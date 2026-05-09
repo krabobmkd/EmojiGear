@@ -67,4 +67,4 @@ if(NOT UNITEXTEDITOR_SHARED)
  target_link_libraries(EmojiGear PRIVATE unitexteditor unibutton)
 endif()
 
-target_compile_definitions(EmojiGear PRIVATE USE_DEBUG_BDBPRINT=1)
+# target_compile_definitions(EmojiGear PRIVATE USE_DEBUG_BDBPRINT=1)

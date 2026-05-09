@@ -305,8 +305,35 @@ void CloseSearchBox();
 
 /* - - - - - - - - - MAIN - - - - - - - - - */
 
+/* #define STACK_WATCH 1 */
+/* measured stack use 18926b */
+#define EG_MIN_STACK (28 * 1024)
+
 int main(int argc, char **argv)
 {
+
+    {
+        struct Task *_t  = FindTask(NULL);
+        int _stacksize   = (int)((int)_t->tc_SPReg - (int)_t->tc_SPLower);
+        if (_stacksize < EG_MIN_STACK) {
+            printf("EmojiGear needs at least 32k stack. Use \"stack 32768\" or set it in the icon properties.\n");
+            return 1;
+        }
+#ifdef STACK_WATCH
+        /* Fill the unused portion of the stack with a sentinel value so we
+         * can measure real high-water use at exit.  _sw_near leaves a 64-byte
+         * safety margin below the current frame before the fill starts. */
+        {
+            int   _sw_anchor = 0;
+            int  *_sw_near   = (int *)((int)&_sw_anchor - 64);
+            int  *_sw_far    = (int *)((int)_t->tc_SPLower + 4);
+            int   _sw_i;
+            for (_sw_i = 0; _sw_i < ((int)_sw_near - (int)_sw_far) / (int)sizeof(int); _sw_i++)
+                _sw_far[_sw_i] = (int)0xCAFEBABE;
+        }
+#endif
+    }
+
     myTask = FindTask(NULL);
     atexit(&exitclose);
 
@@ -752,6 +779,7 @@ UTED_WordWrap,FALSE,// test
                         /* now close button would just close the current text context */
                         EgTabs_CloseCurrentTab();
                         /* old: direct quitting ok = FALSE; */
+
                         break;
 
                     case WMHI_GADGETUP:
@@ -998,6 +1026,19 @@ UTED_WordWrap,FALSE,// test
 
         } /* end main loop */
     }
+
+#ifdef STACK_WATCH
+    {
+        struct Task *_sw_task = FindTask(NULL);
+        int _sw_stacksize = (int)((int)_sw_task->tc_SPReg - (int)_sw_task->tc_SPLower);
+        int *_sw_p = (int *)((int)_sw_task->tc_SPLower + 4);
+        while (*_sw_p == (int)0xCAFEBABE && _sw_p < (int *)_sw_task->tc_SPReg)
+            _sw_p++;
+        printf("**** STACK_WATCH: total=%d  real use=%d\n",
+               _sw_stacksize,
+               (int)((int)_sw_task->tc_SPReg - (int)_sw_p));
+    }
+#endif
 
     return 0;
 }

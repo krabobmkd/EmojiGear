@@ -384,6 +384,19 @@ BOOL EgSearchBox_HandleInput(EgSearchBox *sb)
                 }
                 break;
             }
+            case WMHI_MENUPICK:
+            {
+                /* Dispatch menu selection to action system */
+                UWORD menuCode = (UWORD)(result & WMHI_MENUMASK);
+                if (menuCode != MENUNULL) {
+                    LONG actionID = EgMenu_ToActionID(&app->mainwindow.menu,
+                                                      menuCode);
+                    if (actionID >= 0) {
+                        EgAction_Execute((ULONG)actionID,app);
+                    }
+                }
+                break;
+            }
 
             default:
                 break;

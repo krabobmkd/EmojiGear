@@ -1286,6 +1286,7 @@ BOOL Action_EditPaste(struct App *ctx)
     if (!ctx || !ctx->activeEditorObj) return FALSE;
 
     text = clipboard_read();
+
     if (!text) return FALSE;
 
         if(ctx->activeEditorObj == app->textEditorObj)
@@ -1293,6 +1294,7 @@ BOOL Action_EditPaste(struct App *ctx)
     SetGdAttrs(ctx->activeEditorObj, UTED_InsertText, (ULONG)text, TAG_END);
         } else if(app->searchBox.window)
         {   /* those for the search box */
+
     SetGadgetAttrs(ctx->activeEditorObj,app->searchBox.window,NULL,
             UTED_InsertText, (ULONG)text, TAG_END
             );
