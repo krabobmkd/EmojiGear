@@ -798,7 +798,7 @@ BOOL Action_FileAbout(struct App *ctx)
     "       embedding FreeType2, libpng and zlib\n"
     "  \xF0\x9F\x8C\xBF UniTextEditor  (BOOPSI gadget, krb, License LGPL)\n"
     "  \xF0\x9F\x8C\xBF UniButton      (BOOPSI gadget, krb, License LGPL)\n\n"
-    " This app install those fonts, you may install other ones:\n"
+    " This app install those fonts, you may install other ones:\n\n"
     "  LiberationSans-Regular.ttf Ascender Corporation, license GPL\n"
     "  NotoColorEmoji32.ttf       NoTo, SIL Open Font License 1.1\n"
     "  UbuntuMono-Regular.ttf     Canonical Ltd, Ubuntu Font Licence Version 1.0 (UFL)\n"
