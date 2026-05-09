@@ -1,0 +1,15 @@
+==id $VER: unitexteditor_lib.sfd 1.0
+* "unitexteditor.gadget"
+==base _UniTextEditorBase
+==basetype struct Library *
+==libname unitexteditor.gadget
+==bias 30
+==public
+==include <exec/libraries.h>
+==include <intuition/intuition.h>
+==include <intuition/classes.h>
+==include <gadgets/button.h>
+==include <gadgets/unitexteditor.h>
+==version 40
+Class *UNITEXTEDITOR_GetClass()()
+==end

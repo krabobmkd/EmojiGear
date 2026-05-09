@@ -1,0 +1,72 @@
+==id $VER: utf8rastport_lib.sfd 1.0 (06.05.2026)
+* "utf8rastport.library"
+==base _URPBase
+==basetype struct Library *
+==libname utf8rastport.library
+==bias 30
+==include <exec/libraries.h>
+==include <exec/types.h>
+==include <graphics/rastport.h>
+==include <graphics/gfx.h>
+==include <utility/tagitem.h>
+==include <intuition/screens.h>
+==include <libraries/utf8rastport.h>
+==public
+==version 1
+*
+*------ DrawContext lifecycle ------
+*
+struct URPDrawContext *URPDC_Create( CONST STRPTR name ) (a0)
+VOID URPDC_Retain( struct URPDrawContext *dc ) (a0)
+VOID URPDC_Release( struct URPDrawContext *dc ) (a0)
+*
+*------ Font management ------
+*
+LONG URPDC_AddFont( struct URPDrawContext *dc, CONST STRPTR fontPath,
+	LONG pointSize, ULONG flags ) (a0,a1,d0,d1)
+VOID URPDC_RemoveFont( struct URPDrawContext *dc, CONST STRPTR fontPath,
+	LONG pointSize ) (a0,a1,d0)
+VOID URPDC_FlushFonts( struct URPDrawContext *dc ) (a0)
+VOID URPDC_ChangeFontsSize( struct URPDrawContext *dc,
+	ULONG nPointSize, ULONG fontMask ) (a0,d0,d1)
+*
+*------ DrawContext attributes ------
+*
+VOID URPDC_SetAttribsA( struct URPDrawContext *dc, ULONG *taglist ) (a0,a1)
+*
+*------ Preferences and style ------
+*
+VOID URPDC_SetPreferenceFlags( struct URPDrawContext *dc, ULONG flags ) (a0,d0)
+ULONG URPDC_GetPreferenceFlags( CONST struct URPDrawContext *dc ) (a0)
+VOID URPDC_FlushGlyphCache( struct URPDrawContext *dc ) (a0)
+VOID URPDC_SetStyle( struct URPDrawContext *dc, ULONG styleBits ) (a0,d0)
+*
+*------ Colour ------
+*
+VOID URPDC_SetDrawColor( struct URPDrawContext *dc,
+	ULONG textRGB, ULONG backgroundRGB ) (a0,d0,d1)
+VOID URPDC_SetDrawColorFromPen( struct URPDrawContext *dc,
+	struct Screen *screen, LONG txtPen, LONG bgPen ) (a0,a1,d0,d1)
+*
+*------ Measurement ------
+*
+VOID URPDC_GetFontLineMetrics( struct URPDrawContext *dc,
+	struct URPTextMetric *out ) (a0,a1)
+VOID URPDC_TextSizeUTF8( struct URPDrawContext *dc, CONST STRPTR utf8,
+	LONG maxChars, struct URPTextMetric *out ) (a0,a1,d0,a2)
+VOID URPDC_HorizontalOffsetArrayUTF8( struct URPDrawContext *dc,
+	CONST STRPTR utf8, LONG maxChars, LONG *arrayout ) (a0,a1,d0,a2)
+*
+*------ Drawing ------
+*
+VOID URPDrawTextUTF8( struct RastPort *rp, struct URPDrawContext *dc,
+	struct URPTextPos *pos, CONST STRPTR utf8,
+	ULONG maxChars ) (a0,a1,a2,a3,d0)
+*
+*------ CLUT / palette support ------
+*
+VOID URPDC_SetDrawScreen( struct URPDrawContext *dc,
+	struct Screen *screen ) (a0,a1)
+VOID URPDC_UpdateColorMap( struct URPDrawContext *dc,
+	struct Screen *screen ) (a0,a1)
+==end

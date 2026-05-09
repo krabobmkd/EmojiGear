@@ -1,0 +1,15 @@
+==id $VER: unibutton_lib.sfd 1.0
+* "unibutton.gadget"
+==base _UniButtonBase
+==basetype struct Library *
+==libname unibutton.gadget
+==bias 30
+==public
+==include <exec/libraries.h>
+==include <intuition/intuition.h>
+==include <intuition/classes.h>
+==include <gadgets/button.h>
+==include <gadgets/unibutton.h>
+==version 40
+Class *UNIBUTTON_GetClass()()
+==end
