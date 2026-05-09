@@ -4,6 +4,10 @@ Amiga UTF8 Unicode FreeType rendering lib + BOOPSI text editor gadgets + Text Ed
 Having texts using the universaly acclaimed UTF-8 encoding, and Unicode in general, is one of the most super cool evolution in computer science over these past 25 years, even if you don't hear much about it. Look back at what spaghetti plate architectures microsoft and java had to manage in the 90's to handle multiple alphabets, endless numbers of encoding, and translation libraries, before UTF-8 Unicode appeared and made the world simple and the old stuff useless. And that's nothing compared to the fact it allows anyone to copy-paste emojis, flowers, licorns, and even poops, in the most serious documents, all that with a very elegant, non-resource consuming approach.
 
  Despite its very fast propagation on the 3 modern OSes (not mentioning servers and Web), close to no effort as been done to have a full UTF8 Unicode support in the Amiga OSes world, when those are known for their tight resource management. 
+
+![EmojiGear screenshot 1](images/emojigear1.png)
+![EmojiGear screenshot 2](images/emojigear2.png)
+![EmojiGear screenshot 3](images/emojigear3.png)
  
 # W00t !
  
