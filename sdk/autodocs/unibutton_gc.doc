@@ -1,0 +1,208 @@
+TABLE OF CONTENTS
+
+unibutton.gadget/--datasheet--
+unibutton.gadget/UNIBUTTON_GetClass
+
+unibutton.gadget/--datasheet--               unibutton.gadget/--datasheet--
+
+    NAME
+        unibutton.gadget -- Unicode/Emoji push-button gadget
+
+    SUPERCLASS
+        gadgetclass
+
+    REQUIRES
+        utf8rastport.library, bevel.image
+
+    DESCRIPTION
+        UniButton is a BOOPSI gadget class that provides a push-button
+        widget whose label is rendered by utf8rastport.library using a
+        FreeType font.  Unlike the system button.gadget (which draws
+        labels with the Amiga Text() call), UniButton can display full
+        Unicode text and colour Emoji in button labels.
+
+        The normal, selected, and disabled visual states are pre-rendered
+        into off-screen BitMaps cached inside the gadget.  Responding to
+        mouse clicks (which occurs in input.device context) therefore only
+        needs a safe BltBitMapRastPort and does not call FreeType at
+        interrupt time.
+
+        A URPDrawContext (font and glyph cache) can be shared between
+        multiple UniButton instances via UBT_URPDrawContext, exactly as
+        UTED_URPDrawContext works in UniTextEditor.  Sharing one context
+        keeps all buttons in a window using the same cached glyphs.
+
+    METHODS
+        OM_NEW       -- Initialise gadget; load font; pre-render states.
+        OM_SET       -- Apply attribute tags; re-render states as needed.
+        OM_GET       -- Return attribute values.
+        OM_DISPOSE   -- Free cached bitmaps and release draw context.
+        GM_RENDER    -- Blit the appropriate pre-rendered state bitmap.
+        GM_HITTEST   -- Standard gadget hit test.
+        GM_GOACTIVE  -- Activate gadget (highlight selected state).
+        GM_HANDLEINPUT -- Track release inside/outside gadget bounds.
+        GM_GOINACTIVE -- Deactivate; send UBTN_Pressed if released inside.
+        GM_DOMAIN    -- Return GDOMAIN_MINIMUM and GDOMAIN_MAXIMUM dimensions.
+
+    ATTRIBUTES
+        -- Font configuration --
+
+        UniButton renders its label through a font fallback chain managed
+        by utf8rastport.library, exactly as UniTextEditor does.  The chain
+        is walked in order for every codepoint: the first font that contains
+        a glyph for that codepoint is used.
+
+        Fonts must be added in priority order:
+          1. Primary font   -- the preferred typeface for label text.
+          2. Fallback fonts -- cover codepoints absent from earlier fonts.
+          3. Emoji font     -- a colour bitmap font (e.g. NotoColorEmoji)
+                              added last so ordinary text takes priority.
+
+        This allows a button label such as "Save 💾" or "OK ✔" to render
+        both the text glyphs and the Emoji glyph from the same chain
+        without any application-level character routing.
+
+        A complete font configuration -- or a reconfiguration at any time
+        -- can be sent in a single SetGadgetAttrs() call:
+
+          1. UBT_FlushFonts   -- discard the current chain and glyph cache.
+          2. UBT_PointSize    -- set the size for subsequent AddFont calls.
+          3. UBT_AddFont      -- primary font (repeat for each fallback and
+             UBT_AddFont         the Emoji font).
+             ...
+
+        Example -- set up or reconfigure at runtime:
+
+          SetGadgetAttrs(btnGadget, window, NULL,
+              UBT_FlushFonts,  TRUE,
+              UBT_PointSize,   14,
+              UBT_AddFont,     "FONTS:DejaVuSans.ttf",
+              UBT_AddFont,     "FONTS:NotoColorEmoji.ttf",
+              TAG_END);
+
+        UBT_PointSize  (TAG_USER|0x7301)  [IS]  (ULONG)
+            Font point size in screen pixels.  Default: 14.
+
+        UBT_URPPrefs  (TAG_USER|0x7302)  [IS]  (ULONG)
+            URP_PREF_* flags forwarded to the draw context.
+            Default: URP_PREF_ANTIALIAS | URP_PREF_CLUTMODE_NOMASK |
+                     URP_PREF_HIGHFILTERING.
+
+        UBT_FontFlags  (TAG_USER|0x7306)  [IS]  (ULONG)
+            Flags stored for subsequent UBT_AddFont calls.  Default: 0.
+
+        UBT_AddFont  (TAG_USER|0x7307)  [IS]  (STRPTR)
+            Load one font file and append it to the end of the fallback
+            chain, using the current UBT_PointSize and UBT_FontFlags.
+            Include this tag multiple times in one SetGadgetAttrs() call
+            to build the full chain in a single operation.
+            The path string is not copied by the gadget.
+
+        UBT_FlushFonts  (TAG_USER|0x7308)  [IS]
+            Flush all fonts and the glyph cache.  Place this tag before
+            UBT_PointSize and UBT_AddFont to perform a full
+            reconfiguration in one SetGadgetAttrs() call.
+
+        UBT_URPDrawContext  (TAG_USER|0x730B)  [ISG]  (struct URPDrawContext *)
+            Shared draw context.  The gadget calls URPDC_Retain() on
+            the supplied pointer.  Retrieve via OM_GET to share with a
+            second UniButton instance.
+
+        -- Colours --
+
+        UBT_TextPen  (TAG_USER|0x7303)  [IS]  (ULONG)
+            Intuition pen for the text foreground.  Default: 1.
+
+        UBT_BgPen  (TAG_USER|0x7304)  [IS]  (ULONG)
+            Intuition pen for the button background (normal state).
+            Default: 0.
+
+        UBT_SelBgPen  (TAG_USER|0x7305)  [IS]  (ULONG)
+            Intuition pen for the button background in the selected
+            (pressed) state.  Default: FILLPEN from DrawInfo (pen 3).
+
+        -- Appearance --
+
+        UBT_BevelStyle  (TAG_USER|0x7309)  [IG]  (ULONG)
+            Bevel style from bevel.h (BVS_* constants).
+            Default: BVS_BUTTON.  May only be set at OM_NEW.
+
+        UBT_Transparent  (TAG_USER|0x730A)  [IS]  (BOOL)
+            When TRUE, background fill is skipped; the button appears
+            transparent.  Default: FALSE.
+
+        -- Margins --
+            All margins are measured in pixels INSIDE the bevel frame.
+            The bevel thickness is added automatically on top.
+
+        UBT_LeftMargin    (TAG_USER|0x730C)  [ISG]  (ULONG)  Default: 4.
+        UBT_RightMargin   (TAG_USER|0x730D)  [ISG]  (ULONG)  Default: 4.
+        UBT_TopMargin     (TAG_USER|0x730E)  [ISG]  (ULONG)  Default: 2.
+        UBT_BottomMargin  (TAG_USER|0x730F)  [ISG]  (ULONG)  Default: 2.
+
+        -- Standard gadget attributes (inherited) --
+
+        GA_Text  (STRPTR)
+            NUL-terminated label string for the button.  Rendered with
+            the loaded FreeType font.
+
+        GA_ID  (WORD)
+            Unique gadget identifier.  Returned as the value of
+            UBTN_Pressed when the button is activated.
+
+        GA_Disabled  (BOOL)
+            When TRUE, the button ignores activation attempts and renders
+            in a ghosted disabled state.
+
+    NOTIFICATIONS
+        Sent via OM_NOTIFY when the button is released with the pointer
+        still over the gadget.  Connect with ICA_TARGET / ICA_MAP.
+
+        UBTN_Pressed  (TAG_USER|0x73C1)
+            Button activated.  Value = GA_ID of the button.
+
+    SEE ALSO
+        utf8rastport.library/--datasheet--,
+        unitexteditor_gc/--datasheet--,
+        unibutton.gadget/UNIBUTTON_GetClass
+
+unibutton.gadget/UNIBUTTON_GetClass         unibutton.gadget/UNIBUTTON_GetClass
+
+    NAME
+        UNIBUTTON_GetClass -- obtain the UniButton gadget class pointer
+
+    SYNOPSIS
+        class = UNIBUTTON_GetClass();
+        D0
+
+        Class *UNIBUTTON_GetClass(VOID);
+
+    FUNCTION
+        Returns the pointer to the UniButton BOOPSI gadget class for
+        use with NewObject().  The class is set up when the library is
+        opened; this function always returns a valid pointer provided
+        that unibutton.gadget opened successfully.
+
+        The typical usage sequence is:
+
+            UniButtonBase = OpenLibrary("gadgets/unibutton.gadget", 1);
+            if (!UniButtonBase) { /* error */ }
+            btn = NewObject(UNIBUTTON_GetClass(), NULL,
+                            GA_Text,        "Click Me 😀",
+                            GA_ID,          MY_BTN_ID,
+                            GA_RelVerify,   TRUE,
+                            UBT_PointSize,  14,
+                            UBT_AddFont,    "FONTS:MyFont.ttf",
+                            TAG_END);
+
+        The gadget notifies via UBTN_Pressed when the button is clicked.
+
+    INPUTS
+        None.
+
+    RESULT
+        class -- pointer to the UniButton Class structure.
+
+    SEE ALSO
+        unibutton.gadget/--datasheet--,
+        utf8rastport.library/URPDC_Create

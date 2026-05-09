@@ -53,3 +53,15 @@ dkms.conf
 
 # debug information files
 *.dwo
+
+# UAE / FS-UAE filesystem metadata sidecars
+*.uaem
+
+# Qt Creator user-local project settings
+*.user
+
+# CMake build output
+buildAmiga/
+
+# Generated installer package directory
+EmojiGear_pkg/

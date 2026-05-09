@@ -1,0 +1,135 @@
+Short:        UTF-8 Unicode text editor with Emoji for AmigaOS 3.9/3.2
+Author:       krabobmkd
+Uploader:     victorien.ferry@free.fr
+Type:         text/edit
+Version:      0.9
+Architecture: m68k-amigaos >= 3.9
+Requires:     68020, AmigaOS 3.9 or 3.2.x, 8 MB Fast RAM
+
+
+EmojiGear is a UTF-8 Unicode text editor for AmigaOS 3.9 or 3.2.x (68020+).
+It renders TrueType/OpenType fonts via a built-in FreeType 2 engine and
+displays full-colour Emoji from CBDT/CBLC bitmap fonts -- on real 68k
+hardware.  Multiple documents open in a tab bar.  Load and save UTF-8,
+ISO Latin-1, ISO Latin-2; auto-detect UTF-16.  Find & Replace, Undo/
+Redo, word wrap, ANSI escape rendering, configurable font size, and an
+Emoji Box mapping 40 glyphs to F-key combinations.
+
+Beyond the editor, the package installs three reusable Amiga components
+that any developer can open from their own application:
+  utf8rastport.library  -- FreeType 2 Unicode rendering on any RastPort,
+                          with font fallback chains and colour Emoji.
+  unitexteditor.gadget  -- the full editor as a BOOPSI gadget class,
+                          embeddable in any application window.
+  unibutton.gadget      -- a push-button gadget with Unicode/Emoji labels.
+
+All settings are stored in the icon Tooltypes.  A standard Amiga
+Installer script handles everything, including a choice of low-colour
+(OCS/ECS) or high-quality (AGA/RTG) default configuration.
+
+---------------------------------------------------------------------------
+
+EmojiGear v0.9
+
+---------------------------------------------------------------------------
+
+WHAT IS IT?
+
+EmojiGear is a UTF-8 Unicode text editor for AmigaOS 3.9 or 3.2.x, running on any
+Amiga with a 68020 or better processor.  It renders TrueType and OpenType
+fonts using a built-in FreeType 2 engine, and displays full-colour Emoji
+from a CBDT/CBLC colour bitmap font.  On a 68k Amiga.  Yes, really.
+
+It opens, edits, and saves plain text files in UTF-8, ISO Latin-1, and
+ISO Latin-2 encoding, handles UTF-16 on load, and can export as
+backslash-escaped ASCII for maximum portability.  Multiple documents can
+be open simultaneously in a tab bar.  ANSI escape sequences are rendered
+for coloured terminal output and log files.
+
+Beyond the application itself, EmojiGear ships three reusable Amiga
+shared components that any developer can use in their own programs:
+
+  utf8rastport.library
+    A standard AmigaOS shared library that brings FreeType 2 glyph
+    rendering to any RastPort.  Manages font fallback chains, glyph
+    caches, anti-aliasing, colour Emoji, and CLUT/RTG colour mapping.
+
+  unitexteditor.gadget
+    A BOOPSI gadget class providing the full Unicode text editor widget,
+    embeddable in any BOOPSI-aware application window.
+
+  unibutton.gadget
+    A BOOPSI push-button gadget that renders its label with FreeType,
+    enabling Unicode and Emoji text in button labels.
+
+---------------------------------------------------------------------------
+
+FEATURES
+
+- Full UTF-8 editing: type, paste, save any Unicode character, including
+  Emoji, CJK, Greek, Cyrillic, Arabic and more.
+- TrueType / OpenType font rendering via FreeType 2.
+- Full-colour Emoji from CBDT/CBLC fonts (e.g. NotoColorEmoji).
+- Font fallback chain: combine a text font with an Emoji font and they
+  both work seamlessly in the same line of text.
+- Multi-document tab bar (up to 20 open documents).
+- Load / save in UTF-8, ISO Latin-1 (western), ISO Latin-2 (central/
+  eastern European).  Auto-detects UTF-16 (BE and LE) on load.
+- Find & Replace with case-insensitive option.
+- Undo / Redo history.
+- ANSI escape sequence rendering (Amiga pen mode and Unix/xterm 256-
+  colour mode).
+- Word wrap, force monospace, configurable tab width.
+- Adjustable font size at runtime (Ctrl++ / Ctrl+-).
+- Emoji Box window: 40 Emoji assignable to F-key combinations.
+- Font settings window: configure up to 3 text fonts + 1 Emoji font.
+- Settings window: colours, tab behaviour, screen mode.
+- All settings saved in icon Tooltypes (EmojiGear.info).
+- Iconifiable to Workbench backdrop.
+- Opens files from CLI: EmojiGear file1.txt file2.txt [Latin1|Latin2]
+- AmigaGuide documentation included.
+
+---------------------------------------------------------------------------
+
+REQUIREMENTS
+
+- Amiga with 68020 or better CPU
+- AmigaOS 3.9 or 3.2.x
+- At least 8 MB Fast RAM (more is better for large files and Emoji fonts)
+- At least 32 kB stack (set via the icon or: stack 32768)
+- For colour Emoji and antialiased text: AGA or an RTG card
+  (Picasso96 / CyberGraphX) with 8-bit or better screen depth
+
+---------------------------------------------------------------------------
+
+INSTALLATION
+
+Double-click the Install icon and follow the on-screen instructions.
+The installer will:
+  - Ask where to install EmojiGear
+  - Install utf8rastport.library to Libs:
+  - Install unitexteditor.gadget and unibutton.gadget to
+    SYS:Classes/Gadgets/  (skipped if a newer version is already present)
+  - Install four TrueType fonts to Fonts:
+      LiberationSans-Regular.ttf   (proportional text)
+      UbuntuMono-Regular.ttf       (monospace text)
+      NotoColorEmoji32.ttf         (colour Emoji, compact 32px strikes)
+      OpenMoji-black-glyf.ttf      (2-colour Emoji, works on any depth)
+  - Optionally install example text files (UTF-8, Latin-1, Latin-2,
+    ANSI colour, UTF-16, multilingual)
+  - Ask whether you prefer a low-colour (OCS/ECS) or high-quality
+    (AGA/RTG) default configuration
+
+To start EmojiGear, double-click its icon in the installed drawer.
+
+---------------------------------------------------------------------------
+
+SOURCE CODE AND BUG REPORTS
+
+Source code:
+  https://github.com/krabobmkd/EmojiGear
+
+Bug reports and feature requests:
+  https://github.com/krabobmkd/EmojiGear/issues
+
+---------------------------------------------------------------------------

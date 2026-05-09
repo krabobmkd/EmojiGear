@@ -1,0 +1,377 @@
+; EmojiGear Installer Script
+; For use with the standard Amiga 'Installer' tool (v43+).
+;
+; Installs:
+;   - EmojiGear                    (UTF-8 Unicode text editor)
+;   - utf8rastport.library  -> Libs:
+;   - unitexteditor.gadget  -> SYS:Classes/Gadgets/
+;   - unibutton.gadget      -> SYS:Classes/Gadgets/
+;   - 4 TrueType fonts      -> Fonts:
+;   - example text files    -> <dest>/examples_text/  (optional)
+;
+
+(set #app-name    "EmojiGear")
+(set #app-version "v0.9")
+(set #app-default "Work:")
+
+; Library/gadget versions we are shipping
+(set #urp-ver   (+ (* 1 65536) 0))   ; utf8rastport.library  v1.0
+(set #uted-ver  (+ (* 1 65536) 0))   ; unitexteditor.gadget  v1.0
+(set #ubtn-ver  (+ (* 1 65536) 0))   ; unibutton.gadget      v1.0
+
+; ---------------------------------------------------------------------------
+; Welcome
+; ---------------------------------------------------------------------------
+(message
+    (cat
+        "Greetings, Amiga champion!\n\n"
+        "Welcome to the " #app-name " " #app-version " installer!\n\n"
+        #app-name " is a Unicode UTF-8 text editor -- quite possibly the\n"
+        "most futuristic text editor ever to grace a 68k processor.\n"
+        "It renders TrueType fonts, supports the full Unicode range,\n"
+        "and yes, it displays full-colour Emoji. On an Amiga. In 2026.\n\n"
+        "We will also install the shared components that power it:\n"
+        "  utf8rastport.library  (FreeType 2 rendering for any app)\n"
+        "  unitexteditor.gadget  (reusable Unicode editor BOOPSI gadget)\n"
+        "  unibutton.gadget      (Unicode-label push-button gadget)\n\n"
+        "Click Proceed and let's make history!"
+    )
+    (all)
+)
+
+; ---------------------------------------------------------------------------
+; Choose installation directory
+; ---------------------------------------------------------------------------
+(set #parent
+    (askdir
+        (prompt
+            (cat "Where would you like to install " #app-name "?")
+        )
+        (help
+            (cat
+                "Choose a drawer for the installation.\n"
+                "A '" #app-name "' drawer will be created inside it.\n\n"
+                "Default: " #app-default #app-name
+            )
+        )
+        (default #app-default)
+    )
+)
+
+(set #dest (tackon #parent #app-name))
+
+(complete 5)
+
+; ---------------------------------------------------------------------------
+; Install utf8rastport.library -> Libs:
+; ---------------------------------------------------------------------------
+(set #urp-installed (getversion "Libs:utf8rastport.library"))
+
+(if (>= #urp-installed #urp-ver)
+    (
+        (message
+            (cat
+                "utf8rastport.library v"
+                (/ #urp-installed 65536)
+                " is already installed and is at least as recent as\n"
+                "the one included here.  Skipping -- your version wins!\n"
+            )
+        )
+    )
+    (
+        (working "Installing utf8rastport.library to Libs: ...")
+        (copyfiles
+            (source "bin/utf8rastport.library")
+            (dest "Libs:")
+        )
+    )
+)
+
+(complete 20)
+
+; ---------------------------------------------------------------------------
+; Install unitexteditor.gadget -> SYS:Classes/Gadgets/
+; ---------------------------------------------------------------------------
+(set #uted-dest "SYS:Classes/Gadgets/")
+(set #uted-installed (getversion (tackon #uted-dest "unitexteditor.gadget")))
+
+(if (>= #uted-installed #uted-ver)
+    (
+        (message
+            (cat
+                "unitexteditor.gadget v"
+                (/ #uted-installed 65536)
+                " is already installed and is at least as recent.\n"
+                "Skipping -- steady on!"
+            )
+        )
+    )
+    (
+        (working "Installing unitexteditor.gadget to SYS:Classes/Gadgets/ ...")
+        (makedir #uted-dest)
+        (copyfiles
+            (source "bin/unitexteditor.gadget")
+            (dest #uted-dest)
+        )
+    )
+)
+
+(complete 35)
+
+; ---------------------------------------------------------------------------
+; Install unibutton.gadget -> SYS:Classes/Gadgets/
+; ---------------------------------------------------------------------------
+(set #ubtn-installed (getversion (tackon #uted-dest "unibutton.gadget")))
+
+(if (>= #ubtn-installed #ubtn-ver)
+    (
+        (message
+            (cat
+                "unibutton.gadget v"
+                (/ #ubtn-installed 65536)
+                " is already installed and is at least as recent.\n"
+                "Skipping!"
+            )
+        )
+    )
+    (
+        (working "Installing unibutton.gadget to SYS:Classes/Gadgets/ ...")
+        (copyfiles
+            (source "bin/unibutton.gadget")
+            (dest #uted-dest)
+        )
+    )
+)
+
+(complete 50)
+
+; ---------------------------------------------------------------------------
+; Install TrueType fonts -> Fonts:
+; ---------------------------------------------------------------------------
+(working "Installing TrueType fonts to Fonts: ...")
+
+(copyfiles
+    (source "Fonts/LiberationSans-Regular.ttf")
+    (dest "Fonts:")
+)
+(copyfiles
+    (source "Fonts/NotoColorEmoji32.ttf")
+    (dest "Fonts:")
+)
+(copyfiles
+    (source "Fonts/OpenMoji-black-glyf.ttf")
+    (dest "Fonts:")
+)
+(copyfiles
+    (source "Fonts/UbuntuMono-Regular.ttf")
+    (dest "Fonts:")
+)
+
+(complete 60)
+
+; ---------------------------------------------------------------------------
+; Create destination drawer and install EmojiGear
+; ---------------------------------------------------------------------------
+(working (cat "Creating " #dest " ..."))
+(makedir #dest)
+
+(working (cat "Copying " #app-name " ..."))
+(copyfiles
+    (source "bin/EmojiGear")
+    (dest #dest)
+)
+
+(working "Copying documentation ...")
+(copyfiles
+    (source "EmojiGear.guide")
+    (dest #dest)
+    (infos)
+)
+(copyfiles
+    (source "LICENSE")
+    (dest #dest)
+)
+
+(complete 75)
+
+; ---------------------------------------------------------------------------
+; Optional: example text files
+; ---------------------------------------------------------------------------
+(set #install-examples
+    (askbool
+        (prompt
+            (cat
+                "Would you like to install example text files?\n\n"
+                "These include UTF-8, Latin-1, Latin-2, ANSI colour,\n"
+                "UTF-16, and multilingual samples -- a little tour of the\n"
+                "Unicode universe, Amiga-style."
+            )
+        )
+        (help
+            (cat
+                "Example files will be placed in:\n"
+                #dest "/examples_text/\n\n"
+                "They are purely optional but handy for testing fonts\n"
+                "and getting a feel for what EmojiGear can display."
+            )
+        )
+        (default 1)
+    )
+)
+
+(if (= #install-examples 1)
+    (
+        (set #ex-dest (tackon #dest "examples_text"))
+        (working "Creating examples_text drawer ...")
+        (makedir #ex-dest)
+        (working "Copying example text files ...")
+        (copyfiles
+            (source "examples_text")
+            (dest #ex-dest)
+            (all)
+        )
+    )
+)
+
+(complete 88)
+
+; ---------------------------------------------------------------------------
+; Optional: SDK
+; ---------------------------------------------------------------------------
+(set #install-sdk
+    (askbool
+        (prompt
+            (cat
+                "Would you like to install the EmojiGear SDK?\n\n"
+                "The SDK contains everything you need to build your own\n"
+                "applications using utf8rastport.library, unitexteditor.gadget\n"
+                "and unibutton.gadget:\n\n"
+                "  include/  -- C header files\n"
+                "  clib/     -- function prototypes\n"
+                "  inline/   -- GCC inline stubs\n"
+                "  pragmas/  -- SAS/C pragmas\n"
+                "  sfd/      -- SFD function descriptor files\n"
+                "  autodocs/ -- API documentation\n"
+                "  examples/ -- example source code"
+            )
+        )
+        (help
+            (cat
+                "The SDK will be copied into the directory you choose.\n"
+                "A sub-drawer 'EmojiGearSDK' will be created inside it."
+            )
+        )
+        (default 0)
+    )
+)
+
+(if (= #install-sdk 1)
+    (
+        (set #sdk-parent
+            (askdir
+                (prompt "Where would you like to install the EmojiGear SDK?")
+                (help
+                    (cat
+                        "Choose a location for the SDK.\n"
+                        "An 'EmojiGearSDK' drawer will be created inside it.\n\n"
+                        "Typical choices: Work:, SYS:Developer/, or any\n"
+                        "existing NDK/SDK directory."
+                    )
+                )
+                (default "Work:")
+            )
+        )
+        (set #sdk-dest (tackon #sdk-parent "EmojiGearSDK"))
+        (working "Creating EmojiGearSDK drawer...")
+        (makedir #sdk-dest)
+        (working "Copying SDK files (this may take a moment)...")
+        (copyfiles
+            (source "sdk")
+            (dest #sdk-dest)
+            (all)
+        )
+        (message
+            (cat
+                "The SDK has been installed to:\n\n"
+                "  " #sdk-dest "\n\n"
+                "Point your compiler's include path there and you are\n"
+                "ready to build Unicode-powered Amiga applications!"
+            )
+        )
+    )
+)
+
+(complete 95)
+
+; ---------------------------------------------------------------------------
+; Choose icon / default configuration
+; ---------------------------------------------------------------------------
+(set #icon-choice
+    (askchoice
+        (prompt
+            (cat
+                "Which default display configuration do you prefer?\n\n"
+                "This sets the starting colour and font settings\n"
+                "stored in the EmojiGear icon tooltypes.\n"
+                "You can always change them later from the Settings menu."
+            )
+        )
+        (help
+            (cat
+                "Low-end (2 colours):\n"
+                "  Monochrome rendering, no antialiasing.\n"
+                "  Best for OCS/ECS machines or low-colour screens.\n\n"
+                "High Quality:\n"
+                "  Antialiased fonts, colour Emoji support.\n"
+                "  Recommended for AGA and RTG (Picasso, CyberGfx)."
+            )
+        )
+        (choices
+            "Low-end (2 colours) -- OCS/ECS friendly"
+            "High Quality -- AGA / RTG recommended"
+        )
+        (default 1)
+    )
+)
+
+(if (= #icon-choice 0)
+    (
+        (working "Installing low-colour icon and settings ...")
+        (copyfiles
+            (source "bin/EmojiGearL.info")
+            (dest #dest)
+            (newname "EmojiGear.info")
+        )
+    )
+    (
+        (working "Installing high-quality icon and settings ...")
+        (copyfiles
+            (source "bin/EmojiGearH.info")
+            (dest #dest)
+            (newname "EmojiGear.info")
+        )
+    )
+)
+
+(complete 100)
+
+; ---------------------------------------------------------------------------
+; Done!
+; ---------------------------------------------------------------------------
+(exit
+    (cat
+        "  * * *  Installation complete!  * * *\n\n"
+        #app-name " " #app-version " has landed in:\n\n"
+        "  " #dest "\n\n"
+        "The following shared components are now available\n"
+        "to all applications on your system:\n"
+        "  Libs:utf8rastport.library\n"
+        "  SYS:Classes/Gadgets/unitexteditor.gadget\n"
+        "  SYS:Classes/Gadgets/unibutton.gadget\n\n"
+        "TrueType fonts have been placed in Fonts:.\n\n"
+        "Double-click the EmojiGear icon to begin your\n"
+        "Unicode adventure.  Enjoy the future -- today!\n\n"
+        "       ( on an Amiga.  Obviously. )"
+    )
+    (quiet)
+)

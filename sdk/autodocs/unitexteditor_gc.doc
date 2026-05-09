@@ -1,0 +1,510 @@
+TABLE OF CONTENTS
+
+unitexteditor.gadget/--datasheet--
+unitexteditor.gadget/UNITEXTEDITOR_GetClass
+
+unitexteditor.gadget/--datasheet--         unitexteditor.gadget/--datasheet--
+
+    NAME
+        unitexteditor.gadget -- scrollable Unicode/UTF-8 text editor gadget
+
+    SUPERCLASS
+        gadgetclass
+
+    REQUIRES
+        utf8rastport.library, freetype (via utf8rastport.library)
+
+    DESCRIPTION
+        UniTextEditor is a BOOPSI gadget class providing a fully featured
+        scrollable text editor widget with UTF-8 and full Emoji support.
+        Lines are pre-rendered into individual cached BitMaps and re-blitted
+        on scroll or refresh for smooth performance.  Per-character horizontal
+        offsets enable pixel-accurate cursor placement and text selection.
+
+        The gadget delegates all glyph rendering to utf8rastport.library
+        through a URPDrawContext object.  One context may be shared between
+        multiple gadget instances (e.g. two editor panes sharing one font
+        cache), or each instance may maintain its own.
+
+        Key features:
+
+            > Full UTF-8 text editing with undo/redo history.
+            > Multi-document context stash: switch between named documents
+              in O(1) without reloading from disk.
+            > Search and replace (forward/backward, case-insensitive option).
+            > Word wrap with visual-row tracking for accurate scrollbar sizing.
+            > ANSI escape sequence rendering (Amiga and Unix/xterm colour modes).
+            > TAB expansion with configurable width; optional TAB visualisation.
+            > Keyboard input via UTED_PutRawKey / UTED_PutVanillaKey, keeping
+              all editor logic in safe application task context.
+            > Configurable margins, line spacing, and bevel style.
+
+    METHODS
+        OM_NEW       -- Initialise gadget, create or attach URPDrawContext.
+        OM_SET       -- Apply attribute tags; redraws as needed.
+        OM_GET       -- Return attribute values.
+        OM_DISPOSE   -- Free all resources including context stash.
+        GM_RENDER    -- Blit cached line bitmaps; rebuild stale lines first.
+        GM_HITTEST   -- Standard gadget hit test.
+        GM_GOACTIVE  -- Record activation; enable cursor blink.
+        GM_HANDLEINPUT -- Track mouse for click-to-position and drag-select.
+        GM_GOINACTIVE -- Deactivate cursor.
+
+    ATTRIBUTES
+        -- Font configuration --
+
+        UniTextEditor renders glyphs through a font fallback chain managed
+        by utf8rastport.library.  The chain is ordered: when a codepoint
+        is needed, the library walks the chain from the first added font
+        to the last and uses the first face that contains a matching glyph.
+
+        This means that fonts must be added in priority order:
+          1. Primary font   -- the preferred typeface for normal text.
+          2. Fallback fonts -- loaded for codepoints absent from earlier
+                              fonts (e.g. a CJK extension, a symbol font).
+          3. Emoji font     -- a colour bitmap font such as NotoColorEmoji,
+                              added last so it only activates for codepoints
+                              that are not covered by the text fonts above.
+
+        With such a chain the gadget can display Latin text, extended
+        Unicode scripts, and full-colour Emoji all in the same text buffer
+        without any application-level codepoint routing.
+
+        A complete font configuration -- or a reconfiguration at any time
+        -- can be sent in a single SetGadgetAttrs() call by placing the
+        tags in this order:
+
+          1. UTED_FlushFonts    -- discard current chain and glyph cache.
+          2. UTED_PointSize     -- set the size for subsequent AddFont calls.
+          3. UTED_AddFont       -- primary font (repeated as many times as
+             UTED_AddFont          needed for fallbacks and the Emoji font).
+             ...
+
+        Example -- set up or reconfigure a 3-font chain at runtime:
+
+          SetGadgetAttrs(editorGadget, window, NULL,
+              UTED_FlushFonts,  TRUE,
+              UTED_PointSize,   16,
+              UTED_AddFont,     "FONTS:DejaVuSans.ttf",
+              UTED_AddFont,     "FONTS:FreeSans.ttf",
+              UTED_AddFont,     "FONTS:NotoColorEmoji.ttf",
+              TAG_END);
+
+        Because the entire operation is one atomic tag list, there is no
+        intermediate state where the gadget has no fonts loaded.
+
+        UTED_PointSize  (TAG_USER|0x7101)  [IS]  (ULONG)
+            Font point size in screen pixels.  Stored for subsequent
+            UTED_AddFont calls; does not resize already-loaded fonts.
+            Default: 12.
+
+        UTED_URPPrefs  (TAG_USER|0x7102)  [IS]  (ULONG)
+            URP_PREF_* flags forwarded to URPDC_SetPreferenceFlags().
+            Default: URP_PREF_ANTIALIAS | URP_PREF_CLUTMODE_NOMASK.
+
+        UTED_FontFlags  (TAG_USER|0x7105)  [IS]  (ULONG)
+            Flags stored for subsequent UTED_AddFont calls.  Default: 0.
+
+        UTED_AddFont  (TAG_USER|0x7106)  [IS]  (STRPTR)
+            Load one font file and append it to the end of the fallback
+            chain, using the current UTED_PointSize and UTED_FontFlags.
+            Include this tag multiple times in one SetGadgetAttrs() call
+            to build the full chain in a single operation.
+            The path string is not copied by the gadget.
+
+        UTED_FlushFonts  (TAG_USER|0x7107)  [IS]
+            Unload all fonts and flush the glyph cache.  Equivalent to
+            calling URPDC_FlushFonts() directly.  Place this tag before
+            UTED_PointSize and UTED_AddFont to perform a full
+            reconfiguration in one SetGadgetAttrs() call.
+
+        UTED_URPDrawContext  (TAG_USER|0x7147)  [ISG]  (struct URPDrawContext *)
+            Share an existing draw context instead of creating a new one.
+            The gadget calls URPDC_Retain() on the supplied pointer.
+            Use OM_GET to retrieve the current context for sharing with
+            a second gadget instance.
+
+        -- Colours --
+
+        UTED_TextPen  (TAG_USER|0x7103)  [IS]  (ULONG)
+            Intuition pen number for text foreground.  Default: 1.
+
+        UTED_BgPen  (TAG_USER|0x7104)  [IS]  (ULONG)
+            Intuition pen number for text background.  Default: 0.
+
+        UTED_SelectionColor  (TAG_USER|0x7107)  [IS]  (ULONG)
+            Selection highlight background as 0x00RRGGBB.
+            Default: 0x000000AA (medium blue).
+
+        UTED_CursorColor  (TAG_USER|0x7108)  [IS]  (ULONG)
+            Text cursor colour as 0x00RRGGBB.  Default: 0x00FFFFFF.
+
+        -- Text content --
+
+        UTED_Text  (TAG_USER|0x7109)  [ISG]  (STRPTR)
+            [S] Replace the entire text buffer with a NUL-terminated
+                UTF-8 string.
+            [G] Returns an AllocVec()'d copy of the buffer; caller must
+                FreeVec() the result.
+
+        UTED_Modified  (TAG_USER|0x710A)  [G]  (BOOL)
+            TRUE if the buffer has been modified since the last
+            UTED_Text set or since UTED_Modified was last cleared via
+            OM_SET(UTED_Modified, FALSE).
+
+        UTED_MaxNumberOfUndo  (TAG_USER|0x7113)  [ISG]  (ULONG)
+            Maximum undo/redo history depth.  Setting this flushes all
+            current history.  0 = undo disabled.  Default: 64.
+
+        -- Cursor and scroll state --
+
+        UTED_LineCount  (TAG_USER|0x710B)  [G]  (ULONG)
+            Total number of logical lines in the buffer (always >= 1).
+
+        UTED_RenderedLineCount  (TAG_USER|0x7126)  [G]  (ULONG)
+            Total visual rows after word-wrap expansion.  Equals
+            UTED_LineCount when word-wrap is off.  Use this value for
+            scrollbar sizing when word-wrap is active.
+
+        UTED_ScrollTop  (TAG_USER|0x710C)  [ISG]  (ULONG)
+            0-based index of the first fully visible line.
+
+        UTED_VisibleLines  (TAG_USER|0x710D)  [G]  (ULONG)
+            Number of lines that fully fit in the gadget height.
+
+        UTED_CursorLine  (TAG_USER|0x710E)  [ISG]  (ULONG)
+            0-based line index of the insertion cursor.
+
+        UTED_CursorChar  (TAG_USER|0x710F)  [ISG]  (ULONG)
+            0-based codepoint index of the cursor within its line.
+
+        UTED_ScrollLeft  (TAG_USER|0x7110)  [ISG]  (ULONG)
+            Horizontal scroll offset in pixels.  Default: 0.
+
+        UTED_MaxLineWidth  (TAG_USER|0x7111)  [G]  (ULONG)
+            Width in pixels of the widest rendered line.  Returns 0 if
+            no line has been measured yet.
+
+        -- Editing actions --
+
+        UTED_InsertText  (TAG_USER|0x7114)  [S]  (STRPTR)
+            Insert NUL-terminated UTF-8 text at the cursor.  Newlines
+            split lines.  Deletes any active selection first.
+
+        UTED_DeleteChar  (TAG_USER|0x7115)  [S]  (LONG)
+            Delete one character: -1 = backspace, +1 = forward-delete.
+            Deletes any active selection instead if one exists.
+
+        UTED_MoveCursorX  (TAG_USER|0x7116)  [S]  (LONG)
+            Move cursor horizontally by delta codepoints.  Positive =
+            right, negative = left.  Pair with UTED_CursorExtend to
+            extend the selection.
+
+        UTED_MoveCursorY  (TAG_USER|0x7117)  [S]  (LONG)
+            Move cursor vertically by delta lines.  Positive = down,
+            negative = up.
+
+        UTED_CursorExtend  (TAG_USER|0x7118)  [S]  (BOOL)
+            Companion for UTED_MoveCursorX / UTED_MoveCursorY.
+            TRUE = extend selection anchor; FALSE = clear selection first.
+
+        UTED_ClearSelection  (TAG_USER|0x7119)  [S]
+            Collapse selection to cursor position.
+
+        UTED_SelectAll  (TAG_USER|0x711A)  [S]
+            Select entire buffer contents.
+
+        UTED_DeleteSelection  (TAG_USER|0x711B)  [S]
+            Delete selected text.  No-op if no selection.
+
+        UTED_GetSelectedText  (TAG_USER|0x711C)  [G]  (STRPTR)
+            AllocVec()'d copy of selected text as NUL-terminated UTF-8.
+            Returns NULL if no selection.  Caller must FreeVec().
+
+        UTED_Undo  (TAG_USER|0x7120)  [S]
+            Undo the last edit.  No-op if no undo history available.
+
+        UTED_Redo  (TAG_USER|0x7121)  [S]
+            Redo the last undone edit.
+
+        -- Scroll actions --
+
+        UTED_ScrollTo  (TAG_USER|0x711D)  [S]  (ULONG)
+            Scroll the viewport to make the given line index visible.
+
+        UTED_ScrollToCenter  (TAG_USER|0x711E)  [S]  (BOOL)
+            Companion for UTED_ScrollTo.  TRUE = center the target line.
+
+        UTED_InvalidateLine  (TAG_USER|0x711F)  [S]  (ULONG)
+            Invalidate one line cache (rebuilds on next GM_RENDER).
+            Pass UTED_ALLLINES (~0UL) to invalidate everything.
+
+        -- Keyboard input --
+
+        IMPORTANT: UniTextEditor does NOT process keyboard events
+        autonomously when activated.  BOOPSI gadgets receive no
+        IDCMP_VANILLAKEY messages through GM_HANDLEINPUT, and the
+        standard gadget activation path does not give the gadget access
+        to typed characters.  The application MUST forward every
+        keyboard event explicitly using the two tags below.
+
+        The encoding for both tags is:
+
+            value = (Qualifier << 16) | KeyCode
+
+        where Qualifier is the Intuition qualifier word (IEQUALIFIER_*
+        from <devices/inputevent.h>) and KeyCode is either the raw key
+        code or the vanilla byte, depending on which tag is used.
+        Passing qualifiers allows the gadget to apply correct modifier
+        semantics (Shift to extend selection, Ctrl for word operations,
+        etc.).
+
+        UTED_PutRawKey  (TAG_USER|0x7122)  [S]  (ULONG)
+            Forward a raw Intuition key code obtained from an
+            IDCMP_RAWKEY event.  Encode as ((Qualifier << 16) | RawKey).
+            Key-up events (bit 7 of RawKey set) are silently ignored.
+
+            Handled internally: arrow keys, Page Up/Down, Backspace,
+            Delete, Return, Tab, Escape (clear selection), Ctrl+A
+            (select all), Ctrl+Z (undo), Ctrl+Y (redo), printable
+            characters via MapRawKey + Latin-1 to UTF-8 conversion.
+
+            F1-F10 and their Shift/Ctrl variants are NOT handled; the
+            application receives them and may use them for macros or
+            Emoji insertion.
+
+        UTED_PutVanillaKey  (TAG_USER|0x7123)  [S]  (ULONG)
+            Forward an already-translated vanilla key byte obtained from
+            an IDCMP_VANILLAKEY event.  Encode as
+            ((Qualifier << 16) | VanillaKeyByte).
+
+            Intuition performs dead-key and Shift/Alt composition before
+            issuing IDCMP_VANILLAKEY, so the low byte is the final
+            character in the keymap's native 8-bit encoding.  Bytes
+            0x80-0xFF are decoded to Unicode according to
+            UTED_VanillaKeyAnsiCode.
+
+        UTED_VanillaKeyAnsiCode  (TAG_USER|0x7124)  [ISG]  (ULONG)
+            Encoding used by UTED_PutVanillaKey for bytes 0xA0-0xFF.
+            UTED_VANILLAKEY_LATIN1 (1, default) = ISO 8859-1.
+            UTED_VANILLAKEY_LATIN2 (2)          = ISO 8859-2.
+            Set this once at startup after probing the locale or keymap.
+
+        -- Display options --
+
+        UTED_WordWrap  (TAG_USER|0x7125)  [ISG]  (BOOL)
+            When TRUE, long lines are visually wrapped at word or
+            character boundaries.  Logical buffer coordinates remain
+            in \n-separated line space.  Default: FALSE.
+
+        UTED_MaxDisplayLines  (TAG_USER|0x7127)  [IS]  (ULONG)
+            Cap the rendered height to (MaxDisplayLines * lineHeight)
+            pixels.  Default: ~0UL (unlimited).
+
+        UTED_NoLineFeed  (TAG_USER|0x7128)  [IS]  (BOOL)
+            When TRUE, newlines are stripped from input and Enter
+            triggers UTEDN_EnterPressed instead.  Default: FALSE.
+
+        UTED_TabSpaces  (TAG_USER|0x7112)  [ISG]  (ULONG)
+            Spaces per TAB character.  Range: 1..12.  Default: 4.
+
+        UTED_TabsAreSpaces  (TAG_USER|0x713A)  [ISG]  (BOOL)
+            When TRUE, the Tab key inserts UTED_TabSpaces space
+            characters instead of a literal \t.  Default: FALSE.
+
+        UTED_VisibleTabs  (TAG_USER|0x7137)  [ISG]  (BOOL)
+            When TRUE, draw a faint line inside each tab run at the
+            text baseline.  Default: FALSE.
+
+        UTED_ApplyAnsiEscapes  (TAG_USER|0x713B)  [ISG]  (BOOL)
+            When TRUE, ANSI/VT100 escape sequences in the text are
+            interpreted during rendering.  Default: FALSE.
+
+        UTED_AnsiUnixColors  (TAG_USER|0x713D)  [ISG]  (BOOL)
+            Colour-mapping mode when UTED_ApplyAnsiEscapes is TRUE.
+            FALSE (default) = Amiga mode: SGR codes map to pens 0-7.
+            TRUE            = Unix/xterm mode: full 256-colour palette
+                              and 24-bit true-colour via FindColor().
+
+        -- Margins and layout --
+
+        UTED_LeftMargin    (TAG_USER|0x7129)  [ISG]  (ULONG)  Default: 2.
+        UTED_RightMargin   (TAG_USER|0x712B)  [ISG]  (ULONG)  Default: 0.
+        UTED_TopMargin     (TAG_USER|0x712C)  [ISG]  (ULONG)  Default: 0.
+        UTED_BottomMargin  (TAG_USER|0x712D)  [ISG]  (ULONG)  Default: 0.
+        UTED_LineSpacing   (TAG_USER|0x712A)  [ISG]  (ULONG)
+            Extra pixels added below each line.  Default: 1.
+
+        UTED_BevelStyle  (TAG_USER|0x712E)  [IG]  (ULONG)
+            Bevel style constant from bevel.h.  Default: BVS_NONE.
+
+        -- Context stash (multi-document) --
+
+        UTED_CurrentContext  (TAG_USER|0x7138)  [ISG]  (STRPTR)
+            Named editing context key, typically an absolute file path.
+            [S] Switch to the named context.  If new, the current
+                document is stashed and an empty document is activated.
+                If previously stashed, the stash is restored (O(1)).
+                Followed by UTED_Text in the same call, the restored or
+                fresh document is immediately overwritten -- use this
+                for file load.
+            [G] Returns a direct pointer to the internal name buffer.
+                Do not FreeVec() the result.
+
+        UTED_RenameContext  (TAG_USER|0x7139)  [S]  (STRPTR)
+            Rename the current context key in place without triggering
+            a stash/restore cycle.  Use after a "Save As" operation.
+
+        UTED_DeleteContext  (TAG_USER|0x713C)  [S]  (STRPTR)
+            Delete a stashed (non-current) context by name.  Frees all
+            associated memory.  Switch away before deleting.
+
+        UTED_LineTextToGet  (TAG_USER|0x7131)  [S]  (ULONG)
+            Select line index for UTED_LineUTF8TextBuffer.
+
+        UTED_LineUTF8TextBuffer  (TAG_USER|0x7132)  [G]  (STRPTR)
+            Direct pointer to the internal UTF-8 buffer of the line
+            selected with UTED_LineTextToGet.  Valid only until the
+            next edit on that line.  Do NOT FreeVec().
+
+        -- Search & Replace --
+
+        UTED_SearchNext  (TAG_USER|0x7133)  [S]  (STRPTR)
+            Search forward from the cursor for the UTF-8 pattern.
+            If found, the match is selected and the cursor moves to
+            the end of the match.
+
+        UTED_SearchPrevious  (TAG_USER|0x7134)  [S]  (STRPTR)
+            Search backward from the cursor for the UTF-8 pattern.
+            If found, the match is selected and the cursor moves to
+            the start of the match.
+
+        UTED_ReplaceString  (TAG_USER|0x7135)  [S]  (STRPTR)
+            Replace the match from the last successful search with
+            this UTF-8 string.  Pass "" to delete without inserting.
+
+        UTED_SearchCaseSensitive  (TAG_USER|0x7136)  [ISG]  (BOOL)
+            When TRUE (default), searches are byte-exact.  When FALSE,
+            ASCII letters are matched case-insensitively.
+
+        -- Activation --
+
+        UTED_SetPrivateActivation  (TAG_USER|0x7130)  [IS]  (BOOL)
+            External activation control.  Set TRUE when the gadget
+            should behave as activated (cursor shown and blinking).
+
+    NOTIFICATIONS
+        Sent via OM_NOTIFY; connect with ICA_TARGET / ICA_MAP.
+
+        UTEDN_CursorMoved   (TAG_USER|0x05C1)
+            Cursor moved or selection changed.
+            Value = new cursor line index.
+
+        UTEDN_TextChanged   (TAG_USER|0x05C2)
+            Text content changed.
+            Value = line index where the edit occurred.
+
+        UTEDN_ScrollChanged (TAG_USER|0x05C3)
+            Scroll position changed.
+            Value = new scrollTopLine index.
+
+        UTEDN_UndoAvailable (TAG_USER|0x05C4)
+            Undo availability changed.
+            Value = TRUE if undo is possible.
+
+        UTEDN_RedoAvailable (TAG_USER|0x05C5)
+            Redo availability changed.
+            Value = TRUE if redo is possible.
+
+        UTEDN_EnterPressed  (TAG_USER|0x05C6)
+            Enter key pressed while UTED_NoLineFeed is TRUE.
+            Value = 0.
+
+    IMPORTANT NOTES
+        1. KEYBOARD REDIRECTION IS MANDATORY
+
+           UniTextEditor cannot receive IDCMP_VANILLAKEY or IDCMP_RAWKEY
+           messages through the standard BOOPSI GM_HANDLEINPUT path.
+           input.device dispatches those events to the window's IDCMP
+           port, not to the active gadget's method handler.
+
+           The application must wait on the window signal, read every
+           IDCMP_RAWKEY and IDCMP_VANILLAKEY message, and forward them
+           to the gadget using UTED_PutRawKey and UTED_PutVanillaKey
+           via SetGadgetAttrs().  Without this redirection the gadget
+           accepts mouse input and cursor movement but the user cannot
+           type any text.
+
+        2. RENDERING MUST RUN IN THE APPLICATION TASK CONTEXT
+
+           UniTextEditor renders lines by calling utf8rastport.library
+           and FreeType, which perform memory allocation, disk I/O (font
+           file access), and PNG decompression (for colour Emoji bitmaps).
+           These operations are illegal inside a restricted process such
+           as input.device.
+
+           The gadget therefore does NOT redraw itself in response to
+           mouse or keyboard events received inside GM_HANDLEINPUT.
+           Instead it sends OM_NOTIFY with UTEDN_ScrollChanged,
+           UTEDN_TextChanged, etc. to signal that a repaint is needed.
+
+           The application must call RefreshGList() (or equivalent) from
+           its own task context after receiving such a notification via
+           the IDCMP_IDCMPUPDATE or ICA_TARGET mechanism.  Only then
+           does the gadget actually rebuild stale line bitmaps and blit
+           the updated display.
+
+        3. EXAMPLE IMPLEMENTATION
+
+           The EmojiGear application (source in the EmojiGear/ directory)
+           provides a complete reference implementation showing:
+             - IDCMP event loop with RAWKEY and VANILLAKEY redirection.
+             - Scroll notification handling and RefreshGList() calls.
+             - Multi-document tab management via UTED_CurrentContext.
+             - Font setup and URPDrawContext sharing between gadgets.
+
+    SEE ALSO
+        utf8rastport.library/--datasheet--,
+        unibutton_gc/--datasheet--,
+        unitexteditor.gadget/UNITEXTEDITOR_GetClass
+
+unitexteditor.gadget/UNITEXTEDITOR_GetClass                                   \
+                              unitexteditor.gadget/UNITEXTEDITOR_GetClass
+
+    NAME
+        UNITEXTEDITOR_GetClass -- obtain the UniTextEditor gadget class pointer
+
+    SYNOPSIS
+        class = UNITEXTEDITOR_GetClass();
+        D0
+
+        Class *UNITEXTEDITOR_GetClass(VOID);
+
+    FUNCTION
+        Returns the pointer to the UniTextEditor BOOPSI gadget class for
+        use with NewObject().  The class is set up when the library is
+        opened; this function always returns a valid pointer provided
+        that unitexteditor.gadget opened successfully.
+
+        The typical usage sequence is:
+
+            UniTextEditorBase = OpenLibrary("gadgets/unitexteditor.gadget", 1);
+            if (!UniTextEditorBase) { /* error */ }
+            editorGadget = NewObject(UNITEXTEDITOR_GetClass(), NULL,
+                                     GA_Left,       x,
+                                     GA_Top,        y,
+                                     GA_Width,      w,
+                                     GA_Height,     h,
+                                     UTED_PointSize, 14,
+                                     UTED_AddFont,  "FONTS:MyFont.ttf",
+                                     TAG_END);
+
+    INPUTS
+        None.
+
+    RESULT
+        class -- pointer to the UniTextEditor Class structure.
+
+    SEE ALSO
+        unitexteditor.gadget/--datasheet--,
+        utf8rastport.library/URPDC_Create

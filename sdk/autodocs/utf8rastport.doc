@@ -1,0 +1,812 @@
+TABLE OF CONTENTS
+
+utf8rastport.library/--datasheet--
+utf8rastport.library/URPDC_Create
+utf8rastport.library/URPDC_Retain
+utf8rastport.library/URPDC_Release
+utf8rastport.library/URPDC_AddFont
+utf8rastport.library/URPDC_RemoveFont
+utf8rastport.library/URPDC_FlushFonts
+utf8rastport.library/URPDC_ChangeFontsSize
+utf8rastport.library/URPDC_SetAttribsA
+utf8rastport.library/URPDC_SetPreferenceFlags
+utf8rastport.library/URPDC_GetPreferenceFlags
+utf8rastport.library/URPDC_FlushGlyphCache
+utf8rastport.library/URPDC_SetStyle
+utf8rastport.library/URPDC_SetDrawColor
+utf8rastport.library/URPDC_SetDrawColorFromPen
+utf8rastport.library/URPDC_GetFontLineMetrics
+utf8rastport.library/URPDC_TextSizeUTF8
+utf8rastport.library/URPDC_HorizontalOffsetArrayUTF8
+utf8rastport.library/URPDrawTextUTF8
+utf8rastport.library/URPDC_SetDrawScreen
+utf8rastport.library/URPDC_UpdateColorMap
+
+utf8rastport.library/--datasheet--           utf8rastport.library/--datasheet--
+
+    NAME
+        utf8rastport.library -- Unicode/UTF-8 text rendering via FreeType 2
+
+    DESCRIPTION
+        utf8rastport.library is an AmigaOS shared library that exposes
+        FreeType 2 glyph rendering to any application.  It draws UTF-8
+        encoded text onto any AmigaOS RastPort, including full-colour
+        Emoji from CBDT/CBLC colour bitmap fonts (e.g. NotoColorEmoji).
+
+        The central object is the URPDrawContext, which holds a chain of
+        loaded font faces, a glyph cache, and all rendering preferences.
+        Multiple applications or windows may share one context (via
+        URPDC_Retain/URPDC_Release) or each maintain their own.
+
+        Three glyph-cache pixel formats are used internally:
+
+            URP_CACHE_MONO (0)
+                1 bit/pixel, word-aligned rows.  Drawn with BltTemplate().
+                Works on every screen depth including OCS/ECS planar.
+
+            URP_CACHE_GRAY (1)
+                1 byte/pixel alpha mask.  Anti-aliased text.  Drawn with
+                alpha-blending on RTG screens, or via a CLUT-remapped
+                BltMaskBitMapRastPort on indexed/planar screens.
+
+            URP_CACHE_RGBA (2)
+                4 bytes/pixel R,G,B,A.  Used for colour Emoji.  Drawn
+                with CyberGfx WritePixelArray alpha-blend on RTG, or
+                remapped via FindColor() on indexed screens.
+
+        The cache format is chosen automatically per glyph from the active
+        preference flags (URP_PREF_ANTIALIAS) and the FreeType pixel format
+        of each glyph (colour Emoji are always RGBA).
+
+    PREFERENCE FLAGS
+        URP_PREF_ANTIALIAS      (1<<0)
+            Request grey-level (URP_CACHE_GRAY) rendering for scalable
+            font glyphs.  Colour Emoji are always RGBA regardless.
+
+        URP_PREF_CLUTMODE_NOMASK (1<<1)
+            On indexed-colour screens, blit the entire glyph bounding
+            box (background included) rather than using a transparency
+            mask.  Faster; avoids artefacts when the background is a
+            solid fill rather than an arbitrary pattern.
+
+        URP_PREF_HIGHFILTERING  (1<<2)
+            Use an iterative 2x2 box-averaging pyramid before the final
+            nearest-neighbour pass when downscaling colour Emoji by more
+            than 2x.  Produces smoother emoji at small point sizes at
+            the cost of a one-time per-glyph rendering pass.  No effect
+            on MONO or GRAY glyphs.
+
+        URP_PREF_FORCE_MONOSPACE (1<<3)
+            Force all glyphs to advance by the same fixed width, even
+            when the active font is proportionally spaced.
+
+    STYLE FLAGS
+        URP_STYLE_NORMAL  (0)
+        URP_STYLE_BOLD    (1<<0)
+        URP_STYLE_ITALIC  (1<<1)
+            Synthetic bold and italic are applied via FreeType matrix
+            transforms.  Has no visible effect on bitmap-only fonts
+            such as colour Emoji.
+
+    ATTRIBUTE TAGS (URPDC_SetAttribsA)
+        URPDCA_TabSpaces  (TAG_USER|0x7201)
+            (ULONG) Number of space-glyph advances per TAB character.
+            Valid range: 1 to 12.  Default: 4.
+
+    STRUCTURES
+        struct URPTextMetric
+            WORD width    Total advance width of the measured string.
+            WORD height   Ascender + descender of the primary font.
+            WORD baseX    Baseline X offset from origin (normally 0).
+            WORD baseY    Ascender: pixels from origin to top of line.
+
+        struct URPTextPos
+            WORD x        Horizontal position in RastPort coordinates.
+            WORD y        Vertical baseline position (y increases down).
+
+        struct URPDrawContext
+            Opaque.  Allocate with URPDC_Create(), free with
+            URPDC_Release().
+
+    OPENING THE LIBRARY
+        struct Library *URPBase;
+        URPBase = OpenLibrary("utf8rastport.library", 1);
+
+    SEE ALSO
+        unitexteditor_gc/--datasheet--, unibutton_gc/--datasheet--
+
+utf8rastport.library/URPDC_Create           utf8rastport.library/URPDC_Create
+
+    NAME
+        URPDC_Create -- allocate a new drawing context
+
+    SYNOPSIS
+        dc = URPDC_Create(name)
+        D0                A0
+
+        struct URPDrawContext *URPDC_Create(CONST STRPTR name);
+
+    FUNCTION
+        Allocates and initialises a new URPDrawContext.  The context
+        holds all state required to render UTF-8 text: loaded font faces,
+        a glyph bitmap cache, colour settings, and rendering preferences.
+
+        If name is non-NULL, the same context pointer will be returned to
+        any subsequent URPDC_Create() call passing the same name string.
+        The use-count is incremented as if URPDC_Retain() had been called.
+        This allows multiple windows or gadgets to share one font cache
+        without each reloading the same font files from disk.
+
+        If name is NULL, a private (unshared) context is created.
+
+    INPUTS
+        name -- NUL-terminated name string for context sharing, or NULL
+                for a private context.
+
+    RESULT
+        dc -- pointer to a new URPDrawContext, or NULL if FreeType 2
+              could not be initialised or memory was exhausted.
+
+    SEE ALSO
+        URPDC_Retain, URPDC_Release, URPDC_AddFont
+
+utf8rastport.library/URPDC_Retain           utf8rastport.library/URPDC_Retain
+
+    NAME
+        URPDC_Retain -- increment the use-count of a drawing context
+
+    SYNOPSIS
+        URPDC_Retain(dc)
+                     A0
+
+        VOID URPDC_Retain(struct URPDrawContext *dc);
+
+    FUNCTION
+        Declares that one more owner holds a reference to dc.  Each
+        URPDC_Retain() call must be matched by exactly one URPDC_Release()
+        call.  The context is destroyed only when its use-count reaches zero.
+
+    INPUTS
+        dc -- pointer to an existing URPDrawContext.
+
+    RESULT
+        None.
+
+    SEE ALSO
+        URPDC_Create, URPDC_Release
+
+utf8rastport.library/URPDC_Release          utf8rastport.library/URPDC_Release
+
+    NAME
+        URPDC_Release -- release a reference to a drawing context
+
+    SYNOPSIS
+        URPDC_Release(dc)
+                      A0
+
+        VOID URPDC_Release(struct URPDrawContext *dc);
+
+    FUNCTION
+        Decrements the use-count of dc.  When the count reaches zero the
+        context is destroyed: all loaded font faces are closed, all cached
+        glyph bitmaps are freed, and the memory used by the context itself
+        is returned to the system.
+
+        Passing a NULL pointer is safe and has no effect.
+
+    INPUTS
+        dc -- pointer to a URPDrawContext previously obtained from
+              URPDC_Create() or retained with URPDC_Retain().
+
+    RESULT
+        None.
+
+    SEE ALSO
+        URPDC_Create, URPDC_Retain
+
+utf8rastport.library/URPDC_AddFont          utf8rastport.library/URPDC_AddFont
+
+    NAME
+        URPDC_AddFont -- load a font and append it to the fallback chain
+
+    SYNOPSIS
+        ok = URPDC_AddFont(dc, fontPath, pointSize, flags)
+        D0                 A0  A1        D0          D1
+
+        LONG URPDC_AddFont(struct URPDrawContext *dc, CONST STRPTR fontPath,
+                           LONG pointSize, ULONG flags);
+
+    FUNCTION
+        Opens a TrueType (.ttf / .ttc) or OpenType (.otf / .otc) font
+        file and appends it to the end of the context's fallback chain.
+
+        When rendering a codepoint, the library walks the chain from the
+        first added font to the last and uses the first face that contains
+        a glyph for that codepoint.  This allows transparent multi-script
+        and Emoji support: add a primary Latin font first, then a CJK
+        extension, then a colour Emoji font.
+
+        The font is loaded at the given pointSize.  On a 72 DPI screen
+        one point equals one pixel, so pointSize 18 produces 18-pixel-tall
+        glyphs.  The glyph cache is keyed by (face, size, style), so
+        multiple point sizes of the same font file may coexist in one
+        context.
+
+    INPUTS
+        dc        -- target URPDrawContext.
+        fontPath  -- AmigaOS path to the font file (e.g. "FONTS:MyFont.ttf").
+        pointSize -- desired size in points/pixels (> 0).
+        flags     -- reserved; pass 0.
+
+    RESULT
+        ok -- non-zero on success, 0 on failure (file not found, parse
+              error, or memory exhausted).
+
+    SEE ALSO
+        URPDC_RemoveFont, URPDC_FlushFonts, URPDC_ChangeFontsSize
+
+utf8rastport.library/URPDC_RemoveFont     utf8rastport.library/URPDC_RemoveFont
+
+    NAME
+        URPDC_RemoveFont -- remove one font from the fallback chain
+
+    SYNOPSIS
+        URPDC_RemoveFont(dc, fontPath, pointSize)
+                         A0  A1        D0
+
+        VOID URPDC_RemoveFont(struct URPDrawContext *dc, CONST STRPTR fontPath,
+                              LONG pointSize);
+
+    FUNCTION
+        Removes the font identified by fontPath and pointSize from the
+        fallback chain and frees all glyph cache entries belonging to it.
+        Does nothing if no matching entry is found.
+
+    INPUTS
+        dc        -- target URPDrawContext.
+        fontPath  -- path used in the matching URPDC_AddFont() call.
+        pointSize -- size used in the matching URPDC_AddFont() call.
+
+    RESULT
+        None.
+
+    SEE ALSO
+        URPDC_AddFont, URPDC_FlushFonts
+
+utf8rastport.library/URPDC_FlushFonts     utf8rastport.library/URPDC_FlushFonts
+
+    NAME
+        URPDC_FlushFonts -- unload all fonts and clear the glyph cache
+
+    SYNOPSIS
+        URPDC_FlushFonts(dc)
+                         A0
+
+        VOID URPDC_FlushFonts(struct URPDrawContext *dc);
+
+    FUNCTION
+        Closes every font face in the fallback chain and discards all
+        cached glyph bitmaps.  The context itself remains valid; new fonts
+        may be added immediately afterwards with URPDC_AddFont().
+
+        Use this when changing the font set entirely, e.g. when the user
+        selects a new font in a preferences panel.
+
+    INPUTS
+        dc -- target URPDrawContext.
+
+    RESULT
+        None.
+
+    SEE ALSO
+        URPDC_AddFont, URPDC_RemoveFont, URPDC_ChangeFontsSize
+
+utf8rastport.library/URPDC_ChangeFontsSize                                    \
+                                      utf8rastport.library/URPDC_ChangeFontsSize
+
+    NAME
+        URPDC_ChangeFontsSize -- resize one or more loaded fonts
+
+    SYNOPSIS
+        URPDC_ChangeFontsSize(dc, nPointSize, fontMask)
+                              A0  D0          D1
+
+        VOID URPDC_ChangeFontsSize(struct URPDrawContext *dc,
+                                   ULONG nPointSize, ULONG fontMask);
+
+    FUNCTION
+        Flushes the glyph cache and changes the point size of the fonts
+        selected by fontMask.  Bit 0 of fontMask corresponds to the first
+        font added (URPDC_AddFont call #1), bit 1 to the second, and so on.
+        Pass ~0UL to resize all fonts simultaneously.
+
+        Fonts whose current point size already equals nPointSize are
+        unchanged (no cache flush for those faces).  If no fonts have
+        been loaded yet this call has no effect.
+
+    INPUTS
+        dc         -- target URPDrawContext.
+        nPointSize -- new size in points/pixels (> 0).
+        fontMask   -- bitmask of font indices to resize; ~0UL = all.
+
+    RESULT
+        None.
+
+    SEE ALSO
+        URPDC_AddFont, URPDC_FlushFonts
+
+utf8rastport.library/URPDC_SetAttribsA   utf8rastport.library/URPDC_SetAttribsA
+
+    NAME
+        URPDC_SetAttribsA -- apply a tag list of drawing context attributes
+
+    SYNOPSIS
+        URPDC_SetAttribsA(dc, taglist)
+                          A0  A1
+
+        VOID URPDC_SetAttribsA(struct URPDrawContext *dc, ULONG *taglist);
+
+    FUNCTION
+        Applies a TAG_DONE-terminated array of tag/value pairs to the
+        drawing context.  Currently recognised tags:
+
+            URPDCA_TabSpaces (TAG_USER|0x7201)
+                (ULONG) Spaces per TAB character.  Range: 1..12.
+                Default: 4.
+
+    INPUTS
+        dc      -- target URPDrawContext.
+        taglist -- pointer to a ULONG array of { tag, value } pairs
+                   terminated by TAG_DONE (0).
+
+    RESULT
+        None.
+
+    NOTE
+        A varargs convenience macro URPDC_SetAttribs(dc, ...) is provided
+        in the SDK header.  It builds the array on the stack and calls
+        URPDC_SetAttribsA() automatically.
+
+    SEE ALSO
+        URPDC_Create
+
+utf8rastport.library/URPDC_SetPreferenceFlags                                 \
+                                  utf8rastport.library/URPDC_SetPreferenceFlags
+
+    NAME
+        URPDC_SetPreferenceFlags -- set rendering preference flags
+
+    SYNOPSIS
+        URPDC_SetPreferenceFlags(dc, flags)
+                                 A0  D0
+
+        VOID URPDC_SetPreferenceFlags(struct URPDrawContext *dc, ULONG flags);
+
+    FUNCTION
+        Replaces the current set of rendering preference flags with flags.
+        If the new flags differ from the old flags, the glyph cache is
+        flushed automatically so subsequent renders use the new settings.
+
+        See the --datasheet-- entry for a description of each URP_PREF_*
+        flag.
+
+    INPUTS
+        dc    -- target URPDrawContext.
+        flags -- OR combination of URP_PREF_* constants, or 0.
+
+    RESULT
+        None.
+
+    SEE ALSO
+        URPDC_GetPreferenceFlags, URPDC_FlushGlyphCache
+
+utf8rastport.library/URPDC_GetPreferenceFlags                                 \
+                                  utf8rastport.library/URPDC_GetPreferenceFlags
+
+    NAME
+        URPDC_GetPreferenceFlags -- return the current rendering flags
+
+    SYNOPSIS
+        flags = URPDC_GetPreferenceFlags(dc)
+        D0                               A0
+
+        ULONG URPDC_GetPreferenceFlags(CONST struct URPDrawContext *dc);
+
+    FUNCTION
+        Returns the OR combination of URP_PREF_* flags currently active
+        in dc.
+
+    INPUTS
+        dc -- target URPDrawContext.
+
+    RESULT
+        flags -- current preference flags.
+
+    SEE ALSO
+        URPDC_SetPreferenceFlags
+
+utf8rastport.library/URPDC_FlushGlyphCache                                    \
+                                    utf8rastport.library/URPDC_FlushGlyphCache
+
+    NAME
+        URPDC_FlushGlyphCache -- discard all cached glyph bitmaps
+
+    SYNOPSIS
+        URPDC_FlushGlyphCache(dc)
+                              A0
+
+        VOID URPDC_FlushGlyphCache(struct URPDrawContext *dc);
+
+    FUNCTION
+        Frees all cached glyph bitmaps in dc without unloading the
+        font faces.  The cache will be rebuilt on-demand as glyphs are
+        rendered again.
+
+        This is lighter than URPDC_FlushFonts(): the font files remain
+        open and are not re-read from disk.  Use it after a palette or
+        colour change that invalidates CLUT-remapped bitmaps.
+
+    INPUTS
+        dc -- target URPDrawContext.
+
+    RESULT
+        None.
+
+    SEE ALSO
+        URPDC_FlushFonts, URPDC_SetPreferenceFlags
+
+utf8rastport.library/URPDC_SetStyle         utf8rastport.library/URPDC_SetStyle
+
+    NAME
+        URPDC_SetStyle -- set bold/italic style for subsequent rendering
+
+    SYNOPSIS
+        URPDC_SetStyle(dc, styleBits)
+                       A0  D0
+
+        VOID URPDC_SetStyle(struct URPDrawContext *dc, ULONG styleBits);
+
+    FUNCTION
+        Sets the active text style for subsequent calls to URPDrawTextUTF8().
+        Different style combinations are stored as separate cache entries,
+        so switching style between two text segments does not flush the
+        cache.
+
+        URP_STYLE_BOLD and URP_STYLE_ITALIC are implemented as synthetic
+        FreeType matrix transforms.  They have no visible effect on
+        bitmap-only fonts such as colour Emoji.
+
+        Call URPDC_SetStyle(dc, URP_STYLE_NORMAL) to return to plain text.
+
+    INPUTS
+        dc        -- target URPDrawContext.
+        styleBits -- OR of URP_STYLE_* constants:
+                     URP_STYLE_NORMAL (0)
+                     URP_STYLE_BOLD   (1<<0)
+                     URP_STYLE_ITALIC (1<<1)
+
+    RESULT
+        None.
+
+    SEE ALSO
+        URPDrawTextUTF8
+
+utf8rastport.library/URPDC_SetDrawColor   utf8rastport.library/URPDC_SetDrawColor
+
+    NAME
+        URPDC_SetDrawColor -- set foreground and background RGB colour
+
+    SYNOPSIS
+        URPDC_SetDrawColor(dc, textRGB, backgroundRGB)
+                           A0  D0       D1
+
+        VOID URPDC_SetDrawColor(struct URPDrawContext *dc,
+                                ULONG textRGB, ULONG backgroundRGB);
+
+    FUNCTION
+        Sets the text foreground colour (textRGB) and the background colour
+        (backgroundRGB) used when rendering anti-aliased (URP_CACHE_GRAY)
+        glyphs.  Has no effect on MONO (BltTemplate) rendering.
+
+        Colours are specified as 0x00RRGGBB packed values.
+
+        On true-colour RTG screens, alpha-blending is used for GRAY glyphs
+        and backgroundRGB is ignored.  Pass ~0UL for backgroundRGB to signal
+        "transparent background" in that case.
+
+        On indexed-colour screens (AGA or 8-bit RTG), alpha-blending is not
+        available.  backgroundRGB is used to pre-mix each grey-level step
+        into a set of CLUT pen indices.  If backgroundRGB differs from the
+        previously set value, the CLUT-remapped glyph cache is flushed.
+
+    INPUTS
+        dc            -- target URPDrawContext.
+        textRGB       -- foreground colour as 0x00RRGGBB.
+        backgroundRGB -- background colour as 0x00RRGGBB, or ~0UL for
+                         transparent (valid on true-colour screens only).
+
+    RESULT
+        None.
+
+    NOTE
+        On indexed-colour screens prefer URPDC_SetDrawColorFromPen() to
+        avoid expensive FindColor() lookups on every call.
+
+    SEE ALSO
+        URPDC_SetDrawColorFromPen, URPDC_UpdateColorMap
+
+utf8rastport.library/URPDC_SetDrawColorFromPen                                \
+                                 utf8rastport.library/URPDC_SetDrawColorFromPen
+
+    NAME
+        URPDC_SetDrawColorFromPen -- set draw colours from Intuition pen indices
+
+    SYNOPSIS
+        URPDC_SetDrawColorFromPen(dc, screen, txtPen, bgPen)
+                                  A0  A1      D0      D1
+
+        VOID URPDC_SetDrawColorFromPen(struct URPDrawContext *dc,
+                                       struct Screen *screen,
+                                       LONG txtPen, LONG bgPen);
+
+    FUNCTION
+        Convenience wrapper around URPDC_SetDrawColor().  Looks up the
+        RGB values of txtPen and bgPen from the screen's colour map and
+        calls URPDC_SetDrawColor() with those values.
+
+        Pass -1 for bgPen to leave the background colour unchanged.
+
+        txtPen must be in the range 0..255.
+
+    INPUTS
+        dc     -- target URPDrawContext.
+        screen -- Intuition screen whose colour map is used for lookup.
+        txtPen -- pen index for the text foreground (0..255).
+        bgPen  -- pen index for the background, or -1 to skip.
+
+    RESULT
+        None.
+
+    SEE ALSO
+        URPDC_SetDrawColor
+
+utf8rastport.library/URPDC_GetFontLineMetrics                                 \
+                                  utf8rastport.library/URPDC_GetFontLineMetrics
+
+    NAME
+        URPDC_GetFontLineMetrics -- query line-height metrics for all loaded fonts
+
+    SYNOPSIS
+        URPDC_GetFontLineMetrics(dc, out)
+                                 A0  A1
+
+        VOID URPDC_GetFontLineMetrics(struct URPDrawContext *dc,
+                                      struct URPTextMetric *out);
+
+    FUNCTION
+        Iterates every font loaded in dc and queries FreeType face-level
+        metrics (ascender, descender) at the current point size.  Returns
+        the maximum ascender and maximum descender across all faces.
+
+        This is the correct value to use for line-height allocation: it
+        accounts for tall Emoji fonts whose ascender exceeds that of the
+        primary text font.
+
+        out->height = maxAscender + maxDescender
+        out->baseY  = maxAscender
+        out->width  = out->baseX = 0 (not meaningful for this query)
+
+        If no fonts are loaded, all fields are set to zero.
+
+    INPUTS
+        dc  -- target URPDrawContext with at least one loaded font.
+        out -- pointer to a URPTextMetric structure to fill.
+
+    RESULT
+        None (result written into *out).
+
+    SEE ALSO
+        URPDC_TextSizeUTF8, URPDrawTextUTF8
+
+utf8rastport.library/URPDC_TextSizeUTF8 utf8rastport.library/URPDC_TextSizeUTF8
+
+    NAME
+        URPDC_TextSizeUTF8 -- measure pixel dimensions of a UTF-8 string
+
+    SYNOPSIS
+        URPDC_TextSizeUTF8(dc, utf8, maxChars, out)
+                           A0  A1    D0         A2
+
+        VOID URPDC_TextSizeUTF8(struct URPDrawContext *dc, CONST STRPTR utf8,
+                                LONG maxChars, struct URPTextMetric *out);
+
+    FUNCTION
+        Computes the pixel dimensions that utf8 would occupy if rendered
+        by URPDrawTextUTF8() with the same dc.  TAB characters are expanded
+        according to URPDCA_TabSpaces.
+
+        No drawing takes place.  The function walks the glyph chain and
+        accumulates advance widths.
+
+    INPUTS
+        dc       -- target URPDrawContext.
+        utf8     -- NUL-terminated UTF-8 string.
+        maxChars -- maximum Unicode codepoints to measure; pass -1 to
+                    measure the whole string.
+        out      -- pointer to a URPTextMetric structure to fill.
+
+    RESULT
+        None (result written into *out).
+
+    SEE ALSO
+        URPDC_GetFontLineMetrics, URPDC_HorizontalOffsetArrayUTF8,
+        URPDrawTextUTF8
+
+utf8rastport.library/URPDC_HorizontalOffsetArrayUTF8                          \
+                         utf8rastport.library/URPDC_HorizontalOffsetArrayUTF8
+
+    NAME
+        URPDC_HorizontalOffsetArrayUTF8 -- per-character horizontal offsets
+
+    SYNOPSIS
+        URPDC_HorizontalOffsetArrayUTF8(dc, utf8, maxChars, arrayout)
+                                        A0  A1    D0         A2
+
+        VOID URPDC_HorizontalOffsetArrayUTF8(struct URPDrawContext *dc,
+                                             CONST STRPTR utf8,
+                                             LONG maxChars, LONG *arrayout);
+
+    FUNCTION
+        Fills arrayout with the cumulative horizontal pixel offset of each
+        Unicode codepoint in utf8.  arrayout[0] is always 0 (the start of
+        the first character).  arrayout[n] is the pixel offset of the n-th
+        codepoint from the left edge.
+
+        If maxChars equals the number of codepoints in the string plus one,
+        arrayout[maxChars-1] holds the total advance width of the string
+        (the position where the next character would be drawn), which is
+        equivalent to URPTextMetric.width from URPDC_TextSizeUTF8().
+
+        TAB characters are expanded according to URPDCA_TabSpaces.
+
+        The caller must allocate arrayout with at least maxChars LONGs.
+
+    INPUTS
+        dc       -- target URPDrawContext.
+        utf8     -- NUL-terminated UTF-8 string.
+        maxChars -- number of offsets to compute; must be <= codepoint
+                    count + 1.  Pass -1 to process the whole string.
+        arrayout -- caller-allocated LONG array of at least maxChars entries.
+
+    RESULT
+        None (result written into arrayout[]).
+
+    SEE ALSO
+        URPDC_TextSizeUTF8, URPDrawTextUTF8
+
+utf8rastport.library/URPDrawTextUTF8     utf8rastport.library/URPDrawTextUTF8
+
+    NAME
+        URPDrawTextUTF8 -- render a UTF-8 string onto a RastPort
+
+    SYNOPSIS
+        URPDrawTextUTF8(rp, dc, pos, utf8, maxChars)
+                        A0  A1  A2   A3    D0
+
+        VOID URPDrawTextUTF8(struct RastPort *rp, struct URPDrawContext *dc,
+                             struct URPTextPos *pos, CONST STRPTR utf8,
+                             ULONG maxChars);
+
+    FUNCTION
+        Renders the UTF-8 string utf8 onto rp at the baseline position
+        given by *pos.  On return, pos->x has advanced past the last
+        rendered glyph, allowing successive calls to continue on the
+        same line without manual width tracking.
+
+        Glyph rendering paths (chosen per glyph automatically):
+
+            MONO  -- BltTemplate() using the current RastPort FgPen.
+                     Compatible with every screen depth.
+
+            GRAY  -- Alpha-blend onto RTG true-colour screens via
+                     CyberGfx, or BltMaskBitMapRastPort through a
+                     CLUT-remapped glyph mirror on indexed screens
+                     (requires URPDC_UpdateColorMap() to have been
+                     called first).
+
+            RGBA  -- CyberGfx WritePixelArray alpha-blend on RTG, or
+                     palette-remapped nearest-colour on indexed screens.
+
+        Glyphs missing from all fonts in the fallback chain are silently
+        skipped.
+
+    INPUTS
+        rp       -- target RastPort (e.g. window->RPort).
+        dc       -- URPDrawContext with at least one loaded font.
+        pos      -- baseline origin in RastPort coordinates.  Updated
+                    in place: pos->x advances past the rendered string.
+        utf8     -- NUL-terminated UTF-8 string to draw.
+        maxChars -- maximum Unicode codepoints to draw; pass -1 for the
+                    full string.
+
+    RESULT
+        None.
+
+    NOTE
+        Call URPDC_UpdateColorMap() after opening or changing the screen
+        palette before drawing GRAY or RGBA glyphs on indexed screens.
+        Until that call is made, anti-aliased and colour glyphs are
+        silently skipped on such screens.
+
+    SEE ALSO
+        URPDC_GetFontLineMetrics, URPDC_TextSizeUTF8,
+        URPDC_UpdateColorMap, URPDC_SetDrawColor
+
+utf8rastport.library/URPDC_SetDrawScreen utf8rastport.library/URPDC_SetDrawScreen
+
+    NAME
+        URPDC_SetDrawScreen -- set the target screen, updating CLUT only if changed
+
+    SYNOPSIS
+        URPDC_SetDrawScreen(dc, screen)
+                            A0  A1
+
+        VOID URPDC_SetDrawScreen(struct URPDrawContext *dc,
+                                 struct Screen *screen);
+
+    FUNCTION
+        Records screen as the current rendering target.  The internal
+        RGB-to-CLUT remap table (and CLUT-mode glyph mirrors) are rebuilt
+        only if the screen pointer differs from the previously recorded one.
+        Use this for the common case of rendering onto the same screen every
+        frame; it avoids unnecessary CLUT rebuilds on every draw call.
+
+        When the screen has changed (e.g. the user switched screen modes),
+        prefer URPDC_UpdateColorMap() which always rebuilds the remap table.
+
+    INPUTS
+        dc     -- target URPDrawContext.
+        screen -- Intuition screen to associate with dc.
+
+    RESULT
+        None.
+
+    SEE ALSO
+        URPDC_UpdateColorMap
+
+utf8rastport.library/URPDC_UpdateColorMap                                     \
+                                    utf8rastport.library/URPDC_UpdateColorMap
+
+    NAME
+        URPDC_UpdateColorMap -- rebuild the RGB-to-CLUT remap table
+
+    SYNOPSIS
+        URPDC_UpdateColorMap(dc, screen)
+                             A0  A1
+
+        VOID URPDC_UpdateColorMap(struct URPDrawContext *dc,
+                                  struct Screen *screen);
+
+    FUNCTION
+        Samples the colour map of screen's ViewPort and rebuilds the
+        internal RGB-to-CLUT lookup table used to remap GRAY and RGBA
+        glyph bitmaps onto indexed-colour (planar/chunky 8-bit) screens.
+        Also flushes all CLUT-mode glyph mirrors so they are regenerated
+        with the new palette on the next draw call.
+
+        Call this once after the screen is opened, and again whenever the
+        palette changes (e.g. after SetRGB32() / LoadRGB32()).
+
+        Until this function has been called at least once, GRAY and RGBA
+        glyphs are silently skipped when rendering onto an indexed screen.
+        This does not affect MONO glyph rendering, which always works.
+
+    INPUTS
+        dc     -- target URPDrawContext.
+        screen -- Intuition screen whose ViewPort.ColorMap is sampled.
+
+    RESULT
+        None.
+
+    SEE ALSO
+        URPDC_SetDrawScreen, URPDC_SetDrawColor, URPDrawTextUTF8

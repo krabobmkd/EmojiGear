@@ -1,0 +1,643 @@
+@DATABASE EmojiGear.guide
+@$VER: EmojiGear.guide 0.9 (09.05.2026)
+@AUTHOR krabobmkd
+@(C) 2026 krabobmkd
+@MASTER PROGDIR:EmojiGear.guide
+@NODE MAIN "EmojiGear - Unicode Text Editor"
+
+@{b}EmojiGear v0.9@{ub}
+Unicode Text Editor for AmigaOS 3.9 / 3.2.x
+
+@{i}A UTF-8 text editor with full Emoji and Unicode support,@{ui}
+@{i}powered by a custom FreeType 2 rendering engine.@{ui}
+
+------------------------------------------------------------------------------
+
+  @{" Introduction      " LINK INTRO}       What is EmojiGear?
+  @{" Getting Started   " LINK GETSTART}    Launching the program
+  @{" The Editor        " LINK EDITOR}      Typing and editing text
+  @{" Tabs              " LINK TABS}        Working with multiple documents
+  @{" Menus             " LINK MENUS}       Full menu reference
+  @{" Keyboard          " LINK KEYBOARD}    Keyboard shortcuts
+  @{" Emoji Box         " LINK EMOJIBOX}    Inserting emoji characters
+  @{" Find & Replace    " LINK FINDREPLACE} Searching in your text
+  @{" Settings          " LINK SETTINGS}    Editor preferences
+  @{" Font Settings     " LINK FONTSETTINGS}Choosing fonts
+  @{" File Formats      " LINK FORMATS}     Encoding support explained
+  @{" Workbench         " LINK WORKBENCH}   Running from Workbench / tooltypes
+  @{" Requirements      " LINK REQUIRE}     What you need to run EmojiGear
+
+@ENDNODE
+
+
+@NODE INTRO "Introduction"
+@TOC MAIN
+
+@{b}What is EmojiGear?@{ub}
+
+EmojiGear is a Unicode-aware plain-text editor for AmigaOS 3.9 or 3.2.x (68k).
+It can open, edit, and save text files encoded as UTF-8, ISO Latin-1,
+or ISO Latin-2, and renders all characters -- including colour Emoji --
+using a built-in FreeType 2 engine.
+
+Unlike classic Amiga text editors that are limited to the system font
+and an 8-bit codepage, EmojiGear:
+
+  @{b}*@{ub}  Renders any TrueType or OpenType font (.ttf / .otf).
+  @{b}*@{ub}  Displays full-colour Emoji from a CBDT/CBLC colour bitmap
+     font such as NotoColorEmoji.ttf.
+  @{b}*@{ub}  Supports up to three fallback fonts so exotic scripts are
+     handled gracefully when the primary font lacks glyphs.
+  @{b}*@{ub}  Opens multiple files at once, each in its own tab.
+  @{b}*@{ub}  Interprets ANSI escape sequences for coloured terminal output.
+  @{b}*@{ub}  Converts between encodings on load and save.
+
+EmojiGear is built on two reusable Amiga shared components that any
+application can use independently:
+
+  @{b}utf8rastport.library@{ub}
+    A standard AmigaOS shared library that exposes FreeType 2 rendering
+    to any program.  It handles UTF-8 text layout, glyph rasterisation,
+    emoji decoding and RastPort blitting.
+
+  @{b}unitexteditor.gadget@{ub}
+    A BOOPSI gadget class providing the full Unicode text editor widget.
+    Any BOOPSI-aware application can embed it in its own windows.
+
+@{" Back to Contents " LINK MAIN}
+@ENDNODE
+
+
+@NODE GETSTART "Getting Started"
+@TOC MAIN
+
+@{b}Launching EmojiGear@{ub}
+
+@{u}From the Shell:@{uu}
+
+  To open an empty editor:
+
+    1.Shell> EmojiGear
+
+  To open one file:
+
+    1.Shell> EmojiGear PROGDIR:mytext.txt
+
+  To open several files (each in its own tab):
+
+    1.Shell> EmojiGear file1.txt file2.txt file3.txt
+
+  To open a file saved in an 8-bit encoding:
+
+    1.Shell> EmojiGear oldtext.txt Latin1
+    1.Shell> EmojiGear oldtext.txt Latin2
+
+  The encoding keyword (Latin1 / Latin2, case-insensitive) applies to
+  all file arguments and may appear anywhere in the argument list.
+
+@{u}From Workbench:@{uu}
+
+  Double-click the EmojiGear icon.  The program opens with a single
+  blank tab.
+
+  You can also drop a file icon onto the EmojiGear icon; the file will
+  be opened automatically.
+
+  See @{" Workbench / Tooltypes " LINK WORKBENCH} for more options.
+
+@{" Back to Contents " LINK MAIN}
+@ENDNODE
+
+
+@NODE EDITOR "The Editor"
+@TOC MAIN
+
+@{b}The Editor Area@{ub}
+
+The large area in the middle of the window is the text editor.  It
+works like any standard text editor:
+
+  @{b}*@{ub}  Click to position the cursor.
+  @{b}*@{ub}  Click and drag, or Shift-click, to select text.
+  @{b}*@{ub}  Type to insert characters at the cursor.
+  @{b}*@{ub}  Backspace / Delete to erase characters.
+  @{b}*@{ub}  Vertical and horizontal scroll bars are provided.
+
+@{u}Status Bar@{uu}
+
+A status bar at the bottom of the window shows:
+
+  @{b}*@{ub}  @{b}Ready@{ub} when the file has not been modified since the last save.
+  @{b}*@{ub}  @{b}Modified@{ub} when unsaved changes are present.
+  @{b}*@{ub}  The current line and column number.
+  @{b}*@{ub}  The file path of the active document.
+
+@{u}Encoding display@{uu}
+
+When a file was loaded as Latin-1 or Latin-2 the status bar reflects
+this so you know what encoding is active.
+
+@{" Back to Contents " LINK MAIN}
+@ENDNODE
+
+
+@NODE TABS "Working with Multiple Documents"
+@TOC MAIN
+
+@{b}Tabs@{ub}
+
+EmojiGear supports up to 20 open documents simultaneously.  Each
+document occupies a tab in the tab bar near the top of the window.
+
+@{u}Opening a new empty tab:@{uu}
+
+  Select @{b}Project > New@{ub} from the menu.
+
+@{u}Opening a file in a new tab:@{uu}
+
+  Use any @{b}Project > Load@{ub} menu item.  The file is always opened in a
+  new tab (or the tab is brought to front if the file is already open).
+
+@{u}Switching between tabs:@{uu}
+
+  @{b}*@{ub}  Click the tab with the mouse.
+  @{b}*@{ub}  @{b}Ctrl+Tab@{ub}         -- next tab.
+  @{b}*@{ub}  @{b}Ctrl+Shift+Tab@{ub}   -- previous tab.
+  @{b}*@{ub}  @{b}Navigate > Next Text@{ub} and @{b}Navigate > Previous Text@{ub} in the menu.
+
+@{u}Closing a tab:@{uu}
+
+  @{b}*@{ub}  Click the window close gadget (top-left corner), or
+  @{b}*@{ub}  Select @{b}Project > Close@{ub}.
+
+  If it is the last remaining tab, closing it quits EmojiGear.
+
+@{u}Tab labels:@{uu}
+
+  A tab shows the file name portion of the path.  A new unsaved
+  document is shown as @{b}New File@{ub}.
+
+@{" Back to Contents " LINK MAIN}
+@ENDNODE
+
+
+@NODE MENUS "Menu Reference"
+@TOC MAIN
+
+@{b}Menu Reference@{ub}
+
+@{u}Project@{uu}
+
+  @{b}New@{ub}
+    Opens a blank document in a new tab.
+
+  @{b}Load UTF-8 Text...@{ub}               (Amiga-O)
+    Opens a file requester and loads the chosen file as UTF-8.
+
+  @{b}Load ISO Latin-1 Text...@{ub}
+    As above, but decodes the file as ISO 8859-1 (Western European).
+
+  @{b}Load ISO Latin-2 Text...@{ub}
+    As above, but decodes the file as ISO 8859-2 (Central European).
+
+  @{b}Open Recent@{ub}
+    Sub-menu listing the last 8 files opened.  Shows filename and
+    encoding.  Only visible when at least one file has been opened.
+
+  @{b}Close@{ub}                             (Amiga-Q)
+    Closes the current tab (or quits if it is the only tab).
+
+  @{b}Save As UTF-8 Text...@{ub}             (Amiga-S)
+    Saves the current document as a UTF-8 file.
+
+  @{b}Save UTF-8 As Escaped ASCII...@{ub}
+    Saves as plain ASCII; all non-ASCII characters are replaced by
+    \uXXXX or \UXXXXXXXX escape sequences.
+
+  @{b}Save As ISO Latin-1 Text...@{ub}
+    Saves with ISO 8859-1 encoding.  Characters that cannot be
+    represented are lost.
+
+  @{b}Save As ISO Latin-2 Text...@{ub}
+    As above, for ISO 8859-2.
+
+  @{b}About EmojiGear...@{ub}
+    Shows the About page in a dedicated tab.
+
+  @{b}Quit@{ub}
+    Exits EmojiGear.
+
+@{u}Edit@{uu}
+
+  @{b}Cut@{ub}                               (Amiga-X)
+    Cuts the selected text to the clipboard.
+
+  @{b}Copy UTF-8@{ub}                        (Amiga-C)
+    Copies the selection to the clipboard as UTF-8.
+
+  @{b}Copy As ISO Latin-1@{ub}
+    Copies, converting to Latin-1.
+
+  @{b}Copy As ISO Latin-2@{ub}
+    Copies, converting to Latin-2.
+
+  @{b}Paste UTF-8@{ub}                       (Amiga-V)
+    Pastes UTF-8 text from the clipboard.
+
+  @{b}Paste from ISO Latin-1@{ub}
+    Pastes and converts from Latin-1.
+
+  @{b}Paste from ISO Latin-2@{ub}
+    Pastes and converts from Latin-2.
+
+  @{b}Undo@{ub}                              (Amiga-Z)
+    Undoes the last edit operation.
+
+  @{b}Redo@{ub}                              (Amiga-Y)
+    Redoes an undone operation.
+
+  @{b}Emoji Box...@{ub}                      (Amiga-E)
+    Opens the Emoji Box window for point-and-click emoji insertion.
+    See @{" Emoji Box " LINK EMOJIBOX}.
+
+@{u}Navigate@{uu}
+
+  @{b}Find...@{ub}                           (Amiga-F)
+    Opens the Find & Replace bar.
+
+  @{b}Find Next@{ub}
+    Jumps to the next occurrence of the current search term.
+
+  @{b}Find Previous@{ub}
+    Jumps to the previous occurrence.
+
+  @{b}Go to Line...@{ub}                     (Amiga-G)
+    Prompts for a line number and moves the cursor there.
+
+  @{b}Previous Text@{ub}                     (Ctrl+Shift+Tab)
+    Switches to the previous tab.
+
+  @{b}Next Text@{ub}                         (Ctrl+Tab)
+    Switches to the next tab.
+
+@{u}Settings@{uu}
+
+  @{b}Settings...@{ub}                       (Amiga-P)
+    Opens the Settings window.  See @{" Settings " LINK SETTINGS}.
+
+  @{b}Font Settings...@{ub}                  (Amiga-T)
+    Opens the Font Settings window.  See @{" Font Settings " LINK FONTSETTINGS}.
+
+  @{b}Word Wrap@{ub}          (toggle, on by default)
+    Enables or disables automatic line wrapping at the window edge.
+
+  @{b}Force Monospace@{ub}    (toggle)
+    Renders all glyphs at the same fixed width regardless of the font.
+
+  @{b}ANSI Escape Rendering@{ub}  (toggle)
+    Interprets ANSI/VT100 colour and attribute escape sequences in
+    the text (useful for log files and terminal captures).
+
+  @{b}Use ANSI Unix Colors@{ub}   (toggle)
+    When ANSI rendering is on, resolves colour codes through the
+    xterm 256-colour palette and the screen's closest pen.
+
+  @{b}Font Size +@{ub}                       (Ctrl++)
+    Increases the display font size one step.
+
+  @{b}Font Size -@{ub}                       (Ctrl+-)
+    Decreases the display font size one step.
+
+@{" Back to Contents " LINK MAIN}
+@ENDNODE
+
+
+@NODE KEYBOARD "Keyboard Shortcuts"
+@TOC MAIN
+
+@{b}Keyboard Shortcuts@{ub}
+
+  @{u}File operations@{uu}
+
+    Amiga-O       Load UTF-8 file
+    Amiga-S       Save as UTF-8
+    Amiga-Q       Close current tab
+    Amiga-P       Open Settings window
+    Amiga-T       Open Font Settings window
+
+  @{u}Editing@{uu}
+
+    Amiga-Z       Undo
+    Amiga-Y       Redo
+    Amiga-X       Cut
+    Amiga-C       Copy (UTF-8)
+    Amiga-V       Paste (UTF-8)
+    Amiga-E       Open Emoji Box
+
+  @{u}Navigation@{uu}
+
+    Amiga-F       Open Find & Replace bar
+    Amiga-G       Go to Line
+    Ctrl+Tab      Next tab
+    Ctrl+Shift+Tab  Previous tab
+
+  @{u}Display@{uu}
+
+    Ctrl++        Font size larger
+    Ctrl+-        Font size smaller
+
+  @{u}Emoji F-keys@{uu}
+
+    F1 .. F10               Insert emoji (row 1 of active set)
+    Shift+F1 .. Shift+F10   Insert emoji (row 2)
+    Ctrl+F1  .. Ctrl+F10    Insert emoji (row 3)
+    Ctrl+Shift+F1 .. F10    Insert emoji (row 4)
+
+    See @{" Emoji Box " LINK EMOJIBOX} for details.
+
+@{" Back to Contents " LINK MAIN}
+@ENDNODE
+
+
+@NODE EMOJIBOX "Emoji Box"
+@TOC MAIN
+
+@{b}Emoji Box@{ub}
+
+Open the Emoji Box with @{b}Edit > Emoji Box...@{ub} (Amiga-E).
+
+The window shows a grid of 40 emoji arranged in 4 rows and 10 columns.
+The column headers read @{b}F1@{ub} through @{b}F10@{ub}, and the row headers show
+the modifier combination required:
+
+  @{b}(none)@{ub}           F1 .. F10
+  @{b}Shift@{ub}            Shift+F1 .. Shift+F10
+  @{b}Ctrl@{ub}             Ctrl+F1  .. Ctrl+F10
+  @{b}Sh+Ctrl@{ub}          Ctrl+Shift+F1 .. Ctrl+Shift+F10
+
+Pressing the corresponding F-key combination while the editor has focus
+inserts that emoji directly into the text at the cursor position.
+
+A chooser gadget at the top of the Emoji Box window selects the active
+emoji set.
+
+@{b}Tip:@{ub} You do not need to keep the Emoji Box open to use the F-keys.
+Once you have learned the key assignments, close the window and use the
+keyboard directly.
+
+@{" Back to Contents " LINK MAIN}
+@ENDNODE
+
+
+@NODE FINDREPLACE "Find and Replace"
+@TOC MAIN
+
+@{b}Find and Replace@{ub}
+
+Open the Find & Replace bar with @{b}Navigate > Find...@{ub} (Amiga-F).
+A panel appears below the tab bar with the following controls:
+
+  @{b}Search :@{ub}      Type the text to find.
+  @{b}Replace :@{ub}     Type the replacement text.
+  @{b}X@{ub}             Clear the search or replace field.
+  @{b}Find Next@{ub}     Jump to the next match.
+  @{b}Find Previous@{ub} Jump to the previous match.
+  @{b}Replace@{ub}       Replace the current match and advance.
+  @{b}Replace All@{ub}   Replace all matches in the document.
+  @{b}Case sensitive@{ub} Toggle case-sensitive matching.
+  @{b}Close@{ub}         Hide the Find & Replace bar.
+
+You can also use @{b}Navigate > Find Next@{ub} and @{b}Navigate > Find Previous@{ub}
+from the menu, or @{b}Navigate > Go to Line...@{ub} (Amiga-G) to jump to a
+specific line number.
+
+@{" Back to Contents " LINK MAIN}
+@ENDNODE
+
+
+@NODE SETTINGS "Settings"
+@TOC MAIN
+
+@{b}Settings Window@{ub}  (Amiga-P)
+
+The Settings window lets you configure the editor appearance and
+behaviour.  Changes take effect immediately and are saved to the
+program's icon tooltypes when you close the window.
+
+@{u}Editor display@{uu}
+
+  @{b}Background Color@{ub}
+    The background colour of the editor area.  Click the colour
+    gadget to choose a new colour from the screen palette.
+
+  @{b}Pen Color@{ub}
+    The default text colour.
+
+  @{b}Tab Spaces@{ub}
+    Number of spaces that one tab character represents (2 to 12).
+
+  @{b}Visualize Tabs@{ub}
+    When checked, tab characters are drawn with a visible marker.
+
+  @{b}Tab key does spaces@{ub}
+    When checked, pressing Tab inserts spaces instead of a tab
+    character.
+
+@{u}Quick toggles (also in Settings menu)@{uu}
+
+  @{b}Word Wrap@{ub}          Lines are wrapped at the window boundary.
+  @{b}Force Monospace@{ub}    Fixed-width rendering for all glyphs.
+  @{b}ANSI Escape Rendering@{ub}  Colour/style escape sequences rendered.
+  @{b}Use ANSI Unix Colors@{ub}   xterm 256-colour palette for ANSI.
+
+All settings are stored in the @{b}Tooltypes@{ub} of the EmojiGear icon.
+On disk this means the @{b}EmojiGear.info@{ub} file -- the standard Amiga
+icon file that sits alongside the EmojiGear executable.  Settings are
+loaded automatically from it on every launch.
+
+See also @{" Screen Mode " LINK SETTINGS} in the Settings window to choose
+whether to open on the Workbench screen or a custom screen.
+
+@{" Back to Contents " LINK MAIN}
+@ENDNODE
+
+
+@NODE FONTSETTINGS "Font Settings"
+@TOC MAIN
+
+@{b}Font Settings Window@{ub}  (Amiga-T)
+
+EmojiGear uses FreeType 2 to render TrueType and OpenType fonts.
+Use the Font Settings window to choose which font files to use.
+
+@{u}Fonts@{uu}
+
+  @{b}Primary Font:@{ub}
+    The main font for all text.  Supports .ttf and .otf files.
+    Click the file gadget button (...) to browse with an ASL requester.
+
+  @{b}Fallback Font 1:@{ub}
+    Used for glyphs not found in the primary font.
+
+  @{b}Fallback Font 2:@{ub}
+    Second fallback, for even wider Unicode coverage.
+
+  @{b}Emoji Font:@{ub}
+    A colour emoji font (CBDT/CBLC, e.g. NotoColorEmoji.ttf).
+    When a character is in an emoji range and this font is set,
+    EmojiGear renders the full-colour bitmap version.
+
+@{u}Options@{uu}
+
+  @{b}Antialias when possible@{ub}
+    Enables grey-level anti-aliasing.  May look sharper on hi-res
+    screens; on lo-res or low-colour screens plain bitmaps look better.
+
+  @{b}Emoji Quality scaling@{ub}
+    When checked, emoji bitmaps are scaled with a higher-quality
+    algorithm for smoother results at large sizes.
+
+@{u}Presets@{uu}
+
+  @{b}Low-end 2 colors@{ub}
+    Switches to a configuration optimised for 2-colour screens
+    (no antialiasing, monospace, small font size).
+
+  @{b}High Quality@{ub}
+    Enables antialiasing and proportional rendering.
+
+  @{b}High Monospace@{ub}
+    High quality but with fixed-width rendering (useful for code).
+
+Font settings are saved in the icon tooltypes and restored on launch.
+
+@{" Back to Contents " LINK MAIN}
+@ENDNODE
+
+
+@NODE FORMATS "File Formats and Encodings"
+@TOC MAIN
+
+@{b}File Formats and Encodings@{ub}
+
+EmojiGear works internally in UTF-8 and converts on load and save.
+
+@{u}UTF-8@{uu}
+
+  The native encoding.  All Unicode characters (U+0000 to U+10FFFF)
+  are supported.  Files may start with an optional UTF-8 BOM
+  (EF BB BF), which is stripped on load.
+
+  UTF-16 files (BE or LE, detected by BOM) are converted to UTF-8
+  automatically on load.
+
+@{u}ISO Latin-1  (ISO 8859-1)@{uu}
+
+  Western European: French, German, Spanish, Italian, English, etc.
+  Byte values 0xA0-0xFF map directly to U+00A0-U+00FF.
+  Use @{b}Load ISO Latin-1@{ub} or pass @{b}Latin1@{ub} on the Shell command line.
+
+@{u}ISO Latin-2  (ISO 8859-2)@{uu}
+
+  Central/Eastern European: Czech, Polish, Slovak, Slovenian,
+  Croatian, etc.
+  Use @{b}Load ISO Latin-2@{ub} or pass @{b}Latin2@{ub} on the Shell command line.
+
+@{u}Auto-detection@{uu}
+
+  When loading with @{b}Load UTF-8 Text@{ub}, EmojiGear validates the bytes.
+  If the file is not valid UTF-8 it is silently re-interpreted as
+  Latin-1 so no data is lost.
+
+@{u}Save as Escaped ASCII@{uu}
+
+  Saves as 7-bit ASCII.  Every non-ASCII character is written as a
+  \uXXXX (BMP) or \UXXXXXXXX (supplementary plane) escape.  This
+  produces files that any ASCII-only editor can read while preserving
+  all Unicode information.
+
+@{" Back to Contents " LINK MAIN}
+@ENDNODE
+
+
+@NODE WORKBENCH "Running from Workbench / Tooltypes"
+@TOC MAIN
+
+@{b}Running from Workbench@{ub}
+
+Double-click the EmojiGear icon to launch the program.  A file icon
+dropped onto the EmojiGear icon will be opened on startup.
+
+EmojiGear can also be iconified: click the iconify gadget (the small
+square in the top-right of the window title bar).  The program shrinks
+to an AppIcon on the Workbench backdrop.  Double-clicking the AppIcon
+brings the window back.
+
+@{u}Tooltypes@{uu}
+
+All persistent settings are stored in the icon tooltypes of the
+EmojiGear icon.  You can inspect and change them from the Workbench
+with @{b}Icons > Information...@{ub}.  Known tooltypes include:
+
+  @{b}PRIMARYFONT=path@{ub}       Path to primary TrueType font.
+  @{b}FALLBACK1=path@{ub}         Path to first fallback font.
+  @{b}FALLBACK2=path@{ub}         Path to second fallback font.
+  @{b}EMOJIFONT=path@{ub}         Path to colour emoji font.
+  @{b}FONTSIZE=n@{ub}             Font size index (0=8pt, 1=12pt, ...).
+  @{b}WORDWRAP=YES/NO@{ub}        Word wrap on or off.
+  @{b}MONOSPACE=YES/NO@{ub}       Force monospace rendering.
+  @{b}ANTIALIAS=YES/NO@{ub}       Antialiased rendering.
+  @{b}TABSPACES=n@{ub}            Tab stop width in spaces.
+  @{b}TABSARESPACES=YES/NO@{ub}   Tab key inserts spaces.
+  @{b}VIZTABS=YES/NO@{ub}         Visualize tab characters.
+  @{b}APPLYANSI=YES/NO@{ub}       ANSI escape rendering.
+  @{b}RECENTFILE0=path@{ub}       Most recently opened file.
+  @{b}RECENTFILE1=path@{ub}       ... (up to RECENTFILE7)
+
+It is recommended to let EmojiGear manage these values through its
+Settings and Font Settings windows rather than editing them by hand.
+
+@{" Back to Contents " LINK MAIN}
+@ENDNODE
+
+
+@NODE REQUIRE "System Requirements"
+@TOC MAIN
+
+@{b}System Requirements@{ub}
+
+  @{b}CPU:@{ub}          Motorola 68020 or better.
+  @{b}OS:@{ub}           AmigaOS 3.9 or 3.2.x (libraries v44+).
+  @{b}Chip RAM:@{ub}     At least 1 MB recommended.
+  @{b}Fast RAM:@{ub}     At least 4 MB recommended.
+                 More RAM allows larger files and more tabs.
+  @{b}Libraries:@{ub}    All required shared libraries and BOOPSI
+                 gadget classes are included with the program:
+
+                   utf8rastport.library
+                   gadgets/unitexteditor.gadget
+                   gadgets/unibutton.gadget
+                   gadgets/clicktab.gadget
+                   gadgets/layout.gadget
+                   gadgets/button.gadget
+                   gadgets/checkbox.gadget
+                   gadgets/getfile.gadget
+                   gadgets/integer.gadget
+                   gadgets/palette.gadget
+                   gadgets/chooser.gadget
+                   window.class
+                   images/label.image
+                   requester.class
+                   gadgets/scroller.gadget
+
+  @{b}Fonts:@{ub}        EmojiGear requires at least one TrueType or
+                 OpenType font file (.ttf / .otf) for text rendering.
+                 A colour emoji font (e.g. NotoColorEmoji.ttf) is
+                 optional but recommended for full emoji display.
+
+  @{b}Screens:@{ub}      Works on the Workbench screen or a custom AGA/
+                 RTG screen.  RTG screens with 24-bit colour give the
+                 best results for antialiased text and colour emoji.
+
+@{" Back to Contents " LINK MAIN}
+@ENDNODE
