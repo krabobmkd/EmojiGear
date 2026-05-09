@@ -31,7 +31,7 @@
 #include <intuition/screens.h>
 #include <string.h>
 
-#include "unitexteditor.h"
+#include <gadgets/unitexteditor.h>
 #include "offscreenbm.h"
     #include <libraries/utf8rastport.h>
 #ifdef STATIC_UTF8RASTPORT

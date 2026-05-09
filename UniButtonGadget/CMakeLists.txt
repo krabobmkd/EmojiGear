@@ -41,7 +41,9 @@ else()
 endif()
 
 # Headers in this directory are part of the public API
-target_include_directories(${LIBNAME} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(${LIBNAME} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
+							${CMAKE_CURRENT_SOURCE_DIR}/../sdk/include)
+
 
 # unitexteditor target must already exist (built by parent before this dir).
 # Linking it provides:

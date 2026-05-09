@@ -22,7 +22,7 @@
 #include <intuition/icclass.h>
 #include <string.h>
 
-#include "unibutton.h"
+#include <gadgets/unibutton.h>
 #include "offscreenbm.h"
 
 #ifdef STATIC_UTF8RASTPORT

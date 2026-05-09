@@ -55,7 +55,7 @@ static BOOL uted_is_word_char_at(UniTextEditorLine *ln, ULONG ch)
 #include <proto/bevel.h>
 #include <images/bevel.h>
 
-#include "bdbprintf.h"
+
 
 #define G(o) ((struct Gadget *)(o))
 

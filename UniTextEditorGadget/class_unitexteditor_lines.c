@@ -28,7 +28,7 @@
 #include <graphics/gfx.h>
 #include <graphics/rastport.h>
 #include "unitexteditor_private.h"
-#include "bdbprintf.h"
+
 
 
 /* =========================================================================

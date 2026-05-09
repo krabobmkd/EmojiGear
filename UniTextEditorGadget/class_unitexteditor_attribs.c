@@ -23,7 +23,6 @@
     #include <libraries/utf8rastport.h>
     #include <proto/utf8rastport.h>
 #endif
-#include "bdbprintf.h"
 
 static void updateLineHeight(UniTextEditorData *inst);
 

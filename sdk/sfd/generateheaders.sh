@@ -1,5 +1,8 @@
-# Note: just generating clib/inline/proto/pragmas are the "minimal OS3 needs"
-# with the Amiga GCC6.5 tool sfdc.
+# Note: sfd are file describing amiga library functions, used to generate includes
+# so any compiler can just have a sfd->include tool to make sure it works with it.
+# yet the includes generated with bebbo gcc6.5 "sfdc" quite works for all amiga compilers.
+# just generating clib/inline/proto/pragmas are the "minimal OS3 needs"
+
 # in the future if we manage multiple other OSes, generate what's needed for
 # your compiler from the .sfd files with your compiler tool for this.
 

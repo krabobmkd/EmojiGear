@@ -17,8 +17,6 @@
 #include <devices/inputevent.h>
 #include <clib/alib_protos.h>
 #include "unitexteditor_private.h"
-#include "bdbprintf.h"
-
 
 /* =========================================================================
  * GM_GOACTIVE  (left button down) – input.device context, no API calls

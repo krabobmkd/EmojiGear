@@ -42,12 +42,9 @@ else()
 endif()
 
 # Headers in this directory are part of the public API
-target_include_directories(${UTENAME} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-
-# utf8rastport target must already exist (built by the parent project first)
-
-target_include_directories(${UTENAME} PUBLIC
-		${CMAKE_CURRENT_SOURCE_DIR}/../sdk/include)
+target_include_directories(${UTENAME} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
+					${CMAKE_CURRENT_SOURCE_DIR}/../sdk/include
+						)
 
 if(UNITEXTEDITOR_STATIC_LINK)
     target_compile_definitions(${UTENAME}
