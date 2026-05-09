@@ -1,0 +1,120 @@
+=== Plik testowy - Kodowanie ISO Latin-2 (ISO 8859-2) ===
+Autor: Test EmojiGear - Edytor tekstu UTF-8 dla AmigaOS 3
+Data: Kwiecien 2026
+
+== Polska i jej piekno ==
+
+Polska jest krajem polozonym w srodkowej Europie.
+Kraj ten slynie z goscinnosci, bogatej historii i kultury.
+Warszawa, stolica Polski, lezy nad Wisla.
+Krakow jest dawnym miastem krolewskim i centrum kultury.
+
+== Polskie miasta ==
+
+Warszawa - stolica i najwieksze miasto Polski
+Krakow - dawna stolica, Wawel i Sukiennice
+Gdansk - miasto nad Baltykiem, Stocznia Gdanska
+Wroclaw - miasto stu mostow nad Odra
+Poznan - miasto Pypcia i Starego Rynku
+Lodz - miasto wlokiennictwa i sztuki
+Szczecin - brama na Baltyk
+Lublin - miasto na wschodzie Polski
+Bydgoszcz - miasto nad Brda i Kanalem Bydgoskim
+Katowice - serce Gornego Slaska
+
+== Polska kuchnia ==
+
+Tradycyjne polskie potrawy:
+  - Bigos - kapusta z miesem i grzybami
+  - Pierogi - gotowane lub smazone z nadzieniem
+  - Flaki - zupa z zoladkiem i warzywami
+  - Zurek - kwasna zupa z biala kielbasa
+  - Golabki - kapusta nadziewana miesem i ryzem
+  - Kotlet schabowy - wieprzowy kotlet z ziemniakami
+  - Kopytka - kluski ziemniaczane
+  - Makowiec - bulka z makiem
+
+W Polsce pije sie:
+  - Herbate z cytryna lub mlekiem
+  - Kompot z owocow
+  - Zurawinowke - nalewka zurawinowa
+
+== Zdania z polskimi literami ==
+
+¯ó³w g±skê ja¼n±.
+
+Pchnaæ w tê ³ód¼ je¿a lub o¶m skrzyñ fig.
+Ach, jak¿e nych s³ów jest w tym zdaniu !
+Pojecha³e¶ do tej wioski w pi±tek rano i za¶piewa³e¶.
+Dzieñ dobry, jak siê masz dzisiaj ?
+Dziêkujê bardzo za pomoc w nauce polskiego.
+Proszê o fili¿ankê kawy bez cukru.
+Nie mogê znale¼æ moich kluczy do mieszkania.
+Mama upiek³a piêkny tort na urodziny m³odszej siostry.
+Na zewn±trz pada deszcz i wieje silny wiatr.
+Chcia³bym pój¶æ do kina dzisiaj wieczorem.
+Proszê podpisaæ tu i oddaæ formularz na recepcji.
+Jutro rano wyje¿d¿amy na wakacje do Tatr.
+Te ksi±¿ki s± bardzo interesuj±ce i pouczaj±ce.
+Niebieskookiej blondynce ¶ni± siê ¿ó³te ³±ki.
+
+== Polski alfabet ==
+
+Polskie litery specjalne:
+Wielkie: ¡ Æ Ê £ Ñ Ó ¦ ¬ ¯
+Male   : ± æ ê ³ ñ ó ¶ ¼ ¿
+
+Alfabet polski ma 32 litery i 9 liter diakrytycznych.
+Litery specyficzne dla jezyka polskiego to: a, c, e, l, n, o, s, z, z.
+Nie ma liter: q, v, x (poza zapozyczeniami).
+
+== Przyslowia polskie ==
+
+Co dwie g³owy, to nie jedna.
+Nie ma ró¿y bez kolców.
+Czym skorupka za m³odu nasi±knie, tym na staro¶æ tr±ci.
+Kto rano wstaje, temu Pan Bóg daje.
+Jak Kuba Bogu, tak Bóg Kubie.
+Z du¿ego ob³oku ma³y deszcz.
+Nic dwa razy sie nie zdarza.
+Nie wszystko z³oto, co sie ¶wieci.
+Lepszy wróbel w rêku ni¿ go³±b na dachu.
+Apetyt ro¶nie w miarê jedzenia.
+Zgoda buduje, niezgoda rujnuje.
+S³owo sie rzek³o, koby³ce na deszcz.
+
+== Koniec pliku testowego ==
+Ten plik jest zakodowany w ISO Latin-2 (ISO 8859-2).
+Znaki polskie sa kodowane na jednym bajcie (128-255).
+Na przyklad: ± (a z ogonkiem) = 0xB1, ³ (l z kreska) = 0xB3.
+Po zaladowaniu w EmojiGear tekst zostanie przekonwertowany do UTF-8.
+
+Linia uzupelniajaca numer 091 - test polskich liter: ± æ ê ³ ñ ó ¶ ¼ ¿
+Za¿ó³æ gê¶la ja¼ñ - klasyczny pangram 092 - ¡ Æ Ê £ Ñ Ó ¦ ¬ ¯
+Zima, wiosna, lato, jesieñ 093 - cztery pory roku w Polsce
+Linia uzupelniajaca numer 094 - test polskich liter: ± æ ê ³ ñ ó ¶ ¼ ¿
+Za¿ó³æ gê¶la ja¼ñ - klasyczny pangram 095 - ¡ Æ Ê £ Ñ Ó ¦ ¬ ¯
+Zima, wiosna, lato, jesieñ 096 - cztery pory roku w Polsce
+Linia uzupelniajaca numer 097 - test polskich liter: ± æ ê ³ ñ ó ¶ ¼ ¿
+Za¿ó³æ gê¶la ja¼ñ - klasyczny pangram 098 - ¡ Æ Ê £ Ñ Ó ¦ ¬ ¯
+Zima, wiosna, lato, jesieñ 099 - cztery pory roku w Polsce
+Linia uzupelniajaca numer 100 - test polskich liter: ± æ ê ³ ñ ó ¶ ¼ ¿
+Za¿ó³æ gê¶la ja¼ñ - klasyczny pangram 101 - ¡ Æ Ê £ Ñ Ó ¦ ¬ ¯
+Zima, wiosna, lato, jesieñ 102 - cztery pory roku w Polsce
+Linia uzupelniajaca numer 103 - test polskich liter: ± æ ê ³ ñ ó ¶ ¼ ¿
+Za¿ó³æ gê¶la ja¼ñ - klasyczny pangram 104 - ¡ Æ Ê £ Ñ Ó ¦ ¬ ¯
+Zima, wiosna, lato, jesieñ 105 - cztery pory roku w Polsce
+Linia uzupelniajaca numer 106 - test polskich liter: ± æ ê ³ ñ ó ¶ ¼ ¿
+Za¿ó³æ gê¶la ja¼ñ - klasyczny pangram 107 - ¡ Æ Ê £ Ñ Ó ¦ ¬ ¯
+Zima, wiosna, lato, jesieñ 108 - cztery pory roku w Polsce
+Linia uzupelniajaca numer 109 - test polskich liter: ± æ ê ³ ñ ó ¶ ¼ ¿
+Za¿ó³æ gê¶la ja¼ñ - klasyczny pangram 110 - ¡ Æ Ê £ Ñ Ó ¦ ¬ ¯
+Zima, wiosna, lato, jesieñ 111 - cztery pory roku w Polsce
+Linia uzupelniajaca numer 112 - test polskich liter: ± æ ê ³ ñ ó ¶ ¼ ¿
+Za¿ó³æ gê¶la ja¼ñ - klasyczny pangram 113 - ¡ Æ Ê £ Ñ Ó ¦ ¬ ¯
+Zima, wiosna, lato, jesieñ 114 - cztery pory roku w Polsce
+Linia uzupelniajaca numer 115 - test polskich liter: ± æ ê ³ ñ ó ¶ ¼ ¿
+Za¿ó³æ gê¶la ja¼ñ - klasyczny pangram 116 - ¡ Æ Ê £ Ñ Ó ¦ ¬ ¯
+Zima, wiosna, lato, jesieñ 117 - cztery pory roku w Polsce
+Linia uzupelniajaca numer 118 - test polskich liter: ± æ ê ³ ñ ó ¶ ¼ ¿
+Za¿ó³æ gê¶la ja¼ñ - klasyczny pangram 119 - ¡ Æ Ê £ Ñ Ó ¦ ¬ ¯

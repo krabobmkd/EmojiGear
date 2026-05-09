@@ -694,7 +694,7 @@ static ULONG EmojiGrid_OnRender(Class *cl, Object *o, struct gpRender *msg)
 
         URPDC_SetDrawColorFromPen(inst->dc, inst->screen,
                                   (LONG)inst->pens[EGPEN_TEXT], (LONG)inst->pens[EGPEN_BG]);
-        SetAPen(rp, inst->pens[EGPEN_BG]);
+        SetAPen(rp, inst->pens[EGPEN_TEXT]);
         SetBPen(rp, inst->pens[EGPEN_BG]);
         SetDrMd(rp, JAM2);
 

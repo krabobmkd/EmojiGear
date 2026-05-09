@@ -1,0 +1,31 @@
+*E[1m*E[33m=[ THE SHELL-STARTUP SURVIVAL GUIDE ]=*E[0m
+
+*E[32m--- Chapter 1: First Contact ---*E[0m
+
+You open a Shell window. The cursor blinks.
+*E[3mIt judges you.*E[23m
+
+Type *E[1mdir*E[22m: works fine.
+Type *E[1mdir RAM:*E[22m: works fine.
+Type *E[1mdir DF0:*E[22m: *E[7m DISK NOT VALIDATED *E[0m
+
+*E[32m--- Chapter 2: The Prompt ---*E[0m
+
+*E[4mBefore:*E[24m  *E[33m1.Ram Disk:>*E[0m
+*E[4mAfter:*E[24m   *E[33m*E[1mWB3.1.Ram Disk:>*E[0m  *E[3m(now with 600% more style)*E[23m
+
+Achieved by: *E[1m*E[4mone line*E[24m*E[22m in Shell-Startup.
+Time spent:  *E[1m*E[33mthree hours*E[0m reading docs.
+
+*E[32m--- Chapter 3: Aliases ---*E[0m
+
+  *E[1malias cls   "echo *"*E[4m*E[33m[2J*E[0m*E[22m*E[24m"*E[22m
+  *E[1malias bye   "echo Thanks; endcli"*E[22m
+  *E[3m(the "bye" alias was used exactly once, then forgotten)*E[23m
+
+*E[32m--- Epilogue ---*E[0m
+
+*E[7m WARNING: Modifying Shell-Startup may cause dependency on coffee. *E[0m
+
+*E[1mThe Amiga thanks you for your service.*E[0m
+*E[3mDisk activity light blinks approvingly.*E[23m

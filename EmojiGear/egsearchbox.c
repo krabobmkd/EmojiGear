@@ -55,8 +55,8 @@ BOOL EgSearchBox_Create(EgSearchBox *sb, ULONG pointSize/*,ULONG *sharedButtonsD
         ICA_TARGET,             (ULONG)TargetInstance,
         UTED_BevelStyle,        BVS_FIELD,
         UTED_PointSize,         pointSize,
-        UTED_AddFont,           (ULONG)"arial.ttf",
-        UTED_AddFont,           (ULONG)"NotoColorEmoji.ttf",
+        UTED_AddFont,           (ULONG)"LiberationSans-Regular.ttf",
+        UTED_AddFont,           (ULONG)"NotoColorEmoji32.ttf",
         UTED_TextPen,           1UL,
         UTED_BgPen,             0UL,
         UTED_MaxDisplayLines,   1UL,
@@ -106,8 +106,8 @@ BOOL EgSearchBox_Create(EgSearchBox *sb, ULONG pointSize/*,ULONG *sharedButtonsD
         UTED_PointSize,         pointSize,
         UTED_URPDrawContext,    (ULONG)buttonsDc,
 
-        // UTED_AddFont,           (ULONG)"arial.ttf",
-        // UTED_AddFont,           (ULONG)"NotoColorEmoji.ttf",
+        // UTED_AddFont,           (ULONG)"LiberationSans-Regular.ttf",
+        // UTED_AddFont,           (ULONG)"NotoColorEmoji32.ttf",
 
         UTED_TextPen,           1UL,
         UTED_BgPen,             0UL,

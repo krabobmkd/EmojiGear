@@ -1,0 +1,120 @@
+=== Texte de test - Encodage ISO Latin-1 (ISO 8859-1) ===
+Auteur: Test EmojiGear - Éditeur de texte UTF-8 pour AmigaOS 3
+Date: Avril 2026
+
+== La France et ses régions ==
+
+La France est un pays magnifique situé en Europe occidentale.
+Elle est connue pour sa gastronomie, son art de vivre et sa culture
+rayonnante à travers le monde entier.
+
+== Les villes principales ==
+
+Paris, la Ville Lumière, est la capitale de la France.
+Elle abrite la Tour Eiffel, le musée du Louvre et Notre-Dame de Paris.
+Lyon est la capitale de la gastronomie française.
+Marseille, Côte d'Azur, est la deuxième ville de France.
+Bordeaux produit les meilleurs vins du monde entier.
+Strasbourg est une cité européenne située en Alsace.
+
+== La gastronomie française ==
+
+Les fromages sont une spécialité incontournable :
+  - Le camembert de Normandie
+  - Le roquefort des Causses
+  - Le comté du Jura
+  - Le brie de Meaux
+  - Le chèvre de Loire
+
+Les plats typiques :
+  - La bouillabaisse marseillaise
+  - La quiche lorraine
+  - Le boeuf bourguignon
+  - La ratatouille provençale
+  - La crêpe bretonne
+
+== Quelques phrases avec des accents ==
+
+Au revoir, à bientôt et merci beaucoup !
+Je préfère les films français aux films américains.
+Elle était très heureuse d'avoir réussi son baccalauréat.
+Le bibliothécaire lui a recommandé un roman intéressant.
+Notre voisine possède un beau jardin fleurissant.
+C'est un phénomène étrange que je ne m'explique guère.
+Le tailleur a créé une robe élégante pour la cérémonie.
+Ma soeur aînée habite près de la forêt de Fontainebleau.
+Ils étaient fous de joie après avoir gagné le championnat.
+La flèche de la cathédrale se reflète dans la rivière.
+Le cycliste a traversé les Alpes malgré la neige abondante.
+Il faut toujours vérifier l'orthographe des mots français.
+Cette année, les moissons ont été particulièrement bonnes.
+Le médecin a prescrit des remèdes contre la fièvre du patient.
+Votre répertoire de chansons est vraiment extraordinaire.
+La science progresse grâce à de nombreuses découvertes.
+
+== Poésie ==
+
+Demain, dès l'aube, à l'heure où blanchit la campagne,
+Je partirai. Vois-tu, je sais que tu m'attends.
+J'irai par la forêt, j'irai par la montagne.
+Je ne puis demeurer loin de toi plus longtemps.
+  -- Victor Hugo, "Demain dès l'aube"
+
+Mon enfant, ma soeur,
+Songe à la douceur
+D'aller là-bas vivre ensemble !
+Aimer à loisir,
+Aimer et mourir
+Au pays qui te ressemble !
+  -- Charles Baudelaire, "L'Invitation au voyage"
+
+== Proverbes français ==
+
+Après la pluie, le beau temps.
+Mieux vaut tard que jamais.
+Qui cherche, trouve.
+L'appétit vient en mangeant.
+Nul n'est prophète en son pays.
+Chaque chose en son temps.
+À bon entendeur, salut !
+Les chiens aboient, la caravane passe.
+Qui veut voyager loin ménage sa monture.
+Rira bien qui rira le dernier.
+Il ne faut pas vendre la peau de l'ours avant de l'avoir tué.
+L'habit ne fait pas le moine.
+Pierre qui roule n'amasse pas mousse.
+Qui trop embrasse mal étreint.
+Tout ce qui brille n'est pas or.
+
+== Conjugaison du verbe aimer ==
+
+Présent  : j'aime, tu aimes, il/elle aime,
+              nous aimons, vous aimez, ils/elles aiment
+Imparfait : j'aimais, tu aimais, il aimait,
+              nous aimions, vous aimiez, ils aimaient
+Futur     : j'aimerai, tu aimeras, il aimera,
+              nous aimerons, vous aimerez, ils aimeront
+Conditionnel: j'aimerais, tu aimerais, il aimerait
+
+== Fin du fichier de test ==
+Ce fichier est encodé en ISO Latin-1 (ISO 8859-1).
+Les caractères accentués sont codés sur un seul octet (128-255).
+Par exemple : é (e accent aigu) = 0xE9, è (e accent grave) = 0xE8.
+Lorsque chargé dans EmojiGear, ce texte doit être converti en UTF-8.
+
+Ligne supplémentaire numéro 104 ? test des accents français àéèêëîïôùûüç
+Ligne supplémentaire numéro 105 ? test des accents français àéèêëîïôùûüç
+Ligne supplémentaire numéro 106 ? test des accents français àéèêëîïôùûüç
+Ligne supplémentaire numéro 107 ? test des accents français àéèêëîïôùûüç
+Ligne supplémentaire numéro 108 ? test des accents français àéèêëîïôùûüç
+Ligne supplémentaire numéro 109 ? test des accents français àéèêëîïôùûüç
+Ligne supplémentaire numéro 110 ? test des accents français àéèêëîïôùûüç
+Ligne supplémentaire numéro 111 ? test des accents français àéèêëîïôùûüç
+Ligne supplémentaire numéro 112 ? test des accents français àéèêëîïôùûüç
+Ligne supplémentaire numéro 113 ? test des accents français àéèêëîïôùûüç
+Ligne supplémentaire numéro 114 ? test des accents français àéèêëîïôùûüç
+Ligne supplémentaire numéro 115 ? test des accents français àéèêëîïôùûüç
+Ligne supplémentaire numéro 116 ? test des accents français àéèêëîïôùûüç
+Ligne supplémentaire numéro 117 ? test des accents français àéèêëîïôùûüç
+Ligne supplémentaire numéro 118 ? test des accents français àéèêëîïôùûüç
+Ligne supplémentaire numéro 119 ? test des accents français àéèêëîïôùûüç

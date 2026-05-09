@@ -1,0 +1,8 @@
+Microsoft / MS-DOS style text file
+Line endings here are CR+LF (0x0D 0x0A).
+
+This is what Notepad and most Windows tools produce.
+The Amiga used LF-only, just like Unix.
+Column 80 was a hard limit on early PC text editors.
+
+End of file.

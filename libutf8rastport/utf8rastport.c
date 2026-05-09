@@ -1289,7 +1289,7 @@ ULONG URPDC_UpdateColorMap(REG(a0, struct URPDrawContext *dc), REG(a1, struct Sc
 ULONG URPDC_SetDrawScreen(REG(a0, struct URPDrawContext *dc), REG(a1, struct Screen *screen))
 {
     ULONG ndepth;
-    return 1339;
+
     if (!dc || !screen || !screen->RastPort.BitMap ) return 0;
 
     ndepth = GetBitMapAttr(screen->RastPort.BitMap,BMA_DEPTH);
@@ -1299,7 +1299,7 @@ ULONG URPDC_SetDrawScreen(REG(a0, struct URPDrawContext *dc), REG(a1, struct Scr
     dc->lastScreen = screen;
     dc->lastScreenDepth = ndepth;
 
-    URPDC_UpdateColorMap( dc, screen );
+    return URPDC_UpdateColorMap( dc, screen );
 
 }
 

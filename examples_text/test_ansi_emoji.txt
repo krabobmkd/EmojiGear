@@ -1,0 +1,27 @@
+*E[1m*E[33mThe Ultimate Amiga Programmer's Day*E[0m
+*E[32m==========================================*E[0m
+
+*E[33mMorning briefing*E[0m *E[32m(08:00)*E[0m
+  *E[4mTodo list*E[24m:
+    *E[1m*E[33mStep 1:*E[0m Boot the Amiga. Watch the 🧧 hand-draw the Workbench.
+    *E[1m*E[33mStep 2:*E[0m Realise 512K is not enough. *E[7m Upgrade to 1MB! *E[0m 🎉
+    *E[1m*E[33mStep 3:*E[0m Open your favourite text editor 💻 and stare at it.
+
+*E[33mLunch break*E[0m *E[32m(12:00)*E[0m
+  Chef proudly serves *E[4mSyntax Soup*E[24m 🍲
+  Contains: *E[1mpointers*E[22m, *E[3mrecursion*E[23m, and one *E[7m NULL deref *E[0m for flavour.
+  Pairs well with ☕ coffee. *E[1m*E[3mTwo cups minimum.*E[0m 😪
+
+*E[33mAfternoon debugging*E[0m *E[32m(14:00 - 23:59)*E[0m
+  *E[4mPhase 1*E[24m: It compiles! 🎉
+  *E[4mPhase 2*E[24m: It runs! 🤔
+  *E[4mPhase 3*E[24m: *E[7m GURU MEDITATION 00000004.0000BABE *E[0m 😱
+  *E[4mPhase 4*E[24m: *E[3mReboot. Repeat.*E[23m 🔄
+
+*E[33mEvening status report*E[0m
+  Bugs fixed:      *E[32m*E[1m1*E[0m
+  Bugs introduced: *E[33m*E[1m3*E[0m
+  *E[3mThis is called progress.*E[23m 💡
+
+*E[32m==========================================*E[0m
+*E[1m*E[33mGood night, Amiga. You were worth every penny.*E[0m 💜

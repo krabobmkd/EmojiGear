@@ -261,7 +261,15 @@ void UpdateButtonFontsFromSettings(void)
         UBT_AddFont,     (ULONG)app->appSettings.fallback1FontPath,
         UBT_AddFont,     (ULONG)app->appSettings.fallback2FontPath,
         UBT_AddFont,     (ULONG)app->appSettings.emojiFontPath,
+        GA_Text,         (ULONG)"\xF0\x9F\x98\x8A", // have to flush bitmap cache to change font
         TAG_END);
+     if(CurrentMainWindow)
+        RefreshGList(app->statusBarEmojiBtn, CurrentMainWindow, NULL, 1);
+    /* if emojibox open refresh */
+    if(app->emojiBoxWindow.window && app->emojiBoxWindow.gridGadget)
+    {
+        RefreshGList(app->emojiBoxWindow.gridGadget, app->emojiBoxWindow.window, NULL, 1);
+    }
 
 }
 
@@ -388,30 +396,14 @@ int main(int argc, char **argv)
  // UTED_TopMargin,0,
  // UTED_RightMargin,0,
  // UTED_BottomMargin,0,
-            //tests
-        // GA_FollowMouse, TRUE,
-        // GA_Immediate,   TRUE,
-        // GA_RelVerify,   TRUE,
+
         UTED_TabSpaces,app->appSettings.tabSpaces,
         UTED_TabsAreSpaces,app->appSettings.tabsAreSpaces,
         UTED_VisibleTabs,app->appSettings.visualizeTabs,
 
 UTED_BevelStyle, BVS_FIELD,
 UTED_WordWrap,FALSE,// test
-// for test because there's no font settings yet
-// UTED_PointSize,fontSizeTable[app->appSettings.currentFontSizeIndex],
 
-//UTED_AddFont,(ULONG)"symbola.ttf",
- // UTED_AddFont,(ULONG)"arial.ttf",
- // UTED_AddFont,(ULONG)"OpenMoji-black-glyf.ttf",
-// UTED_AddFont,    (ULONG)"NotoColorEmoji.ttf",
-
-        // UTED_PointSize,  (ULONG)app->pointSize,
-        // UTED_AddFont,    (ULONG)app->fontPath,
-        // UTED_AddFont,    (ULONG)"NotoColorEmoji.ttf", /* add the emoji font callback. */
-        /* no screen yet ! */
-        // UTED_TextPen,           1UL,
-        // UTED_BgPen,             0UL,
         UTED_VanillaKeyAnsiCode, detect_vanilla_ansi_code(),
         TAG_DONE);
 
@@ -600,7 +592,7 @@ UTED_WordWrap,FALSE,// test
 #ifdef HELP_USE_DATATYPE_AND_WINDOW
    PmHelpView_Init(&app->helpView, "PetMate Help", "PROGDIR:PetMate.guide");
 #endif
- flushbdbprint();
+
     /* Open the window */
     //BMainWindow_SetTitle(&app->mainwindow,"EmojiGear v" EMOJIGEAR_VERSION);
     BMainWindow_SetTitleLocS(&app->mainwindow,MSG_WINDOW_TITLE_WITHFILE, "Unicode Text Editor v" EMOJIGEAR_VERSION);
@@ -608,21 +600,26 @@ UTED_WordWrap,FALSE,// test
 
     BMainWindow_Show(&app->mainwindow,app->window_obj,&app->appSettings);
 
- flushbdbprint();
-    /* Load file passed on CLI: EmojiGear <path> [Latin1|Latin2] */
-    if (argc > 1 && argv[1] && argv[1][0] != '\0') {
+
+    /* Load files passed on CLI: EmojiGear <path> [<path2> ...] [Latin1|Latin2] */
+    if (argc > 1) {
         int encoding = 0;
         int i;
-        for (i = 2; i < argc; i++) {
+        for (i = 1; i < argc; i++) {
             if (argv[i]) {
-                if (strcasecmp(argv[i], "latin1") == 0) { encoding = 1; break; }
-                if (strcasecmp(argv[i], "latin2") == 0) { encoding = 2; break; }
+                if (strcasecmp(argv[i], "latin1") == 0) { encoding = 1; }
+                else if (strcasecmp(argv[i], "latin2") == 0) { encoding = 2; }
             }
         }
-        if (encoding == 0)
-            load_utf8_from_path(app, argv[1], NULL);
-        else
-            load_encoded_from_path(app, argv[1], encoding);
+        for (i = 1; i < argc; i++) {
+            if (!argv[i] || argv[i][0] == '\0') continue;
+            if (strcasecmp(argv[i], "latin1") == 0 ||
+                strcasecmp(argv[i], "latin2") == 0) continue;
+            if (encoding == 0)
+                load_utf8_from_path(app, argv[i], NULL);
+            else
+                load_encoded_from_path(app, argv[i], encoding);
+        }
     }
 
     /* - - - Input Event Loop - - - */

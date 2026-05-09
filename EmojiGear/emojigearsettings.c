@@ -179,7 +179,7 @@ void AppSettings_Load(AppSettings *as)
     as->primaryFontPath = NULL;
     val = ToolTypePrefs_Get(TT_PRIMARYFONT);
     if (val && val[0] != '\0') as->primaryFontPath = StrDup(val);
-    else as->primaryFontPath = StrDup("arial.ttf");
+    else as->primaryFontPath = StrDup("LiberationSans-Regular.ttf");
 
     as->fallback1FontPath = NULL;
     val = ToolTypePrefs_Get(TT_FALLBACK1FONT);

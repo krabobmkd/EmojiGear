@@ -1,0 +1,120 @@
+=== Emoji Parade – 120 lines of fun ===
+Line 002: 😀  —  grinning face
+Line 003: 😂  —  tears of joy
+Line 004: 🥹  —  holding back tears
+Line 005: 😍  —  heart eyes
+Line 006: 🤔  —  thinking
+Line 007: 😎  —  sunglasses
+Line 008: 🥳  —  partying
+Line 009: 🤯  —  mind blown
+Line 010: 😈  —  smiling devil
+Line 011: 💀  —  skull
+Line 012: 👀  —  eyes
+Line 013: 🙏  —  folded hands
+Line 014: 👍  —  thumbs up
+Line 015: 💪  —  flexed bicep
+Line 016: 🤝  —  handshake
+Line 017: ❤  —  red heart
+Line 018: 🔥  —  fire
+Line 019: 💯  —  hundred points
+Line 020: ⭐  —  star
+Line 021: 🌈  —  rainbow
+Line 022: 🌸  —  cherry blossom
+Line 023: 🌙  —  crescent moon
+Line 024: 🌍  —  earth globe
+Line 025: 🚀  —  rocket
+Line 026: 🎉  —  party popper
+Line 027: 🎵  —  musical note
+Line 028: 🎸  —  guitar
+Line 029: 🎃  —  jack-o-lantern
+Line 030: 🎂  —  birthday cake
+Line 031: 🍕  —  pizza
+Line 032: 🍾  —  champagne
+Line 033: 🥂  —  clinking glasses
+Line 034: ☕  —  hot beverage
+Line 035: 🐱  —  cat face
+Line 036: 🐶  —  dog face
+Line 037: 🦄  —  unicorn
+Line 038: 🦊  —  fox
+Line 039: 🐢  —  turtle
+Line 040: 🦋  —  butterfly
+Line 041: 😂  repeated xx tears of joy
+Line 042: 🥹🥹  repeated xxx holding back tears
+Line 043: 😍😍😍  repeated x heart eyes
+Line 044: 🤔🤔🤔🤔  repeated xx thinking
+Line 045: 😎😎😎😎😎  repeated xxx sunglasses
+Line 046: 🥳  repeated x partying
+Line 047: 🤯🤯  repeated xx mind blown
+Line 048: 😈😈😈  repeated xxx smiling devil
+Line 049: 💀💀💀💀  repeated x skull
+Line 050: 👀👀👀👀👀  repeated xx eyes
+Line 051: 🙏  repeated xxx folded hands
+Line 052: 👍👍  repeated x thumbs up
+Line 053: 💪💪💪  repeated xx flexed bicep
+Line 054: 🤝🤝🤝🤝  repeated xxx handshake
+Line 055: ❤❤❤❤❤  repeated x red heart
+Line 056: 🔥  repeated xx fire
+Line 057: 💯💯  repeated xxx hundred points
+Line 058: ⭐⭐⭐  repeated x star
+Line 059: 🌈🌈🌈🌈  repeated xx rainbow
+Line 060: 🌸🌸🌸🌸🌸  repeated xxx cherry blossom
+Line 061: 🌙  repeated x crescent moon
+Line 062: 🌍🌍  repeated xx earth globe
+Line 063: 🚀🚀🚀  repeated xxx rocket
+Line 064: 🎉🎉🎉🎉  repeated x party popper
+Line 065: 🎵🎵🎵🎵🎵  repeated xx musical note
+Line 066: 🎸  repeated xxx guitar
+Line 067: 🎃🎃  repeated x jack-o-lantern
+Line 068: 🎂🎂🎂  repeated xx birthday cake
+Line 069: 🍕🍕🍕🍕  repeated xxx pizza
+Line 070: 🍾🍾🍾🍾🍾  repeated x champagne
+Line 071: 🥂  repeated xx clinking glasses
+Line 072: ☕☕  repeated xxx hot beverage
+Line 073: 🐱🐱🐱  repeated x cat face
+Line 074: 🐶🐶🐶🐶  repeated xx dog face
+Line 075: 🦄🦄🦄🦄🦄  repeated xxx unicorn
+Line 076: 🦊  repeated x fox
+Line 077: 🐢🐢  repeated xx turtle
+Line 078: 🦋🦋🦋  repeated xxx butterfly
+Line 079: 😀😀😀😀  repeated x grinning face
+Line 080: 😂😂😂😂😂  repeated xx tears of joy
+Line 081: 🥹  repeated xxx holding back tears
+Line 082: 😍😍  repeated x heart eyes
+Line 083: 🤔🤔🤔  repeated xx thinking
+Line 084: 😎😎😎😎  repeated xxx sunglasses
+Line 085: 🥳🥳🥳🥳🥳  repeated x partying
+Line 086: 🤯  repeated xx mind blown
+Line 087: 😈😈  repeated xxx smiling devil
+Line 088: 💀💀💀  repeated x skull
+Line 089: 👀👀👀👀  repeated xx eyes
+Line 090: 🙏🙏🙏🙏🙏  repeated xxx folded hands
+Line 091: 👍  repeated x thumbs up
+Line 092: 💪💪  repeated xx flexed bicep
+Line 093: 🤝🤝🤝  repeated xxx handshake
+Line 094: ❤❤❤❤  repeated x red heart
+Line 095: 🔥🔥🔥🔥🔥  repeated xx fire
+Line 096: 💯  repeated xxx hundred points
+Line 097: ⭐⭐  repeated x star
+Line 098: 🌈🌈🌈  repeated xx rainbow
+Line 099: 🌸🌸🌸🌸  repeated xxx cherry blossom
+Line 100: 🌙🌙🌙🌙🌙  repeated x crescent moon
+Line 101: 🌍  repeated xx earth globe
+Line 102: 🚀🚀  repeated xxx rocket
+Line 103: 🎉🎉🎉  repeated x party popper
+Line 104: 🎵🎵🎵🎵  repeated xx musical note
+Line 105: 🎸🎸🎸🎸🎸  repeated xxx guitar
+Line 106: 🎃  repeated x jack-o-lantern
+Line 107: 🎂🎂  repeated xx birthday cake
+Line 108: 🍕🍕🍕  repeated xxx pizza
+Line 109: 🍾🍾🍾🍾  repeated x champagne
+Line 110: 🥂🥂🥂🥂🥂  repeated xx clinking glasses
+Line 111: ☕  repeated xxx hot beverage
+Line 112: 🐱🐱  repeated x cat face
+Line 113: 🐶🐶🐶  repeated xx dog face
+Line 114: 🦄🦄🦄🦄  repeated xxx unicorn
+Line 115: 🦊🦊🦊🦊🦊  repeated x fox
+Line 116: 🐢  repeated xx turtle
+Line 117: 🦋🦋  repeated xxx butterfly
+Line 118: 😀😀😀  repeated x grinning face
+Line 119: 😂😂😂😂  repeated xx tears of joy
+=== End of emoji parade ===

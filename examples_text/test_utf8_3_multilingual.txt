@@ -1,0 +1,126 @@
+=== Multilingual Greetings – Hello World in 20 languages ===
+
+--- Round 1 ---
+  [English     ] Hello, World! How are you today?
+  [French      ] Bonjour le monde ! Comment allez-vous ?
+  [Spanish     ] ¡Hola Mundo! ¿Cómo estás hoy?
+  [German      ] Hallo Welt! Wie geht es Ihnen heute?
+  [Italian     ] Ciao Mondo! Come stai oggi?
+  [Portuguese  ] Olá Mundo! Como você está hoje?
+  [Russian     ] Привет мир! Как дела сегодня?
+  [Japanese    ] こんにちは世界！今日はいかがですか？
+  [Chinese     ] 你好世界！你今天好吗？
+  [Korean      ] 안녕하세요 세계! 오늘 어떠세요?
+  [Arabic      ] مرحبا بالعالم! كيف حالك اليوم؟
+  [Hebrew      ] שלום עולם! איך אתה היום?
+  [Greek       ] Γεια σου κόσμε! Πώς είσαι σήμερα;
+  [Polish      ] Cześć świecie! Jak się masz dzisiaj?
+  [Czech       ] Ahoj světe! Jak se máš dnes?
+  [Hungarian   ] Helló Világ! Hogy vagy ma?
+  [Turkish     ] Merhaba Dünya! Bugün nasılsın?
+  [Swedish     ] Hej världen! Hur mår du idag?
+  [Finnish     ] Hei maailma! Kuinka voit tänään?
+  [Dutch       ] Hallo Wereld! Hoe gaat het vandaag?
+
+--- Round 2 ---
+  [English     ] Hello, World! How are you today?
+  [French      ] Bonjour le monde ! Comment allez-vous ?
+  [Spanish     ] ¡Hola Mundo! ¿Cómo estás hoy?
+  [German      ] Hallo Welt! Wie geht es Ihnen heute?
+  [Italian     ] Ciao Mondo! Come stai oggi?
+  [Portuguese  ] Olá Mundo! Como você está hoje?
+  [Russian     ] Привет мир! Как дела сегодня?
+  [Japanese    ] こんにちは世界！今日はいかがですか？
+  [Chinese     ] 你好世界！你今天好吗？
+  [Korean      ] 안녕하세요 세계! 오늘 어떠세요?
+  [Arabic      ] مرحبا بالعالم! كيف حالك اليوم؟
+  [Hebrew      ] שלום עולם! איך אתה היום?
+  [Greek       ] Γεια σου κόσμε! Πώς είσαι σήμερα;
+  [Polish      ] Cześć świecie! Jak się masz dzisiaj?
+  [Czech       ] Ahoj světe! Jak se máš dnes?
+  [Hungarian   ] Helló Világ! Hogy vagy ma?
+  [Turkish     ] Merhaba Dünya! Bugün nasılsın?
+  [Swedish     ] Hej världen! Hur mår du idag?
+  [Finnish     ] Hei maailma! Kuinka voit tänään?
+  [Dutch       ] Hallo Wereld! Hoe gaat het vandaag?
+
+--- Round 3 ---
+  [English     ] Hello, World! How are you today?
+  [French      ] Bonjour le monde ! Comment allez-vous ?
+  [Spanish     ] ¡Hola Mundo! ¿Cómo estás hoy?
+  [German      ] Hallo Welt! Wie geht es Ihnen heute?
+  [Italian     ] Ciao Mondo! Come stai oggi?
+  [Portuguese  ] Olá Mundo! Como você está hoje?
+  [Russian     ] Привет мир! Как дела сегодня?
+  [Japanese    ] こんにちは世界！今日はいかがですか？
+  [Chinese     ] 你好世界！你今天好吗？
+  [Korean      ] 안녕하세요 세계! 오늘 어떠세요?
+  [Arabic      ] مرحبا بالعالم! كيف حالك اليوم؟
+  [Hebrew      ] שלום עולם! איך אתה היום?
+  [Greek       ] Γεια σου κόσμε! Πώς είσαι σήμερα;
+  [Polish      ] Cześć świecie! Jak się masz dzisiaj?
+  [Czech       ] Ahoj světe! Jak se máš dnes?
+  [Hungarian   ] Helló Világ! Hogy vagy ma?
+  [Turkish     ] Merhaba Dünya! Bugün nasılsın?
+  [Swedish     ] Hej världen! Hur mår du idag?
+  [Finnish     ] Hei maailma! Kuinka voit tänään?
+  [Dutch       ] Hallo Wereld! Hoe gaat het vandaag?
+
+--- Round 4 ---
+  [English     ] Hello, World! How are you today?
+  [French      ] Bonjour le monde ! Comment allez-vous ?
+  [Spanish     ] ¡Hola Mundo! ¿Cómo estás hoy?
+  [German      ] Hallo Welt! Wie geht es Ihnen heute?
+  [Italian     ] Ciao Mondo! Come stai oggi?
+  [Portuguese  ] Olá Mundo! Como você está hoje?
+  [Russian     ] Привет мир! Как дела сегодня?
+  [Japanese    ] こんにちは世界！今日はいかがですか？
+  [Chinese     ] 你好世界！你今天好吗？
+  [Korean      ] 안녕하세요 세계! 오늘 어떠세요?
+  [Arabic      ] مرحبا بالعالم! كيف حالك اليوم؟
+  [Hebrew      ] שלום עולם! איך אתה היום?
+  [Greek       ] Γεια σου κόσμε! Πώς είσαι σήμερα;
+  [Polish      ] Cześć świecie! Jak się masz dzisiaj?
+  [Czech       ] Ahoj světe! Jak se máš dnes?
+  [Hungarian   ] Helló Világ! Hogy vagy ma?
+  [Turkish     ] Merhaba Dünya! Bugün nasılsın?
+  [Swedish     ] Hej världen! Hur mår du idag?
+  [Finnish     ] Hei maailma! Kuinka voit tänään?
+  [Dutch       ] Hallo Wereld! Hoe gaat het vandaag?
+
+--- Round 5 ---
+  [English     ] Hello, World! How are you today?
+  [French      ] Bonjour le monde ! Comment allez-vous ?
+  [Spanish     ] ¡Hola Mundo! ¿Cómo estás hoy?
+  [German      ] Hallo Welt! Wie geht es Ihnen heute?
+  [Italian     ] Ciao Mondo! Come stai oggi?
+  [Portuguese  ] Olá Mundo! Como você está hoje?
+  [Russian     ] Привет мир! Как дела сегодня?
+  [Japanese    ] こんにちは世界！今日はいかがですか？
+  [Chinese     ] 你好世界！你今天好吗？
+  [Korean      ] 안녕하세요 세계! 오늘 어떠세요?
+  [Arabic      ] مرحبا بالعالم! كيف حالك اليوم؟
+  [Hebrew      ] שלום עולם! איך אתה היום?
+  [Greek       ] Γεια σου κόσμε! Πώς είσαι σήμερα;
+  [Polish      ] Cześć świecie! Jak się masz dzisiaj?
+  [Czech       ] Ahoj světe! Jak se máš dnes?
+  [Hungarian   ] Helló Világ! Hogy vagy ma?
+  [Turkish     ] Merhaba Dünya! Bugün nasılsın?
+  [Swedish     ] Hej världen! Hur mår du idag?
+  [Finnish     ] Hei maailma! Kuinka voit tänään?
+  [Dutch       ] Hallo Wereld! Hoe gaat het vandaag?
+
+--- Round 6 ---
+  [English     ] Hello, World! How are you today?
+  [French      ] Bonjour le monde ! Comment allez-vous ?
+  [Spanish     ] ¡Hola Mundo! ¿Cómo estás hoy?
+  [German      ] Hallo Welt! Wie geht es Ihnen heute?
+  [Italian     ] Ciao Mondo! Come stai oggi?
+  [Portuguese  ] Olá Mundo! Como você está hoje?
+  [Russian     ] Привет мир! Как дела сегодня?
+  [Japanese    ] こんにちは世界！今日はいかがですか？
+  [Chinese     ] 你好世界！你今天好吗？
+  [Korean      ] 안녕하세요 세계! 오늘 어떠세요?
+  [Arabic      ] مرحبا بالعالم! كيف حالك اليوم؟
+  [Hebrew      ] שלום עולם! איך אתה היום?
+  [Greek       ] Γεια σου κόσμε! Πώς είσαι σήμερα;

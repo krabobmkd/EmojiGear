@@ -609,7 +609,7 @@ BOOL EgFontsView_HandleInput(EgFontsView *pfv)
                     syncCheckboxesToState(pfv);
 
                     removeAllFonts();
-                    app->appSettings.primaryFontPath = FontStrDup("arial.ttf");
+                    app->appSettings.primaryFontPath = FontStrDup("LiberationSans-Regular.ttf");
                     app->appSettings.emojiFontPath = FontStrDup("OpenMoji-black-glyf.ttf");
                     syncFontPaths(pfv);
                     UpdateEditorFontsFromSettings();
@@ -620,8 +620,8 @@ BOOL EgFontsView_HandleInput(EgFontsView *pfv)
                     syncCheckboxesToState(pfv);
 
                     removeAllFonts();
-                    app->appSettings.primaryFontPath = FontStrDup("arial.ttf");
-                    app->appSettings.emojiFontPath = FontStrDup("NotoColorEmoji.ttf");
+                    app->appSettings.primaryFontPath = FontStrDup("LiberationSans-Regular.ttf");
+                    app->appSettings.emojiFontPath = FontStrDup("NotoColorEmoji32.ttf");
                     syncFontPaths(pfv);
                     UpdateEditorFontsFromSettings();
 
@@ -632,7 +632,7 @@ BOOL EgFontsView_HandleInput(EgFontsView *pfv)
 
                     removeAllFonts();
                     app->appSettings.primaryFontPath = FontStrDup("UbuntuMono-Regular.ttf");
-                    app->appSettings.emojiFontPath = FontStrDup("NotoColorEmoji.ttf");
+                    app->appSettings.emojiFontPath = FontStrDup("NotoColorEmoji32.ttf");
                     syncFontPaths(pfv);
                     UpdateEditorFontsFromSettings();
                 }

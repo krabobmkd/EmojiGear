@@ -1,0 +1,1 @@
+Old Macintosh (System 1-9, pre-OS X) text fileLine endings here are bare CR (0x0D) only.Classic Mac OS used CR as the sole line terminator.This confused Unix and DOS tools for decades.HyperCard stacks, ResEdit resources... good times.End of file.

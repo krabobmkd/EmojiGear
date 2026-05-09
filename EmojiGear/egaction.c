@@ -792,12 +792,18 @@ BOOL Action_FileAbout(struct App *ctx)
 
     /* ---- credits ---- */
     "  Author  : Krb\n"
-    "  License : LGPL\n\n"
+    "  License : GPL\n\n"
     "  Built upon open roots, free as the spring breeze:\n\n"
     "  \xF0\x9F\x8C\xBF utf8rastport.library  (LGPL)\n"
     "       embedding FreeType2, libpng and zlib\n"
-    "  \xF0\x9F\x8C\xBF UniTextEditor  (BOOPSI gadget)\n"
-    "  \xF0\x9F\x8C\xBF UniButton      (BOOPSI gadget)\n\n"
+    "  \xF0\x9F\x8C\xBF UniTextEditor  (BOOPSI gadget, krb, License LGPL)\n"
+    "  \xF0\x9F\x8C\xBF UniButton      (BOOPSI gadget, krb, License LGPL)\n\n"
+    " This app install those fonts, you may install other ones:\n"
+    "  LiberationSans-Regular.ttf Ascender Corporation, license GPL\n"
+    "  NotoColorEmoji32.ttf       NoTo, SIL Open Font License 1.1\n"
+    "  UbuntuMono-Regular.ttf     Canonical Ltd, Ubuntu Font Licence Version 1.0 (UFL)\n"
+    "  OpenMoji-black-glyf.ttf    HfG Schwäbisch Gmünd, Creative Commons Attribution-ShareAlike 4.0 International (CC BY-SA 4.0)\n"
+    "\n"
 
     /* ---- links ---- */
     "\xF0\x9F\x90\xA6 Source code blossoms at:\n"
