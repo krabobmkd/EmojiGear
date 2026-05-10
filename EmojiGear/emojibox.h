@@ -29,6 +29,8 @@ typedef struct EmojiBoxWindow {
     Object         *windowObj;                      /* BOOPSI window object  */
     struct Window  *window;                         /* Intuition window      */
 
+    LONG            left, top, width, height;       /* remembered window geometry */
+
     Object         *chooser;                        /* set-selector          */
     Object         *gridGadget;                     /* emoji grid            */
     Object         *mainLayout;                     /* root layout           */

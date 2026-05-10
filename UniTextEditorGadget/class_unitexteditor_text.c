@@ -389,9 +389,9 @@ ULONG UniTextEditor_DoInsertText(Class *cl, Object *o, const char *text, LONG le
     if (!len) return 0;
 
     /* Delete selection first if any (records its own undo entry)
-     but not for tab key
+     but not for tab key (tab with selection has its own handling)
     */
-    if (inst->hasSelection && length ==1 && (*text) == 0x09 )
+    if (inst->hasSelection && !(length == 1 && (*text) == 0x09))
         UniTextEditor_DoDeleteSelection(cl, o);
 
     /* Cursor position right before the insert (= after any sel-delete) */

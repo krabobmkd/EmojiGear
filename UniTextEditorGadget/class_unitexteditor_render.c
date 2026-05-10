@@ -210,9 +210,15 @@ ULONG UniTextEditor_OnDomain(Class *cl, Object *o, struct gpDomain *msg)
             // domain->Width = 32767;
             // domain->Height = 32767;
             // return 1;
+    /* Use actual rendered line height (includes descenders) when available;
+     * fall back to pointSize before the first font is loaded. */
+    ULONG lineH = (inst->lineHeightBase > 0)
+                  ? (ULONG)inst->lineHeightBase
+                  : inst->pointSize;
+
     /* let's default as minimum */
     domain->Width = 64+inst->leftMargin+inst->rightMargin;
-    domain->Height = inst->pointSize+inst->lineSpacing + inst->topMargin + inst->bottomMargin;
+    domain->Height = lineH + inst->lineSpacing + inst->topMargin + inst->bottomMargin;
 
     // Adjust based on gpd_Which
     switch (msg->gpd_Which) {
@@ -220,12 +226,12 @@ ULONG UniTextEditor_OnDomain(Class *cl, Object *o, struct gpDomain *msg)
             /* Use default values*/
             break;
         case GDOMAIN_MAXIMUM:
-            /* default maximum, wtach out values are 2 bytes signed "WORD" */
+            /* default maximum, watch out values are 2 bytes signed "WORD" */
             domain->Width = 32767;
             domain->Height = 32767;
             if (inst->maxDisplayLines < 65535UL) {
 
-                ULONG maxH = (inst->pointSize +inst->lineSpacing)
+                ULONG maxH = (lineH + inst->lineSpacing)
                              * inst->maxDisplayLines
                              + inst->topMargin
                              + inst->bottomMargin;

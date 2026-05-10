@@ -18,6 +18,8 @@ typedef struct EgSearchBox {
     /* instance when opened */
     struct Window *window;
 
+    LONG left, top, width, height;       /* remembered window geometry */
+
     EgMenu menu; /* same as mainwindow */
 
     Object *layout;           /* outer vertical layout – add to parent layout */

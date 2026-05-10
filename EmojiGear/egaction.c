@@ -1427,14 +1427,28 @@ BOOL Action_NavFindNext(struct App *ctx)
     GetAttr(UTED_CursorChar, ctx->textEditorObj, &charAfter);
 
     if (lineAfter == lineBefore && charAfter == charBefore) {
-        DisplayBeep(CurrentMainScreen);
-    } else {
+        /* Not found forward — wrap to start of document and try again */
         SetGdAttrs(ctx->textEditorObj,
-            UTED_ScrollTo, lineAfter,
-            UTED_ScrollToCenter, TRUE,
+            UTED_CursorLine, 0UL,
+            UTED_CursorChar, 0UL,
             TAG_END);
-        SyncVScroller();
+        GetAttr(UTED_CursorLine, ctx->textEditorObj, &lineBefore);
+        GetAttr(UTED_CursorChar, ctx->textEditorObj, &charBefore);
+        SetGdAttrs(ctx->textEditorObj, UTED_SearchNext, (ULONG)searchString, TAG_END);
+        GetAttr(UTED_CursorLine, ctx->textEditorObj, &lineAfter);
+        GetAttr(UTED_CursorChar, ctx->textEditorObj, &charAfter);
+        if (lineAfter == lineBefore && charAfter == charBefore) {
+            DisplayBeep(CurrentMainScreen); /* not found anywhere */
+            UpdateStatusBar();
+            return TRUE;
+        }
     }
+
+    SetGdAttrs(ctx->textEditorObj,
+        UTED_ScrollTo, lineAfter,
+        UTED_ScrollToCenter, TRUE,
+        TAG_END);
+    SyncVScroller();
     UpdateStatusBar();
     return TRUE;
 }
@@ -1444,6 +1458,7 @@ BOOL Action_NavFindPrev(struct App *ctx)
     const char *searchString;
     ULONG searchIsCaseSensitive;
     ULONG lineBefore, charBefore, lineAfter, charAfter;
+    ULONG lineCount;
 
     if (!ctx || !ctx->textEditorObj) return FALSE;
     searchString = EgSearchBox_GetUTF8SearchString(&app->searchBox);
@@ -1462,14 +1477,31 @@ BOOL Action_NavFindPrev(struct App *ctx)
     GetAttr(UTED_CursorChar, ctx->textEditorObj, &charAfter);
 
     if (lineAfter == lineBefore && charAfter == charBefore) {
-        DisplayBeep(CurrentMainScreen);
-    } else {
+        /* Not found backward — wrap to end of document and try again */
+        lineCount = 0;
+        GetAttr(UTED_LineCount, ctx->textEditorObj, &lineCount);
+        if (lineCount > 0) lineCount--;
         SetGdAttrs(ctx->textEditorObj,
-            UTED_ScrollTo, lineAfter,
-            UTED_ScrollToCenter, TRUE,
+            UTED_CursorLine, lineCount,
+            UTED_CursorChar, 999999UL,
             TAG_END);
-        SyncVScroller();
+        GetAttr(UTED_CursorLine, ctx->textEditorObj, &lineBefore);
+        GetAttr(UTED_CursorChar, ctx->textEditorObj, &charBefore);
+        SetGdAttrs(ctx->textEditorObj, UTED_SearchPrevious, (ULONG)searchString, TAG_END);
+        GetAttr(UTED_CursorLine, ctx->textEditorObj, &lineAfter);
+        GetAttr(UTED_CursorChar, ctx->textEditorObj, &charAfter);
+        if (lineAfter == lineBefore && charAfter == charBefore) {
+            DisplayBeep(CurrentMainScreen); /* not found anywhere */
+            UpdateStatusBar();
+            return TRUE;
+        }
     }
+
+    SetGdAttrs(ctx->textEditorObj,
+        UTED_ScrollTo, lineAfter,
+        UTED_ScrollToCenter, TRUE,
+        TAG_END);
+    SyncVScroller();
     UpdateStatusBar();
     return TRUE;
 }

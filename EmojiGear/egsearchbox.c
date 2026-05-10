@@ -41,7 +41,11 @@ BOOL EgSearchBox_Create(EgSearchBox *sb, ULONG pointSize/*,ULONG *sharedButtonsD
     Object *replaceLine;
     Object *buttonLine;
     ULONG buttonsDc;
-    memset(sb, 0, sizeof(*sb));
+    {
+        LONG sl = sb->left, st = sb->top, sw = sb->width, sh = sb->height;
+        memset(sb, 0, sizeof(*sb));
+        sb->left = sl; sb->top = st; sb->width = sw; sb->height = sh;
+    }
 
     /* ------------------------------------------------------------------ */
     /* Line 1: "Search :"  [UniTextEditor]  [X]                           */
@@ -268,6 +272,15 @@ void EgSearchBox_Open(EgSearchBox *sb)
                  TAG_END);
     }
 
+    if (sb->width > 0) {
+        SetAttrs(sb->windowObj,
+                 WA_Left,   (ULONG)sb->left,
+                 WA_Top,    (ULONG)sb->top,
+                 WA_Width,  (ULONG)sb->width,
+                 WA_Height, (ULONG)sb->height,
+                 TAG_END);
+    }
+
     sb->window = (struct Window *)DoMethod(sb->windowObj, WM_OPEN, NULL);
     if(sb->window)
         EgMenu_Create(&sb->menu,CurrentMainScreen,sb->window,&app->appSettings);
@@ -279,6 +292,11 @@ void EgSearchBox_Open(EgSearchBox *sb)
 void EgSearchBox_Close(EgSearchBox *sb)
 {
     if (!sb || !sb->windowObj || !sb->window) return;
+
+    GetAttr(WA_Left,   sb->windowObj, (ULONG *)&sb->left);
+    GetAttr(WA_Top,    sb->windowObj, (ULONG *)&sb->top);
+    GetAttr(WA_Width,  sb->windowObj, (ULONG *)&sb->width);
+    GetAttr(WA_Height, sb->windowObj, (ULONG *)&sb->height);
 
     if(sb->window && sb->menu.menu)
         EgMenu_Close( &sb->menu,sb->window );
@@ -301,6 +319,12 @@ BOOL EgSearchBox_HandleInput(EgSearchBox *sb)
             case WMHI_CLOSEWINDOW:
                 EgSearchBox_Close(sb);
                 return TRUE;
+            case WMHI_NEWSIZE:
+                if (sb->searchEditor)
+                    RefreshGList((struct Gadget *)sb->searchEditor, sb->window, NULL, 1);
+                if (sb->replaceEditor)
+                    RefreshGList((struct Gadget *)sb->replaceEditor, sb->window, NULL, 1);
+                break;
             case WMHI_ACTIVE:
             app->activeEditorObj == sb->searchEditor;
             break;

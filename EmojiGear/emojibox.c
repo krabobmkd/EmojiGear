@@ -996,7 +996,9 @@ static ULONG ASM SAVEDS EmojiGrid_Dispatch(
  * -------------------------------------------------------------------------*/
 void EmojiBoxWindow_Init(EmojiBoxWindow *ebw)
 {
+    LONG sl = ebw->left, st = ebw->top, sw = ebw->width, sh = ebw->height;
     memset(ebw, 0, sizeof(EmojiBoxWindow));
+    ebw->left = sl; ebw->top = st; ebw->width = sw; ebw->height = sh;
     NewList(&ebw->chooserList);
 }
 
@@ -1264,6 +1266,15 @@ void EmojiBoxWindow_Open(EmojiBoxWindow *ebw)
                      WA_CustomScreen, (ULONG)CurrentMainScreen,
                      TAG_END);
 
+        if (ebw->width > 0) {
+            SetAttrs(ebw->windowObj,
+                     WA_Left,   (ULONG)ebw->left,
+                     WA_Top,    (ULONG)ebw->top,
+                     WA_Width,  (ULONG)ebw->width,
+                     WA_Height, (ULONG)ebw->height,
+                     TAG_END);
+        }
+
         ebw->window = (struct Window *)DoMethod(ebw->windowObj, WM_OPEN, NULL);
     }
 }
@@ -1274,6 +1285,12 @@ void EmojiBoxWindow_Open(EmojiBoxWindow *ebw)
 void EmojiBoxWindow_Close(EmojiBoxWindow *ebw)
 {
     if (!ebw || !ebw->windowObj || !ebw->window) return;
+
+    GetAttr(WA_Left,   ebw->windowObj, (ULONG *)&ebw->left);
+    GetAttr(WA_Top,    ebw->windowObj, (ULONG *)&ebw->top);
+    GetAttr(WA_Width,  ebw->windowObj, (ULONG *)&ebw->width);
+    GetAttr(WA_Height, ebw->windowObj, (ULONG *)&ebw->height);
+
     DoMethod(ebw->windowObj, WM_CLOSE, NULL);
     ebw->window = NULL;
 }

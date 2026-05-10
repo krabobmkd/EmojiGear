@@ -237,6 +237,27 @@ void AppSettings_Load(AppSettings *as)
                             &app->mainwindow.width,&app->mainwindow.height);
         }
 
+        p = ToolTypePrefs_Get("SEARCHWINDOW");
+        if(p)
+        {
+            app->searchBox.left = 0;
+            app->searchBox.top = 0;
+            app->searchBox.width = 0;
+            app->searchBox.height = 0;
+            sscanf(p, "%d:%d:%d:%d", &app->searchBox.left, &app->searchBox.top,
+                   &app->searchBox.width, &app->searchBox.height);
+        }
+
+        p = ToolTypePrefs_Get("EMOJIWINDOW");
+        if(p)
+        {
+            app->emojiBoxWindow.left = 0;
+            app->emojiBoxWindow.top = 0;
+            app->emojiBoxWindow.width = 0;
+            app->emojiBoxWindow.height = 0;
+            sscanf(p, "%d:%d:%d:%d", &app->emojiBoxWindow.left, &app->emojiBoxWindow.top,
+                   &app->emojiBoxWindow.width, &app->emojiBoxWindow.height);
+        }
     }
 
 }
@@ -326,6 +347,44 @@ void AppSettings_Save(AppSettings *as)
         snprintf(buf,31,"%d:%d:%d:%d",app->mainwindow.left,app->mainwindow.top,
                            app->mainwindow.width,app->mainwindow.height );
          ToolTypePrefs_Set("WINDOW",buf);
+    }
+
+    /* Search box window position */
+    {
+        LONG sl = app->searchBox.left, st = app->searchBox.top;
+        LONG sw = app->searchBox.width, sh = app->searchBox.height;
+        if (app->searchBox.window) {
+            GetAttr(WA_Left,   app->searchBox.windowObj, (ULONG *)&sl);
+            GetAttr(WA_Top,    app->searchBox.windowObj, (ULONG *)&st);
+            GetAttr(WA_Width,  app->searchBox.windowObj, (ULONG *)&sw);
+            GetAttr(WA_Height, app->searchBox.windowObj, (ULONG *)&sh);
+        }
+        if (sw > 0) {
+            char buf[32];
+            snprintf(buf, 31, "%d:%d:%d:%d", (int)sl, (int)st, (int)sw, (int)sh);
+            ToolTypePrefs_Set("SEARCHWINDOW", buf);
+        } else {
+            ToolTypePrefs_Remove("SEARCHWINDOW");
+        }
+    }
+
+    /* Emoji box window position */
+    {
+        LONG el = app->emojiBoxWindow.left, et = app->emojiBoxWindow.top;
+        LONG ew = app->emojiBoxWindow.width, eh = app->emojiBoxWindow.height;
+        if (app->emojiBoxWindow.window) {
+            GetAttr(WA_Left,   app->emojiBoxWindow.windowObj, (ULONG *)&el);
+            GetAttr(WA_Top,    app->emojiBoxWindow.windowObj, (ULONG *)&et);
+            GetAttr(WA_Width,  app->emojiBoxWindow.windowObj, (ULONG *)&ew);
+            GetAttr(WA_Height, app->emojiBoxWindow.windowObj, (ULONG *)&eh);
+        }
+        if (ew > 0) {
+            char buf[32];
+            snprintf(buf, 31, "%d:%d:%d:%d", (int)el, (int)et, (int)ew, (int)eh);
+            ToolTypePrefs_Set("EMOJIWINDOW", buf);
+        } else {
+            ToolTypePrefs_Remove("EMOJIWINDOW");
+        }
     }
 
     /* Save font size as point size value */
