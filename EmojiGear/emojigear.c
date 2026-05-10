@@ -1057,9 +1057,17 @@ void exitclose(void)
 
     if (app)
     {
+
+        EgSettingsView_Close(&app->settingsView);
+        EgFontsView_Close(&app->fontsView);
+        EmojiBoxWindow_Close(&app->emojiBoxWindow);
+        EgSearchBox_Close(&app->searchBox);
+
         /* save settings*/
         AppSettings_Save(&app->appSettings);
         AppSettings_Close(&app->appSettings);
+
+
 
         /* Free tab bar resources */
         if (app->tabList) {
