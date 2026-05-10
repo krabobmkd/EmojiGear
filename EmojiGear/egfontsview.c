@@ -467,7 +467,12 @@ BOOL EgFontsView_Init(EgFontsView *pfv, const char *title)
 void EgFontsView_Open(EgFontsView *pfv)
 {
     if (!pfv || !pfv->windowObj) return;
-    if (pfv->window) return;
+    if (pfv->window)
+    {
+        WindowToFront(pfv->window);
+        ActivateWindow(pfv->window);
+        return;
+    }
 
     if (CurrentMainScreen) {
         SetAttrs(pfv->windowObj,

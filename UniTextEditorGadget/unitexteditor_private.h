@@ -261,6 +261,7 @@ typedef struct UniTextEditorData {
 
     /* Font & draw context — dc lives for the gadget's whole lifetime */
     struct URPDrawContext *dc;
+    struct Task         *callerTask;
     ULONG                 pointSize;   /* stored for UTED_AddFont calls */
     ULONG                 fontFlags;   /* stored for UTED_AddFont calls */
     ULONG                 tabSpaces;   /* forwarded to URPDCA_TabSpaces; default 4 */
@@ -515,6 +516,8 @@ void  uted_rebuild_wrap_map    (UniTextEditorData *inst);
 ULONG uted_cursor_visual_row   (UniTextEditorData *inst);
 BOOL  uted_pool_alloc          (UTEDBitMapPool *pool, ULONG size,
                                  UWORD lineHeight, struct Screen *screen);
+BOOL  uted_pool_growalloc      (UTEDBitMapPool *pool, ULONG newSize,
+                                 struct Screen *screen);
 void  uted_pool_free           (UTEDBitMapPool *pool);
 
 

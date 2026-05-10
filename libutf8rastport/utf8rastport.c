@@ -34,8 +34,10 @@
 #include <proto/cybergraphics.h>
 #include <proto/dos.h>
 #include <proto/intuition.h>
+#include <proto/layers.h>
 #include <cybergraphx/cybergraphics.h>
 #include <graphics/layers.h>
+#include <utility/hooks.h>
 
 #include "urp_cgx_blend.h"
 
@@ -1704,10 +1706,216 @@ static struct URPGlyphEntry *urp_get_notfound(struct URPDrawContext *dc)
 /* =========================================================================
  * CGX true-colour draw path
  *
- * LockBitMapTags / UnLockBitMap done once for the whole string.
- * Per-glyph work: update ctx.ge, ctx.dx, ctx.dy, dispatch blend function.
- * MONO glyphs fall through to BltTemplate (safe on RTG soft-blitter).
+ * When the RastPort has a Layer, DoHookClipRects() is used so that only
+ * the actually-visible ClipRects are painted — preventing writes into
+ * areas covered by other windows.  The hook is called once per visible
+ * rectangle; inside it we LockBitMapTags, clip to bf_Bounds, draw the
+ * full string (restarting from startX each call), then UnLockBitMap.
+ *
+ * Without a Layer the original single-pass path is used unchanged.
  * ========================================================================= */
+
+/* BackFillMsg is not defined in AmigaOS 3.x system headers; mirror it here. */
+struct urp_bf_msg {
+    struct Layer     *bf_Layer;
+    struct Rectangle  bf_Bounds;
+    LONG              bf_OffsetX;
+    LONG              bf_OffsetY;
+};
+
+/* Hook data: everything needed to (re)draw the string per ClipRect. */
+struct urp_cgx_clip_hook {
+    struct Hook           hook;       /* must be first – a0 on entry */
+    struct RastPort      *rp;
+    struct URPDrawContext *dc;
+    const unsigned char  *p;
+    int                   remaining;
+    WORD                  startX;
+    WORD                  posY;
+    WORD                  finalX;     /* updated each call; all calls agree */
+    int                   forcedmono; /* 0 = proportional, 1 = forced-mono */
+    int                   firstCall;  /* limit glyph-not-found tracking */
+};
+
+/* Hook entry: called by DoHookClipRects once per visible ClipRect.
+ * a0 = struct Hook *, a2 = struct RastPort *, a1 = struct urp_bf_msg * */
+static void urp_cgx_clip_hook_func(
+        REG(a0, struct Hook          *h),
+        REG(a2, struct RastPort      *rp),
+        REG(a1, struct urp_bf_msg    *msg))
+{
+    struct urp_cgx_clip_hook     *hd = (struct urp_cgx_clip_hook *)h;
+    struct urp_blend_ctx          ctx;
+    APTR                          handle;
+    ULONG                         bmwidth, bmheight, pixfmt;
+    const struct urp_blend_vtable *vt;
+    unsigned long                 cp;
+    struct URPGlyphEntry         *ge;
+    WORD                          gx, gy, layer_x, layer_y;
+    const unsigned char          *p;
+    int                           remaining;
+    struct RastPort               crp; /* Layer=NULL copy for raw BltTemplate */
+
+    handle = LockBitMapTags(rp->BitMap,
+                            LBMI_PIXFMT,      (ULONG)&pixfmt,
+                            LBMI_BASEADDRESS, (ULONG)&ctx.base,
+                            LBMI_BYTESPERROW, (ULONG)&ctx.bpr,
+                            LBMI_WIDTH,       (ULONG)&bmwidth,
+                            LBMI_HEIGHT,      (ULONG)&bmheight,
+                            TAG_DONE);
+    if (!handle) return;
+
+    /* Clip strictly to this visible rectangle (screen coords). */
+    ctx.cx1 = msg->bf_Bounds.MinX;
+    ctx.cy1 = msg->bf_Bounds.MinY;
+    ctx.cx2 = (msg->bf_Bounds.MaxX + 1 < (WORD)bmwidth)  ? msg->bf_Bounds.MaxX + 1 : (WORD)bmwidth;
+    ctx.cy2 = (msg->bf_Bounds.MaxY + 1 < (WORD)bmheight) ? msg->bf_Bounds.MaxY + 1 : (WORD)bmheight;
+
+    /* Layer origin: converts window-local glyph coords to screen coords. */
+    layer_x = msg->bf_Layer ? msg->bf_Layer->bounds.MinX : 0;
+    layer_y = msg->bf_Layer ? msg->bf_Layer->bounds.MinY : 0;
+
+    /* Layer=NULL copy: required for raw bitmap access inside the hook.
+     * Docs: "make sure you use a copy of the RastPort and NULL the Layer". */
+    crp       = *rp;
+    crp.Layer = NULL;
+
+    vt = (pixfmt < 14) ? &urp_blend_table[pixfmt] : NULL;
+
+    p         = hd->p;
+    remaining = hd->remaining;
+
+    if (hd->forcedmono) {
+        WORD cellW = (hd->dc->monoAdvanceX > 0) ? hd->dc->monoAdvanceX : 8;
+        WORD curX  = hd->startX;
+        WORD centerOff;
+
+        while (1) {
+            cp = urp_utf8_next(&p, &remaining);
+            if (cp == 0) break;
+
+            if (cp == 0x09) {
+                curX += (WORD)((ULONG)hd->dc->tabSpaces * (ULONG)cellW);
+                continue;
+            }
+            ge = urp_get_glyph(hd->dc, cp, NULL, NULL);
+            if (!ge) {
+                if (hd->firstCall && hd->dc->numberOfGlyphsNotFound < MAX_CODE_NOT_FOUND)
+                    hd->dc->codeNotFound[hd->dc->numberOfGlyphsNotFound++] = (ULONG)cp;
+                ge = urp_get_notfound(hd->dc);
+            }
+            if (!ge || ge->width <= 0 || ge->rows <= 0) { curX += cellW; continue; }
+
+            centerOff = (cellW - ge->advanceX) / 2;
+            if (centerOff < 0) centerOff = 0;
+            gx = curX + centerOff + ge->bearingX;
+            gy = hd->posY - ge->bearingY;
+
+            switch (ge->pixelFmt) {
+                case URP_CACHE_MONO: {
+                    /* manually intersect glyph rect with clip rect */
+                    WORD sx  = (WORD)(gx + layer_x), sy = (WORD)(gy + layer_y);
+                    WORD bx1 = sx  > ctx.cx1 ? sx  : (WORD)ctx.cx1;
+                    WORD by1 = sy  > ctx.cy1 ? sy  : (WORD)ctx.cy1;
+                    WORD bx2 = sx + (WORD)ge->width < ctx.cx2 ? sx + (WORD)ge->width : (WORD)ctx.cx2;
+                    WORD by2 = sy + (WORD)ge->rows  < ctx.cy2 ? sy + (WORD)ge->rows  : (WORD)ctx.cy2;
+                    if (bx1 < bx2 && by1 < by2) {
+                        WORD srcx = bx1 - sx, srcy = by1 - sy;
+                        BltTemplate(
+                            (PLANEPTR)(ge->pixels + (ULONG)srcy * ge->pitch),
+                            (LONG)srcx, (LONG)ge->pitch,
+                            &crp, (LONG)bx1, (LONG)by1,
+                            (LONG)(bx2 - bx1), (LONG)(by2 - by1));
+                    }
+                    break;
+                }
+                case URP_CACHE_GRAY:
+                    if (vt && vt->gray) {
+                        ctx.ge = ge;
+                        ctx.dx = gx + layer_x;
+                        ctx.dy = gy + layer_y;
+                        vt->gray(&ctx, hd->dc);
+                    }
+                    break;
+                case URP_CACHE_RGBA:
+                    if (vt && vt->rgba) {
+                        ctx.ge = ge;
+                        ctx.dx = gx + layer_x;
+                        ctx.dy = gy + layer_y;
+                        vt->rgba(&ctx, hd->dc);
+                    }
+                    break;
+            }
+            curX += cellW;
+        }
+        hd->finalX = curX;
+
+    } else {
+        WORD curX = hd->startX;
+
+        while (1) {
+            cp = urp_utf8_next(&p, &remaining);
+            if (cp == 0) break;
+
+            if (cp == 0x09) {
+                curX += urp_tab_advance(hd->dc);
+                continue;
+            }
+            ge = urp_get_glyph(hd->dc, cp, NULL, NULL);
+            if (!ge) {
+                if (hd->firstCall && hd->dc->numberOfGlyphsNotFound < MAX_CODE_NOT_FOUND)
+                    hd->dc->codeNotFound[hd->dc->numberOfGlyphsNotFound++] = (ULONG)cp;
+                ge = urp_get_notfound(hd->dc);
+            }
+            if (!ge || ge->width <= 0 || ge->rows <= 0) {
+                if (ge) curX += ge->advanceX;
+                continue;
+            }
+            gx = curX + ge->bearingX;
+            gy = hd->posY - ge->bearingY;
+
+            switch (ge->pixelFmt) {
+                case URP_CACHE_MONO: {
+                    WORD sx  = (WORD)(gx + layer_x), sy = (WORD)(gy + layer_y);
+                    WORD bx1 = sx  > ctx.cx1 ? sx  : (WORD)ctx.cx1;
+                    WORD by1 = sy  > ctx.cy1 ? sy  : (WORD)ctx.cy1;
+                    WORD bx2 = sx + (WORD)ge->width < ctx.cx2 ? sx + (WORD)ge->width : (WORD)ctx.cx2;
+                    WORD by2 = sy + (WORD)ge->rows  < ctx.cy2 ? sy + (WORD)ge->rows  : (WORD)ctx.cy2;
+                    if (bx1 < bx2 && by1 < by2) {
+                        WORD srcx = bx1 - sx, srcy = by1 - sy;
+                        BltTemplate(
+                            (PLANEPTR)(ge->pixels + (ULONG)srcy * ge->pitch),
+                            (LONG)srcx, (LONG)ge->pitch,
+                            &crp, (LONG)bx1, (LONG)by1,
+                            (LONG)(bx2 - bx1), (LONG)(by2 - by1));
+                    }
+                    break;
+                }
+                case URP_CACHE_GRAY:
+                    if (vt && vt->gray) {
+                        ctx.ge = ge;
+                        ctx.dx = gx + layer_x;
+                        ctx.dy = gy + layer_y;
+                        vt->gray(&ctx, hd->dc);
+                    }
+                    break;
+                case URP_CACHE_RGBA:
+                    if (vt && vt->rgba) {
+                        ctx.ge = ge;
+                        ctx.dx = gx + layer_x;
+                        ctx.dy = gy + layer_y;
+                        vt->rgba(&ctx, hd->dc);
+                    }
+                    break;
+            }
+            curX += ge->advanceX;
+        }
+        hd->finalX = curX;
+    }
+
+    hd->firstCall = 0;
+    UnLockBitMap(handle);
+}
 
 static void urp_draw_text_cgx(struct RastPort      *rp,
                                struct URPDrawContext *dc,
@@ -1719,13 +1927,30 @@ static void urp_draw_text_cgx(struct RastPort      *rp,
     APTR                            handle;
     ULONG                           bmwidth, bmheight, pixfmt;
     const struct urp_blend_vtable  *vt;
-    struct Layer                   *layer;
     unsigned long                   cp;
     struct URPGlyphEntry           *ge;
     WORD                            gx, gy;
 
-    /* if Layer NULL, we'll clip against BitMap rectangle */
-    layer = rp->Layer;
+    if (rp->Layer) {
+        struct urp_cgx_clip_hook hd;
+        hd.hook.h_MinNode.mln_Succ = NULL;
+        hd.hook.h_MinNode.mln_Pred = NULL;
+        hd.hook.h_Entry    = (ULONG(*)())urp_cgx_clip_hook_func;
+        hd.hook.h_SubEntry = NULL;
+        hd.hook.h_Data     = NULL;
+        hd.rp         = rp;
+        hd.dc         = dc;
+        hd.p          = p;
+        hd.remaining  = remaining;
+        hd.startX     = pos->x;
+        hd.posY       = pos->y;
+        hd.finalX     = pos->x;
+        hd.forcedmono = 0;
+        hd.firstCall  = 1;
+        DoHookClipRects(&hd.hook, rp, NULL);
+        pos->x = hd.finalX;
+        return;
+    }
 
     handle = LockBitMapTags(rp->BitMap,
                             LBMI_PIXFMT,      (ULONG)&pixfmt,
@@ -1736,18 +1961,9 @@ static void urp_draw_text_cgx(struct RastPort      *rp,
                             TAG_DONE);
     if (!handle) return;
 
-    if(layer)
-    {
-        ctx.cx1 = layer->bounds.MinX;
-        ctx.cy1 = layer->bounds.MinY;
-        ctx.cx2 = (layer->bounds.MaxX + 1 < (WORD)bmwidth)  ? layer->bounds.MaxX + 1 : (WORD)bmwidth;
-        ctx.cy2 = (layer->bounds.MaxY + 1 < (WORD)bmheight) ? layer->bounds.MaxY + 1 : (WORD)bmheight;
-    } else
-    {
-        ctx.cx1 = ctx.cy1 = 0;
-        ctx.cx2 = bmwidth;
-        ctx.cy2 = bmheight;
-    }
+    ctx.cx1 = ctx.cy1 = 0;
+    ctx.cx2 = bmwidth;
+    ctx.cy2 = bmheight;
 
     vt = (pixfmt < 14) ? &urp_blend_table[pixfmt] : NULL;
 
@@ -1784,16 +2000,16 @@ static void urp_draw_text_cgx(struct RastPort      *rp,
             case URP_CACHE_GRAY:
                 if (vt && vt->gray) {
                     ctx.ge = ge;
-                    ctx.dx = gx + ctx.cx1;
-                    ctx.dy = gy + ctx.cy1;
+                    ctx.dx = gx;
+                    ctx.dy = gy;
                     vt->gray(&ctx, dc);
                 }
                 break;
             case URP_CACHE_RGBA:
                 if (vt && vt->rgba) {
                     ctx.ge = ge;
-                    ctx.dx = gx + ctx.cx1;
-                    ctx.dy = gy + ctx.cy1;
+                    ctx.dx = gx;
+                    ctx.dy = gy;
                     vt->rgba(&ctx, dc);
                 }
                 break;
@@ -1814,7 +2030,6 @@ static void urp_draw_text_cgx_forcedmono(struct RastPort      *rp,
     APTR                            handle;
     ULONG                           bmwidth, bmheight, pixfmt;
     const struct urp_blend_vtable  *vt;
-    struct Layer                   *layer;
     unsigned long                   cp;
     struct URPGlyphEntry           *ge;
     WORD                            gx, gy, cellW, centerOff;
@@ -1822,7 +2037,26 @@ static void urp_draw_text_cgx_forcedmono(struct RastPort      *rp,
     if (dc->monoAdvanceX <= 0) urp_compute_mono_advance(dc);
     cellW = (dc->monoAdvanceX > 0) ? dc->monoAdvanceX : 8;
 
-    layer = rp->Layer;
+    if (rp->Layer) {
+        struct urp_cgx_clip_hook hd;
+        hd.hook.h_MinNode.mln_Succ = NULL;
+        hd.hook.h_MinNode.mln_Pred = NULL;
+        hd.hook.h_Entry    = (ULONG(*)())urp_cgx_clip_hook_func;
+        hd.hook.h_SubEntry = NULL;
+        hd.hook.h_Data     = NULL;
+        hd.rp         = rp;
+        hd.dc         = dc;
+        hd.p          = p;
+        hd.remaining  = remaining;
+        hd.startX     = pos->x;
+        hd.posY       = pos->y;
+        hd.finalX     = pos->x;
+        hd.forcedmono = 1;
+        hd.firstCall  = 1;
+        DoHookClipRects(&hd.hook, rp, NULL);
+        pos->x = hd.finalX;
+        return;
+    }
 
     handle = LockBitMapTags(rp->BitMap,
                             LBMI_PIXFMT,      (ULONG)&pixfmt,
@@ -1833,16 +2067,9 @@ static void urp_draw_text_cgx_forcedmono(struct RastPort      *rp,
                             TAG_DONE);
     if (!handle) return;
 
-    if (layer) {
-        ctx.cx1 = layer->bounds.MinX;
-        ctx.cy1 = layer->bounds.MinY;
-        ctx.cx2 = (layer->bounds.MaxX + 1 < (WORD)bmwidth)  ? layer->bounds.MaxX + 1 : (WORD)bmwidth;
-        ctx.cy2 = (layer->bounds.MaxY + 1 < (WORD)bmheight) ? layer->bounds.MaxY + 1 : (WORD)bmheight;
-    } else {
-        ctx.cx1 = ctx.cy1 = 0;
-        ctx.cx2 = bmwidth;
-        ctx.cy2 = bmheight;
-    }
+    ctx.cx1 = ctx.cy1 = 0;
+    ctx.cx2 = bmwidth;
+    ctx.cy2 = bmheight;
 
     vt = (pixfmt < 14) ? &urp_blend_table[pixfmt] : NULL;
 
@@ -1880,16 +2107,16 @@ static void urp_draw_text_cgx_forcedmono(struct RastPort      *rp,
             case URP_CACHE_GRAY:
                 if (vt && vt->gray) {
                     ctx.ge = ge;
-                    ctx.dx = gx + ctx.cx1;
-                    ctx.dy = gy + ctx.cy1;
+                    ctx.dx = gx;
+                    ctx.dy = gy;
                     vt->gray(&ctx, dc);
                 }
                 break;
             case URP_CACHE_RGBA:
                 if (vt && vt->rgba) {
                     ctx.ge = ge;
-                    ctx.dx = gx + ctx.cx1;
-                    ctx.dy = gy + ctx.cy1;
+                    ctx.dx = gx;
+                    ctx.dy = gy;
                     vt->rgba(&ctx, dc);
                 }
                 break;

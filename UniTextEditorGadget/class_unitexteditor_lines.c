@@ -94,6 +94,72 @@ BOOL uted_pool_alloc(UTEDBitMapPool *pool, ULONG size,
 }
 
 /* =========================================================================
+ * uted_pool_growalloc
+ *
+ * Grow an existing pool to `newSize` entries WITHOUT freeing and
+ * reallocating the bitmaps that are already in it.
+ *
+ * Precondition: all lines must have returned their borrowed pointers
+ * (uted_line_evict_chunks called for every line) so freeCount == size
+ * and no line->chunks[] pointer references the old entries array.
+ *
+ * The chip-RAM bitmaps themselves never move; only the host-RAM wrapper
+ * structs (OffscreenBitMap) are copied into a fresh, larger array.
+ * =========================================================================
+ */
+BOOL uted_pool_growalloc(UTEDBitMapPool *pool, ULONG newSize, struct Screen *screen)
+{
+    ULONG            i;
+    ULONG            oldSize   = pool->size;
+    ULONG            allocCount;
+    OffscreenBitMap  *newEntries;
+    OffscreenBitMap **newFreeStack;
+    struct BitMap    *friendBM = screen ? screen->RastPort.BitMap : NULL;
+
+    if (newSize <= oldSize) return (pool->freeCount > 0);
+
+    newEntries = (OffscreenBitMap *)AllocVec(newSize * sizeof(OffscreenBitMap),
+                                              MEMF_ANY | MEMF_CLEAR);
+    newFreeStack = (OffscreenBitMap **)AllocVec(newSize * sizeof(OffscreenBitMap *),
+                                                 MEMF_ANY);
+    if (!newEntries || !newFreeStack) {
+        if (newEntries)   FreeVec(newEntries);
+        if (newFreeStack) FreeVec(newFreeStack);
+        return (pool->freeCount > 0);
+    }
+
+    /* Copy existing wrapper structs – only host-RAM pointers are copied;
+     * the chip-RAM bitmaps they point to stay at their original addresses. */
+    if (oldSize > 0)
+        CopyMem(pool->entries, newEntries, oldSize * sizeof(OffscreenBitMap));
+
+    /* Allocate bitmaps for the newly added slots */
+    allocCount = oldSize;
+    for (i = oldSize; i < newSize; i++) {
+        OffscreenBitMap_Init(&newEntries[i],
+                             LINE_CHUNK_WIDTH, (int)pool->height,
+                             0, BMF_CLEAR, friendBM);
+        if (!newEntries[i]._bm) break;
+        allocCount++;
+    }
+
+    /* All entries are free (precondition: caller evicted everything first) */
+    pool->freeCount = 0;
+    for (i = 0; i < allocCount; i++)
+        newFreeStack[pool->freeCount++] = &newEntries[i];
+
+    /* Release old host-RAM arrays only – bitmaps now live in newEntries */
+    FreeVec(pool->entries);
+    FreeVec(pool->freeStack);
+
+    pool->entries   = newEntries;
+    pool->freeStack = newFreeStack;
+    pool->size      = allocCount;
+
+    return (pool->freeCount > 0);
+}
+
+/* =========================================================================
  * uted_pool_free
  *
  * Close all pool bitmaps and free the two AllocVec'd arrays.

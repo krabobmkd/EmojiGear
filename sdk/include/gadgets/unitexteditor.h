@@ -435,6 +435,13 @@ typedef struct UTEDTextPosition {
  *   Default: FALSE. */
 #define UTED_AnsiUnixColors      (UTED_Dummy + 61)
 
+/* [WO] Flush the internal bdbprintf debug buffer to stdout.
+ * Set to TRUE from the application main task event loop.
+ * Only active when gadget is built with USE_DEBUG_BDBPRINT defined. */
+#define UTED_FlushDebugOutput    (UTED_Dummy + 62)
+#define UTED_SetMainProcess    (UTED_Dummy + 63)
+
+
 
 /* =========================================================================
  * Notification attribute tags   (base TAG_USER | 0x05C0)

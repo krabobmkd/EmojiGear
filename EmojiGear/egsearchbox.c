@@ -255,7 +255,12 @@ void EgSearchBox_Dispose(EgSearchBox *sb)
 void EgSearchBox_Open(EgSearchBox *sb)
 {
     if (!sb || !sb->windowObj) return;
-    if (sb->window) return; /* already open */
+    if (sb->window)
+    {
+        WindowToFront(sb->window);
+        ActivateWindow(sb->window);
+        return; /* already open */
+    }
 
     if (CurrentMainScreen) {
         SetAttrs(sb->windowObj,

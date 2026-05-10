@@ -530,6 +530,19 @@ static const EmojiSetDesc emojiSets[EMOJIBOX_NUM_SETS] = {
  * =========================================================================
  */
 
+/* Grid cell/header minimum dimensions and window size constants */
+#define EGRID_HDR_COL_MIN   72   /* min px for row-label column ("Sh+Ctrl" + pad) */
+#define EGRID_HDR_ROW_MIN   14   /* min px for column-label row (small font + 6) */
+#define EGRID_CELL_MIN_W    22   /* min px per emoji column (10 cols) */
+#define EGRID_CELL_MIN_H    24   /* min px per emoji row    (4 rows)  */
+#define EGRID_MIN_GAD_W  (EGRID_HDR_COL_MIN + 10 * EGRID_CELL_MIN_W)
+#define EGRID_MIN_GAD_H  (EGRID_HDR_ROW_MIN +  4 * EGRID_CELL_MIN_H)
+#define EBOXW_EXTRA_H    130     /* top bar + ANSI section + chrome + spacing */
+#define EBOXW_OPEN_W     400
+#define EBOXW_OPEN_H     280
+#define EBOXW_MIN_W  (EGRID_MIN_GAD_W + 8)
+#define EBOXW_MIN_H  (EGRID_MIN_GAD_H + EBOXW_EXTRA_H)
+
 /* Private tag base */
 #define EGRID_Dummy      (TAG_USER | 0x7400)
 #define EGRID_EmojiSet   (EGRID_Dummy + 1)  /* [IS] const char *[40]        */
@@ -617,9 +630,20 @@ static ULONG EmojiGrid_OnRender(Class *cl, Object *o, struct gpRender *msg)
     fontH    = rp->Font ? (WORD)rp->Font->tf_YSize    : 8;
     baseLine = rp->Font ? (WORD)rp->Font->tf_Baseline : 6;
 
-    /* Layout: fixed header sizes, equal cell widths/heights */
+    /* Layout: header sizes derived from font metrics, equal cell widths/heights */
     inst->headerRowH = fontH + 6;
-    inst->headerColW = 52;
+    {
+        /* Measure the widest row label so the column is never too tight */
+        WORD maxLblW = 0, ri;
+        for (ri = 0; ri < 4; ri++) {
+            WORD tw = (WORD)TextLength(rp, rowLabels[ri],
+                                       (ULONG)strlen(rowLabels[ri]));
+            if (tw > maxLblW) maxLblW = tw;
+        }
+        inst->headerColW = maxLblW + 14;
+        if (inst->headerColW < EGRID_HDR_COL_MIN)
+            inst->headerColW = EGRID_HDR_COL_MIN;
+    }
     {
         WORD cw = gw - inst->headerColW;
         WORD ch = gh - inst->headerRowH;
@@ -905,6 +929,41 @@ static ULONG EmojiGrid_OnGet(Class *cl, Object *o, struct opGet *msg)
 }
 
 /* -------------------------------------------------------------------------
+ * GM_DOMAIN  – report minimum / nominal / maximum dimensions to layout.class
+ * -------------------------------------------------------------------------*/
+static ULONG EmojiGrid_OnDomain(Class *cl, Object *o, struct gpDomain *msg)
+{
+    EmojiGridInst *inst    = EGRID_INST(cl, o);
+    struct IBox   *domain  = &msg->gpd_Domain;
+
+    /* Use cached metrics from the last GM_RENDER, or fall back to safe estimates */
+    WORD hColW   = (inst->headerColW > 0) ? inst->headerColW : EGRID_HDR_COL_MIN;
+    WORD hRowH   = (inst->headerRowH > 0) ? inst->headerRowH : EGRID_HDR_ROW_MIN;
+    WORD emojiH  = (inst->fontHeight  > 0) ? inst->fontHeight : EGRID_CELL_MIN_H;
+    WORD cellHMin = (emojiH + 4 > EGRID_CELL_MIN_H) ? emojiH + 4 : EGRID_CELL_MIN_H;
+
+    domain->Left = 0;
+    domain->Top  = 0;
+
+    switch (msg->gpd_Which) {
+    case GDOMAIN_MINIMUM:
+        domain->Width  = hColW + 10 * EGRID_CELL_MIN_W;
+        domain->Height = hRowH +  4 * cellHMin;
+        break;
+    case GDOMAIN_MAXIMUM:
+        domain->Width  = 32767;
+        domain->Height = 32767;
+        break;
+    case GDOMAIN_NOMINAL:
+    default:
+        domain->Width  = hColW + 10 * (EGRID_CELL_MIN_W * 3);
+        domain->Height = hRowH +  4 * (cellHMin * 2);
+        break;
+    }
+    return 1;
+}
+
+/* -------------------------------------------------------------------------
  * Dispatcher
  * -------------------------------------------------------------------------*/
 static ULONG ASM SAVEDS EmojiGrid_Dispatch(
@@ -917,6 +976,7 @@ static ULONG ASM SAVEDS EmojiGrid_Dispatch(
     case OM_UPDATE:      return EmojiGrid_OnSet(cl, o, (struct opSet *)msg);
     case OM_GET:         return EmojiGrid_OnGet(cl, o, (struct opGet *)msg);
     case GM_HITTEST:     return GMR_GADGETHIT;
+    case GM_DOMAIN:      return EmojiGrid_OnDomain(cl, o, (struct gpDomain *)msg);
     case GM_RENDER:      return EmojiGrid_OnRender(cl, o, (struct gpRender *)msg);
     case GM_GOACTIVE:    return EmojiGrid_OnGoActive(cl, o, (struct gpInput *)msg);
     case GM_HANDLEINPUT: return EmojiGrid_OnHandleInput(cl, o, (struct gpInput *)msg);
@@ -930,9 +990,6 @@ static ULONG ASM SAVEDS EmojiGrid_Dispatch(
  * =========================================================================
  */
 
-/* Minimum window dimensions */
-#define EBOXW_MIN_W  380
-#define EBOXW_MIN_H  220
 
 /* -------------------------------------------------------------------------
  * EmojiBoxWindow_Init
@@ -1169,10 +1226,10 @@ static BOOL EmojiBoxWindow_Create(EmojiBoxWindow *ebw, struct App *curApp)
     ebw->windowObj = (Object *)NewObject(WINDOW_GetClass(), NULL,
         WA_Left,   120,
         WA_Top,    100,
-        WA_Width,  EBOXW_MIN_W,
-        WA_Height, EBOXW_MIN_H,
-        WA_MinWidth,  EBOXW_MIN_W / 2,
-        WA_MinHeight, EBOXW_MIN_H / 2,
+        WA_Width,  EBOXW_OPEN_W,
+        WA_Height, EBOXW_OPEN_H,
+        WA_MinWidth,  EBOXW_MIN_W,
+        WA_MinHeight, EBOXW_MIN_H,
         WA_IDCMP,  IDCMP_CLOSEWINDOW | IDCMP_GADGETUP | IDCMP_NEWSIZE | IDCMP_RAWKEY,
         WA_Flags,  WFLG_DRAGBAR | WFLG_DEPTHGADGET | WFLG_CLOSEGADGET |
                    WFLG_SIZEGADGET | WFLG_ACTIVATE | WFLG_SMART_REFRESH,

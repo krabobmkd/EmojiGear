@@ -665,7 +665,11 @@ UTED_WordWrap,FALSE,// test
             ULONG result, waitedSignals, currentSignals;
             ULONG settingsSig, fontsSig, searchBoxSig, emojiBoxSig;
 
-            flushbdbprint();
+            // flushbdbprint();
+            // if(app->textEditorObj)
+            // {
+            //     SetAttrs(app->textEditorObj,UTED_FlushDebugOutput,TRUE,TAG_END);
+            // }
 
             settingsSig  = EgSettingsView_GetSignalMask(&app->settingsView);
             fontsSig     = EgFontsView_GetSignalMask(&app->fontsView);
@@ -1225,7 +1229,7 @@ void OpenSearchBox()
         if(CurrentMainScreen->Font) pointSize = CurrentMainScreen->Font->ta_YSize;
         EgSearchBox_Create(&app->searchBox,pointSize);
     }
-    if(app->searchBox.windowObj && !app->searchBox.window)
+    if(app->searchBox.windowObj /* no because refocus && !app->searchBox.window*/)
     {
         EgSearchBox_Open(&app->searchBox);
     }

@@ -331,7 +331,12 @@ BOOL EgSettingsView_Init(EgSettingsView *psv, const char *title)
 void EgSettingsView_Open(EgSettingsView *psv)
 {
     if (!psv || !psv->windowObj) return;
-    if (psv->window) return; /* already open */
+    if (psv->window)
+    {
+        WindowToFront(psv->window);
+        ActivateWindow(psv->window);
+        return; /* already open */
+    }
 
     if (CurrentMainScreen) {
         SetAttrs(psv->windowObj,

@@ -38,7 +38,7 @@
 #include <graphics/gfx.h>
 #include <stdio.h>
 #include "unitexteditor_private.h"
-
+#include "bdbprintf.h"
 
 static BOOL uted_is_word_char_at(UniTextEditorLine *ln, ULONG ch)
 {
@@ -68,7 +68,6 @@ static void uted_do_layout( Class *cl, Object *o,
                             WORD               newHeight,
                             struct Screen     *screen)
 {
-    BOOL rebuildPool = FALSE;
     UniTextEditorData *inst   = UTED_DATA(cl, o);
 
     /* Word-wrap: width change alters wrap points → must rebuild map */
@@ -92,27 +91,43 @@ static void uted_do_layout( Class *cl, Object *o,
         /* +1 for partial boundary chunk, +2*POOL_H_CHUNK_BUFFER for warm
          * chunks kept on both sides during horizontal scrolling. */
         ULONG chunksPerLine = ((ULONG)newWidth + LINE_CHUNK_WIDTH - 1)
-                              / LINE_CHUNK_WIDTH + 1 + 2 * POOL_H_CHUNK_BUFFER;
+                              / LINE_CHUNK_WIDTH + 1 + (2 * POOL_H_CHUNK_BUFFER);
         ULONG neededSize    = ((ULONG)inst->visibleLines + 2 * POOL_LINE_BUFFER)
                               * chunksPerLine;
 
-        rebuildPool = (!inst->bmPool.entries
-                       || inst->bmPool.height != (UWORD)inst->lineHeightBase
-                       || inst->bmPool.size    < neededSize);
+        {
+            BOOL noPool        = (!inst->bmPool.entries);
+            BOOL heightChanged = (!noPool &&
+                                  inst->bmPool.height != (UWORD)inst->lineHeightBase);
+            BOOL tooSmall      = (!noPool && !heightChanged &&
+                                  inst->bmPool.size < neededSize);
 
-        if (rebuildPool) {
-            UniTextEditorLine *line;
+            if (noPool || heightChanged || tooSmall) {
+                UniTextEditorLine *line;
+                struct Screen *useScreen = screen ? screen : inst->screen;
 
-            /* Return all borrowed bitmaps before freeing the pool */
-            for (line = (UniTextEditorLine *)inst->lines.mlh_Head;
-                 line->node.mln_Succ;
-                 line = (UniTextEditorLine *)line->node.mln_Succ)
-                uted_line_evict_chunks(inst, line);
+                // bdbprintf(" *** rebuildPool noPool=%d heightChanged=%d tooSmall=%d old=%d need=%d\n",
+                //           (int)noPool, (int)heightChanged, (int)tooSmall,
+                //           (int)inst->bmPool.size, (int)neededSize);
 
-            uted_pool_free(&inst->bmPool);
-            uted_pool_alloc(&inst->bmPool, neededSize,
-                            (UWORD)inst->lineHeightBase,
-                            screen ? screen : inst->screen);
+                /* Return all borrowed bitmaps before touching the pool */
+                for (line = (UniTextEditorLine *)inst->lines.mlh_Head;
+                     line->node.mln_Succ;
+                     line = (UniTextEditorLine *)line->node.mln_Succ)
+                    uted_line_evict_chunks(inst, line);
+
+                if (noPool || heightChanged) {
+                    /* Line height changed (font resize) or first alloc:
+                     * existing bitmaps have the wrong dimensions – rebuild. */
+                    uted_pool_free(&inst->bmPool);
+                    uted_pool_alloc(&inst->bmPool, neededSize,
+                                    (UWORD)inst->lineHeightBase, useScreen);
+                } else {
+                    /* Same line height, window grew: reuse existing bitmaps,
+                     * allocate only the additional slots needed. */
+                    uted_pool_growalloc(&inst->bmPool, neededSize, useScreen);
+                }
+            }
         }
     }
 
@@ -159,11 +174,23 @@ static void uted_do_layout( Class *cl, Object *o,
  */
 ULONG UniTextEditor_OnLayout(Class *cl, Object *o, struct gpLayout *msg)
 {
-   // UniTextEditorData *inst   = UTED_DATA(cl, o);
-    struct Screen     *screen = msg->gpl_GInfo ? msg->gpl_GInfo->gi_Screen : NULL;
+    UniTextEditorData *inst   = UTED_DATA(cl, o);
+/* layouting from here should not be problematic,
+ * but we have AllocBitMap and layers things to do.
+   on "some configurations" or video driver this happens
+   on the wrong context, so we just ask an external refresh
+   from a regular process context , and layouting will ocuur from GM_RENDER.
 
-// return 1; // test
-    uted_do_layout(cl,o, G(o)->Width, G(o)->Height, screen);
+*/
+    if(FindTask(NULL) == inst->callerTask)
+    {
+        struct Screen     *screen = msg->gpl_GInfo ? msg->gpl_GInfo->gi_Screen : NULL;
+        uted_do_layout(cl,o, G(o)->Width, G(o)->Height, screen);
+    }else
+    if (msg->gpl_GInfo)
+    {
+        uted_notify(cl, o, msg->gpl_GInfo, UTEDN_ScrollChanged, inst->scrollTopLine);
+    }
 
     return TRUE;
 }
@@ -229,7 +256,7 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
     WORD               top    = G(o)->TopEdge;
     WORD               width  = G(o)->Width;
     WORD               height = G(o)->Height;
-    struct Screen     *scr    = msg->gpr_GInfo ? msg->gpr_GInfo->gi_Screen : NULL;
+    struct Screen     *scr;
 
     ULONG   lineIdx;
     WORD    absY;
@@ -246,6 +273,22 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
     ULONG   rStart, rEnd;
     bevelLeft = 0;
     bevelTop  = 0;
+
+    /* forbid out of context rendering - else crash on some video drivers */
+    if(!rp || !(msg->gpr_GInfo)) return TRUE;
+    scr    = msg->gpr_GInfo->gi_Screen;
+    if(!scr) return TRUE;
+    /* there is a necessity to not draw from interuptions,
+     * device contexts, etc...
+     * No idea why, but my A1200 pistorm with OS 3.2.3+ P96 indivision
+     * send the resize draw from "Another context"
+     * When my UAE also OS3.2.3 , also P96 indi, wether it uses
+     * AGA or P96, send it on regular task...
+     */
+    // if(FindTask(NULL) != inst->callerTask)
+    // {
+    //     return TRUE;
+    // }
 
 // bdbprintf("UniTextEditor_OnRender t:%08x\n",(int)FindTask(NULL));
 
@@ -286,6 +329,13 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
     needLayout = (width  != inst->layoutedWidth  ||
                   height != inst->layoutedHeight ||
                   (scr && scr != inst->screen));
+    /* layouting need loud alloc can only be support from the correct context
+        well to please some video drivers
+    */
+    if(needLayout && (FindTask(NULL) != inst->callerTask))
+    {
+        return TRUE;
+    }
 
     if (msg->gpr_Redraw != GREDRAW_UPDATE || needLayout) {
         isFullRefresh = TRUE;
@@ -301,8 +351,9 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
     inst->refreshEndLine   = ~0L;
 
     if (needLayout)
+    {
         uted_do_layout(cl, o, width, height, scr);
-
+    }
     /* Rebuild wrap map if text or width changed since last render */
     if (inst->wordWrap && inst->wrapMapDirty)
         uted_rebuild_wrap_map(inst);
@@ -981,9 +1032,14 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
 
     /* Fill margin strips on full refresh, when inner clipping disabled ! */
 
-    if (inst->redrawBevel) {
-
-        DrawImage(rp,inst->bevel,0,0);
+    /*on some amiga configuration
+     * redrawing all is mandatory
+     * if (inst->redrawBevel)*/
+    {
+        if(inst->bevel)
+        {
+            DrawImage(rp,inst->bevel,0,0);
+        }
         inst->redrawBevel = FALSE;
 
         SetAPen(rp, (LONG)inst->bgPen);

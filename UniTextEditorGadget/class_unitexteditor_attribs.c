@@ -17,6 +17,7 @@
 #include <string.h>
 #include <stdio.h>
 #include "unitexteditor_private.h"
+#include "bdbprintf.h"
 #ifdef STATIC_UTF8RASTPORT
     #include "utf8rastport.h"
 #else
@@ -487,6 +488,7 @@ ULONG UniTextEditor_OnNew(Class *cl, Object *o, struct opSet *msg)
     inst->halfwayPen   = 0;
 
     inst->bevel = NULL;
+    inst->callerTask = FindTask(NULL);
 
     /* URPDrawContext font configuration may be external and shared */
     {
@@ -1051,6 +1053,7 @@ ULONG UniTextEditor_OnSet(Class *cl, Object *o, struct opSet *msg)
             UWORD  qualifier = (UWORD)((packed >> 16) & 0xFFFF);
             BOOL   shift     = (qualifier & (IEQUALIFIER_LSHIFT | IEQUALIFIER_RSHIFT))
                                ? TRUE : FALSE;
+            BOOL   ctrl      = (qualifier & IEQUALIFIER_CONTROL) ? TRUE : FALSE;
             BOOL   navHandled = FALSE;
 
             /* Ignore key-up events */
@@ -1218,10 +1221,38 @@ ULONG UniTextEditor_OnSet(Class *cl, Object *o, struct opSet *msg)
                 UniTextEditor_DoMoveCursor(cl, o,  1,  0, shift);
                 navHandled = TRUE; break;
             case RAWKEY_UP:
-                UniTextEditor_DoMoveCursor(cl, o,  0, -1, shift);
+                if (ctrl) {
+                    ULONG curVisRow  = uted_cursor_visual_row(inst);
+                    ULONG topRow     = inst->scrollTopLine;
+                    if (curVisRow > topRow) {
+                        /* move cursor to first visible row */
+                        UniTextEditor_DoMoveCursor(cl, o, 0,
+                            -(LONG)(curVisRow - topRow), shift);
+                    } else {
+                        /* already at top of page: scroll one full page up */
+                        LONG vis = (LONG)(inst->visibleLines > 1 ? inst->visibleLines - 1 : 1);
+                        UniTextEditor_DoMoveCursor(cl, o, 0, -vis, shift);
+                    }
+                } else {
+                    UniTextEditor_DoMoveCursor(cl, o,  0, -1, shift);
+                }
                 navHandled = TRUE; break;
             case RAWKEY_DOWN:
-                UniTextEditor_DoMoveCursor(cl, o,  0,  1, shift);
+                if (ctrl) {
+                    ULONG curVisRow  = uted_cursor_visual_row(inst);
+                    ULONG vis        = (ULONG)(inst->visibleLines > 1 ? inst->visibleLines - 1 : 1);
+                    ULONG lastVisRow = inst->scrollTopLine + vis;
+                    if (curVisRow < lastVisRow) {
+                        /* move cursor to last visible row */
+                        UniTextEditor_DoMoveCursor(cl, o, 0,
+                            (LONG)(lastVisRow - curVisRow), shift);
+                    } else {
+                        /* already at bottom of page: scroll one full page down */
+                        UniTextEditor_DoMoveCursor(cl, o, 0, (LONG)vis, shift);
+                    }
+                } else {
+                    UniTextEditor_DoMoveCursor(cl, o,  0,  1, shift);
+                }
                 navHandled = TRUE; break;
             case RAWKEY_PGUP: {
                 LONG vis = (LONG)(inst->visibleLines > 1 ? inst->visibleLines - 1 : 1);
@@ -1901,6 +1932,13 @@ ULONG UniTextEditor_OnSet(Class *cl, Object *o, struct opSet *msg)
             result = 1;
             break;
         }
+
+        case UTED_FlushDebugOutput:
+            flushbdbprint();
+            break;
+        case UTED_SetMainProcess:
+
+        break;
 
         default: break;
         }
