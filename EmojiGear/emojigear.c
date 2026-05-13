@@ -749,9 +749,10 @@ UTED_WordWrap,FALSE,// test
                     break;
                     case WMHI_VANILLAKEY:
                     {
-                        ULONG key = (result & 0x0FF);
+                        ULONG key = (result & 0x00FF);
                         ULONG qualifiers=0;
                         GetAttr(WINDOW_Qualifier,app->window_obj,&qualifiers);
+                        printf("vk:%08x q:%08x\n",key,qualifiers);
                         /* Intuition already applied dead-key/shift composition;
                          * the low byte is the final character in the keymap encoding. */
 

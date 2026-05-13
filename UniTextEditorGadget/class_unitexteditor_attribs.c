@@ -1276,97 +1276,98 @@ ULONG UniTextEditor_OnSet(Class *cl, Object *o, struct opSet *msg)
                  * to UTF-8; 0x80-0xFF is encoded as a 2-byte UTF-8 sequence.
                  * Eastern European keymaps (ISO 8859-2 etc.) will mis-encode
                  * characters in the 0x80-0xFF range — see UTED_PutRawKey docs. */
-                struct InputEvent ie;
-                UBYTE mapbuf[8];
-                WORD  nchars;
-#define RAWKEY_F1  0x50
-#define RAWKEY_F10  0x59
-#define RAWKEY_HELP  0x5F
-                /*we're not interested in some keys... (does print garbage) */
-                if(keycode>=RAWKEY_F1 && keycode<=RAWKEY_F10) break;
-                if(keycode == RAWKEY_HELP) break;
+//                 struct InputEvent ie;
 
-                memset(&ie, 0, sizeof(ie));
-                ie.ie_Class     = IECLASS_RAWKEY;
-                ie.ie_Code      = keycode;
-                ie.ie_Qualifier = qualifier;
+//                 UBYTE mapbuf[8];
+//                 WORD  nchars;
+// #define RAWKEY_F1  0x50
+// #define RAWKEY_F10  0x59
+// #define RAWKEY_HELP  0x5F
+//                 /*we're not interested in some keys... (does print garbage) */
+//                 if(keycode>=RAWKEY_F1 && keycode<=RAWKEY_F10) break;
+//                 if(keycode == RAWKEY_HELP) break;
 
-                nchars = MapRawKey(&ie, (STRPTR)mapbuf, (LONG)sizeof(mapbuf), NULL);
+//                 memset(&ie, 0, sizeof(ie));
+//                 ie.ie_Class     = IECLASS_RAWKEY;
+//                 ie.ie_Code      = keycode;
+//                 ie.ie_Qualifier = qualifier;
 
-                if (nchars > 0) {
-                    UBYTE ch = mapbuf[0];
+//                 nchars = MapRawKey(&ie, (STRPTR)mapbuf, (LONG)sizeof(mapbuf), NULL);
 
-                    if (nchars == 1) {
-                        /* Operations valid even in read-only mode */
-                        if (ch == 0x1B) {                   /* Escape */
-                            UniTextEditor_DoClearSelection(cl, o);
-                            redraw = TRUE; result = 1;
-                        } else if (ch == 0x01) {            /* Ctrl+A – select all */
-                            UniTextEditor_DoSelectAll(cl, o);
-                            redraw = TRUE; result = 1;
-                        } else if (!inst->readOnly) {
-                            if (ch == 0x08) {               /* Backspace */
-                                UniTextEditor_DoDeleteChar(cl, o, -1);
-                                redraw = TRUE; result = 1;
-                            } else if (ch == 0x7F) {        /* Delete */
-                                UniTextEditor_DoDeleteChar(cl, o,  1);
-                                redraw = TRUE; result = 1;
-                            } else if (ch == 0x0D || ch == 0x0A) { /* Return */
-                                if (inst->noLineFeed) {
-                                    uted_notify(cl, o, msg->ops_GInfo, UTEDN_EnterPressed, 0);
-                                    result = 1;
-                                } else {
-                                    UniTextEditor_DoInsertText(cl, o, "\n", 1);
-                                    redraw = TRUE; result = 1;
-                                }
-                            } else if (ch == 0x09) {        /* Tab (via MapRawKey, fallback) */
-                                UniTextEditor_DoInsertText(cl, o, "\t", 1);
-                                redraw = TRUE; result = 1;
-                            } else if (ch == 0x1A) {        /* Ctrl+Z – undo */
-                                UniTextEditor_DoUndo(cl, o);
-                                uted_undo_notify(cl, o, msg->ops_GInfo);
-                                redraw = TRUE; result = 1;
-                            } else if (ch == 0x19) {        /* Ctrl+Y – redo */
-                                UniTextEditor_DoRedo(cl, o);
-                                uted_undo_notify(cl, o, msg->ops_GInfo);
-                                redraw = TRUE; result = 1;
-                            } else if (ch >= 0x20) {        /* Printable Latin-1 */
-                                char u[3];
-                                ULONG ul;
-                                if (ch < 0x80) {
-                                    u[0] = (char)ch; ul = 1;
-                                } else {
-                                    u[0] = (char)(0xC0 | (ch >> 6));
-                                    u[1] = (char)(0x80 | (ch & 0x3F));
-                                    ul = 2;
-                                }
-                                UniTextEditor_DoInsertText(cl, o, u, (LONG)ul);
-                                redraw = TRUE; result = 1;
-                            }
-                            /* other control chars < 0x20: silently ignored */
-                        }
-                    } else if (!inst->readOnly) {
-                        /* Multi-char translation (rare): insert printable bytes only */
-                        char utf8[24];
-                        ULONG utf8len = 0;
-                        WORD  i;
-                        for (i = 0; i < nchars && utf8len < 20; i++) {
-                            UBYTE c = mapbuf[i];
-                            if (c >= 0x20) {
-                                if (c < 0x80) {
-                                    utf8[utf8len++] = (char)c;
-                                } else {
-                                    utf8[utf8len++] = (char)(0xC0 | (c >> 6));
-                                    utf8[utf8len++] = (char)(0x80 | (c & 0x3F));
-                                }
-                            }
-                        }
-                        if (utf8len > 0) {
-                            UniTextEditor_DoInsertText(cl, o, utf8, (LONG)utf8len);
-                            redraw = TRUE; result = 1;
-                        }
-                    }
-                }
+//                 if (nchars > 0) {
+//                     UBYTE ch = mapbuf[0];
+
+//                     if (nchars == 1) {
+//                         /* Operations valid even in read-only mode */
+//                         if (ch == 0x1B) {                   /* Escape */
+//                             UniTextEditor_DoClearSelection(cl, o);
+//                             redraw = TRUE; result = 1;
+//                         } else if (ch == 0x01) {            /* Ctrl+A – select all */
+//                             UniTextEditor_DoSelectAll(cl, o);
+//                             redraw = TRUE; result = 1;
+//                         } else if (!inst->readOnly) {
+//                             if (ch == 0x08) {               /* Backspace */
+//                                 UniTextEditor_DoDeleteChar(cl, o, -1);
+//                                 redraw = TRUE; result = 1;
+//                             } else if (ch == 0x7F) {        /* Delete */
+//                                 UniTextEditor_DoDeleteChar(cl, o,  1);
+//                                 redraw = TRUE; result = 1;
+//                             } else if (ch == 0x0D || ch == 0x0A) { /* Return */
+//                                 if (inst->noLineFeed) {
+//                                     uted_notify(cl, o, msg->ops_GInfo, UTEDN_EnterPressed, 0);
+//                                     result = 1;
+//                                 } else {
+//                                     UniTextEditor_DoInsertText(cl, o, "\n", 1);
+//                                     redraw = TRUE; result = 1;
+//                                 }
+//                             } else if (ch == 0x09) {        /* Tab (via MapRawKey, fallback) */
+//                                 UniTextEditor_DoInsertText(cl, o, "\t", 1);
+//                                 redraw = TRUE; result = 1;
+//                             } else if (ch == 0x1A) {        /* Ctrl+Z – undo */
+//                                 UniTextEditor_DoUndo(cl, o);
+//                                 uted_undo_notify(cl, o, msg->ops_GInfo);
+//                                 redraw = TRUE; result = 1;
+//                             } else if (ch == 0x19) {        /* Ctrl+Y – redo */
+//                                 UniTextEditor_DoRedo(cl, o);
+//                                 uted_undo_notify(cl, o, msg->ops_GInfo);
+//                                 redraw = TRUE; result = 1;
+//                             } else if (ch >= 0x20) {        /* Printable Latin-1 */
+//                                 char u[3];
+//                                 ULONG ul;
+//                                 if (ch < 0x80) {
+//                                     u[0] = (char)ch; ul = 1;
+//                                 } else {
+//                                     u[0] = (char)(0xC0 | (ch >> 6));
+//                                     u[1] = (char)(0x80 | (ch & 0x3F));
+//                                     ul = 2;
+//                                 }
+//                                 UniTextEditor_DoInsertText(cl, o, u, (LONG)ul);
+//                                 redraw = TRUE; result = 1;
+//                             }
+//                             /* other control chars < 0x20: silently ignored */
+//                         }
+//                     } else if (!inst->readOnly) {
+//                         /* Multi-char translation (rare): insert printable bytes only */
+//                         char utf8[24];
+//                         ULONG utf8len = 0;
+//                         WORD  i;
+//                         for (i = 0; i < nchars && utf8len < 20; i++) {
+//                             UBYTE c = mapbuf[i];
+//                             if (c >= 0x20) {
+//                                 if (c < 0x80) {
+//                                     utf8[utf8len++] = (char)c;
+//                                 } else {
+//                                     utf8[utf8len++] = (char)(0xC0 | (c >> 6));
+//                                     utf8[utf8len++] = (char)(0x80 | (c & 0x3F));
+//                                 }
+//                             }
+//                         }
+//                         if (utf8len > 0) {
+//                             UniTextEditor_DoInsertText(cl, o, utf8, (LONG)utf8len);
+//                             redraw = TRUE; result = 1;
+//                         }
+//                     }
+//                 }
                 /* nchars == 0: unmapped key, silently ignore */
             }
             break;
