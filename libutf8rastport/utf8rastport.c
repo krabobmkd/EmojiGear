@@ -1041,6 +1041,16 @@ struct URPDrawContext *URPDC_Create(REG(a0, const char *name))
 
     dc->useCount = 1;
 
+    if(GfxBase->LibNode.lib_Version<46)
+    {
+        dc->graphicsBlitNeedChipRamSource = TRUE;
+        dc->tempChipRamSize = 8*40; /* likely 2 color max character size */
+        dc->tempChipRam = AllocMem(dc->tempChipRamSize,MEMF_CHIP);
+    } else
+    {
+        dc->graphicsBlitNeedChipRamSource = FALSE;
+    }
+
     return dc;
 }
 
@@ -1073,6 +1083,10 @@ void URPDC_Release(REG(a0, struct URPDrawContext *dc))
     if (dc->hqScratch) { FreeVec(dc->hqScratch); dc->hqScratch = NULL; }
 
     FT_Done_FreeType(dc->library);
+    if(dc->tempChipRam)
+    {
+        FreeMem(dc->tempChipRam,dc->tempChipRamSize);
+    }
     FreeVec(dc);
 }
 
@@ -2170,9 +2184,25 @@ static void urp_draw_text_clut(struct RastPort      *rp,
 
         switch (ge->pixelFmt) {
             case URP_CACHE_MONO:
-                BltTemplate((PLANEPTR)ge->pixels, 0, (LONG)ge->pitch,
-                            rp, (LONG)gx, (LONG)gy,
-                            (LONG)ge->width, (LONG)ge->rows);
+            {
+                if(dc->graphicsBlitNeedChipRamSource)
+                {
+                    ULONG maskSize = ge->rows * ge->pitch;
+                    if(maskSize<=dc->tempChipRamSize)
+                    {
+                        CopyMem(ge->pixels,dc->tempChipRam,maskSize);
+                        BltTemplate((PLANEPTR)dc->tempChipRam, 0, (LONG)ge->pitch,
+                                rp, (LONG)gx, (LONG)gy,
+                                (LONG)ge->width, (LONG)ge->rows);
+                    }
+                } else
+                {
+                    BltTemplate((PLANEPTR)ge->pixels, 0, (LONG)ge->pitch,
+                                rp, (LONG)gx, (LONG)gy,
+                                (LONG)ge->width, (LONG)ge->rows);
+
+                }
+            }
                 break;
             case URP_CACHE_GRAY:
                 if (dc->clutValid && dc->lastFriendBitmap) {
@@ -2255,9 +2285,23 @@ static void urp_draw_text_clut_forcedmono(struct RastPort      *rp,
 
         switch (ge->pixelFmt) {
             case URP_CACHE_MONO:
-                BltTemplate((PLANEPTR)ge->pixels, 0, (LONG)ge->pitch,
-                            rp, (LONG)gx, (LONG)gy,
-                            (LONG)ge->width, (LONG)ge->rows);
+                if(dc->graphicsBlitNeedChipRamSource)
+                {
+                    ULONG maskSize = ge->rows * ge->pitch;
+                    if(maskSize<=dc->tempChipRamSize)
+                    {
+                        CopyMem(ge->pixels,dc->tempChipRam,maskSize);
+                        BltTemplate((PLANEPTR)dc->tempChipRam, 0, (LONG)ge->pitch,
+                                rp, (LONG)gx, (LONG)gy,
+                                (LONG)ge->width, (LONG)ge->rows);
+                    }
+                } else
+                {
+                    BltTemplate((PLANEPTR)ge->pixels, 0, (LONG)ge->pitch,
+                                rp, (LONG)gx, (LONG)gy,
+                                (LONG)ge->width, (LONG)ge->rows);
+                }
+
                 break;
             case URP_CACHE_GRAY:
                 if (dc->clutValid && dc->lastFriendBitmap) {

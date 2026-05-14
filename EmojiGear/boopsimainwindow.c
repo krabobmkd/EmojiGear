@@ -16,6 +16,10 @@
 #include <datatypes/datatypes.h>
 #include <datatypes/pictureclass.h>
 
+
+#include <proto/layout.h>
+#include <gadgets/layout.h>
+
 #include <proto/window.h>
 #include <classes/window.h>
 
@@ -263,6 +267,22 @@ void GenericOpenWindow(BoopsiMainWindow *mw,Object *window_obj,struct AppSetting
                             TAG_END);
     }
 
+    /* test for OS3.9 layout problems */
+    // {
+    //     struct Gadget *mlayout=NULL;
+    //     GetAttr(WINDOW_ParentGroup,window_obj,(ULONG *)&mlayout);
+
+    //     if(mlayout)
+    //     {
+    //         RethinkLayout( mlayout,CurrentMainWindow,NULL,TRUE);
+
+    //         // SetGadgetAttrs(mlayout,CurrentMainWindow,NULL,
+    //         //     GA_Width,w,
+    //         //     GA_Height,h,
+    //         //     TAG_END
+    //         //         );
+    //     }
+    // }
 
   //  ActivateGadget((struct Gadget *)app->textEditorObj,CurrentMainWindow,NULL);
 
@@ -479,6 +499,10 @@ void BMainWindow_SwitchToWB(struct BoopsiMainWindow *mw,Object *window_obj,struc
         WA_SizeGadget,TRUE,
         WA_DepthGadget,TRUE,
         WA_CloseGadget,TRUE,
+
+        WA_SizeBBottom,TRUE, /* both ! */
+        WA_SizeBRight,TRUE,
+
         WA_ReportMouse, TRUE,
         WA_Title,(ULONG)&mw->title[0],
         WINDOW_IconifyGadget, TRUE,

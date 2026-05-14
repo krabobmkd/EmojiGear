@@ -46,7 +46,7 @@ void flushbdbprint(void)
     if (bdb_position > 0) {
         bdb_buffer[bdb_position] = '\0';
         Printf(bdb_buffer);
-        fflush(stdout);
+       // fflush(stdout);
         bdb_position = 0;
         bdb_buffer[0] = '\0';
     }

@@ -95,6 +95,20 @@ struct URPDrawContext {
     ULONG                prefFlags;
     struct URPGlyphCache cache;
 
+    /*OS3.9 graphics.library <=40 bitmap bliting functions
+     * can only blit from chip memory, which is a limitation of the
+     * blitter hardware. yet OS3.2 graphics can blit from fast ram to chip ram,
+     * and blit with cpu in that case.
+     * for 2 color glyphs and masks, Freetype produces an amiga compatible
+     *  correct "planar" 2byte aligned bitmap format in fast,
+     *  So to save chip memory the best solution is to do a quick copy in a
+     *  small chip buffer before blitting.
+     */
+    UWORD *tempChipRam;
+    ULONG tempChipRamSize;
+    /* This is totally guessed from graphics version number */
+    ULONG graphicsBlitNeedChipRamSource;
+
     /* Foreground colour for GRAY glyph rendering (default white) */
     union {
         ULONG        ARGB;
@@ -120,11 +134,11 @@ struct URPDrawContext {
 
     /* RGB444 → CLUT pen remap table; clutValid set by URPDC_UpdateColorMap() */
     UBYTE clutRemap[4096];
-    UBYTE clutValid;
 
     /* 16-entry AA shade ramp for GRAY glyphs on CLUT screens */
     UBYTE aaRemap[16];
     UBYTE clut_pad[3];
+    UBYTE clutValid;/* moved for alignment, goes with clutRemap */
 
     /* Scratch buffer for URP_PREF_HIGHFILTERING pyramid downscaling.
      * Allocated lazily, grown as needed, freed in URPDC_Destroy.

@@ -13,7 +13,7 @@
 
 #include <proto/bevel.h>
 #include <images/bevel.h>
-
+#include <intuition/icclass.h>
 #include <string.h>
 #include <stdio.h>
 #include "unitexteditor_private.h"
@@ -1937,10 +1937,16 @@ ULONG UniTextEditor_OnSet(Class *cl, Object *o, struct opSet *msg)
         case UTED_FlushDebugOutput:
             flushbdbprint();
             break;
-        case UTED_SetMainProcess:
 
-        break;
-
+        /* should be done by supeclass, but there's a OS3.9 bug*/
+        case ICA_TARGET:
+            inst->target = (Object*)tag->ti_Data;
+            result = 1;
+            break;
+        /* should be done by supeclass, but there's a OS3.9 bug*/
+        case GA_ID:
+            inst->ga_id = tag->ti_Data;
+            break;
         default: break;
         }
     }

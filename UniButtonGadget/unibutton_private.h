@@ -88,6 +88,10 @@ typedef struct UniButtonData {
     struct Screen   *screen;
     struct DrawInfo *drawInfo;
 
+    /* OS3.9 intuition can't manage OM_NOTIFY with DoSuperMethod... */
+    Object *target;
+    ULONG  ga_id;
+
 } UniButtonData;
 
 #define UBT_DATA(cl, o)  ((UniButtonData *)INST_DATA((cl), (o)))

@@ -484,50 +484,26 @@ UTED_WordWrap,FALSE,// test
     /*
      * Create tab bar
      */
+
     {
-        struct Node *firstNode;
+       // struct Node *firstNode;
 
         app->tabList = (struct List *)AllocVec(sizeof(struct List),
                                                MEMF_ANY | MEMF_CLEAR);
         if (!app->tabList) cleanexit("Tab list alloc failed");
         NewList(app->tabList);
+        /* We have to fill one tab and one "text stash context" */
+        EgTabs_NewTab();
 
-        /* Initial "New File" tab — use synthetic key ":n:1" so the stash
-         * system saves its content when the user switches to another tab. */
-        {
-            static const char initKey[] = ":n:1";
-            char *keyCopy = (char *)AllocVec(sizeof(initKey), MEMF_ANY);
-            if (!keyCopy) cleanexit("Tab key alloc failed");
-            strcpy(keyCopy, initKey);
 
-            app->tabContextNames[0] = keyCopy;
-            app->tabNewSerial       = 1;
-            app->tabCount           = 1;
-            app->tabCurrentIndex    = 0;
-
-            /* Tell the gadget the real initial context key so its stash
-             * will save content under ":n:1" when the user switches tabs. */
-            SetGdAttrs(app->textEditorObj,
-                       UTED_CurrentContext, (ULONG)keyCopy,
-                       TAG_END);
-
-            EgTabs_FillLabel(app->tabLabels[0], sizeof(app->tabLabels[0]), initKey);
-            firstNode = AllocClickTabNode(
-                TNA_Text,   (ULONG)app->tabLabels[0],
-                TNA_Number, 0,
+            app->tabGadget = NewObject(CLICKTAB_GetClass(), NULL,
+                GA_ID,              GID_TABBAR,
+                GA_RelVerify,       TRUE,
+                CLICKTAB_Labels,    (ULONG)app->tabList,
+                CLICKTAB_Current,   0,
                 TAG_END);
-            if (!firstNode) cleanexit("AllocClickTabNode failed");
-            app->tabNodes[0] = firstNode;
-            AddTail(app->tabList, firstNode);
-        }
+            if (!app->tabGadget) cleanexit("ClickTab gadget creation failed");
 
-        app->tabGadget = NewObject(CLICKTAB_GetClass(), NULL,
-            GA_ID,              GID_TABBAR,
-            GA_RelVerify,       TRUE,
-            CLICKTAB_Labels,    (ULONG)app->tabList,
-            CLICKTAB_Current,   0,
-            TAG_END);
-        if (!app->tabGadget) cleanexit("ClickTab gadget creation failed");
     }
 
     /*
@@ -1140,8 +1116,6 @@ void exitclose(void)
         LocaleBase = NULL;
     }
 
-    /* Debug leak reports */
-    flushbdbprint();
 
     if(CyberGfxBase) CloseLibrary(CyberGfxBase);
     if(DataTypesBase) CloseLibrary(DataTypesBase);

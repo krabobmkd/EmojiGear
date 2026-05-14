@@ -439,7 +439,7 @@ typedef struct UTEDTextPosition {
  * Set to TRUE from the application main task event loop.
  * Only active when gadget is built with USE_DEBUG_BDBPRINT defined. */
 #define UTED_FlushDebugOutput    (UTED_Dummy + 62)
-#define UTED_SetMainProcess    (UTED_Dummy + 63)
+
 
 
 

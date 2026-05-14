@@ -410,6 +410,10 @@ typedef struct UniTextEditorData {
     WORD  lastClickX;
     WORD  lastClickY;
 
+    /* OS3.9 intuition can't manage OM_NOTIFY with DoSuperMethod... */
+    Object *target;
+    ULONG  ga_id;
+
 } UniTextEditorData;
 
 /* pendingDragType values */

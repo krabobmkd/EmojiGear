@@ -99,8 +99,10 @@
  */
 #define UBTN_Dummy          (TAG_USER | 0x73C0)
 
-/* Button was activated.  Value = GA_ID of the button. */
+/* Button was activated.  Value = GA_ID of the button.
+ Correction, useless ,GA_Selected TRUE is notified
 #define UBTN_Pressed        (UBTN_Dummy + 1)
+*/
 
 /* =========================================================================
  * Class management  (static-link mode)

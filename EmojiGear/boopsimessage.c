@@ -123,7 +123,6 @@ static ULONG ASM SAVEDS TargetModelDispatch(
         {
             struct TagItem *ptag;
             ULONG sender_ID = 0;
-
             /* Extract the sender's GA_ID */
             ptag = FindTagItem(GA_ID, M->opUpdate.opu_AttrList);
             if (ptag) sender_ID = ptag->ti_Data;

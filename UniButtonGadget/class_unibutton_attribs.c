@@ -58,23 +58,44 @@ void ubt_render_self(Class *cl, Object *o, struct GadgetInfo *gi)
 
 void ubt_notify_pressed(Class *cl, Object *o, struct GadgetInfo *gi)
 {
+    UniButtonData      *inst;
     struct opUpdate nmsg;
+    Object *target=NULL;
     ULONG tags[5];
 
+    inst = UBT_DATA(cl, o);
+
+    if(!inst->target || !inst->ga_id) return;
+
     tags[0] = GA_ID;
-    tags[1] = 0;
-    GetAttr(GA_ID, o, &tags[1]);
-    if (!tags[1]) return;
+    tags[1] = inst->ga_id;
+   // GetAttr(GA_ID, o, &tags[1]);
+   // if (!tags[1]) return;
 
     tags[2] = GA_Selected;
     tags[3] = TRUE;
     tags[4] = TAG_DONE;
 
+
+/* good on os3.2 (and following 1992 boopsi specs)
     nmsg.MethodID     = OM_NOTIFY;
     nmsg.opu_AttrList = (struct TagItem *)tags;
     nmsg.opu_GInfo    = gi;
     nmsg.opu_Flags    = 0;
     DoSuperMethodA(cl, (APTR)o, (Msg)&nmsg);
+*/
+
+//    GetAttr(ICA_TARGET,o,(ULONG*)&target);
+/*
+    OS3.9 boopsi can't send
+    notification by the "DoSuperMethodA" and GetAttr(GA_ID,...) mecanism
+*/
+    nmsg.MethodID     = OM_UPDATE;
+    nmsg.opu_AttrList = (struct TagItem *)tags;
+    nmsg.opu_GInfo    = gi;
+    nmsg.opu_Flags    = 0;
+    DoMethodA(inst->target,(Msg)&nmsg);
+
 
 }
 
@@ -374,6 +395,15 @@ ULONG UniButton_OnSet(Class *cl, Object *o, struct opSet *msg)
             result = 1;
             break;
         }
+        /* should be done by supeclass, but there's a OS3.9 bug*/
+        case ICA_TARGET:
+            inst->target = (Object*)tag->ti_Data;
+            result = 1;
+            break;
+        /* should be done by supeclass, but there's a OS3.9 bug*/
+        case GA_ID:
+            inst->ga_id = tag->ti_Data;
+            break;
 
         default:
             break;
