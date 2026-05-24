@@ -25,4 +25,11 @@ target_include_directories(testoffscreenbm PUBLIC
 )
 target_compile_options(testoffscreenbm PRIVATE ${AMIGA_COMPILER_OPTIONS} )
 
+add_executable(testunibutton testunibutton.c)
+target_include_directories(testunibutton PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+target_compile_options(testunibutton PRIVATE ${AMIGA_COMPILER_OPTIONS} )
+
 

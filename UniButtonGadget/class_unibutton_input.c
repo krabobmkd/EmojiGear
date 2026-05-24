@@ -43,6 +43,10 @@ ULONG UniButton_OnGoActive(Class *cl, Object *o, struct gpInput *msg)
     /* Only activate on a real user click, not a synthetic activation */
     if (!msg->gpi_IEvent) return GMR_NOREUSE;
 
+    /* For push buttons, remember current latch state before showing feedback */
+    if (inst->pushButton)
+        inst->prevSelected = (BOOL)((G(o)->Flags & GFLG_SELECTED) != 0);
+
     G(o)->Flags |= GFLG_SELECTED;
 
     rp = ObtainGIRPort(msg->gpi_GInfo);
@@ -70,9 +74,37 @@ ULONG UniButton_OnHandleInput(Class *cl, Object *o, struct gpInput *msg)
     if (ie->ie_Class == IECLASS_RAWMOUSE) {
 
         if (ie->ie_Code == SELECTUP) {
-            /* Button released */
             over = mouse_over_gadget(G(o), msg);
 
+            if (inst->pushButton) {
+                if (over) {
+                    /* Toggle: keep selected iff was unselected before the click */
+                    if (inst->prevSelected)
+                        G(o)->Flags &= ~GFLG_SELECTED;
+                    /* else GFLG_SELECTED stays set from GM_GOACTIVE */
+                } else {
+                    /* Released outside: restore pre-click state */
+                    if (!inst->prevSelected)
+                        G(o)->Flags &= ~GFLG_SELECTED;
+                }
+
+                rp = ObtainGIRPort(msg->gpi_GInfo);
+                if (rp) {
+                    int st = (G(o)->Flags & GFLG_SELECTED)
+                             ? UBT_STATE_SELECTED : UBT_STATE_NORMAL;
+                    ubt_blit_state(inst, G(o), rp, st);
+                    ReleaseGIRPort(rp);
+                }
+
+                if (over) {
+                    ubt_notify_pressed(cl, o, msg->gpi_GInfo);
+                    *msg->gpi_Termination = 0;
+                    return GMR_NOREUSE | GMR_VERIFY;
+                }
+                return GMR_NOREUSE;
+            }
+
+            /* Normal momentary button */
             G(o)->Flags &= ~GFLG_SELECTED;
 
             rp = ObtainGIRPort(msg->gpi_GInfo);
@@ -82,7 +114,6 @@ ULONG UniButton_OnHandleInput(Class *cl, Object *o, struct gpInput *msg)
             }
 
             if (over) {
-                /* Clicked: notify ICA_TARGET and ask Intuition for GADGETUP */
                 ubt_notify_pressed(cl, o, msg->gpi_GInfo);
                 *msg->gpi_Termination = 0;
                 return GMR_NOREUSE | GMR_VERIFY;
@@ -91,33 +122,43 @@ ULONG UniButton_OnHandleInput(Class *cl, Object *o, struct gpInput *msg)
         }
 
         if (ie->ie_Code == MENUDOWN) {
-            /* Right/menu button: go inactive and let Intuition reuse the event */
-            G(o)->Flags &= ~GFLG_SELECTED;
+            /* Right/menu button: cancel and reuse event */
+            if (inst->pushButton) {
+                /* Restore pre-click state */
+                if (!inst->prevSelected)
+                    G(o)->Flags &= ~GFLG_SELECTED;
+            } else {
+                G(o)->Flags &= ~GFLG_SELECTED;
+            }
             rp = ObtainGIRPort(msg->gpi_GInfo);
             if (rp) {
-                ubt_blit_state(inst, G(o), rp, UBT_STATE_NORMAL);
+                int st = (G(o)->Flags & GFLG_SELECTED)
+                         ? UBT_STATE_SELECTED : UBT_STATE_NORMAL;
+                ubt_blit_state(inst, G(o), rp, st);
                 ReleaseGIRPort(rp);
             }
             return GMR_REUSE;
         }
 
-        /* Mouse moved while held: track selected/deselected visual */
-        over = mouse_over_gadget(G(o), msg);
-        {
-            BOOL wasSelected = (BOOL)((G(o)->Flags & GFLG_SELECTED) != 0);
-            if (over && !wasSelected) {
-                G(o)->Flags |= GFLG_SELECTED;
-                rp = ObtainGIRPort(msg->gpi_GInfo);
-                if (rp) {
-                    ubt_blit_state(inst, G(o), rp, UBT_STATE_SELECTED);
-                    ReleaseGIRPort(rp);
-                }
-            } else if (!over && wasSelected) {
-                G(o)->Flags &= ~GFLG_SELECTED;
-                rp = ObtainGIRPort(msg->gpi_GInfo);
-                if (rp) {
-                    ubt_blit_state(inst, G(o), rp, UBT_STATE_NORMAL);
-                    ReleaseGIRPort(rp);
+        /* Mouse moved while held – only track hover visual for normal buttons */
+        if (!inst->pushButton) {
+            over = mouse_over_gadget(G(o), msg);
+            {
+                BOOL wasSelected = (BOOL)((G(o)->Flags & GFLG_SELECTED) != 0);
+                if (over && !wasSelected) {
+                    G(o)->Flags |= GFLG_SELECTED;
+                    rp = ObtainGIRPort(msg->gpi_GInfo);
+                    if (rp) {
+                        ubt_blit_state(inst, G(o), rp, UBT_STATE_SELECTED);
+                        ReleaseGIRPort(rp);
+                    }
+                } else if (!over && wasSelected) {
+                    G(o)->Flags &= ~GFLG_SELECTED;
+                    rp = ObtainGIRPort(msg->gpi_GInfo);
+                    if (rp) {
+                        ubt_blit_state(inst, G(o), rp, UBT_STATE_NORMAL);
+                        ReleaseGIRPort(rp);
+                    }
                 }
             }
         }
@@ -134,13 +175,20 @@ ULONG UniButton_OnGoInactive(Class *cl, Object *o, struct gpGoInactive *msg)
 {
     UniButtonData  *inst = UBT_DATA(cl, o);
     struct RastPort *rp;
+    int              state;
 
-    G(o)->Flags &= ~GFLG_SELECTED;
+    /* Push buttons keep their latched GFLG_SELECTED; normal buttons always clear it */
+    if (!inst->pushButton)
+        G(o)->Flags &= ~GFLG_SELECTED;
 
     rp = ObtainGIRPort(msg->gpgi_GInfo);
     if (rp) {
-        int state = (G(o)->Flags & GFLG_DISABLED)
-                    ? UBT_STATE_DISABLED : UBT_STATE_NORMAL;
+        if (G(o)->Flags & GFLG_DISABLED)
+            state = UBT_STATE_DISABLED;
+        else if (G(o)->Flags & GFLG_SELECTED)
+            state = UBT_STATE_SELECTED;
+        else
+            state = UBT_STATE_NORMAL;
         ubt_blit_state(inst, G(o), rp, state);
         ReleaseGIRPort(rp);
     }

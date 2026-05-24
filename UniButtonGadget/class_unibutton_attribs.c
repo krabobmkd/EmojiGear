@@ -139,12 +139,13 @@ ULONG UniButton_OnNew(Class *cl, Object *o, struct opSet *msg)
     inst->selBgPen    = 3; /* FILLPEN */
     inst->transparent = FALSE;
     inst->readOnly    = FALSE;
+    inst->pushButton  = FALSE;
     inst->leftMargin  = 4;
     inst->rightMargin = 4;
     inst->topMargin   = 2;
     inst->bottomMargin= 2;
 
-bdbprintf("UniButton_OnNew\n");
+//bdbprintf("UniButton_OnNew\n");
 
     /* URPDrawContext: shared or private */
     {
@@ -194,6 +195,24 @@ bdbprintf("UniButton_OnNew\n");
     /* Apply remaining tags */
     UniButton_OnSet(cl, newObj, msg);
 
+    /* looks like we ned that for WMHI_GADGETUP to work */
+    {
+        ULONG setatr[]={ GA_RelVerify,TRUE,TAG_END  };
+        struct opSet msgset;
+        msgset.MethodID = OM_SET;
+        msgset.ops_GInfo = msg->ops_GInfo;
+        msgset.ops_AttrList = &setatr[0];
+        DoSuperMethod(cl, newObj,(APTR)&msgset);
+    }
+    {
+        /* krb note: this is the real thing that allows having state
+         * with old boopsi way WMHI_GADGETUP */
+        G(newObj)->Activation |= GACT_RELVERIFY;
+    }
+    /*this crash when DoSuperMethod() works,
+     * SetSuperAttrs is bugged in libs it seems:
+     * SetSuperAttrs(cl,newObj,GA_RelVerify,TRUE,TAG_END);
+    */
     return (ULONG)newObj;
 
 fail:
@@ -230,8 +249,9 @@ ULONG UniButton_OnSet(Class *cl, Object *o, struct opSet *msg)
     UniButtonData  *inst   = UBT_DATA(cl, o);
     struct TagItem *state  = msg->ops_AttrList;
     struct TagItem *tag;
-    ULONG           result = 0;
-    BOOL            redraw = FALSE;
+    ULONG           result   = 0;
+    BOOL            redraw   = FALSE;  /* cache rebuild + blit */
+    BOOL            justBlit = FALSE;  /* blit only, no rebuild (GA_Selected, GA_Disabled) */
 
     while ((tag = NextTagItem(&state)) != NULL) {
         switch (tag->ti_Tag)
@@ -333,6 +353,11 @@ ULONG UniButton_OnSet(Class *cl, Object *o, struct opSet *msg)
             result = 1;
             break;
 
+        case UBT_PushButton:
+            inst->pushButton = tag->ti_Data ? TRUE : FALSE;
+            result = 1;
+            break;
+
         case GA_ReadOnly:
             inst->readOnly = tag->ti_Data ? TRUE : FALSE;
             result = 1;
@@ -410,6 +435,19 @@ ULONG UniButton_OnSet(Class *cl, Object *o, struct opSet *msg)
             result = 1;
             break;
         }
+        /* GA_Selected: superclass already updates GFLG_SELECTED; we just re-blit.
+         * In UBT_PushButton mode this is how callers programmatically set latch state. */
+        case GA_Selected:
+            justBlit = TRUE;
+            result = 1;
+            break;
+
+        /* GA_Disabled: superclass already updates GFLG_DISABLED; we just re-blit. */
+        case GA_Disabled:
+            justBlit = TRUE;
+            result = 1;
+            break;
+
         case UBT_FlushDebugOutput:
             flushbdbprint();
             break;
@@ -457,7 +495,7 @@ ULONG UniButton_OnSet(Class *cl, Object *o, struct opSet *msg)
         }
     }
 
-    if (redraw && msg->ops_GInfo)
+    if ((redraw || justBlit) && msg->ops_GInfo)
         ubt_render_self(cl, o, msg->ops_GInfo);
 
     return result;
@@ -483,6 +521,10 @@ ULONG UniButton_OnGet(Class *cl, Object *o, struct opGet *msg)
 
     case UBT_Transparent:
         *msg->opg_Storage = (ULONG)inst->transparent;
+        return TRUE;
+
+    case UBT_PushButton:
+        *msg->opg_Storage = (ULONG)inst->pushButton;
         return TRUE;
 
     case GA_ReadOnly:

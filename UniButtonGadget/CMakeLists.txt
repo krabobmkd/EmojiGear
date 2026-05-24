@@ -69,4 +69,4 @@ if(AMIGA_COMPILER_OPTIONS)
     )
 endif()
 
-target_compile_definitions(${LIBNAME} PRIVATE USE_DEBUG_BDBPRINT=1)
+# target_compile_definitions(${LIBNAME} PRIVATE USE_DEBUG_BDBPRINT=1)

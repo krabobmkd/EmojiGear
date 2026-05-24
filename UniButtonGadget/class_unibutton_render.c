@@ -51,8 +51,45 @@ static void ubt_build_one_state(UniButtonData *inst, WORD gadW, WORD gadH,
     OffscreenBitMap *obm = &inst->cacheBm[state];
     struct RastPort *rp;
     ULONG            bgPen;
+    ULONG            txtPen;
     UWORD            imageState;
-    UWORD            ghostPen;
+
+    /* ---- Resolve per-state pens ----------------------------------------- */
+
+    if (state == UBT_STATE_DISABLED && scr && scr->ViewPort.ColorMap) {
+        /* Grey #888888 background */
+        struct ColorMap *cm   = scr->ViewPort.ColorMap;
+        ULONG            npen = (ULONG)cm->Count;
+        ULONG            txtRGB[3];
+        ULONG            dimR, dimG, dimB;
+
+        bgPen = (ULONG)FindColor(cm,
+                    0x88888888UL, 0x88888888UL, 0x88888888UL, npen);
+
+        /* Text: midpoint between txtPen color and #888888 */
+        GetRGB32(cm, inst->txtPen, 1UL, txtRGB);
+        dimR = (txtRGB[0] >> 1) + 0x44444444UL;
+        dimG = (txtRGB[1] >> 1) + 0x44444444UL;
+        dimB = (txtRGB[2] >> 1) + 0x44444444UL;
+        txtPen = (ULONG)FindColor(cm, dimR, dimG, dimB, npen);
+
+        imageState = IDS_NORMAL;
+    } else {
+        switch (state) {
+        case UBT_STATE_SELECTED:
+            bgPen      = inst->selBgPen;
+            txtPen     = inst->txtPen;
+            imageState = IDS_SELECTED;
+            break;
+        default: /* UBT_STATE_NORMAL */
+            bgPen      = inst->bgPen;
+            txtPen     = inst->txtPen;
+            imageState = IDS_NORMAL;
+            break;
+        }
+    }
+
+    /* ---- Allocate offscreen bitmap -------------------------------------- */
 
     OffscreenBitMap_Close(obm);
     OffscreenBitMap_Init(obm, (int)gadW, (int)gadH, 0, BMF_CLEAR,
@@ -67,26 +104,10 @@ static void ubt_build_one_state(UniButtonData *inst, WORD gadW, WORD gadH,
             (int)obm->_layer
             );
 
-
     rp = obm->_rp;
 
-    switch (state) {
-    case UBT_STATE_SELECTED:
-        bgPen      = inst->selBgPen;
-        imageState = IDS_SELECTED;
-        break;
-    case UBT_STATE_DISABLED:
-        bgPen      = inst->bgPen;
-        imageState = IDS_NORMAL;
-        break;
-    default: /* UBT_STATE_NORMAL */
-        bgPen      = inst->bgPen;
-        imageState = IDS_NORMAL;
-        break;
-    }
-
-    /* 1. Fill background */
-    if (!inst->transparent || state == UBT_STATE_SELECTED) {
+    /* 1. Fill background (always fill for disabled so grey is visible) */
+    if (!inst->transparent || state != UBT_STATE_NORMAL) {
         SetAPen(rp, (LONG)bgPen);
         SetDrMd(rp, JAM1);
         RectFill(rp, 0L, 0L, (LONG)(gadW - 1), (LONG)(gadH - 1));
@@ -129,37 +150,11 @@ static void ubt_build_one_state(UniButtonData *inst, WORD gadW, WORD gadH,
         pos.x = textX;
         pos.y = textY;
 
-        if (state == UBT_STATE_DISABLED) {
-            /* render with background pen to make it invisible, then ghost */
-            URPDC_SetDrawColorFromPen(inst->dc, scr,
-                                      (LONG)bgPen, (LONG)bgPen);
-            SetAPen(rp, (LONG)bgPen);
-            SetBPen(rp, (LONG)bgPen);
-        } else {
-            URPDC_SetDrawColorFromPen(inst->dc, scr,
-                                      (LONG)inst->txtPen, (LONG)bgPen);
-            SetAPen(rp, (LONG)inst->txtPen);
-            SetBPen(rp, (LONG)bgPen);
-        }
+        URPDC_SetDrawColorFromPen(inst->dc, scr, (LONG)txtPen, (LONG)bgPen);
+        SetAPen(rp, (LONG)txtPen);
+        SetBPen(rp, (LONG)bgPen);
         SetDrMd(rp, JAM2);
         URPDrawTextUTF8(rp, inst->dc, &pos, inst->text, (ULONG)(-1));
-    }
-
-    /* Ghost pattern overlay for disabled state */
-    if (state == UBT_STATE_DISABLED && dri) {
-        /*TODO redo that with one blit,
-         *  this code is a joke - WritePixel calls are slowest-est-ests
-        WORD x, y;
-        ghostPen = dri->dri_Pens[BACKGROUNDPEN];
-        SetAPen(rp, (LONG)ghostPen);
-        SetDrMd(rp, JAM1);
-         fine 2-pixel checkerboard: set every other pixel in a 2x2 tile
-        for (y = 0; y < gadH; y += 2) {
-            for (x = (WORD)(y & 2 ? 0 : 1); x < gadW; x += 2) {
-                WritePixel(rp, (LONG)x, (LONG)y);
-            }
-        }
-        */
     }
 }
 

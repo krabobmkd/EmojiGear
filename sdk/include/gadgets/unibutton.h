@@ -93,6 +93,11 @@
 /* debug purpose */
 #define UBT_FlushDebugOutput    (UBT_Dummy + 16)
 
+/* [ISG] (BOOL) When TRUE, button latches like BUTTON_PushButton: each click
+ *              toggles the selected/depressed state.  GA_Selected reflects the
+ *              latched state.  Default: FALSE. */
+#define UBT_PushButton          (UBT_Dummy + 17)
+
 
 
 /* =========================================================================

@@ -42,7 +42,8 @@ ULONG ASM SAVEDS UniButton_Dispatch(
             return GMR_GADGETHIT;
 
         case GM_GOACTIVE:
-            if (UBT_DATA(cl, o)->readOnly) return GMR_NOREUSE;
+            if (UBT_DATA(cl, o)->readOnly)    return GMR_NOREUSE;
+            if (G(o)->Flags & GFLG_DISABLED)  return GMR_NOREUSE;
             return UniButton_OnGoActive(cl, o, (struct gpInput *)msg);
 
         case GM_HANDLEINPUT:

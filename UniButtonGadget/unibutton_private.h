@@ -89,6 +89,10 @@ typedef struct UniButtonData {
     struct Screen   *screen;
     struct DrawInfo *drawInfo;
 
+    /* Push/latch toggle mode (UBT_PushButton) */
+    BOOL    pushButton;
+    BOOL    prevSelected;   /* GFLG_SELECTED state captured at GM_GOACTIVE */
+
     /* OS3.9 intuition can't manage OM_NOTIFY with DoSuperMethod... */
     Object *target;
     ULONG  ga_id;
