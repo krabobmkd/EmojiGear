@@ -64,14 +64,14 @@ static void ubt_build_one_state(UniButtonData *inst, WORD gadW, WORD gadH,
         ULONG            dimR, dimG, dimB;
 
         bgPen = (ULONG)FindColor(cm,
-                    0x88888888UL, 0x88888888UL, 0x88888888UL, npen);
+                    0x88888888UL, 0x88888888UL, 0x88888888UL, /*npen*/-1);
 
         /* Text: midpoint between txtPen color and #888888 */
         GetRGB32(cm, inst->txtPen, 1UL, txtRGB);
         dimR = (txtRGB[0] >> 1) + 0x44444444UL;
         dimG = (txtRGB[1] >> 1) + 0x44444444UL;
         dimB = (txtRGB[2] >> 1) + 0x44444444UL;
-        txtPen = (ULONG)FindColor(cm, dimR, dimG, dimB, npen);
+        txtPen = (ULONG)FindColor(cm, dimR, dimG, dimB, /*npen*/-1);
 
         imageState = IDS_NORMAL;
     } else {
@@ -96,13 +96,13 @@ static void ubt_build_one_state(UniButtonData *inst, WORD gadW, WORD gadH,
                          scr ? scr->RastPort.BitMap : NULL);
     if (!obm->_rp) return;
 
-    bdbprintf("buildonestate: %d %08x %08x %08x %08x\n",
-            state,
-            (int)obm->_bm,
-            (int)obm->_rp,
-            (int)obm->_layerinfo,
-            (int)obm->_layer
-            );
+    // bdbprintf("buildonestate: %d %08x %08x %08x %08x\n",
+    //         state,
+    //         (int)obm->_bm,
+    //         (int)obm->_rp,
+    //         (int)obm->_layerinfo,
+    //         (int)obm->_layer
+    //         );
 
     rp = obm->_rp;
 

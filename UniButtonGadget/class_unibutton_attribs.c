@@ -31,13 +31,13 @@ void ubt_free_cache(UniButtonData *inst)
 
     for (i = 0; i < UBT_NUM_STATES; i++)
     {
-        bdbprintf("ubt_free_cache:layer: %d %08x %08x %08x %08x\n",
-                i,
-                (int)inst->cacheBm[i]._bm,
-                (int)inst->cacheBm[i]._rp,
-                (int)inst->cacheBm[i]._layerinfo,
-                (int)inst->cacheBm[i]._layer
-                );
+        // bdbprintf("ubt_free_cache:layer: %d %08x %08x %08x %08x\n",
+        //         i,
+        //         (int)inst->cacheBm[i]._bm,
+        //         (int)inst->cacheBm[i]._rp,
+        //         (int)inst->cacheBm[i]._layerinfo,
+        //         (int)inst->cacheBm[i]._layer
+        //         );
         OffscreenBitMap_Close(&inst->cacheBm[i]);
     }
     inst->cacheValid  = FALSE;
