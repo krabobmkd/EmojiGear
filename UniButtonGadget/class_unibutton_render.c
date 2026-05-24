@@ -53,7 +53,7 @@ static void ubt_build_one_state(UniButtonData *inst, WORD gadW, WORD gadH,
     ULONG            bgPen;
     ULONG            txtPen;
     UWORD            imageState;
-
+    int w,h;
     /* ---- Resolve per-state pens ----------------------------------------- */
 
     if (state == UBT_STATE_DISABLED && scr && scr->ViewPort.ColorMap) {
@@ -90,65 +90,58 @@ static void ubt_build_one_state(UniButtonData *inst, WORD gadW, WORD gadH,
     }
 
     /* ---- Allocate offscreen bitmap -------------------------------------- */
-
-    OffscreenBitMap_Close(obm);
-    OffscreenBitMap_Init(obm, (int)gadW, (int)gadH, 0, BMF_CLEAR,
+/*
+   WORD    fontHeight;
+    WORD    fontAscent;
+    WORD    textWidth;
+*/
+    w = inst->textWidth;
+    h = inst->fontHeight;
+    if(w<16) w=16;
+    if(h<8) h=8;
+    if(!obm->_bm || obm->_w != w || obm->_h != h)
+    {
+        OffscreenBitMap_Close(obm);
+        OffscreenBitMap_Init(obm, w, h, 0, BMF_CLEAR,
                          scr ? scr->RastPort.BitMap : NULL);
-    if (!obm->_rp) return;
 
-    // bdbprintf("buildonestate: %d %08x %08x %08x %08x\n",
-    //         state,
-    //         (int)obm->_bm,
-    //         (int)obm->_rp,
-    //         (int)obm->_layerinfo,
-    //         (int)obm->_layer
-    //         );
-
-    rp = obm->_rp;
+    }
+    if (!obm->_bm) return;
+    rp = &obm->_srp;
 
     /* 1. Fill background (always fill for disabled so grey is visible) */
     if (!inst->transparent || state != UBT_STATE_NORMAL) {
         SetAPen(rp, (LONG)bgPen);
         SetDrMd(rp, JAM1);
-        RectFill(rp, 0L, 0L, (LONG)(gadW - 1), (LONG)(gadH - 1));
+        RectFill(rp, 0L, 0L, (LONG)(w - 1), (LONG)(h - 1));
     }
-
-    /* 2. Draw bevel frame */
-    if (inst->bevel && dri) {
-        SetAttrs((Object *)inst->bevel,
-            IA_Left,   0UL,
-            IA_Top,    0UL,
-            IA_Width,  (ULONG)gadW,
-            IA_Height, (ULONG)gadH,
-            TAG_DONE);
-        DrawImageState(rp, (struct Image *)inst->bevel, 0L, 0L,
-                       (ULONG)imageState, dri);
-    }
-
+    obm->_imageState = imageState;
+    obm->_bgpen = bgPen;
     /* 3. Render UTF-8 label centred in content area */
     if (inst->text && inst->text[0] && inst->dc && scr) {
-        WORD contentLeft  = inst->leftMargin;
-        WORD contentTop   = inst->topMargin;
-        WORD contentW     = gadW - inst->leftMargin - inst->rightMargin;
-        WORD contentH     = gadH - inst->topMargin  - inst->bottomMargin;
-        struct URPTextMetric metric;
+        // WORD contentLeft  = inst->leftMargin;
+        // WORD contentTop   = inst->topMargin;
+        // WORD contentW     = gadW - inst->leftMargin - inst->rightMargin;
+        // WORD contentH     = gadH - inst->topMargin  - inst->bottomMargin;
+    //    struct URPTextMetric metric;
         struct URPTextPos    pos;
-        WORD textX, textY;
+      //  WORD textX, textY;
 
-        if (contentW <= 0 || contentH <= 0) return;
+       // if (contentW <= 0 || contentH <= 0) return;
 
-        URPDC_TextSizeUTF8(inst->dc, inst->text, -1, &metric);
+    //    URPDC_TextSizeUTF8(inst->dc, inst->text, -1, &metric);
 
-        textX = contentLeft + (contentW - metric.width) / 2;
-        textY = contentTop  + (contentH - inst->fontHeight) / 2
-                + inst->fontAscent;
+        // textX = 0;// contentLeft + (contentW - metric.width) / 2;
+        // textY = // contentTop  + (contentH - inst->fontHeight) / 2
+        //         //+
+        //         inst->fontAscent;
 
-        if (textX < contentLeft) textX = contentLeft;
+/*        if (textX < contentLeft) textX = contentLeft;
         if (textY < contentTop + inst->fontAscent)
             textY = contentTop + inst->fontAscent;
-
-        pos.x = textX;
-        pos.y = textY;
+*/
+        pos.x = 0;
+        pos.y = inst->fontAscent;
 
         URPDC_SetDrawColorFromPen(inst->dc, scr, (LONG)txtPen, (LONG)bgPen);
         SetAPen(rp, (LONG)txtPen);
@@ -204,8 +197,6 @@ void ubt_rebuild_cache(Class *cl, Object *o,
         ubt_build_one_state(inst, gadW, gadH, i, dri, scr);
 
     inst->cacheValid  = TRUE;
-    inst->cacheWidth  = gadW;
-    inst->cacheHeight = gadH;
 }
 
 /* =========================================================================
@@ -249,9 +240,9 @@ ULONG UniButton_OnRender(Class *cl, Object *o, struct gpRender *msg)
         inst->selBgPen = (ULONG)dri->dri_Pens[FILLPEN];
 
     /* Rebuild cache if size changed or cache was invalidated */
-    needRebuild = (!inst->cacheValid ||
-                   inst->cacheWidth  != gadW ||
-                   inst->cacheHeight != gadH);
+/*no, it's better to really keep all freetype engine inits out of render if we can.
+ * */
+    needRebuild = (!inst->cacheValid );
 
     if (needRebuild && scr) {
         ubt_rebuild_cache(cl, o, gadW, gadH, dri, scr);
@@ -269,12 +260,23 @@ ULONG UniButton_OnRender(Class *cl, Object *o, struct gpRender *msg)
         ubt_blit_state(inst, g, rp, state);
     } else {
         /* Fallback: fill with background pen */
-        ULONG bgPen = (state == UBT_STATE_SELECTED) ? inst->selBgPen : inst->bgPen;
-        SetAPen(rp, (LONG)bgPen);
+        SetAPen(rp, (LONG)inst->cacheBm[state]._bgpen);
         SetDrMd(rp, JAM1);
         RectFill(rp, (LONG)g->LeftEdge, (LONG)g->TopEdge,
                  (LONG)(g->LeftEdge + gadW - 1),
                  (LONG)(g->TopEdge  + gadH - 1));
+    }
+
+    /* Draw bevel frame */
+    if (inst->bevel && dri) {
+        SetAttrs((Object *)inst->bevel,
+            IA_Left,   g->LeftEdge,
+            IA_Top,    g->TopEdge,
+            IA_Width,  (ULONG)gadW,
+            IA_Height, (ULONG)gadH,
+            TAG_DONE);
+        DrawImageState(rp, (struct Image *)inst->bevel, 0L, 0L,
+                       (ULONG)inst->cacheBm[state]._imageState, dri);
     }
 
     return 0;

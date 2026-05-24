@@ -13,13 +13,18 @@ extern "C" {
  
 #include <graphics/gfx.h>
 #include <graphics/layers.h>
+#include <graphics/rastport.h>
 
 typedef struct sOffscreenBitMap {
 	   // -- temp raster for less glitch when drawings
     struct BitMap *_bm; //< direct BitMap access, but most likely you use _rp.
-    struct RastPort *_rp; //< what is used as entry by graphics drawing functions that manages clipping.
-    struct Layer_Info *_layerinfo; //< likely private but could be used.
-    struct Layer *_layer; //< likely private but could be used.
+    struct RastPort _srp;
+   // struct RastPort *_rp; //< what is used as entry by graphics drawing functions that manages clipping.
+   // struct Layer_Info *_layerinfo; //< likely private but could be used.
+   // struct Layer *_layer; //< likely private but could be used.
+    int _w,_h; /* applied size*/
+    int _imageState;
+    int _bgpen;
 } OffscreenBitMap; 
 
 /**

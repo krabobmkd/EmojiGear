@@ -41,20 +41,56 @@ void ubt_free_cache(UniButtonData *inst)
         OffscreenBitMap_Close(&inst->cacheBm[i]);
     }
     inst->cacheValid  = FALSE;
-    inst->cacheWidth  = 0;
-    inst->cacheHeight = 0;
+
 }
 
 void ubt_blit_state(UniButtonData *inst, struct Gadget *g,
                     struct RastPort *rp, int state)
 {
+    WORD textX,textY;
+    struct URPTextPos    pos;
+    OffscreenBitMap *obm= &inst->cacheBm[state];
     if (!inst->cacheValid) return;
-    if (!inst->cacheBm[state]._bm) return;
-    BltBitMapRastPort(inst->cacheBm[state]._bm, 0, 0,
+    if (!obm->_bm) return;
+
+
+
+    textX = (g->Width - obm->_w) / 2;
+    textY =  (g->Height - obm->_h) / 2;
+
+    BltBitMapRastPort(obm->_bm, 0, 0,
                       rp,
-                      (LONG)g->LeftEdge, (LONG)g->TopEdge,
-                      (LONG)inst->cacheWidth, (LONG)inst->cacheHeight,
+                      (LONG)g->LeftEdge+textX, (LONG)g->TopEdge+textY,
+                      (LONG)obm->_w, (LONG)obm->_h,
                       0xC0);
+    {
+        SetAPen(rp, (LONG)obm->_bgpen);
+        SetDrMd(rp, JAM1);
+        if(textY>0)
+        {
+            RectFill(rp, (LONG)g->LeftEdge, (LONG)g->TopEdge,
+                 (LONG)(g->LeftEdge + g->Width - 1),
+                 (LONG)(g->TopEdge  + textY - 1));
+        }
+        if((textY + obm->_h) < g->Height)
+        {
+            RectFill(rp, (LONG)g->LeftEdge, (LONG)(g->TopEdge + textY + obm->_h),
+                 (LONG)(g->LeftEdge + g->Width - 1),
+                 (LONG)(g->TopEdge  + g->Height - 1));
+        }
+        if(textX > 0)
+        {
+            RectFill(rp, (LONG)g->LeftEdge, (LONG)(g->TopEdge + textY),
+                 (LONG)(g->LeftEdge + textX - 1),
+                 (LONG)(g->TopEdge  + textY + obm->_h - 1));
+        }
+        if((textX + obm->_w) < g->Width)
+        {
+            RectFill(rp, (LONG)(g->LeftEdge + textX + obm->_w), (LONG)(g->TopEdge + textY),
+                 (LONG)(g->LeftEdge + g->Width - 1),
+                 (LONG)(g->TopEdge  + textY + obm->_h - 1));
+        }
+    }
 }
 
 void ubt_render_self(Class *cl, Object *o, struct GadgetInfo *gi)
@@ -478,20 +514,20 @@ ULONG UniButton_OnSet(Class *cl, Object *o, struct opSet *msg)
         WORD gadW = G(o)->Width;
         WORD gadH = G(o)->Height;
 
+        /* Update textWidth first so ubt_rebuild_cache allocates the correct bitmap size. */
+        if (inst->text && inst->text[0]) {
+            URPDC_TextSizeUTF8(inst->dc, inst->text, -1, &m);
+            inst->textWidth = (m.width > 0) ? (WORD)m.width : 0;
+        } else {
+            inst->textWidth = 0;
+        }
+
         if (gadW > 0 && gadH > 0 && inst->screen) {
             /* Full rebuild: also calls ubt_update_font_metrics internally. */
             ubt_rebuild_cache(cl, o, gadW, gadH, inst->drawInfo, inst->screen);
         } else {
             /* Gadget not yet rendered – update metrics only so GM_DOMAIN works. */
             ubt_update_font_metrics(inst);
-        }
-
-        /* Cache text advance width for GM_DOMAIN (no FreeType allowed there). */
-        if (inst->text && inst->text[0]) {
-            URPDC_TextSizeUTF8(inst->dc, inst->text, -1, &m);
-            inst->textWidth = (m.width > 0) ? (WORD)m.width : 0;
-        } else {
-            inst->textWidth = 0;
         }
     }
 

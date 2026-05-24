@@ -77,8 +77,6 @@ typedef struct UniButtonData {
     /* Bitmap cache – rebuilt in GM_RENDER when cacheDirty or size changes */
     OffscreenBitMap cacheBm[UBT_NUM_STATES];
     BOOL            cacheValid;
-    WORD            cacheWidth;
-    WORD            cacheHeight;
 
     /* Font metrics – kept current by OM_SET; read by GM_DOMAIN without FreeType */
     WORD    fontHeight;

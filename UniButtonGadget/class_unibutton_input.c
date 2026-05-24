@@ -30,6 +30,23 @@ static BOOL mouse_over_gadget(struct Gadget *g, struct gpInput *gpi)
     return (BOOL)(mx >= 0 && mx < g->Width &&
                   my >= 0 && my < g->Height);
 }
+ULONG UniButton_OnRender(Class *cl, Object *o, struct gpRender *msg);
+static void render(Class *cl, Object *o,struct GadgetInfo *gi)
+{
+    struct RastPort *rp;
+    if(!gi) return;
+    rp = ObtainGIRPort(gi);
+    if (rp) {
+         struct gpRender msg;
+        msg.MethodID = GM_RENDER;
+        msg.gpr_GInfo = gi;
+        msg.gpr_RPort = rp;
+        UniButton_OnRender(cl,o,&msg);
+        ReleaseGIRPort(rp);
+    }
+
+
+}
 
 /* =========================================================================
  * GM_GOACTIVE  (left mouse button pressed over the gadget)
@@ -49,11 +66,7 @@ ULONG UniButton_OnGoActive(Class *cl, Object *o, struct gpInput *msg)
 
     G(o)->Flags |= GFLG_SELECTED;
 
-    rp = ObtainGIRPort(msg->gpi_GInfo);
-    if (rp) {
-        ubt_blit_state(inst, G(o), rp, UBT_STATE_SELECTED);
-        ReleaseGIRPort(rp);
-    }
+    render(cl,o,msg->gpi_GInfo);
 
     return GMR_MEACTIVE;
 }
@@ -66,7 +79,6 @@ ULONG UniButton_OnHandleInput(Class *cl, Object *o, struct gpInput *msg)
 {
     UniButtonData  *inst = UBT_DATA(cl, o);
     struct InputEvent *ie = msg->gpi_IEvent;
-    struct RastPort   *rp;
     BOOL               over;
 
     if (!ie) return GMR_MEACTIVE;
@@ -88,13 +100,7 @@ ULONG UniButton_OnHandleInput(Class *cl, Object *o, struct gpInput *msg)
                         G(o)->Flags &= ~GFLG_SELECTED;
                 }
 
-                rp = ObtainGIRPort(msg->gpi_GInfo);
-                if (rp) {
-                    int st = (G(o)->Flags & GFLG_SELECTED)
-                             ? UBT_STATE_SELECTED : UBT_STATE_NORMAL;
-                    ubt_blit_state(inst, G(o), rp, st);
-                    ReleaseGIRPort(rp);
-                }
+                render(cl,o,msg->gpi_GInfo);
 
                 if (over) {
                     ubt_notify_pressed(cl, o, msg->gpi_GInfo);
@@ -107,11 +113,7 @@ ULONG UniButton_OnHandleInput(Class *cl, Object *o, struct gpInput *msg)
             /* Normal momentary button */
             G(o)->Flags &= ~GFLG_SELECTED;
 
-            rp = ObtainGIRPort(msg->gpi_GInfo);
-            if (rp) {
-                ubt_blit_state(inst, G(o), rp, UBT_STATE_NORMAL);
-                ReleaseGIRPort(rp);
-            }
+            render(cl,o,msg->gpi_GInfo);
 
             if (over) {
                 ubt_notify_pressed(cl, o, msg->gpi_GInfo);
@@ -130,13 +132,7 @@ ULONG UniButton_OnHandleInput(Class *cl, Object *o, struct gpInput *msg)
             } else {
                 G(o)->Flags &= ~GFLG_SELECTED;
             }
-            rp = ObtainGIRPort(msg->gpi_GInfo);
-            if (rp) {
-                int st = (G(o)->Flags & GFLG_SELECTED)
-                         ? UBT_STATE_SELECTED : UBT_STATE_NORMAL;
-                ubt_blit_state(inst, G(o), rp, st);
-                ReleaseGIRPort(rp);
-            }
+            render(cl,o,msg->gpi_GInfo);
             return GMR_REUSE;
         }
 
@@ -147,18 +143,10 @@ ULONG UniButton_OnHandleInput(Class *cl, Object *o, struct gpInput *msg)
                 BOOL wasSelected = (BOOL)((G(o)->Flags & GFLG_SELECTED) != 0);
                 if (over && !wasSelected) {
                     G(o)->Flags |= GFLG_SELECTED;
-                    rp = ObtainGIRPort(msg->gpi_GInfo);
-                    if (rp) {
-                        ubt_blit_state(inst, G(o), rp, UBT_STATE_SELECTED);
-                        ReleaseGIRPort(rp);
-                    }
+                    render(cl,o,msg->gpi_GInfo);
                 } else if (!over && wasSelected) {
                     G(o)->Flags &= ~GFLG_SELECTED;
-                    rp = ObtainGIRPort(msg->gpi_GInfo);
-                    if (rp) {
-                        ubt_blit_state(inst, G(o), rp, UBT_STATE_NORMAL);
-                        ReleaseGIRPort(rp);
-                    }
+                    render(cl,o,msg->gpi_GInfo);
                 }
             }
         }
@@ -181,17 +169,7 @@ ULONG UniButton_OnGoInactive(Class *cl, Object *o, struct gpGoInactive *msg)
     if (!inst->pushButton)
         G(o)->Flags &= ~GFLG_SELECTED;
 
-    rp = ObtainGIRPort(msg->gpgi_GInfo);
-    if (rp) {
-        if (G(o)->Flags & GFLG_DISABLED)
-            state = UBT_STATE_DISABLED;
-        else if (G(o)->Flags & GFLG_SELECTED)
-            state = UBT_STATE_SELECTED;
-        else
-            state = UBT_STATE_NORMAL;
-        ubt_blit_state(inst, G(o), rp, state);
-        ReleaseGIRPort(rp);
-    }
+    render(cl,o,msg->gpgi_GInfo);
 
     return 0;
 }
