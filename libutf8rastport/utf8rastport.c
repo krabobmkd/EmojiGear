@@ -2361,7 +2361,7 @@ void URPDrawTextUTF8(REG(a0, struct RastPort      *rp),
 
     dc->numberOfGlyphsNotFound = 0;
     p         = (const unsigned char *)utf8;
-    remaining = (maxChars < 0) ? INT_MAX : maxChars;
+    remaining = ((int)maxChars < 0) ? 32767 : maxChars;
 
     dc->lastFriendBitmap = rp->BitMap;
 

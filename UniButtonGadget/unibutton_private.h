@@ -80,9 +80,10 @@ typedef struct UniButtonData {
     WORD            cacheWidth;
     WORD            cacheHeight;
 
-    /* Font metrics from last render */
+    /* Font metrics – kept current by OM_SET; read by GM_DOMAIN without FreeType */
     WORD    fontHeight;
     WORD    fontAscent;
+    WORD    textWidth;   /* advance width of inst->text at current font/size */
 
     /* Screen reference and cached DrawInfo (from gi_DrInfo in GM_RENDER) */
     struct Screen   *screen;
@@ -107,6 +108,12 @@ void ubt_update_font_metrics(UniButtonData *inst);
 
 /* Free all cached bitmaps and mark cache invalid */
 void ubt_free_cache(UniButtonData *inst);
+
+/* Rebuild all three state bitmaps (application-task context only) */
+void ubt_rebuild_cache(Class *cl, Object *o,
+                       WORD gadW, WORD gadH,
+                       struct DrawInfo *dri,
+                       struct Screen   *scr);
 
 /* Blit state bitmap to rastport at gadget position; no-op if cache invalid */
 void ubt_blit_state(UniButtonData *inst, struct Gadget *g,

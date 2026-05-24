@@ -20,13 +20,12 @@
 #include <proto/exec.h>
 #include <proto/graphics.h>
 #include <proto/intuition.h>
-#include <proto/layers.h>
 #include <proto/alib.h>
 #include <proto/bevel.h>
 #include <images/bevel.h>
 #include <intuition/gadgetclass.h>
 #include <graphics/gfx.h>
-
+#include "bdbprintf.h"
 #include "unibutton_private.h"
 
 /* =========================================================================
@@ -59,6 +58,15 @@ static void ubt_build_one_state(UniButtonData *inst, WORD gadW, WORD gadH,
     OffscreenBitMap_Init(obm, (int)gadW, (int)gadH, 0, BMF_CLEAR,
                          scr ? scr->RastPort.BitMap : NULL);
     if (!obm->_rp) return;
+
+    bdbprintf("buildonestate: %d %08x %08x %08x %08x\n",
+            state,
+            (int)obm->_bm,
+            (int)obm->_rp,
+            (int)obm->_layerinfo,
+            (int)obm->_layer
+            );
+
 
     rp = obm->_rp;
 
@@ -139,16 +147,19 @@ static void ubt_build_one_state(UniButtonData *inst, WORD gadW, WORD gadH,
 
     /* Ghost pattern overlay for disabled state */
     if (state == UBT_STATE_DISABLED && dri) {
+        /*TODO redo that with one blit,
+         *  this code is a joke - WritePixel calls are slowest-est-ests
         WORD x, y;
         ghostPen = dri->dri_Pens[BACKGROUNDPEN];
         SetAPen(rp, (LONG)ghostPen);
         SetDrMd(rp, JAM1);
-        /* fine 2-pixel checkerboard: set every other pixel in a 2x2 tile */
+         fine 2-pixel checkerboard: set every other pixel in a 2x2 tile
         for (y = 0; y < gadH; y += 2) {
             for (x = (WORD)(y & 2 ? 0 : 1); x < gadW; x += 2) {
                 WritePixel(rp, (LONG)x, (LONG)y);
             }
         }
+        */
     }
 }
 
@@ -161,8 +172,7 @@ static void ubt_build_one_state(UniButtonData *inst, WORD gadW, WORD gadH,
  * contains both tall ascenders and deep descenders so the measured height
  * covers the full glyph cell including pixels below the baseline.
  *
- * Safe to call any time dc is non-NULL, including from GM_DOMAIN (before
- * the first GM_RENDER) so the layout gets a correct minimum height.
+ * Safe to call any time dc is non-NULL.
  * =========================================================================
  */
 void ubt_update_font_metrics(UniButtonData *inst)
@@ -185,7 +195,7 @@ void ubt_update_font_metrics(UniButtonData *inst)
  * or the cache has been invalidated.
  * =========================================================================
  */
-static void ubt_rebuild_cache(Class *cl, Object *o,
+void ubt_rebuild_cache(Class *cl, Object *o,
                                WORD gadW, WORD gadH,
                                struct DrawInfo *dri,
                                struct Screen   *scr)
@@ -285,21 +295,16 @@ ULONG UniButton_OnDomain(Class *cl, Object *o, struct gpDomain *msg)
     struct IBox    *domain = &msg->gpd_Domain;
     WORD            minW, minH;
 
-    /* Ensure font metrics are up-to-date; GM_DOMAIN may run before GM_RENDER */
-    if (inst->dc && inst->fontHeight == 0)
-        ubt_update_font_metrics(inst);
+    /* fontHeight, fontAscent and textWidth are pre-computed in OM_SET so that
+     * GM_DOMAIN never needs FreeType calls (it may run on the input.device task
+     * on some OS versions, where FreeType is unsafe, and it is called repeatedly). */
 
     /* Minimum height must fit the full glyph cell (ascender + descender) */
     minH = inst->fontHeight > 0 ? inst->fontHeight
                                 : (inst->pointSize > 0 ? (WORD)inst->pointSize : 16);
 
-    /* Minimum width from text advance width */
-    minW = 32;
-    if (inst->dc && inst->text && inst->text[0]) {
-        struct URPTextMetric m;
-        URPDC_TextSizeUTF8(inst->dc, inst->text, -1, &m);
-        if (m.width > 0) minW = m.width;
-    }
+    /* Minimum width from cached text advance width */
+    minW = (inst->textWidth > 0) ? inst->textWidth : 32;
 
     minW += inst->leftMargin + inst->rightMargin;
     minH += inst->topMargin  + inst->bottomMargin;

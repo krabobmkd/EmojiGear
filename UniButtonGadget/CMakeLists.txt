@@ -24,6 +24,7 @@ set(UNIBUTTON_SOURCES
     class_unibutton_attribs.c
     class_unibutton_render.c
     class_unibutton_input.c
+    bdbprintf.c
 )
 if(UNIBUTTON_STATIC_LINK)
 	set(LIBNAME "unibutton")
@@ -68,4 +69,4 @@ if(AMIGA_COMPILER_OPTIONS)
     )
 endif()
 
-# target_compile_definitions(${LIBNAME} PRIVATE USE_DEBUG_BDBPRINT=1)
+target_compile_definitions(${LIBNAME} PRIVATE USE_DEBUG_BDBPRINT=1)

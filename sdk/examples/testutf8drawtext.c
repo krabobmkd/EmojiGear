@@ -26,6 +26,7 @@
 #include <proto/exec.h>
 #include <proto/graphics.h>
 #include <proto/intuition.h>
+#include <proto/utf8rastport.h>>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -75,8 +76,8 @@ static const char *TEXT_ARROWS =
  * ------------------------------------------------------------------------- */
 int main(int argc, char *argv[])
 {
-    const char *fontPath  = "arial.ttf";
-    int         pointSize = 24;
+    const char *fontPath  = "LiberationSans-Regular.ttf";
+    int         pointSize = 16;
     struct Window          *win = NULL;
     struct URPDrawContext   *dc  = NULL;
     struct URPTextMetric    metric;
@@ -134,7 +135,7 @@ int main(int argc, char *argv[])
         goto cleanup;
     }
 
-    URPDC_SetPreferences(dc,URP_PREF_ANTIALIAS | URP_PREF_CLUTMODE_NOMASK);
+    URPDC_SetPreferenceFlags(dc,URP_PREF_ANTIALIAS | URP_PREF_CLUTMODE_NOMASK);
     /* if ever color indexed 8bit screen, need to remap glyphs to palette in a second glyph cache */
     URPDC_UpdateColorMap(dc,win->WScreen);
 
@@ -152,7 +153,7 @@ int main(int argc, char *argv[])
         printf("ERROR: cannot load font '%s'\n", fontPath);
         goto cleanup;
     }
-    if (!URPDC_AddFont(dc, "NotoColorEmoji.ttf", pointSize, 0)) {
+    if (!URPDC_AddFont(dc, "NotoColorEmoji32.ttf", pointSize, 0)) {
         printf("no Emoji font\n");
     } else
     {
@@ -217,7 +218,7 @@ printf("   ***** TEXT_SYMBOLS END\n\n\n");
     }
 
 cleanup:
-    if (dc)            URPDC_Destroy(dc);
+    if (dc)            URPDC_Release(dc);
     if (win)           CloseWindow(win);
     
     if (URPBase) CloseLibrary(URPBase);

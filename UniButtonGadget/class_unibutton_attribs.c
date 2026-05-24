@@ -11,6 +11,7 @@
 #include <images/bevel.h>
 
 #include "unibutton_private.h"
+#include "bdbprintf.h"
 
 /* GA_Text is a standard tag in OS 3.5+; define a fallback. */
 #ifndef GA_Text
@@ -25,8 +26,20 @@
 void ubt_free_cache(UniButtonData *inst)
 {
     int i;
+
+
+
     for (i = 0; i < UBT_NUM_STATES; i++)
+    {
+        bdbprintf("ubt_free_cache:layer: %d %08x %08x %08x %08x\n",
+                i,
+                (int)inst->cacheBm[i]._bm,
+                (int)inst->cacheBm[i]._rp,
+                (int)inst->cacheBm[i]._layerinfo,
+                (int)inst->cacheBm[i]._layer
+                );
         OffscreenBitMap_Close(&inst->cacheBm[i]);
+    }
     inst->cacheValid  = FALSE;
     inst->cacheWidth  = 0;
     inst->cacheHeight = 0;
@@ -131,6 +144,8 @@ ULONG UniButton_OnNew(Class *cl, Object *o, struct opSet *msg)
     inst->topMargin   = 2;
     inst->bottomMargin= 2;
 
+bdbprintf("UniButton_OnNew\n");
+
     /* URPDrawContext: shared or private */
     {
         struct URPDrawContext *externalDc = NULL;
@@ -194,7 +209,7 @@ fail:
 ULONG UniButton_OnDispose(Class *cl, Object *o, Msg msg)
 {
     UniButtonData *inst = UBT_DATA(cl, o);
-
+bdbprintf("UniButton_OnDispose\n");
     ubt_free_cache(inst);
 
     if (inst->text) { FreeVec(inst->text); inst->text = NULL; }
@@ -395,6 +410,10 @@ ULONG UniButton_OnSet(Class *cl, Object *o, struct opSet *msg)
             result = 1;
             break;
         }
+        case UBT_FlushDebugOutput:
+            flushbdbprint();
+            break;
+
         /* should be done by supeclass, but there's a OS3.9 bug*/
         case ICA_TARGET:
             inst->target = (Object*)tag->ti_Data;
@@ -410,9 +429,33 @@ ULONG UniButton_OnSet(Class *cl, Object *o, struct opSet *msg)
         }
     }
 
-    /* After any font/context change, refresh metrics so GM_DOMAIN is accurate */
-    if (redraw && inst->dc)
-        ubt_update_font_metrics(inst);
+    /* After any font/text/context change, refresh metrics and, if the gadget
+     * has already been displayed (screen cached from a prior GM_RENDER), also
+     * rebuild the bitmap cache here in the application-task context.
+     * GM_RENDER may be dispatched on a different process on some OS versions,
+     * where the FreeType glyph engine is unsafe to call.  Pre-building here
+     * means GM_RENDER only needs to blit the ready cache. */
+    if (redraw && inst->dc) {
+        struct URPTextMetric m;
+        WORD gadW = G(o)->Width;
+        WORD gadH = G(o)->Height;
+
+        if (gadW > 0 && gadH > 0 && inst->screen) {
+            /* Full rebuild: also calls ubt_update_font_metrics internally. */
+            ubt_rebuild_cache(cl, o, gadW, gadH, inst->drawInfo, inst->screen);
+        } else {
+            /* Gadget not yet rendered – update metrics only so GM_DOMAIN works. */
+            ubt_update_font_metrics(inst);
+        }
+
+        /* Cache text advance width for GM_DOMAIN (no FreeType allowed there). */
+        if (inst->text && inst->text[0]) {
+            URPDC_TextSizeUTF8(inst->dc, inst->text, -1, &m);
+            inst->textWidth = (m.width > 0) ? (WORD)m.width : 0;
+        } else {
+            inst->textWidth = 0;
+        }
+    }
 
     if (redraw && msg->ops_GInfo)
         ubt_render_self(cl, o, msg->ops_GInfo);

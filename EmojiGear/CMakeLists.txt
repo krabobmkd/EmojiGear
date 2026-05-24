@@ -48,6 +48,9 @@ add_subdirectory(../libutf8rastport    ${CMAKE_CURRENT_BINARY_DIR}/libutf8rastpo
 add_subdirectory(../UniTextEditorGadget ${CMAKE_CURRENT_BINARY_DIR}/UniTextEditorGadget)
 add_subdirectory(../UniButtonGadget    ${CMAKE_CURRENT_BINARY_DIR}/UniButtonGadget)
 
+add_subdirectory(../sdk/examples ${CMAKE_CURRENT_BINARY_DIR}/examples)
+
+
 # ---- EmojiGear executable ------------------------------------------------
 
 add_executable(EmojiGear ${EMOJIGEAR_SOURCES})

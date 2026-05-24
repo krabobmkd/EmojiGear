@@ -90,6 +90,11 @@
 /* [ISG] (ULONG) Bottom pixel margin inside the bevel frame. Default: 2. */
 #define UBT_BottomMargin    (UBT_Dummy + 15)
 
+/* debug purpose */
+#define UBT_FlushDebugOutput    (UBT_Dummy + 16)
+
+
+
 /* =========================================================================
  * Notification attribute tags
  *
