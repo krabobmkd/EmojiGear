@@ -502,6 +502,102 @@ static const char *yearEventsTable[40] = {
     "\xF0\x9F\x8E\x91", /* 🎑 moon ceremony   */
 };
 
+/* Business & Computing – devices, network, office, finance */
+static const char *businessEmojiTable[40] = {
+    /* row 0: computing devices */
+    "\xF0\x9F\x92\xBB", /* 💻 laptop          */
+    "\xF0\x9F\x96\xA5", /* 🖥 desktop          */
+    "\xF0\x9F\x96\xA8", /* 🖨 printer          */
+    "\xE2\x8C\xA8",     /* ⌨  keyboard        */
+    "\xF0\x9F\x96\xB1", /* 🖱 mouse            */
+    "\xF0\x9F\x92\xBE", /* 💾 floppy disk      */
+    "\xF0\x9F\x92\xBF", /* 💿 cd               */
+    "\xF0\x9F\x93\xB1", /* 📱 mobile phone     */
+    "\xF0\x9F\x96\xB2", /* 🖲 trackball        */
+    "\xF0\x9F\x93\xA1", /* 📡 satellite dish   */
+    /* row 1: network, security, tech */
+    "\xF0\x9F\x8C\x90", /* 🌐 globe w/meridians*/
+    "\xF0\x9F\x93\xB6", /* 📶 antenna bars     */
+    "\xF0\x9F\x94\x92", /* 🔒 locked           */
+    "\xF0\x9F\x94\x93", /* 🔓 unlocked         */
+    "\xF0\x9F\x94\x91", /* 🔑 key              */
+    "\xE2\x9A\x99",     /* ⚙  gear             */
+    "\xF0\x9F\x9B\xA0", /* 🛠 hammer & wrench  */
+    "\xF0\x9F\xA4\x96", /* 🤖 robot            */
+    "\xF0\x9F\xA7\xA0", /* 🧠 brain            */
+    "\xF0\x9F\x92\xA1", /* 💡 light bulb       */
+    /* row 2: charts, finance, files */
+    "\xF0\x9F\x93\x8A", /* 📊 bar chart        */
+    "\xF0\x9F\x93\x88", /* 📈 chart up         */
+    "\xF0\x9F\x93\x89", /* 📉 chart down       */
+    "\xF0\x9F\x92\xB0", /* 💰 money bag        */
+    "\xF0\x9F\x92\xB3", /* 💳 credit card      */
+    "\xF0\x9F\x92\xB5", /* 💵 dollar banknote  */
+    "\xF0\x9F\x93\x8B", /* 📋 clipboard        */
+    "\xF0\x9F\x93\x81", /* 📁 file folder      */
+    "\xF0\x9F\x97\x82", /* 🗂 card index       */
+    "\xF0\x9F\x8F\xA6", /* 🏦 bank             */
+    /* row 3: office, comms, writing */
+    "\xF0\x9F\x91\x94", /* 👔 necktie          */
+    "\xF0\x9F\x92\xBC", /* 💼 briefcase        */
+    "\xF0\x9F\x93\xA7", /* 📧 e-mail           */
+    "\xF0\x9F\x93\xA8", /* 📨 incoming envelope*/
+    "\xF0\x9F\x93\x85", /* 📅 calendar         */
+    "\xE2\x9C\x8F",     /* ✏  pencil           */
+    "\xF0\x9F\x93\x9D", /* 📝 memo             */
+    "\xF0\x9F\x96\x8A", /* 🖊 pen              */
+    "\xF0\x9F\x97\x92", /* 🗒 spiral notepad   */
+    "\xF0\x9F\x93\x8C", /* 📌 pushpin          */
+};
+
+/* Animals – mammals, birds, sea creatures, reptiles, insects */
+static const char *animalsEmojiTable[40] = {
+    /* row 0: common mammals */
+    "\xF0\x9F\x90\xB6", /* 🐶 dog              */
+    "\xF0\x9F\x90\xB1", /* 🐱 cat              */
+    "\xF0\x9F\x90\xAD", /* 🐭 mouse            */
+    "\xF0\x9F\x90\xB0", /* 🐰 rabbit           */
+    "\xF0\x9F\xA6\x8A", /* 🦊 fox              */
+    "\xF0\x9F\x90\xBB", /* 🐻 bear             */
+    "\xF0\x9F\x90\xBC", /* 🐼 panda            */
+    "\xF0\x9F\x90\xA8", /* 🐨 koala            */
+    "\xF0\x9F\x90\xAF", /* 🐯 tiger            */
+    "\xF0\x9F\xA6\x81", /* 🦁 lion             */
+    /* row 1: farm animals & birds */
+    "\xF0\x9F\x90\xAE", /* 🐮 cow              */
+    "\xF0\x9F\x90\xB7", /* 🐷 pig              */
+    "\xF0\x9F\x90\xB8", /* 🐸 frog             */
+    "\xF0\x9F\x90\xB5", /* 🐵 monkey           */
+    "\xF0\x9F\x99\x88", /* 🙈 see-no-evil      */
+    "\xF0\x9F\x90\x94", /* 🐔 chicken          */
+    "\xF0\x9F\x90\xA7", /* 🐧 penguin          */
+    "\xF0\x9F\x90\xA6", /* 🐦 bird             */
+    "\xF0\x9F\xA6\x86", /* 🦆 duck             */
+    "\xF0\x9F\xA6\x85", /* 🦅 eagle            */
+    /* row 2: sea creatures & insects */
+    "\xF0\x9F\x90\xAC", /* 🐬 dolphin          */
+    "\xF0\x9F\x90\xB3", /* 🐳 whale            */
+    "\xF0\x9F\xA6\x88", /* 🦈 shark            */
+    "\xF0\x9F\x90\xA0", /* 🐠 tropical fish    */
+    "\xF0\x9F\x90\x99", /* 🐙 octopus          */
+    "\xF0\x9F\xA6\x80", /* 🦀 crab             */
+    "\xF0\x9F\xA6\x8B", /* 🦋 butterfly        */
+    "\xF0\x9F\x90\x9D", /* 🐝 honeybee         */
+    "\xF0\x9F\x90\x9B", /* 🐛 bug              */
+    "\xF0\x9F\xA6\x97", /* 🦗 cricket          */
+    /* row 3: reptiles & exotic animals */
+    "\xF0\x9F\x90\x8A", /* 🐊 crocodile        */
+    "\xF0\x9F\x90\xA2", /* 🐢 turtle           */
+    "\xF0\x9F\xA6\x8E", /* 🦎 lizard           */
+    "\xF0\x9F\x90\x8D", /* 🐍 snake            */
+    "\xF0\x9F\xA6\x93", /* 🦓 zebra            */
+    "\xF0\x9F\xA6\x92", /* 🦒 giraffe          */
+    "\xF0\x9F\x90\x98", /* 🐘 elephant         */
+    "\xF0\x9F\xA6\x8F", /* 🦏 rhinoceros       */
+    "\xF0\x9F\xA6\x94", /* 🦔 hedgehog         */
+    "\xF0\x9F\xA6\x98", /* 🦘 kangaroo         */
+};
+
 /* -------------------------------------------------------------------------
  * Emoji set descriptor
  * -------------------------------------------------------------------------*/
@@ -511,15 +607,17 @@ typedef struct {
 } EmojiSetDesc;
 
 static const EmojiSetDesc emojiSets[EMOJIBOX_NUM_SETS] = {
-    { "Popular Emojis", popularEmojiTable },
-    { "Urban Emojis",   urbanEmojiTable   },
-    { "Nature Emojis",  natureEmojiTable  },
-    { "Symbols",        symbolsEmojiTable },
-    { "Sports",         sportsEmojiTable  },
-    { "Katakana",       katakanaTable     },
-    { "Cooking",        cookingEmojiTable },
-    { "Culture",        cultureEmojiTable },
-    { "Year Events",    yearEventsTable   },
+    { "Popular Emojis", popularEmojiTable  },
+    { "Urban Emojis",   urbanEmojiTable    },
+    { "Nature Emojis",  natureEmojiTable   },
+    { "Symbols",        symbolsEmojiTable  },
+    { "Sports",         sportsEmojiTable   },
+    { "Katakana",       katakanaTable      },
+    { "Cooking",        cookingEmojiTable  },
+    { "Culture",        cultureEmojiTable  },
+    { "Year Events",    yearEventsTable    },
+    { "Business",       businessEmojiTable },
+    { "Animals",        animalsEmojiTable  },
 };
 
 /* =========================================================================
