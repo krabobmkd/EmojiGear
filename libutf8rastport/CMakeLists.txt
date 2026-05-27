@@ -210,13 +210,21 @@ if(UTF8RASTPORT_SHARED)
 	add_executable( ${UTF8RPNAME}
 		libinit.s
 		libcinit.c
-#was a test		libmalloc.c
+		lib_amiga_crt.c
 		utf8rastport.c
 		urp_cgx_blend.c
 	)
 
-target_link_options(${UTF8RPNAME} PRIVATE -ffreestanding -nostartfiles -Wl,-e,__start)
+target_link_options(${UTF8RPNAME} PRIVATE
+    -nostdlib -ffreestanding -nostartfiles -Wl,-e,__start)
 target_compile_options(${UTF8RPNAME} PRIVATE -fomit-frame-pointer )
+
+# lib_amiga_crt.c provides memset/memcpy/strlen/etc. With -O3, GCC recognises
+# our simple loops as built-in patterns and replaces them with calls to the
+# very function being compiled → infinite recursion / freeze.
+# -fno-builtin suppresses that only for this translation unit.
+set_source_files_properties(lib_amiga_crt.c PROPERTIES
+    COMPILE_FLAGS "-fno-builtin")
 #target_compile_definitions(${UTF8RPNAME} PRIVATE PRIVATE VERSION_STRING="${VERSTRING}")
 
 
@@ -237,6 +245,14 @@ target_include_directories(${UTF8RPNAME} PUBLIC
 # utf8rastport consumers automatically get FreeType headers via PUBLIC linkage
 
 	target_link_libraries(${UTF8RPNAME} PUBLIC freetype )
+
+# libgcc m020 variant: __udivdi3 / __divdi3 without soft-32 fallbacks.
+# Must come after freetype/png/zlib so the linker resolves refs first.
+# The library targets 68020+ (compiled -mcpu=68020) so the m020 ABI is correct.
+if(UTF8RASTPORT_SHARED)
+    target_link_libraries(${UTF8RPNAME} PRIVATE
+        /opt/amiga/lib/gcc/m68k-amigaos/6.5.0b/libm020/libgcc.a)
+endif()
 
 if(USEFRIBIDI)
 	target_link_libraries(${UTF8RPNAME} PUBLIC fribidi )

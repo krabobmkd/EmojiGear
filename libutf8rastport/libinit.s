@@ -54,8 +54,8 @@ _LVORemove     EQU   -252
    LABEL ClassLib_SIZEOF
 
 ; important must be the same...
-VERSION		EQU	1
-REVISION	EQU	0
+VERSION		EQU	2
+REVISION	EQU	2
 
 CALL	MACRO
 	jsr	_LVO\1(a6)

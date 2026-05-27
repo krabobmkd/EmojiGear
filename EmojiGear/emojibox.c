@@ -1374,6 +1374,7 @@ void EmojiBoxWindow_Open(EmojiBoxWindow *ebw)
         }
 
         ebw->window = (struct Window *)DoMethod(ebw->windowObj, WM_OPEN, NULL);
+
     }
 }
 

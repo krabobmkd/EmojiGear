@@ -1,0 +1,73 @@
+lib_amiga_crt.c — Custom C runtime for utf8rastport.library
+=============================================================
+
+Problem
+-------
+utf8rastport.library is an AmigaOS shared library built with m68k-amigaos-gcc.
+By default GCC links libnix, which initialises global state (memory pools,
+stdio FILE pointers) once at library load time.  When multiple processes open
+the library simultaneously each one shares that global state, causing heap
+corruption and crashes.
+
+Solution
+--------
+The library is linked with -nostdlib -ffreestanding -nostartfiles, removing
+libnix entirely.  lib_amiga_crt.c provides every C symbol that FreeType,
+libpng, and zlib require, using only reentrant AmigaOS primitives:
+
+  malloc / free       AllocVec / FreeVec.  Exec tracks the block size
+                      internally; no header overhead needed.
+
+  memset/memcpy/      Plain C loops.  MUST be compiled with -fno-builtin
+  memmove/strlen/     (see below) or GCC -O3 replaces the loops with calls
+  strcmp / ...        to the very function being compiled → infinite recursion.
+
+  setjmp / longjmp    m68k assembler.  Saves d2-d7/a2-a6/sp into the
+                      136-byte jmp_buf (int[34]).  Required by FreeType's
+                      PNG error-recovery path (pngshim.c / png_jmpbuf).
+
+  fprintf / fputc     Route all output to the current task's DOS Output()
+                      handle.  Reentrant by design: each task has its own
+                      Output() value.
+
+  fread/fwrite/fflush Stubs.  FreeType reads fonts via DOS Open/Read through
+                      ftsystem.c (builds/amiga), never via stdio.  libpng
+                      data is fed through a custom read_data_from_FT_Stream
+                      callback, never via fread.
+
+  getenv              DOS GetVar() into a static buffer.  Non-reentrant but
+                      only called once during FT_Init_FreeType for the
+                      optional FREETYPE_PROPERTIES env var.
+
+  qsort / strtoul /   Standard implementations with no global state.
+  strtol / abort /
+  gmtime
+
+  __initmalloc etc.   Empty stubs; libcinit.c still calls them.
+
+Key build rules
+---------------
+1. -fno-builtin on lib_amiga_crt.c only (CMakeLists set_source_files_properties).
+   GCC -O3 recognises byte-fill/copy loops as memset/memcpy patterns and
+   replaces them with calls to those symbols.  When the file IS the definition
+   of those symbols the result is infinite recursion.  -fno-builtin disables
+   that substitution without affecting the rest of the library.
+
+2. libm020/libgcc.a linked AFTER freetype/png/zlib.
+   __udivdi3 / __divdi3 (64-bit division) come from the 68020 variant of
+   libgcc.  Link order matters for static archives: the archive must appear
+   after the object files that reference its symbols.
+
+3. PNG_SETJMP_SUPPORTED must remain enabled in pnglibconf.h.
+   FreeType's pngshim.c uses png_jmpbuf() unconditionally; disabling it
+   causes a deliberate compile-time error inside libpng headers.
+   PNG_SIMPLIFIED_READ/WRITE_SUPPORTED are disabled (they pull in additional
+   stdio/setjmp code not needed by FreeType).
+
+Library globals
+---------------
+_SysBase        Defined in libinit.s (DC.L 0), set by LibInit from a6.
+DOSBase etc.    Defined in libcinit.c, opened/closed by CLibInit/CLibExpunge.
+__sF            Three-element FILE* array; [2] points to a static stderr
+                stub that routes to Output().  Required by libpng's default
+                error handler (fprintf(stderr, ...)).

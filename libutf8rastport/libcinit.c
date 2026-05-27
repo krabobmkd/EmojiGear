@@ -30,48 +30,34 @@ struct Library         *UtilityBase   ;
 struct Library         *LayersBase    ;
 struct Library         *CyberGfxBase  ;
 
-const char *VersionString = "utf8rastport.library 1.0";
+const char VersionString[] = "utf8rastport.library 2.2 ("__DATE__")";
 const char Lib_ID[]= "utf8rastport.library";
 
-/* test */
-extern int CRunTimeInited;
 
 void CLibClose();
 void CLibExpunge();
 
 int CLibInit()
 {
-    /* not sure about globals init values set in that case */
-    if(!CRunTimeInited)
-    {
-        DOSBase = NULL;
-        GfxBase = NULL;
-        IntuitionBase = NULL;
-        UtilityBase = NULL;
-        LayersBase = NULL;
-        CyberGfxBase = NULL;
+    DOSBase = NULL;
+    GfxBase = NULL;
+    IntuitionBase = NULL;
+    UtilityBase = NULL;
+    LayersBase = NULL;
+    CyberGfxBase = NULL;
 
-        DOSBase = (struct DosLibrary*)OpenLibrary("dos.library",32);
-        if(!DOSBase) goto failinit;
-        GfxBase = (struct GfxBase*) OpenLibrary("graphics.library",39);
-        if(!GfxBase) goto failinit;
-        IntuitionBase = (struct IntuitionBase*)OpenLibrary("intuition.library",39);
-        if(!IntuitionBase) goto failinit;
-        UtilityBase = OpenLibrary("utility.library",39);
-        if(!UtilityBase) goto failinit;
-        LayersBase = OpenLibrary("layers.library",39);
-        if(!LayersBase) goto failinit;
-            /* CyberGfxBase NULL accepted */
-        CyberGfxBase = OpenLibrary("cybergraphics.library", 1);
-
-        /* Manually run the libnix init chain that ncrt0 callfuncs normally walks.
-           Must happen after DOSBase is open (Input()/Output() used by __initstdio).
-           Order mirrors ADD2INIT priorities: -50 before -30. */
-
-        __initmalloc();
-        __initstdio();
-        CRunTimeInited = 1;
-    }
+    DOSBase = (struct DosLibrary*)OpenLibrary("dos.library",32);
+    if(!DOSBase) goto failinit;
+    GfxBase = (struct GfxBase*) OpenLibrary("graphics.library",39);
+    if(!GfxBase) goto failinit;
+    IntuitionBase = (struct IntuitionBase*)OpenLibrary("intuition.library",39);
+    if(!IntuitionBase) goto failinit;
+    UtilityBase = OpenLibrary("utility.library",39);
+    if(!UtilityBase) goto failinit;
+    LayersBase = OpenLibrary("layers.library",39);
+    if(!LayersBase) goto failinit;
+        /* CyberGfxBase NULL accepted */
+    CyberGfxBase = OpenLibrary("cybergraphics.library", 1);
 
     /* success is 0 */
     return 0;
@@ -85,26 +71,20 @@ void CLibClose()
 }
 void CLibExpunge()
 {
-    /* Mirror the ADD2EXIT chain (highest priority first: -30 before -50). */
-    if(CRunTimeInited)
-    {
-        __exitstdio();
-        __exitmalloc();
-       CRunTimeInited = 0;
 
-        if(CyberGfxBase) CloseLibrary(CyberGfxBase);
-        CyberGfxBase = NULL;
-        if(LayersBase) CloseLibrary(LayersBase);
-        LayersBase = NULL;
-        if(UtilityBase) CloseLibrary(UtilityBase);
-        UtilityBase = NULL;
-        if(IntuitionBase) CloseLibrary(IntuitionBase);
-        IntuitionBase = NULL;
-        if(GfxBase) CloseLibrary(GfxBase);
-        GfxBase = NULL;
-        if(DOSBase) CloseLibrary(DOSBase);
-        DOSBase = NULL;
-    }
+    if(CyberGfxBase) CloseLibrary(CyberGfxBase);
+    CyberGfxBase = NULL;
+    if(LayersBase) CloseLibrary(LayersBase);
+    LayersBase = NULL;
+    if(UtilityBase) CloseLibrary(UtilityBase);
+    UtilityBase = NULL;
+    if(IntuitionBase) CloseLibrary(IntuitionBase);
+    IntuitionBase = NULL;
+    if(GfxBase) CloseLibrary(GfxBase);
+    GfxBase = NULL;
+    if(DOSBase) CloseLibrary(DOSBase);
+    DOSBase = NULL;
+
 
 }
 

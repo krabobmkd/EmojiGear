@@ -53,9 +53,9 @@ _LVORemove     EQU   -252
 		ULONG   cb_DOSBase
    LABEL ClassLib_SIZEOF
 
-; important must be the same...
+; important they must be the same as in the .c sources
 VERSION		EQU	2
-REVISION	EQU	0
+REVISION	EQU	3
 
 CALL	MACRO
 	jsr	_LVO\1(a6)
