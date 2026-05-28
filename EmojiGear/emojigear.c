@@ -431,6 +431,14 @@ int main(int argc, char **argv)
 UTED_BevelStyle, BVS_FIELD,
 UTED_WordWrap,FALSE,// test
 
+        /* rawkey and vanilla key will be sent from window message
+          with PutRawKey and PutVanillaKey.
+          if UKM_Internal, keys are managed only with boopsi messages,
+          but it will "hog" the keys for everything and we'll have
+          to Activate() back the gadget now and then.
+          That way text receive keys in any cases.
+        */
+        UTED_KeyMessageMode,UKM_External,
         UTED_VanillaKeyAnsiCode, detect_vanilla_ansi_code(),
         TAG_DONE);
 
@@ -554,8 +562,9 @@ UTED_WordWrap,FALSE,// test
         WA_Width, 640,
         WA_Height, 400,
     /*given at opening    WA_CustomScreen, (ULONG)app->lockedscreen, */
-        WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_MENUPICK | IDCMP_RAWKEY | IDCMP_VANILLAKEY |
-                  IDCMP_GADGETDOWN | IDCMP_GADGETUP /*| IDCMP_MOUSEMOVE*/ | IDCMP_NEWSIZE,
+        WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_MENUPICK | IDCMP_RAWKEY
+        | IDCMP_VANILLAKEY
+        | IDCMP_GADGETDOWN | IDCMP_GADGETUP /*| IDCMP_MOUSEMOVE*/ | IDCMP_NEWSIZE,
         WA_Flags, WFLG_DRAGBAR | WFLG_DEPTHGADGET | WFLG_CLOSEGADGET |
                   WFLG_SIZEGADGET | WFLG_SIZEBRIGHT | WFLG_ACTIVATE | WFLG_SMART_REFRESH
                   ,
@@ -641,11 +650,11 @@ UTED_WordWrap,FALSE,// test
             ULONG result, waitedSignals, currentSignals;
             ULONG settingsSig, fontsSig, searchBoxSig, emojiBoxSig;
 
-            // flushbdbprint();
-            // if(app->textEditorObj)
-            // {
-            //     SetAttrs(app->textEditorObj,UTED_FlushDebugOutput,TRUE,TAG_END);
-            // }
+            flushbdbprint();
+            if(app->textEditorObj)
+            {
+                SetAttrs(app->textEditorObj,UTED_FlushDebugOutput,TRUE,TAG_END);
+            }
 
             settingsSig  = EgSettingsView_GetSignalMask(&app->settingsView);
             fontsSig     = EgFontsView_GetSignalMask(&app->fontsView);
@@ -686,22 +695,27 @@ UTED_WordWrap,FALSE,// test
                     case WMHI_ACTIVE:
                      //printf("WMHI_ACTIVE\n");
                      app->activeEditorObj = app->textEditorObj;
+                     // if(CurrentMainWindow)
+                     // {
+                     //    ActivateGadget(app->textEditorObj,CurrentMainWindow,NULL);
+                     // }
                      break;
                     case WMHI_RAWKEY:
                     {
                         ULONG key = (result & 0x07f);
                         ULONG isUp = (result & 0x080);
                         ULONG qualifiers=0;
+                        int keyUsed=0;
+
                         GetAttr(WINDOW_Qualifier,app->window_obj,&qualifiers);
-
-
+ //printf("WMHI_RAWKEY: %08x %08x\n",result,qualifiers);
+                      //  if (isUp) break;
                         /* Tab rawkey (0x42):
                          *   Ctrl+Shift → previous tab (app-level).
                          *   Shift only  → backtab forwarded to gadget via UTED_PutRawKey
                          *                 (Shift+Tab does not generate WMHI_VANILLAKEY).
                          *   Plain Tab / Ctrl+Tab: fall through; handled by WMHI_VANILLAKEY. */
-                        if (!isUp && key == 0x42 &&
-                            !(qualifiers & IEQUALIFIER_REPEAT))
+                        if (!isUp && key == 0x42 &&  !(qualifiers & IEQUALIFIER_REPEAT))
                         {
                             ULONG isCtrl  = qualifiers & IEQUALIFIER_CONTROL;
                             ULONG isShift = qualifiers &
@@ -709,53 +723,60 @@ UTED_WordWrap,FALSE,// test
                             if (isCtrl && isShift && app->tabCount > 1) {
                                 EgTabs_SwitchTo((app->tabCurrentIndex - 1 +
                                                app->tabCount) % app->tabCount);
-                            } else if (isShift && !isCtrl &&
-                                       app->activeEditorObj == app->textEditorObj) {
-                                SetGdAttrs(app->textEditorObj,
-                                           UTED_PutRawKey, key|(qualifiers<<16), TAG_END);
+                                keyUsed = 1;
                             }
                         }
-                        else if (!EmojiBox_HandleFKey(app, key, qualifiers,CurrentMainWindow)
-                            && app->activeEditorObj == app->textEditorObj)
+                        if(!isUp && !keyUsed)
+                        {
+                            keyUsed = (int) EmojiBox_HandleFKey(app, key, qualifiers,CurrentMainWindow);
+                        }
+                        if (!keyUsed && app->activeEditorObj == app->textEditorObj)
                         {
                             SetGdAttrs(app->textEditorObj,
-                                UTED_PutRawKey,key|(qualifiers<<16),TAG_END);
+                                UTED_PutRawKey,(result & 0x0ff)|(qualifiers<<16),TAG_END);
                         }
                     }
                     break;
-                    // case WMHI_VANILLAKEY:
-                    // {
-                    //     ULONG key = (result & 0x00FF);
-                    //     ULONG qualifiers=0;
-                    //     GetAttr(WINDOW_Qualifier,app->window_obj,&qualifiers);
-                    //     //printf("vk:%08x q:%08x\n",key,qualifiers);
-                    //     /* Intuition already applied dead-key/shift composition;
-                    //      * the low byte is the final character in the keymap encoding. */
+                    case WMHI_VANILLAKEY:
+                    {
+                        ULONG key = (result & 0x00FF);
+                        ULONG qualifiers=0;
+                        GetAttr(WINDOW_Qualifier,app->window_obj,&qualifiers);
+                        //printf("vk:%08x q:%08x\n",key,qualifiers);
+                        /* Intuition already applied dead-key/shift composition;
+                         * the low byte is the final character in the keymap encoding. */
 
-                    //     /* Ctrl+Tab: cycle to next tab (Ctrl+Shift+Tab arrives as rawkey) */
-                    //     if (key == 0x09 &&
-                    //         (qualifiers & IEQUALIFIER_CONTROL) &&
-                    //         !(qualifiers & IEQUALIFIER_REPEAT) &&
-                    //         app->tabCount > 1)
-                    //     {
-                    //         EgTabs_SwitchTo((app->tabCurrentIndex + 1) % app->tabCount);
-                    //     }
-                    //     else
-                    //     if(key == 0x2d && (qualifiers & IEQUALIFIER_CONTROL)!=0 &&
-                    //            (qualifiers & IEQUALIFIER_REPEAT)==0 )
-                    //     {   /* yet - and + keys are received here */
-                    //         Action_SettingsFontSizeMinus(app);
-                    //     } else
-                    //     if( key == 0x2b && (qualifiers & IEQUALIFIER_CONTROL)!=0 &&
-                    //            (qualifiers &IEQUALIFIER_REPEAT)==0)
-                    //     {
-                    //         Action_SettingsFontSizePlus(app);
-                    //     } else if(app->activeEditorObj == app->textEditorObj)
-                    //     {
-                    //         SetGdAttrs(app->textEditorObj, UTED_PutVanillaKey, key|(qualifiers<<16), TAG_END);
-                    //     }
-                    // }
-                    // break;
+                        /*os3.2 completly not apply capslock when mapRawKey does it with correct dead keys !!!*/
+                        if((qualifiers & IEQUALIFIER_CAPSLOCK) &&
+                            (key >=(ULONG)'a') && (key <=(ULONG)'z'))
+                        {
+                            key -= 32;
+                        }
+                        /* Ctrl+Tab: cycle to next tab (Ctrl+Shift+Tab arrives as rawkey) */
+                        if (key == 0x09 &&
+                            (qualifiers & IEQUALIFIER_CONTROL) &&
+                            !(qualifiers & IEQUALIFIER_REPEAT) &&
+                            app->tabCount > 1)
+                        {
+                            EgTabs_SwitchTo((app->tabCurrentIndex + 1) % app->tabCount);
+                        }
+                        else
+                        if(key == 0x2d && (qualifiers & IEQUALIFIER_CONTROL)!=0 &&
+                               (qualifiers & IEQUALIFIER_REPEAT)==0 )
+                        {   /* yet - and + keys are received here */
+                            Action_SettingsFontSizeMinus(app);
+                        } else
+                        if( key == 0x2b && (qualifiers & IEQUALIFIER_CONTROL)!=0 &&
+                               (qualifiers &IEQUALIFIER_REPEAT)==0)
+                        {
+                            Action_SettingsFontSizePlus(app);
+                        } else if(app->activeEditorObj == app->textEditorObj)
+                        {
+                            SetGdAttrs(app->textEditorObj, UTED_PutVanillaKey, key|(qualifiers<<16), TAG_END);
+                        }
+                    }
+                    break;
+
                     case WMHI_CLOSEWINDOW:
                         /* now close button would just close the current text context */
                         EgTabs_CloseCurrentTab();
@@ -798,6 +819,11 @@ UTED_WordWrap,FALSE,// test
                                 EgAction_Execute((ULONG)actionID,app);
                             }
                         }
+                        /* reactivate gadget after menu use*/
+                        // if(CurrentMainWindow)
+                        // {
+                        //     ActivateGadget(app->textEditorObj,CurrentMainWindow,NULL);
+                        // }
                         break;
                     }
                     case WMHI_NEWSIZE:
@@ -853,9 +879,10 @@ UTED_WordWrap,FALSE,// test
                             if (ptag && ptag->ti_Data) {
                              // printf(" ID_TEXTEDITOR activated\n");
                                 app->activeEditorObj = app->textEditorObj;
-                                SetGdAttrs(app->searchBox.searchEditor,
+                                /*watch out SetGdAttrs() is only for main window */
+                                SetAttrs(app->searchBox.searchEditor,
                                     UTED_SetPrivateActivation, FALSE, TAG_END);
-                                SetGdAttrs(app->searchBox.replaceEditor,
+                                SetAttrs(app->searchBox.replaceEditor,
                                     UTED_SetPrivateActivation, FALSE, TAG_END);
                             }
                             break;
@@ -867,7 +894,7 @@ UTED_WordWrap,FALSE,// test
                                 app->activeEditorObj = app->searchBox.searchEditor;
                                 SetGdAttrs(app->textEditorObj,
                                     UTED_SetPrivateActivation, FALSE, TAG_END);
-                                SetGdAttrs(app->searchBox.replaceEditor,
+                                SetAttrs(app->searchBox.replaceEditor,
                                     UTED_SetPrivateActivation, FALSE, TAG_END);
                             }
                             break;
@@ -879,7 +906,7 @@ UTED_WordWrap,FALSE,// test
                                 app->activeEditorObj = app->searchBox.replaceEditor;
                                 SetGdAttrs(app->textEditorObj,
                                     UTED_SetPrivateActivation, FALSE, TAG_END);
-                                SetGdAttrs(app->searchBox.searchEditor,
+                                SetAttrs(app->searchBox.searchEditor,
                                     UTED_SetPrivateActivation, FALSE, TAG_END);
                             }
                             break;

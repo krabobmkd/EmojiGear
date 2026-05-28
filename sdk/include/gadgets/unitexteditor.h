@@ -440,7 +440,20 @@ typedef struct UTEDTextPosition {
  * Only active when gadget is built with USE_DEBUG_BDBPRINT defined. */
 #define UTED_FlushDebugOutput    (UTED_Dummy + 62)
 
-
+/* [IS] (ULONG) Keyboard input routing mode.  One of:
+ *   UKM_External (0) – the application delivers keys via UTED_PutRawKey /
+ *                      UTED_PutVanillaKey from its own event loop.
+ *                      The gadget does NOT keep Boopsi activation after mouse
+ *                      release; keyboard focus stays with the window.
+ *   UKM_Internal (1) – the gadget intercepts RAWKEY events directly from
+ *                      GM_HANDLEINPUT while active; UTED_PutRawKey and
+ *                      UTED_PutVanillaKey are ignored in this mode.
+ *                      The gadget keeps Boopsi activation after mouse release
+ *                      so it continues to receive keyboard events directly.
+ * Default: UKM_External. */
+#define UTED_KeyMessageMode      (UTED_Dummy + 63)
+#define UKM_External  0UL
+#define UKM_Internal  1UL
 
 
 /* =========================================================================

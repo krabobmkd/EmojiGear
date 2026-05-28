@@ -265,6 +265,8 @@ void GenericOpenWindow(BoopsiMainWindow *mw,Object *window_obj,struct AppSetting
                             UTED_TextPen,txtPen & 0x00ff,
                             UTED_BgPen,bgPen  & 0x00ff,
                             TAG_END);
+
+        //ActivateGadget(app->textEditorObj,CurrentMainWindow,NULL);
     }
 
     /* test for OS3.9 layout problems */

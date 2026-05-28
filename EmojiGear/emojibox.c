@@ -1335,7 +1335,7 @@ static BOOL EmojiBoxWindow_Create(EmojiBoxWindow *ebw, struct App *curApp)
         WA_Height, EBOXW_OPEN_H,
         WA_MinWidth,  EBOXW_MIN_W,
         WA_MinHeight, EBOXW_MIN_H,
-        WA_IDCMP,  IDCMP_CLOSEWINDOW | IDCMP_GADGETUP | IDCMP_NEWSIZE | IDCMP_RAWKEY,
+        WA_IDCMP,  IDCMP_CLOSEWINDOW | IDCMP_GADGETUP | IDCMP_NEWSIZE | IDCMP_RAWKEY | IDCMP_VANILLAKEY,
         WA_Flags,  WFLG_DRAGBAR | WFLG_DEPTHGADGET | WFLG_CLOSEGADGET |
                    WFLG_SIZEGADGET | WFLG_ACTIVATE | WFLG_SMART_REFRESH,
         WA_Title,  (ULONG)"Emoji Box",
@@ -1436,7 +1436,45 @@ BOOL EmojiBoxWindow_HandleInput(EmojiBoxWindow *ebw)
             }
 
         } break;
+      case WMHI_VANILLAKEY:
+        {
+            ULONG key = (result & 0x00FF);
+            ULONG qualifiers=0;
+            GetAttr(WINDOW_Qualifier,app->window_obj,&qualifiers);
+            //printf("vk:%08x q:%08x\n",key,qualifiers);
+            /* Intuition already applied dead-key/shift composition;
+             * the low byte is the final character in the keymap encoding. */
 
+            /*os3.2 completly not apply capslock when mapRawKey does it with correct dead keys !!!*/
+            if((qualifiers & IEQUALIFIER_CAPSLOCK) &&
+                (key >=(ULONG)'a') && (key <=(ULONG)'z'))
+            {
+                key -= 32;
+            }
+            /* Ctrl+Tab: cycle to next tab (Ctrl+Shift+Tab arrives as rawkey) */
+            if (key == 0x09 &&
+                (qualifiers & IEQUALIFIER_CONTROL) &&
+                !(qualifiers & IEQUALIFIER_REPEAT) &&
+                app->tabCount > 1)
+            {
+                EgTabs_SwitchTo((app->tabCurrentIndex + 1) % app->tabCount);
+            }
+            else
+            if(key == 0x2d && (qualifiers & IEQUALIFIER_CONTROL)!=0 &&
+                   (qualifiers & IEQUALIFIER_REPEAT)==0 )
+            {   /* yet - and + keys are received here */
+                Action_SettingsFontSizeMinus(app);
+            } else
+            if( key == 0x2b && (qualifiers & IEQUALIFIER_CONTROL)!=0 &&
+                   (qualifiers &IEQUALIFIER_REPEAT)==0)
+            {
+                Action_SettingsFontSizePlus(app);
+            } else if(app->activeEditorObj == app->textEditorObj)
+            {
+                SetGdAttrs(app->textEditorObj, UTED_PutVanillaKey, key|(qualifiers<<16), TAG_END);
+            }
+        }
+        break;
         case WMHI_GADGETUP:
         {
             ULONG gadId = result & WMHI_GADGETMASK;

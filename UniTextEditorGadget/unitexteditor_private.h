@@ -417,6 +417,16 @@ typedef struct UniTextEditorData {
     Object *target;
     ULONG  ga_id;
 
+    ULONG useInternalRawKey;
+
+    /* Deferred keyboard input from input.device context.
+     * GM_HANDLEINPUT copies raw InputEvents here; GM_RENDER drains them via
+     * uted_manageFullRawKey(), which is safe in the application task context. */
+#define UTED_PENDING_KEY_MAX 4
+    struct InputEvent pendingKeys[UTED_PENDING_KEY_MAX];
+    UBYTE             pendingKeyCount;
+    UBYTE             _padKey[3];
+
 } UniTextEditorData;
 
 /* pendingDragType values */
@@ -528,4 +538,11 @@ BOOL  uted_pool_growalloc      (UTEDBitMapPool *pool, ULONG newSize,
 void  uted_pool_free_bitmapcache           (UTEDBitMapPool *pool);
 void  uted_pool_free_layer           (UTEDBitMapPool *pool);
 
+
+int uted_manage_vanilla_keycode(Class *cl, Object *o,ULONG codedata, struct GadgetInfo *gi);
+int uted_manage_rawkey_keycode(Class *cl, Object *o,ULONG codedata, struct GadgetInfo *gi);
+int uted_manageFullRawKey(Class *cl, Object *o,
+            struct InputEvent *ie,
+            struct GadgetInfo *gi
+             );
 #endif /* UNITEXTEDITOR_PRIVATE_H */

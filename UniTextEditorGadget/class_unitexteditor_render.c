@@ -385,6 +385,14 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
      * before any drag (extend=TRUE, moves float), even when both arrived
      * between two consecutive GM_RENDER calls.
      * ------------------------------------------------------------------ */
+    /* Drain deferred keyboard events (pushed by GM_HANDLEINPUT in input.device context) */
+    if (inst->pendingKeyCount > 0) {
+        UBYTE i;
+        for (i = 0; i < inst->pendingKeyCount; i++)
+            uted_manageFullRawKey(cl, o, &inst->pendingKeys[i], msg->gpr_GInfo);
+        inst->pendingKeyCount = 0;
+    }
+
     if (inst->pendingClick || inst->pendingDrag) {
         ULONG hitLine = 0, hitCh = 0;
 

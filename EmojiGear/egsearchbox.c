@@ -57,6 +57,7 @@ BOOL EgSearchBox_Create(EgSearchBox *sb, ULONG pointSize/*,ULONG *sharedButtonsD
     sb->searchEditor = (Object *)NewObject(UNITEXTEDITOR_GetClass(), NULL,
         GA_ID,                  (ULONG)ID_SEARCH_EDITOR,
         ICA_TARGET,             (ULONG)TargetInstance,
+        UTED_KeyMessageMode,    UKM_External, /* send rawkey/vanilla keys messages from window */
         UTED_BevelStyle,        BVS_FIELD,
         UTED_PointSize,         pointSize,
         UTED_AddFont,           (ULONG)"LiberationSans-Regular.ttf",
@@ -109,7 +110,7 @@ BOOL EgSearchBox_Create(EgSearchBox *sb, ULONG pointSize/*,ULONG *sharedButtonsD
         UTED_BevelStyle,        BVS_FIELD,
         UTED_PointSize,         pointSize,
         UTED_URPDrawContext,    (ULONG)buttonsDc,
-
+        UTED_KeyMessageMode,    UKM_External, /* send rawkey/vanilla keys messages from window */
         // UTED_AddFont,           (ULONG)"LiberationSans-Regular.ttf",
         // UTED_AddFont,           (ULONG)"NotoColorEmoji32.ttf",
 
@@ -328,49 +329,49 @@ BOOL EgSearchBox_HandleInput(EgSearchBox *sb)
             case WMHI_ACTIVE:
             app->activeEditorObj == sb->searchEditor;
             break;
-                   case WMHI_RAWKEY:
+           case WMHI_RAWKEY:
+            {
+                ULONG qualifiers=0;
+                GetAttr(WINDOW_Qualifier,sb->windowObj,&qualifiers);
+                ULONG key = (result & 0x07f);
+                ULONG isUp = (result & 0x080);
+
+                // if(key == 0x45) {
+                //     EgSearchBox_Close(sb);
+                //     return TRUE;
+                // }
+                if(app->activeEditorObj == sb->searchEditor ||
+                    app->activeEditorObj == sb->replaceEditor)
+                {
+                    if (!EmojiBox_HandleFKey(app, key, qualifiers,sb->window))
                     {
-                        ULONG qualifiers=0;
-                        GetAttr(WINDOW_Qualifier,sb->windowObj,&qualifiers);
-                        ULONG key = (result & 0x07f);
-                        ULONG isUp = (result & 0x080);
-
-                        // if(key == 0x45) {
-                        //     EgSearchBox_Close(sb);
-                        //     return TRUE;
-                        // }
-                        if(app->activeEditorObj == sb->searchEditor ||
-                            app->activeEditorObj == sb->replaceEditor)
-                        {
-                            if (!EmojiBox_HandleFKey(app, key, qualifiers,sb->window))
-                            {
-                                SetGadgetAttrs(app->activeEditorObj,
-                                    sb->window,NULL,
-                                    UTED_PutRawKey,key|(qualifiers<<16),TAG_END);
-                            }
-                        }
+                        SetGadgetAttrs(app->activeEditorObj,
+                            sb->window,NULL,
+                            UTED_PutRawKey,key|(qualifiers<<16),TAG_END);
                     }
-                    break;
-                    case WMHI_VANILLAKEY:
-                    {
-                        ULONG key = (result & 0x0FF);
-                        ULONG qualifiers=0;
+                }
+            }
+            break;
+            case WMHI_VANILLAKEY:
+            {
+                ULONG key = (result & 0x0FF);
+                ULONG qualifiers=0;
 
-                        if(key == 0x1b) { /* esc in vanilla */
-                            EgSearchBox_Close(sb);
-                            return TRUE;
-                        }
-                         GetAttr(WINDOW_Qualifier,sb->windowObj,&qualifiers);
+                if(key == 0x1b) { /* esc in vanilla */
+                    EgSearchBox_Close(sb);
+                    return TRUE;
+                }
+                 GetAttr(WINDOW_Qualifier,sb->windowObj,&qualifiers);
 
-                        if(app->activeEditorObj == sb->searchEditor ||
-                            app->activeEditorObj == sb->replaceEditor)
-                        {
-                            SetGadgetAttrs(app->activeEditorObj,
-                                sb->window,NULL,
-                                 UTED_PutVanillaKey, key, TAG_END);
-                        }
-                    }
-                    break;
+                if(app->activeEditorObj == sb->searchEditor ||
+                    app->activeEditorObj == sb->replaceEditor)
+                {
+                    SetGadgetAttrs(app->activeEditorObj,
+                        sb->window,NULL,
+                         UTED_PutVanillaKey, key, TAG_END);
+                }
+            }
+            break;
 
             case WMHI_GADGETUP:
             {
