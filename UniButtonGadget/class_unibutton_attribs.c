@@ -517,9 +517,11 @@ ULONG UniButton_OnSet(Class *cl, Object *o, struct opSet *msg)
         /* Update textWidth first so ubt_rebuild_cache allocates the correct bitmap size. */
         if (inst->text && inst->text[0]) {
             URPDC_TextSizeUTF8(inst->dc, inst->text, -1, &m);
-            inst->textWidth = (m.width > 0) ? (WORD)m.width : 0;
+            inst->textWidth = (m.width > 0) ? (WORD)m.width : 16;
+            inst->textHeight = (m.height > 0) ? (WORD)m.height : 8;
         } else {
-            inst->textWidth = 0;
+            inst->textWidth = 16;
+            inst->textHeight = 8;
         }
 
         if (gadW > 0 && gadH > 0 && inst->screen) {

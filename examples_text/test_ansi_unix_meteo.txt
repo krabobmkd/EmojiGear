@@ -1,7 +1,7 @@
 Note: to see correctly this weather report 
  received with wget http://wttr.in , you must:
  - select a "Monospace Font" in Fonts settings, so all characters have same width
- - Enable "ANSI Escape Rednering" and "Use ANSI UNIX Colors"
+ - Enable "ANSI Escape Rendering" in Settings menu
  - Eventually resize characters with ctrl- and ctrl+ so it fits.
 This way the editor will display text the same way as a Unix Shell.
 

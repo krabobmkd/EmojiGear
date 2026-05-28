@@ -1463,6 +1463,58 @@ INLINE WORD urp_tab_advance(struct URPDrawContext *dc)
     return (WORD)((ULONG)dc->tabSpaces * 8UL);
 }
 
+static WORD urp_font_ascender(struct URPDrawContext *dc)
+{
+    int i, asc, maxAscend = 0;
+    for (i = 0; i < dc->numFonts; i++) {
+        struct URPFontEntry *fe = &dc->fonts[i];
+        int scaleNum = 1, scaleDen = 1;
+        if (!fe->face) continue;
+        urp_set_face_size(fe);
+        asc = (int)(fe->face->size->metrics.ascender >> 6);
+        if (!FT_IS_SCALABLE(fe->face) && fe->face->num_fixed_sizes > 0) {
+            int cellH = (int)(fe->face->size->metrics.height >> 6);
+            if (cellH > 0 && cellH != fe->pointSize) {
+                scaleNum = fe->pointSize;
+                scaleDen = cellH;
+            }
+            if (asc <= 0) asc = cellH;
+        }
+        asc = (asc * scaleNum + scaleDen / 2) / scaleDen;
+        if (asc > maxAscend) maxAscend = asc;
+    }
+    return (WORD)(maxAscend > 0 ? maxAscend : 8);
+}
+
+static WORD urp_line_height(struct URPDrawContext *dc)
+{
+    int i, asc, dsc, maxAscend = 0, maxDescend = 0;
+    for (i = 0; i < dc->numFonts; i++) {
+        struct URPFontEntry *fe = &dc->fonts[i];
+        FT_Pos raw_dsc;
+        int scaleNum = 1, scaleDen = 1;
+        if (!fe->face) continue;
+        urp_set_face_size(fe);
+        asc = (int)(fe->face->size->metrics.ascender >> 6);
+        raw_dsc = fe->face->size->metrics.descender;
+        dsc = (int)((-raw_dsc) >> 6);
+        if (!FT_IS_SCALABLE(fe->face) && fe->face->num_fixed_sizes > 0) {
+            int cellH = (int)(fe->face->size->metrics.height >> 6);
+            if (cellH > 0 && cellH != fe->pointSize) {
+                scaleNum = fe->pointSize;
+                scaleDen = cellH;
+            }
+            if (asc <= 0) { asc = cellH; dsc = 0; }
+        }
+        if (dsc < 0) dsc = 0;
+        asc = (asc * scaleNum + scaleDen / 2) / scaleDen;
+        dsc = (dsc * scaleNum + scaleDen / 2) / scaleDen;
+        if (asc > maxAscend)  maxAscend  = asc;
+        if (dsc > maxDescend) maxDescend = dsc;
+    }
+    return (WORD)((maxAscend + maxDescend > 0) ? maxAscend + maxDescend : 8);
+}
+
 
 void URPDC_TextSizeUTF8(REG(a0, struct URPDrawContext *dc),
                         REG(a1, const char           *utf8),
@@ -1487,9 +1539,21 @@ void URPDC_TextSizeUTF8(REG(a0, struct URPDrawContext *dc),
     p         = (const unsigned char *)utf8;
     remaining = (maxChars < 0) ? INT_MAX : maxChars;
 
+    {
+    WORD maxWidth  = 0;
+    int  lineCount = 1;
+
     while (1) {
         cp = urp_utf8_next(&p, &remaining);
         if (cp == 0) break;
+
+        /* Newline: end current line, start a new one */
+        if (cp == 0x0a) {
+            if (totalAdvance > maxWidth) maxWidth = totalAdvance;
+            totalAdvance = 0;
+            lineCount++;
+            continue;
+        }
 
         /* Tab: fixed advance = tabSpaces * space advance */
         if (cp == 0x09) {
@@ -1536,10 +1600,33 @@ void URPDC_TextSizeUTF8(REG(a0, struct URPDrawContext *dc),
         }
     }
 
-    out->width  = totalAdvance;
-    out->height = maxAscender + maxDescender;
+    if (totalAdvance > maxWidth) maxWidth = totalAdvance;
+
+    {
+    /* lineH is the exact Y step used by URPDrawTextUTF8 on every \n.
+     * Height must use the same value so sizing and drawing agree. */
+    WORD lineH = urp_line_height(dc);
+
+    /* Clamp ascender and descender to at least the font-designed values.
+     * This guarantees:
+     *   baseY  == font ascender (what callers pass as pos.y)
+     *   height == N * lineH     (consistent across all strings at the same size)
+     * so sizing and drawing always agree regardless of which glyphs appear. */
+    {
+        WORD fontAsc  = urp_font_ascender(dc);
+        WORD fontDesc = (lineH > fontAsc) ? (WORD)(lineH - fontAsc) : 0;
+        if (maxAscender  < fontAsc)  maxAscender  = fontAsc;
+        if (maxDescender < fontDesc) maxDescender = fontDesc;
+    }
+
+    out->width  = maxWidth;
+    /* Total drawn pixels: first-line ascender, then (N-1) full line steps,
+     * then the last-line descender.  For N=1 this reduces to asc+desc. */
+    out->height = (WORD)(maxAscender + (lineCount - 1) * (int)lineH + maxDescender);
     out->baseX  = 0;
     out->baseY  = maxAscender;
+    }
+    }
 }
 
 void URPDC_GetFontLineMetrics(REG(a0, struct URPDrawContext *dc),
@@ -1746,7 +1833,9 @@ struct urp_cgx_clip_hook {
     int                   remaining;
     WORD                  startX;
     WORD                  posY;
+    WORD                  lineH;      /* line height for newline advance */
     WORD                  finalX;     /* updated each call; all calls agree */
+    WORD                  finalY;     /* updated each call; all calls agree */
     int                   forcedmono; /* 0 = proportional, 1 = forced-mono */
     int                   firstCall;  /* limit glyph-not-found tracking */
 };
@@ -1802,12 +1891,18 @@ static void urp_cgx_clip_hook_func(
     if (hd->forcedmono) {
         WORD cellW = (hd->dc->monoAdvanceX > 0) ? hd->dc->monoAdvanceX : 8;
         WORD curX  = hd->startX;
+        WORD curY  = hd->posY;
         WORD centerOff;
 
         while (1) {
             cp = urp_utf8_next(&p, &remaining);
             if (cp == 0) break;
 
+            if (cp == 0x0a) {
+                curY += hd->lineH;
+                curX  = hd->startX;
+                continue;
+            }
             if (cp == 0x09) {
                 curX += (WORD)((ULONG)hd->dc->tabSpaces * (ULONG)cellW);
                 continue;
@@ -1823,7 +1918,7 @@ static void urp_cgx_clip_hook_func(
             centerOff = (cellW - ge->advanceX) / 2;
             if (centerOff < 0) centerOff = 0;
             gx = curX + centerOff + ge->bearingX;
-            gy = hd->posY - ge->bearingY;
+            gy = curY - ge->bearingY;
 
             switch (ge->pixelFmt) {
                 case URP_CACHE_MONO: {
@@ -1863,14 +1958,21 @@ static void urp_cgx_clip_hook_func(
             curX += cellW;
         }
         hd->finalX = curX;
+        hd->finalY = curY;
 
     } else {
         WORD curX = hd->startX;
+        WORD curY = hd->posY;
 
         while (1) {
             cp = urp_utf8_next(&p, &remaining);
             if (cp == 0) break;
 
+            if (cp == 0x0a) {
+                curY += hd->lineH;
+                curX  = hd->startX;
+                continue;
+            }
             if (cp == 0x09) {
                 curX += urp_tab_advance(hd->dc);
                 continue;
@@ -1886,7 +1988,7 @@ static void urp_cgx_clip_hook_func(
                 continue;
             }
             gx = curX + ge->bearingX;
-            gy = hd->posY - ge->bearingY;
+            gy = curY - ge->bearingY;
 
             switch (ge->pixelFmt) {
                 case URP_CACHE_MONO: {
@@ -1925,6 +2027,7 @@ static void urp_cgx_clip_hook_func(
             curX += ge->advanceX;
         }
         hd->finalX = curX;
+        hd->finalY = curY;
     }
 
     hd->firstCall = 0;
@@ -1958,11 +2061,14 @@ static void urp_draw_text_cgx(struct RastPort      *rp,
         hd.remaining  = remaining;
         hd.startX     = pos->x;
         hd.posY       = pos->y;
+        hd.lineH      = urp_line_height(dc);
         hd.finalX     = pos->x;
+        hd.finalY     = pos->y;
         hd.forcedmono = 0;
         hd.firstCall  = 1;
         DoHookClipRects(&hd.hook, rp, NULL);
         pos->x = hd.finalX;
+        pos->y = hd.finalY;
         return;
     }
 
@@ -1981,9 +2087,20 @@ static void urp_draw_text_cgx(struct RastPort      *rp,
 
     vt = (pixfmt < 14) ? &urp_blend_table[pixfmt] : NULL;
 
+    {
+    WORD startX = pos->x;
+    WORD lineH  = urp_line_height(dc);
+
     while (1) {
         cp = urp_utf8_next(&p, &remaining);
         if (cp == 0) break;
+
+        /* Newline: advance to next line */
+        if (cp == 0x0a) {
+            pos->y += lineH;
+            pos->x  = startX;
+            continue;
+        }
 
         /* Tab: advance without drawing */
         if (cp == 0x09) {
@@ -2030,6 +2147,7 @@ static void urp_draw_text_cgx(struct RastPort      *rp,
         }
         pos->x += ge->advanceX;
     }
+    } /* startX / lineH block */
 
     UnLockBitMap(handle);
 }
@@ -2064,11 +2182,14 @@ static void urp_draw_text_cgx_forcedmono(struct RastPort      *rp,
         hd.remaining  = remaining;
         hd.startX     = pos->x;
         hd.posY       = pos->y;
+        hd.lineH      = urp_line_height(dc);
         hd.finalX     = pos->x;
+        hd.finalY     = pos->y;
         hd.forcedmono = 1;
         hd.firstCall  = 1;
         DoHookClipRects(&hd.hook, rp, NULL);
         pos->x = hd.finalX;
+        pos->y = hd.finalY;
         return;
     }
 
@@ -2087,10 +2208,19 @@ static void urp_draw_text_cgx_forcedmono(struct RastPort      *rp,
 
     vt = (pixfmt < 14) ? &urp_blend_table[pixfmt] : NULL;
 
+    {
+    WORD startX = pos->x;
+    WORD lineH  = urp_line_height(dc);
+
     while (1) {
         cp = urp_utf8_next(&p, &remaining);
         if (cp == 0) break;
 
+        if (cp == 0x0a) {
+            pos->y += lineH;
+            pos->x  = startX;
+            continue;
+        }
         if (cp == 0x09) {
             pos->x += (WORD)((ULONG)dc->tabSpaces * (ULONG)cellW);
             continue;
@@ -2137,6 +2267,7 @@ static void urp_draw_text_cgx_forcedmono(struct RastPort      *rp,
         }
         pos->x += cellW;
     }
+    } /* startX / lineH block */
 
     UnLockBitMap(handle);
 }
@@ -2157,10 +2288,19 @@ static void urp_draw_text_clut(struct RastPort      *rp,
     unsigned long         cp;
     struct URPGlyphEntry *ge;
     WORD                  gx, gy;
+    WORD                  startX = pos->x;
+    WORD                  lineH  = urp_line_height(dc);
 
     while (1) {
         cp = urp_utf8_next(&p, &remaining);
         if (cp == 0) break;
+
+        /* Newline: advance to next line */
+        if (cp == 0x0a) {
+            pos->y += lineH;
+            pos->x  = startX;
+            continue;
+        }
 
         /* Tab: advance without drawing */
         if (cp == 0x09) {
@@ -2254,14 +2394,22 @@ static void urp_draw_text_clut_forcedmono(struct RastPort      *rp,
     unsigned long         cp;
     struct URPGlyphEntry *ge;
     WORD                  gx, gy, cellW, centerOff;
+    WORD                  startX, lineH;
 
     if (dc->monoAdvanceX <= 0) urp_compute_mono_advance(dc);
-    cellW = (dc->monoAdvanceX > 0) ? dc->monoAdvanceX : 8;
+    cellW  = (dc->monoAdvanceX > 0) ? dc->monoAdvanceX : 8;
+    startX = pos->x;
+    lineH  = urp_line_height(dc);
 
     while (1) {
         cp = urp_utf8_next(&p, &remaining);
         if (cp == 0) break;
 
+        if (cp == 0x0a) {
+            pos->y += lineH;
+            pos->x  = startX;
+            continue;
+        }
         if (cp == 0x09) {
             pos->x += (WORD)((ULONG)dc->tabSpaces * (ULONG)cellW);
             continue;

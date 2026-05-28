@@ -119,7 +119,7 @@ static void uted_do_layout( Class *cl, Object *o,
                 if (noPool || heightChanged) {
                     /* Line height changed (font resize) or first alloc:
                      * existing bitmaps have the wrong dimensions – rebuild. */
-                    uted_pool_free(&inst->bmPool);
+                    uted_pool_free_bitmapcache(&inst->bmPool);
                     uted_pool_alloc(&inst->bmPool, neededSize,
                                     (UWORD)inst->lineHeightBase, useScreen);
                 } else {

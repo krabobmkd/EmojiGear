@@ -9,6 +9,7 @@
 #include <proto/utility.h>
 #include <proto/alib.h>
 #include <proto/keymap.h>
+#include <proto/layers.h>
 #include <devices/inputevent.h>
 
 #include <proto/bevel.h>
@@ -460,34 +461,34 @@ ULONG UniTextEditor_OnNew(Class *cl, Object *o, struct opSet *msg)
     /* Zero-initialise */
     memset(inst, 0, sizeof(UniTextEditorData));
 
-
+    /*krb note, commented the 0 and false values done by memset, to optimize */
     /* Defaults */
     inst->pointSize  = 12;
-    inst->fontFlags  = 0;
+//    inst->fontFlags  = 0;
     inst->txtPen     = 1;
     inst->bgPen      = 0;
-    inst->modified        = FALSE;
+//    inst->modified        = FALSE;
     inst->tabSpaces       = 4;
-    inst->tabsAreSpaces    = FALSE;
-    inst->applyAnsiEscapes = FALSE;
-    inst->ansiUnixColors   = FALSE;
+    // inst->tabsAreSpaces    = FALSE;
+    // inst->applyAnsiEscapes = FALSE;
+    inst->ansiUnixColors   = TRUE; /* since r2.2, default to true and no more menu entry no one understand */
     inst->vanillaAnsiCode  = UTED_VANILLAKEY_LATIN1;
     inst->maxDisplayLines  = ~0UL;
-    inst->noLineFeed       = FALSE;
+//    inst->noLineFeed       = FALSE;
     inst->leftMargin       = 2;
-    inst->lineSpacing      = 0;
-    inst->rightMargin      = 0;
-    inst->topMargin        = 0;
-    inst->bottomMargin     = 0;
+    // inst->lineSpacing      = 0;
+    // inst->rightMargin      = 0;
+    // inst->topMargin        = 0;
+    // inst->bottomMargin     = 0;
 
-    inst->refreshStartLine = 0;
+//    inst->refreshStartLine = 0;
     inst->refreshEndLine = ~0;
 
     inst->searchCaseSensitive = TRUE;
-    inst->visibleTabs  = FALSE;
+//    inst->visibleTabs  = FALSE;
     inst->halfwayPen   = 0;
 
-    inst->bevel = NULL;
+//    inst->bevel = NULL;
     inst->callerTask = FindTask(NULL);
 
     /* URPDrawContext font configuration may be external and shared */
@@ -623,7 +624,9 @@ ULONG UniTextEditor_OnDispose(Class *cl, Object *o, Msg msg)
     }
 
     /* All bitmaps returned; now release the pool itself */
-    uted_pool_free(&inst->bmPool);
+    uted_pool_free_bitmapcache(&inst->bmPool);
+    /* the part that has poblems on OS3.9 */
+    uted_pool_free_layer(&inst->bmPool);
 
     if (inst->dc) { URPDC_Release(inst->dc); inst->dc = NULL; }
 

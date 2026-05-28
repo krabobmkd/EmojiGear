@@ -525,7 +525,7 @@ BOOL  uted_pool_alloc          (UTEDBitMapPool *pool, ULONG size,
                                  UWORD lineHeight, struct Screen *screen);
 BOOL  uted_pool_growalloc      (UTEDBitMapPool *pool, ULONG newSize,
                                  struct Screen *screen);
-void  uted_pool_free           (UTEDBitMapPool *pool);
-
+void  uted_pool_free_bitmapcache           (UTEDBitMapPool *pool);
+void  uted_pool_free_layer           (UTEDBitMapPool *pool);
 
 #endif /* UNITEXTEDITOR_PRIVATE_H */

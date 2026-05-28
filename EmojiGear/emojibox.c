@@ -1248,6 +1248,11 @@ static BOOL EmojiBoxWindow_Create(EmojiBoxWindow *ebw, struct App *curApp)
             GA_RelVerify, TRUE,
             GA_Text,      (ULONG)"Underline",
             TAG_END),
+        LAYOUT_AddChild, (ULONG)NewObject(BUTTON_GetClass(), NULL,
+            GA_ID,        (ULONG)GID_EMOJIBOX_ANSI_INVERSE,
+            GA_RelVerify, TRUE,
+            GA_Text,      (ULONG)"Inverse",
+            TAG_END),
         TAG_END);
 
     colorRow = (Object *)NewObject(LAYOUT_GetClass(), NULL,
@@ -1472,6 +1477,7 @@ BOOL EmojiBoxWindow_HandleInput(EmojiBoxWindow *ebw)
                     { GID_EMOJIBOX_ANSI_BOLD,      "*E[1m"  },
                     { GID_EMOJIBOX_ANSI_ITALIC,    "*E[3m"  },
                     { GID_EMOJIBOX_ANSI_UNDERLINE, "*E[4m"  },
+                    { GID_EMOJIBOX_ANSI_INVERSE,   "*E[7m"  },
                     { GID_EMOJIBOX_ANSI_BLUE,      "*E[34m" },
                     { GID_EMOJIBOX_ANSI_RED,       "*E[31m" },
                     { GID_EMOJIBOX_ANSI_GREEN,     "*E[32m" },

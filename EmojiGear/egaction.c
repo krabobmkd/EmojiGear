@@ -73,7 +73,6 @@ static EgAction s_actions[ACTION_COUNT] = {
     /* ACTION_SETTINGS_WORDWRAP      */ { Action_SettingWordWrap,        MSG_SETTINGS_WORDWRAP,      NULL },
     /* ACTION_SETTINGS_FORCEMONOSPACE*/ { Action_SettingForceMonospace,  MSG_SETTINGS_FORCEMONOSPACE,NULL },
     /* ACTION_SETTINGS_APPLYANSI     */ { Action_SettingApplyAnsi,       MSG_SETTINGS_APPLYANSI,          NULL },
-    /* ACTION_SETTINGS_ANSI_UNIX_COLORS */ { Action_SettingAnsiUnixColors, MSG_SETTINGS_ANSI_UNIX_COLORS, NULL },
     /* ACTION_SETTINGS_FONTSIZEP     */ { Action_SettingsFontSizePlus,   MSG_SETTING_FONTSIZEP,      NULL },
     /* ACTION_SETTINGS_FONTSIZEM     */ { Action_SettingsFontSizeMinus,  MSG_SETTING_FONTSIZEM,      NULL },
 
@@ -1756,6 +1755,7 @@ BOOL Action_SettingApplyAnsi(struct App *ctx)
     SyncHScroller();
     return TRUE;
 }
+/*old, kept for archive
 BOOL Action_SettingAnsiUnixColors(struct App *ctx)
 {
     struct MenuItem *item;
@@ -1776,8 +1776,8 @@ BOOL Action_SettingAnsiUnixColors(struct App *ctx)
     SyncHScroller();
     return TRUE;
 }
-
-const int fontSizeTable[]      = { 8, 12, 16, 20, 24, 28, 32 };
+*/
+const int fontSizeTable[]      = { 8, 12, 16, 20, 24, 28, 32,36 };
 const int fontSizeTableCount   = (int)(sizeof(fontSizeTable)/sizeof(fontSizeTable[0]));
 
 BOOL Action_SettingsFontSizePlus(struct App *ctx)

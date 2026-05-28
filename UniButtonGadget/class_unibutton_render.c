@@ -96,7 +96,7 @@ static void ubt_build_one_state(UniButtonData *inst, WORD gadW, WORD gadH,
     WORD    textWidth;
 */
     w = inst->textWidth;
-    h = inst->fontHeight;
+    h = inst->textHeight;
     if(w<16) w=16;
     if(h<8) h=8;
     if(!obm->_bm || obm->_w != w || obm->_h != h)
@@ -297,7 +297,7 @@ ULONG UniButton_OnDomain(Class *cl, Object *o, struct gpDomain *msg)
      * on some OS versions, where FreeType is unsafe, and it is called repeatedly). */
 
     /* Minimum height must fit the full glyph cell (ascender + descender) */
-    minH = inst->fontHeight > 0 ? inst->fontHeight
+    minH = inst->textHeight > 0 ? inst->textHeight
                                 : (inst->pointSize > 0 ? (WORD)inst->pointSize : 16);
 
     /* Minimum width from cached text advance width */

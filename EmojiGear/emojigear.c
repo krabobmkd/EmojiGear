@@ -723,39 +723,39 @@ UTED_WordWrap,FALSE,// test
                         }
                     }
                     break;
-                    case WMHI_VANILLAKEY:
-                    {
-                        ULONG key = (result & 0x00FF);
-                        ULONG qualifiers=0;
-                        GetAttr(WINDOW_Qualifier,app->window_obj,&qualifiers);
-                        //printf("vk:%08x q:%08x\n",key,qualifiers);
-                        /* Intuition already applied dead-key/shift composition;
-                         * the low byte is the final character in the keymap encoding. */
+                    // case WMHI_VANILLAKEY:
+                    // {
+                    //     ULONG key = (result & 0x00FF);
+                    //     ULONG qualifiers=0;
+                    //     GetAttr(WINDOW_Qualifier,app->window_obj,&qualifiers);
+                    //     //printf("vk:%08x q:%08x\n",key,qualifiers);
+                    //     /* Intuition already applied dead-key/shift composition;
+                    //      * the low byte is the final character in the keymap encoding. */
 
-                        /* Ctrl+Tab: cycle to next tab (Ctrl+Shift+Tab arrives as rawkey) */
-                        if (key == 0x09 &&
-                            (qualifiers & IEQUALIFIER_CONTROL) &&
-                            !(qualifiers & IEQUALIFIER_REPEAT) &&
-                            app->tabCount > 1)
-                        {
-                            EgTabs_SwitchTo((app->tabCurrentIndex + 1) % app->tabCount);
-                        }
-                        else
-                        if(key == 0x2d && (qualifiers & IEQUALIFIER_CONTROL)!=0 &&
-                               (qualifiers & IEQUALIFIER_REPEAT)==0 )
-                        {   /* yet - and + keys are received here */
-                            Action_SettingsFontSizeMinus(app);
-                        } else
-                        if( key == 0x2b && (qualifiers & IEQUALIFIER_CONTROL)!=0 &&
-                               (qualifiers &IEQUALIFIER_REPEAT)==0)
-                        {
-                            Action_SettingsFontSizePlus(app);
-                        } else if(app->activeEditorObj == app->textEditorObj)
-                        {
-                            SetGdAttrs(app->textEditorObj, UTED_PutVanillaKey, key|(qualifiers<<16), TAG_END);
-                        }
-                    }
-                    break;
+                    //     /* Ctrl+Tab: cycle to next tab (Ctrl+Shift+Tab arrives as rawkey) */
+                    //     if (key == 0x09 &&
+                    //         (qualifiers & IEQUALIFIER_CONTROL) &&
+                    //         !(qualifiers & IEQUALIFIER_REPEAT) &&
+                    //         app->tabCount > 1)
+                    //     {
+                    //         EgTabs_SwitchTo((app->tabCurrentIndex + 1) % app->tabCount);
+                    //     }
+                    //     else
+                    //     if(key == 0x2d && (qualifiers & IEQUALIFIER_CONTROL)!=0 &&
+                    //            (qualifiers & IEQUALIFIER_REPEAT)==0 )
+                    //     {   /* yet - and + keys are received here */
+                    //         Action_SettingsFontSizeMinus(app);
+                    //     } else
+                    //     if( key == 0x2b && (qualifiers & IEQUALIFIER_CONTROL)!=0 &&
+                    //            (qualifiers &IEQUALIFIER_REPEAT)==0)
+                    //     {
+                    //         Action_SettingsFontSizePlus(app);
+                    //     } else if(app->activeEditorObj == app->textEditorObj)
+                    //     {
+                    //         SetGdAttrs(app->textEditorObj, UTED_PutVanillaKey, key|(qualifiers<<16), TAG_END);
+                    //     }
+                    // }
+                    // break;
                     case WMHI_CLOSEWINDOW:
                         /* now close button would just close the current text context */
                         EgTabs_CloseCurrentTab();

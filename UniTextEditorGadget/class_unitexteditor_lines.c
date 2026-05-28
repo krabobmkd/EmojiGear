@@ -25,6 +25,7 @@
 #include <exec/memory.h>
 #include <proto/exec.h>
 #include <proto/graphics.h>
+#include <proto/layers.h>
 #include <graphics/gfx.h>
 #include <graphics/rastport.h>
 #include "unitexteditor_private.h"
@@ -95,19 +96,30 @@ BOOL uted_pool_alloc(UTEDBitMapPool *pool, ULONG size,
         return FALSE;
     }
 
-    /* Create the single shared Layer+RastPort used when rendering tiles.
+    /* Create the single shared Layer+RastPort IF NOT DONE used when rendering tiles.
      * The layer is initialised with bitmaps[0] but rp->BitMap is swapped
      * to each tile's bitmap before every uted_line_render_chunk() call. */
-    pool->layerInfo = NewLayerInfo();
-    if (!pool->layerInfo) { uted_pool_free(pool); return FALSE; }
+    if(pool->layerInfo == NULL)
+    {
+        pool->layerInfo = NewLayerInfo();
+        pool->layer = CreateUpfrontLayer(pool->layerInfo, pool->bitmaps[0],
+                             0, 0,
+                             LINE_CHUNK_WIDTH - 1, (LONG)lineHeight - 1,
+                             0, NULL);
+        if (!pool->layer) {uted_pool_free_layer(pool);  uted_pool_free_bitmapcache(pool);  return FALSE; }
 
-    pool->layer = CreateUpfrontLayer(pool->layerInfo, pool->bitmaps[0],
-                                     0, 0,
-                                     LINE_CHUNK_WIDTH - 1, (LONG)lineHeight - 1,
-                                     0, NULL);
-    if (!pool->layer) { uted_pool_free(pool); return FALSE; }
+        pool->rp = pool->layer->rp;
+    } else
+    {
+        /* clipping layer already created, but may have to be resized (if font size change) */
+        if((lineHeight - 1) != pool->layer->bounds.MaxY)
+        {
+            LONG dx = 0;
+            LONG dy = (lineHeight - 1) - pool->layer->bounds.MaxY;
+            SizeLayer(0,pool->layer,0,dy);
+        }
+    }
 
-    pool->rp = pool->layer->rp;
     return TRUE;
 }
 
@@ -177,18 +189,15 @@ BOOL uted_pool_growalloc(UTEDBitMapPool *pool, ULONG newSize, struct Screen *scr
 }
 
 /* =========================================================================
- * uted_pool_free
+ * uted_pool_free_bitmapcache
  *
  * Close all pool bitmaps and free the two AllocVec'd arrays.
  * All lines MUST have returned their borrowed pointers before calling this.
  * =========================================================================
  */
-void uted_pool_free(UTEDBitMapPool *pool)
+void uted_pool_free_bitmapcache(UTEDBitMapPool *pool)
 {
     ULONG i;
-    if (pool->layer)     { DeleteLayer(0, pool->layer);       pool->layer     = NULL; }
-    if (pool->layerInfo) { DisposeLayerInfo(pool->layerInfo); pool->layerInfo = NULL; }
-    pool->rp = NULL;
     if (pool->bitmaps) {
         for (i = 0; i < pool->size; i++)
             if (pool->bitmaps[i]) FreeBitMap(pool->bitmaps[i]);
@@ -199,6 +208,12 @@ void uted_pool_free(UTEDBitMapPool *pool)
     pool->size      = 0;
     pool->freeCount = 0;
     pool->height    = 0;
+}
+void uted_pool_free_layer(UTEDBitMapPool *pool)
+{
+    if (pool->layer)     { DeleteLayer(0, pool->layer);       pool->layer     = NULL; }
+    if (pool->layerInfo) { DisposeLayerInfo(pool->layerInfo); pool->layerInfo = NULL; }
+    pool->rp = NULL;
 }
 
 /* =========================================================================

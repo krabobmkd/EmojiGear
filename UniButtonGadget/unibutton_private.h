@@ -82,6 +82,7 @@ typedef struct UniButtonData {
     WORD    fontHeight;
     WORD    fontAscent;
     WORD    textWidth;   /* advance width of inst->text at current font/size */
+    WORD    textHeight;   /* advance width of inst->text at current font/size */
 
     /* Screen reference and cached DrawInfo (from gi_DrInfo in GM_RENDER) */
     struct Screen   *screen;

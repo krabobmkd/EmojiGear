@@ -9,6 +9,7 @@
 #include <proto/exec.h>
 #include <proto/intuition.h>
 #include <proto/graphics.h>
+#include <proto/layers.h>
 #include <clib/alib_protos.h>
 #include <string.h>
 #include <stdio.h>

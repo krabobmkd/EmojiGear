@@ -83,8 +83,8 @@ struct Screen;
  * ------------------------------------------------------------------------- */
 
 struct URPTextMetric {
-    WORD width;   /* total advance width of the string */
-    WORD height;  /* ascender + descender of the primary font */
+    WORD width;   /* total advance width of the string. If multiple lines, width of the longest line. */
+    WORD height;  /* ascender + descender of the primary font. If multiple line, get full height of text. */
     WORD baseX;   /* baseline X offset from the origin (usually 0) */
     WORD baseY;   /* ascender: distance from origin to top of tallest glyph */
 };

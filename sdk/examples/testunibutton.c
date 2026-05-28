@@ -62,9 +62,9 @@ struct Library        *LayoutBase     = NULL;
  * Label pool cycled by the "Change Text" button
  * ------------------------------------------------------------------------- */
 static const char *labels[] = {
-    "\xF0\x9F\x98\x8A Hello, Amiga! \xF0\x9F\x90\xB8",   /* smiley + frog */
-    "Changed! \xF0\x9F\x8E\x89",                           /* party popper  */
-    "Another label \xF0\x9F\x94\xA5",                      /* fire          */
+    "\xF0\x9F\x98\x8A Hello,\n Amiga! \xF0\x9F\x90\xB8",            /* smiley + frog – single line  */
+    "Changed! \xF0\x9F\x8E\x89\nSecond line here",                 /* party popper – two lines     */
+    "Line one \xF0\x9F\x94\xA5\nLine two \xF0\x9F\x8C\x9F\nLine three \xF0\x9F\x90\xB8", /* fire / star / frog – three lines */
 };
 #define NUM_LABELS  3
 
