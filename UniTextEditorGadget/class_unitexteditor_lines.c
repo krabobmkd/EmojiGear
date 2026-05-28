@@ -36,13 +36,13 @@
  * =========================================================================
  */
 
-INLINE OffscreenBitMap *pool_take(UTEDBitMapPool *pool)
+INLINE struct BitMap *pool_take(UTEDBitMapPool *pool)
 {
     if (pool->freeCount == 0) return NULL;
     return pool->freeStack[--pool->freeCount];
 }
 
-INLINE void pool_return(UTEDBitMapPool *pool, OffscreenBitMap *bm)
+INLINE void pool_return(UTEDBitMapPool *pool, struct BitMap *bm)
 {
     if (!bm) return;
     if (pool->freeCount >= pool->size) return; /* safety: never exceed capacity */
@@ -52,8 +52,9 @@ INLINE void pool_return(UTEDBitMapPool *pool, OffscreenBitMap *bm)
 /* =========================================================================
  * uted_pool_alloc
  *
- * Allocate `size` OffscreenBitMap entries of LINE_CHUNK_WIDTH × lineHeight.
- * Stops early if chip RAM runs out; returns FALSE if zero entries allocated.
+ * Allocate `size` BitMap tiles of LINE_CHUNK_WIDTH × lineHeight plus one
+ * shared Layer+RastPort for tile rendering.
+ * Stops early if chip RAM runs out; returns FALSE if zero tiles allocated.
  * =========================================================================
  */
 BOOL uted_pool_alloc(UTEDBitMapPool *pool, ULONG size,
@@ -61,13 +62,14 @@ BOOL uted_pool_alloc(UTEDBitMapPool *pool, ULONG size,
 {
     ULONG i;
     struct BitMap *friendBM = screen ? screen->RastPort.BitMap : NULL;
+    ULONG depth = friendBM ? (ULONG)friendBM->Depth : 4;
 
-    pool->entries   = (OffscreenBitMap *)AllocVec(size * sizeof(OffscreenBitMap),
+    pool->bitmaps   = (struct BitMap **)AllocVec(size * sizeof(struct BitMap *),
                                                    MEMF_ANY | MEMF_CLEAR);
-    pool->freeStack = (OffscreenBitMap **)AllocVec(size * sizeof(OffscreenBitMap *),
+    pool->freeStack = (struct BitMap **)AllocVec(size * sizeof(struct BitMap *),
                                                     MEMF_ANY);
-    if (!pool->entries || !pool->freeStack) {
-        if (pool->entries)   { FreeVec(pool->entries);   pool->entries   = NULL; }
+    if (!pool->bitmaps || !pool->freeStack) {
+        if (pool->bitmaps)   { FreeVec(pool->bitmaps);   pool->bitmaps   = NULL; }
         if (pool->freeStack) { FreeVec(pool->freeStack); pool->freeStack = NULL; }
         return FALSE;
     }
@@ -75,22 +77,38 @@ BOOL uted_pool_alloc(UTEDBitMapPool *pool, ULONG size,
     pool->size      = 0;
     pool->freeCount = 0;
     pool->height    = lineHeight;
+    pool->layerInfo = NULL;
+    pool->layer     = NULL;
+    pool->rp        = NULL;
 
     for (i = 0; i < size; i++) {
-        OffscreenBitMap_Init(&pool->entries[i],
-                             LINE_CHUNK_WIDTH, (int)lineHeight,
-                             0, BMF_CLEAR, friendBM);
-        if (!pool->entries[i]._bm) break;   /* chip RAM exhausted */
-        pool->freeStack[pool->freeCount++] = &pool->entries[i];
+        pool->bitmaps[i] = AllocBitMap(LINE_CHUNK_WIDTH, (ULONG)lineHeight,
+                                        depth, BMF_CLEAR, friendBM);
+        if (!pool->bitmaps[i]) break;   /* chip RAM exhausted */
+        pool->freeStack[pool->freeCount++] = pool->bitmaps[i];
         pool->size++;
     }
 
-   /* bdbprintf("uted_pool_alloc: %lu bitmaps %ux%u (asked %lu)\n",
-              (unsigned long)pool->size,
-              (unsigned)LINE_CHUNK_WIDTH, (unsigned)lineHeight,
-              (unsigned long)size);
-    */
-    return (pool->freeCount > 0);
+    if (pool->size == 0) {
+        FreeVec(pool->bitmaps);   pool->bitmaps   = NULL;
+        FreeVec(pool->freeStack); pool->freeStack = NULL;
+        return FALSE;
+    }
+
+    /* Create the single shared Layer+RastPort used when rendering tiles.
+     * The layer is initialised with bitmaps[0] but rp->BitMap is swapped
+     * to each tile's bitmap before every uted_line_render_chunk() call. */
+    pool->layerInfo = NewLayerInfo();
+    if (!pool->layerInfo) { uted_pool_free(pool); return FALSE; }
+
+    pool->layer = CreateUpfrontLayer(pool->layerInfo, pool->bitmaps[0],
+                                     0, 0,
+                                     LINE_CHUNK_WIDTH - 1, (LONG)lineHeight - 1,
+                                     0, NULL);
+    if (!pool->layer) { uted_pool_free(pool); return FALSE; }
+
+    pool->rp = pool->layer->rp;
+    return TRUE;
 }
 
 /* =========================================================================
@@ -101,61 +119,60 @@ BOOL uted_pool_alloc(UTEDBitMapPool *pool, ULONG size,
  *
  * Precondition: all lines must have returned their borrowed pointers
  * (uted_line_evict_chunks called for every line) so freeCount == size
- * and no line->chunks[] pointer references the old entries array.
+ * and no line->chunks[] pointer references the old bitmaps array.
  *
- * The chip-RAM bitmaps themselves never move; only the host-RAM wrapper
- * structs (OffscreenBitMap) are copied into a fresh, larger array.
+ * The chip-RAM bitmaps never move; only the host-RAM pointer array is
+ * replaced with a larger one.  The shared Layer and RastPort are reused.
  * =========================================================================
  */
 BOOL uted_pool_growalloc(UTEDBitMapPool *pool, ULONG newSize, struct Screen *screen)
 {
-    ULONG            i;
-    ULONG            oldSize   = pool->size;
-    ULONG            allocCount;
-    OffscreenBitMap  *newEntries;
-    OffscreenBitMap **newFreeStack;
-    struct BitMap    *friendBM = screen ? screen->RastPort.BitMap : NULL;
+    ULONG         i;
+    ULONG         oldSize   = pool->size;
+    ULONG         allocCount;
+    struct BitMap **newBitmaps;
+    struct BitMap **newFreeStack;
+    struct BitMap *friendBM = screen ? screen->RastPort.BitMap : NULL;
+    ULONG         depth = friendBM ? (ULONG)friendBM->Depth : 4;
 
     if (newSize <= oldSize) return (pool->freeCount > 0);
 
-    newEntries = (OffscreenBitMap *)AllocVec(newSize * sizeof(OffscreenBitMap),
-                                              MEMF_ANY | MEMF_CLEAR);
-    newFreeStack = (OffscreenBitMap **)AllocVec(newSize * sizeof(OffscreenBitMap *),
-                                                 MEMF_ANY);
-    if (!newEntries || !newFreeStack) {
-        if (newEntries)   FreeVec(newEntries);
+    newBitmaps = (struct BitMap **)AllocVec(newSize * sizeof(struct BitMap *),
+                                             MEMF_ANY | MEMF_CLEAR);
+    newFreeStack = (struct BitMap **)AllocVec(newSize * sizeof(struct BitMap *),
+                                               MEMF_ANY);
+    if (!newBitmaps || !newFreeStack) {
+        if (newBitmaps)   FreeVec(newBitmaps);
         if (newFreeStack) FreeVec(newFreeStack);
         return (pool->freeCount > 0);
     }
 
-    /* Copy existing wrapper structs – only host-RAM pointers are copied;
-     * the chip-RAM bitmaps they point to stay at their original addresses. */
+    /* Copy existing bitmap pointers; chip-RAM bitmaps stay at their addresses. */
     if (oldSize > 0)
-        CopyMem(pool->entries, newEntries, oldSize * sizeof(OffscreenBitMap));
+        CopyMem(pool->bitmaps, newBitmaps, oldSize * sizeof(struct BitMap *));
 
     /* Allocate bitmaps for the newly added slots */
     allocCount = oldSize;
     for (i = oldSize; i < newSize; i++) {
-        OffscreenBitMap_Init(&newEntries[i],
-                             LINE_CHUNK_WIDTH, (int)pool->height,
-                             0, BMF_CLEAR, friendBM);
-        if (!newEntries[i]._bm) break;
+        newBitmaps[i] = AllocBitMap(LINE_CHUNK_WIDTH, (ULONG)pool->height,
+                                     depth, BMF_CLEAR, friendBM);
+        if (!newBitmaps[i]) break;
         allocCount++;
     }
 
     /* All entries are free (precondition: caller evicted everything first) */
     pool->freeCount = 0;
     for (i = 0; i < allocCount; i++)
-        newFreeStack[pool->freeCount++] = &newEntries[i];
+        newFreeStack[pool->freeCount++] = newBitmaps[i];
 
-    /* Release old host-RAM arrays only – bitmaps now live in newEntries */
-    FreeVec(pool->entries);
+    FreeVec(pool->bitmaps);
     FreeVec(pool->freeStack);
 
-    pool->entries   = newEntries;
+    pool->bitmaps   = newBitmaps;
     pool->freeStack = newFreeStack;
     pool->size      = allocCount;
 
+    /* The shared Layer and RastPort are unchanged (same tile dimensions). */
     return (pool->freeCount > 0);
 }
 
@@ -169,11 +186,14 @@ BOOL uted_pool_growalloc(UTEDBitMapPool *pool, ULONG newSize, struct Screen *scr
 void uted_pool_free(UTEDBitMapPool *pool)
 {
     ULONG i;
-    if (pool->entries) {
+    if (pool->layer)     { DeleteLayer(0, pool->layer);       pool->layer     = NULL; }
+    if (pool->layerInfo) { DisposeLayerInfo(pool->layerInfo); pool->layerInfo = NULL; }
+    pool->rp = NULL;
+    if (pool->bitmaps) {
         for (i = 0; i < pool->size; i++)
-            OffscreenBitMap_Close(&pool->entries[i]);
-        FreeVec(pool->entries);
-        pool->entries = NULL;
+            if (pool->bitmaps[i]) FreeBitMap(pool->bitmaps[i]);
+        FreeVec(pool->bitmaps);
+        pool->bitmaps = NULL;
     }
     if (pool->freeStack) { FreeVec(pool->freeStack); pool->freeStack = NULL; }
     pool->size      = 0;
@@ -655,7 +675,6 @@ void uted_line_render_chunk(UniTextEditorData *inst,
                              UniTextEditorLine *line,
                              ULONG              chunkIdx)
 {
-    OffscreenBitMap  *chunk;
     struct RastPort  *rp;
     struct URPTextPos pos;
     ULONG             startChar, startByte;
@@ -663,18 +682,18 @@ void uted_line_render_chunk(UniTextEditorData *inst,
     UWORD             lineHeight = (UWORD)inst->lineHeightBase;
     UWORD             lineAscent = (UWORD)inst->lineAscent;
 
-    if (!inst->dc || lineHeight == 0) return;
+    if (!inst->dc || lineHeight == 0 || !inst->bmPool.rp) return;
 
     /* Grow pointer array if chunkIdx is beyond current allocation */
     if (chunkIdx >= line->chunkAlloc) {
-        ULONG             newAlloc  = chunkIdx + 8;
-        OffscreenBitMap **newChunks = (OffscreenBitMap **)
-            AllocVec(newAlloc * sizeof(OffscreenBitMap *), MEMF_ANY | MEMF_CLEAR);
+        ULONG          newAlloc  = chunkIdx + 8;
+        struct BitMap **newChunks = (struct BitMap **)
+            AllocVec(newAlloc * sizeof(struct BitMap *), MEMF_ANY | MEMF_CLEAR);
         if (!newChunks) return;
 
         if (line->chunks && line->chunkAlloc > 0)
             CopyMem(line->chunks, newChunks,
-                    line->chunkAlloc * sizeof(OffscreenBitMap *));
+                    line->chunkAlloc * sizeof(struct BitMap *));
         if (line->chunks) FreeVec(line->chunks);
 
         line->chunks     = newChunks;
@@ -688,8 +707,9 @@ void uted_line_render_chunk(UniTextEditorData *inst,
         line->chunkHeight = lineHeight;
     }
 
-    chunk = line->chunks[chunkIdx];
-    rp    = chunk->_rp;
+    /* Point the shared RastPort at this tile's bitmap before drawing. */
+    rp = inst->bmPool.rp;
+    rp->BitMap = line->chunks[chunkIdx];
 
     /* Fill background */
     SetAPen(rp, (LONG)inst->bgPen);

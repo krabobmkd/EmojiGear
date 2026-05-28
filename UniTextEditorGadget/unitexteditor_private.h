@@ -32,7 +32,7 @@
 #include <string.h>
 
 #include <gadgets/unitexteditor.h>
-#include "offscreenbm.h"
+#include <graphics/layers.h>
     #include <libraries/utf8rastport.h>
 #ifdef STATIC_UTF8RASTPORT
     #include "staticutf8rastport.h"
@@ -74,11 +74,14 @@ INLINE int uted_pos_cmp(const UniTextEditorPos *a, const UniTextEditorPos *b)
 #define POOL_H_CHUNK_BUFFER  2   /* extra chunks left/right of viewport kept warm */
 
 typedef struct {
-    OffscreenBitMap  *entries;    /* AllocVec'd flat array of OffscreenBitMap */
-    OffscreenBitMap **freeStack;  /* AllocVec'd stack of pointers to free entries */
-    ULONG             size;       /* total entries allocated */
-    ULONG             freeCount;  /* entries currently available */
-    UWORD             height;     /* lineHeight the bitmaps were allocated for */
+    struct BitMap    **bitmaps;    /* AllocVec'd array of N BitMap pointers */
+    struct BitMap   **freeStack;   /* AllocVec'd stack of free bitmap pointers */
+    struct Layer_Info *layerInfo;  /* single shared LayerInfo for tile rendering */
+    struct Layer      *layer;      /* single shared Layer (LINE_CHUNK_WIDTH x height) */
+    struct RastPort   *rp;         /* = layer->rp, used by uted_line_render_chunk */
+    ULONG              size;       /* total bitmaps allocated */
+    ULONG              freeCount;  /* bitmaps currently available */
+    UWORD              height;     /* lineHeight the bitmaps were allocated for */
 } UTEDBitMapPool;
 
 /* =========================================================================
@@ -192,7 +195,7 @@ typedef struct UniTextEditorLine {
      *   free    – uted_line_free_cache() returns all borrowed entries then
      *             frees the pointer array
      */
-    OffscreenBitMap **chunks;    /* dynamically allocated pointer array */
+    struct BitMap   **chunks;    /* dynamically allocated pointer array */
     ULONG            chunkAlloc; /* number of entries currently in chunks[] */
     WORD             chunkHeight;/* lineHeight used when bitmaps were borrowed */
 

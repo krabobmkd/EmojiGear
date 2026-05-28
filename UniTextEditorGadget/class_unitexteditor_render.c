@@ -96,7 +96,7 @@ static void uted_do_layout( Class *cl, Object *o,
                               * chunksPerLine;
 
         {
-            BOOL noPool        = (!inst->bmPool.entries);
+            BOOL noPool        = (!inst->bmPool.bitmaps);
             BOOL heightChanged = (!noPool &&
                                   inst->bmPool.height != (UWORD)inst->lineHeightBase);
             BOOL tooSmall      = (!noPool && !heightChanged &&
@@ -588,7 +588,7 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
             if (!(line_)->chunks || c_ >= (line_)->chunkAlloc || !(line_)->chunks[c_]) \
                 uted_line_render_chunk(inst, (line_), c_); \
             if ((line_)->chunks && c_ < (line_)->chunkAlloc && (line_)->chunks[c_]) { \
-                BltBitMapRastPort((line_)->chunks[c_]->_bm, \
+                BltBitMapRastPort((line_)->chunks[c_], \
                                   (LONG)srcX_, 0, rp, \
                                   (LONG)dstX_, (LONG)absY, \
                                   (LONG)blitW_, (LONG)inst->lineHeightBase, 0xC0); \
@@ -852,7 +852,7 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
                     uted_line_render_chunk(inst, line, c);
 
                 if (line->chunks && c < line->chunkAlloc && line->chunks[c]) {
-                    BltBitMapRastPort(line->chunks[c]->_bm,
+                    BltBitMapRastPort(line->chunks[c],
                                       (LONG)srcX, 0,
                                       rp,
                                       (LONG)dstX, (LONG)absY,

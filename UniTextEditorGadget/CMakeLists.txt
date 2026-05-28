@@ -26,7 +26,6 @@ set(UNITEXTEDITOR_SOURCES
     class_unitexteditor_render.c
     class_unitexteditor_handleinput.c
     class_unitexteditor_undo.c
-    offscreenbm.c
 )
 if(UNITEXTEDTORDEBUG)
 	list(APPEND UNITEXTEDITOR_SOURCES bdbprintf.c)
