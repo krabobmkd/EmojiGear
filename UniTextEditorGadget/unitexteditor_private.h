@@ -378,8 +378,9 @@ typedef struct UniTextEditorData {
     ULONG  lastSearchChar;      /* match start codepoint index (inclusive) */
     ULONG  lastSearchEndChar;   /* match end codepoint index (exclusive)   */
     BOOL   lastSearchValid;     /* TRUE until replaced or a new text is set */
-    BOOL   searchCaseSensitive; /* UTED_SearchCaseSensitive; default TRUE   */
-    BOOL   visibleTabs;         /* UTED_VisibleTabs: draw tab marker at baseline; default FALSE */
+    BOOL   searchCaseSensitive;    /* UTED_SearchCaseSensitive; default TRUE   */
+    BOOL   visibleTabs;            /* UTED_VisibleTabs: draw tab marker at baseline; default FALSE */
+    BOOL   displayInternalVScroll; /* UTED_DisplayInternalVScroll; default TRUE */
     ULONG  halfwayPen;          /* pen nearest to midpoint between txtPen and bgPen */
 
     /* Deferred mouse input from input.device context.
@@ -496,6 +497,11 @@ ULONG UniTextEditor_DoDeleteToLineEnd  (Class *cl, Object *o);
 ULONG UniTextEditor_DoGetSelectedText(Class *cl, Object *o, STRPTR *result);
 void  UniTextEditor_DoHitTest        (Class *cl, Object *o, WORD x, WORD y, ULONG *lineOut, ULONG *charOut);
 void  UniTextEditor_DoInvalidateLine (Class *cl, Object *o, ULONG lineIdx);
+
+/* Clipboard actions (class_unitexteditor_clipboard.c) */
+void uted_do_clipboard_copy (Class *cl, Object *o);
+BOOL uted_do_clipboard_cut  (Class *cl, Object *o);
+BOOL uted_do_clipboard_paste(Class *cl, Object *o);
 
 /* Notify ICA_TARGET with an attribute change */
 void uted_notify(Class *cl, Object *o, struct GadgetInfo *gi, ULONG tag, ULONG value);

@@ -1,0 +1,171 @@
+MUI_NewObject varargs corruption under GCC optimisation on m68k Amiga
+======================================================================
+Date: 2026-05-30
+Compiler: m68k-amigaos-gcc 6.5.0b
+SDK: MUI 5.0 (2021-08-31 os3 build)
+
+
+THE SYMPTOM
+-----------
+MUI_NewObject() calls return NULL at -O1 and above.
+The same code compiled with #pragma GCC optimize("O0") works correctly.
+The bug affects every MUI object creation: windows, groups, boopsi
+wrappers, buttons — everything.
+
+
+THE SDK DEFINITION (inline/muimaster.h)
+---------------------------------------
+The MUI SDK defines the vararg convenience wrapper as:
+
+    __inline Object * MUI_NewObject(CONST_STRPTR cl, Tag tags, ...)
+    {
+      return MUI_NewObjectA(cl, (struct TagItem *) &tags);
+    }
+
+    MUI_NewObjectA itself is an LP2 macro that correctly sets
+    a6=MUIMasterBase, a0=cl, a1=tags and executes jsr a6@(-0x1e:W).
+    LP2 is not the problem.
+
+The trick is forming the taglist pointer by taking &tags — the address
+of the first named vararg parameter.  On m68k all function arguments
+are pushed on the stack in order, so &tags is the start of a contiguous
+block: [tags, value, tag, value, ..., TAG_DONE].  MUI_NewObjectA then
+walks that block as a struct TagItem array.
+
+This works ONLY when MUI_NewObject is compiled as a real function, i.e.
+when all arguments are on the stack before the call.
+
+
+WHAT THE ASSEMBLER REVEALS
+---------------------------
+Compiled with -O0 (working):
+
+    ; All 36 tag/value longs pushed in order:
+    clr.l  -(sp)                   ; TAG_DONE
+    pea    6.w                     ; UKM_Internal value
+    move.l #-2143114140, -(sp)     ; UTED_KeyMessageMode tag
+    move.l d5, -(sp)               ; UTED_Text value
+    ...30 more push instructions...
+    pea    .LC11                   ; "Boopsi.mui"
+    jsr    _MUI_NewObject          ; REAL FUNCTION CALL
+    lea    (144,sp), sp            ; clean 36 longs off stack
+
+Compiled with -O1 (broken):
+
+    move.l #-2143131239, (-16,a5)  ; ONE long stored (just MUIA_Boopsi_Class)
+    move.l (a3), a6
+    lea    (-16,a5), a1            ; a1 = pointer to that single long
+    lea    .LC9, a0                ; "Boopsi.mui"
+    jsr    a6@(-0x1e:W)           ; direct library call, taglist = 1 item
+
+At O1 the entire taglist collapses to one long word.
+MUI_NewObjectA receives a 1-element taglist (no value, no TAG_DONE)
+and returns NULL.
+
+
+ROOT CAUSE: TWO GCC FLAGS
+--------------------------
+
+Primary culprit: -finline
+  Enabled at O1, not present at O0 (O0 implies -fno-inline).
+  Causes GCC to inline the __inline-marked MUI_NewObject body at the
+  call site.  Once inlined, the m68k stack-frame calling convention no
+  longer applies.  The body only references 'tags' (via &tags), so:
+
+Secondary culprit: -fstdarg-opt  (+ -ftree-dce)
+  Also enabled at O1.
+  -fstdarg-opt: "Optimize the prologue of variadic functions with
+  respect to usage of those arguments."  Since the inlined body never
+  calls va_start/va_end, GCC determines the '...' args are unused and
+  marks them for elimination.
+  -ftree-dce then removes the now-dead expressions entirely.
+  Result: only 'tags' (the first tag ID) survives on the stack.
+
+
+OPTIONS INVESTIGATED
+--------------------
+
+Option A: -fno-inline
+  Disables inlining of all inline/__inline-marked functions (except
+  always_inline).  Keeps all other O1/O2 optimisations.
+  This IS a correct fix: MUI_NewObject becomes a real call again,
+  full stack frame, &tags valid.
+  Apply as: -O2 -fno-inline  (per-target or per-file)
+  Downside: disables inlining globally for the translation unit,
+  which may slow down other code.
+
+Option B: -fno-tree-dce  (does NOT fix the bug)
+  Prevents dead-code elimination of the '...' arg expressions.
+  GCC would still EVALUATE them, but has no obligation to place them
+  CONTIGUOUSLY after 'tags' on the stack.  They might go in registers
+  or arbitrary stack slots.  The &tags pointer still only addresses
+  one long word; the rest of the taglist is still missing.
+  Disabling DCE treats a symptom, not the root cause.
+
+Option C: #pragma GCC push_options / optimize("O0") / pop_options
+  Compiles the function body at O0.  However, __inline functions with
+  O0-compiled bodies can still be INLINED by an O1+ caller, because
+  the pragma changes how the body is compiled, not whether it gets
+  substituted.  Does not reliably fix the issue on its own.
+
+Option D: #pragma GCC push_options / optimize("O0") + noinline attribute
+  Combining the pragma with __attribute__((noinline)) does work: the
+  function body is compiled at O0 AND cannot be inlined.  More verbose
+  than necessary; Option E achieves the same with less.
+
+Option E: __attribute__((noinline)) alone  [CHOSEN FIX]
+  Prevents inlining regardless of the caller's optimisation level.
+  GCC always emits a real m68k function call, all arguments are pushed
+  on the stack in order, &tags is valid.
+  This is exactly -fno-inline applied to one function.
+
+Option F: va_start / va_end
+  Two sub-cases:
+  F1 — keep 'Tag tags' as named param, add va_start(ap, tags):
+       va_start forces stack setup but the body still uses &tags.
+       Whether that fixes contiguity is implementation-defined.
+       Not a reliable fix.
+  F2 — change signature to (CONST_STRPTR cl, ...), use va_start(ap, cl),
+       cast ap directly: MUI_NewObjectA(cl, (struct TagItem *)ap).
+       On m68k, va_start(ap, cl) sets ap to the first '...' arg on the
+       stack.  va_start forces GCC to materialise the args in memory
+       even when inlined.  Works in practice on m68k but is
+       implementation-defined per the C standard.
+
+Option G: statement-expression macro
+  Replace the __inline function with:
+    #define MUI_NewObject(cl, tags...) \
+        ({ULONG _t[] = {tags}; MUI_NewObjectA((cl), (struct TagItem *)_t);})
+  Explicitly builds a complete array on the stack before the call.
+  GCC cannot discard array elements whose address is taken.
+  Portable within GNU C.  This is the correct long-term fix for the SDK.
+
+
+THE CHOSEN WORKAROUND (we cannot modify SDK headers)
+-----------------------------------------------------
+A local non-inline wrapper is defined in testmuiuted.c:
+
+    static Object * __attribute__((noinline))
+    MUI_NewObjectB(const char *cl, Tag tags, ...)
+    {
+        return MUI_NewObjectA(cl, (struct TagItem *) &tags);
+    }
+
+All MUI object creation calls use MUI_NewObjectB() instead of
+MUI_NewObject().  The SDK headers are untouched.
+
+'const char *' is used instead of CONST_STRPTR (const UBYTE *) to
+avoid signed/unsigned char warnings with the MUIC_* string literals.
+
+
+SUMMARY TABLE
+-------------
+Fix                          Correct?  Modifies SDK?  Notes
+---------------------------  --------  -------------  ----------------------
+-fno-inline (compile flag)   YES       No             Broad: affects all inlining
+noinline attribute            YES       No             Targeted: one function
+push_options O0 only          NO        No             Inlining still possible
+push_options O0 + noinline    YES       No             Verbose but correct
+-fno-tree-dce                 NO        No             Treats symptom not cause
+va_start (F2 form)            YES*      YES            *impl-defined, needs sig change
+Statement-expression macro    YES       YES            Best SDK fix; GNU C only

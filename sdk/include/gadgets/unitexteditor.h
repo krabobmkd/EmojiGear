@@ -455,6 +455,38 @@ typedef struct UTEDTextPosition {
 #define UKM_External  0UL
 #define UKM_Internal  1UL
 
+/* [S] (any) Copy the current selection to the Amiga system clipboard as
+ *           IFF FTXT/CHRS (UTF-8 bytes, verbatim).  No-op if nothing is
+ *           selected.  The tag value is ignored; pass TRUE by convention.
+ *           Safe to call from the application task (not input handler). */
+#define UTED_ApplyCopy           (UTED_Dummy + 64)
+
+/* [S] (any) Read the system clipboard CHRS chunk and insert it at the
+ *           cursor (deleting any active selection first).  The bytes are
+ *           inserted verbatim; they are assumed to be UTF-8 (as written
+ *           by UTED_ApplyCopy).  Triggers a gadget redraw.
+ *           The tag value is ignored; pass TRUE by convention. */
+#define UTED_ApplyPaste          (UTED_Dummy + 65)
+
+/* [S] (any) Copy the current selection to the clipboard (like UTED_ApplyCopy)
+ *           and then delete it from the buffer (like UTED_DeleteSelection).
+ *           Atomic cut: if nothing is selected this is a no-op.
+ *           Triggers a gadget redraw.  Tag value is ignored; pass TRUE. */
+#define UTED_ApplyCut            (UTED_Dummy + 66)
+
+/* [ISG] (BOOL) When TRUE (default), draw a minimal scroll indicator over the
+ *              right edge of the text area whenever the text is taller than the
+ *              gadget.  The indicator is a filled 4-pixel wide rectangle drawn
+ *              1 pixel from the right border, in the text pen colour.  Its
+ *              vertical position and height are proportional to the scroll
+ *              position and visible fraction of the total text height.
+ *              Useful for small embedded editors (3+ lines) where managing an
+ *              external scrollbar is impractical.  No extra space is reserved;
+ *              the indicator is drawn on top of the text. */
+#define UTED_DisplayInternalVScroll (UTED_Dummy + 67)
+
+
+
 
 /* =========================================================================
  * Notification attribute tags   (base TAG_USER | 0x05C0)

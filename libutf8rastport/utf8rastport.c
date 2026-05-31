@@ -1335,11 +1335,15 @@ ULONG URPDC_UpdateColorMap(REG(a0, struct URPDrawContext *dc), REG(a1, struct Sc
     UBYTE clut_r[256], clut_g[256], clut_b[256];
     ULONG rgb[3];
     int   numColors, i, j;
-    int   bestDist, bestIdx, dist, dr, dg, db;
+    int   bestDist, bestIdx, dist, dr, dg, db, depth;
 
     if (!dc || !screen || !screen->ViewPort.ColorMap) return 0;
 
+    depth = GetBitMapAttr(screen->RastPort.BitMap,BMA_DEPTH);
+
     numColors = (int)screen->ViewPort.ColorMap->Count;
+    if(depth<=8 && numColors> (1L<<depth)) numColors = 1L<<depth;
+
     if (numColors > 256) numColors = 256;
 
     /* Read all palette entries once */

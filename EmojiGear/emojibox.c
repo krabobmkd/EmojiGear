@@ -1425,10 +1425,10 @@ BOOL EmojiBoxWindow_HandleInput(EmojiBoxWindow *ebw)
 
             /* keys managed at window level */
            // ULONG key = (result & WMHI_KEYMASK);
-            if(key == 0x45) {
-                EmojiBoxWindow_Close(ebw);
-                return TRUE;
-            }
+            // if(key == 0x45) {
+            //     EmojiBoxWindow_Close(ebw);
+            //     return TRUE;
+            // }
             /* send f unction keys to main window */
             if ((key >= EMOJIBOX_RAWKEY_F1 && key <= EMOJIBOX_RAWKEY_F10) && isUp == 0)
             {
@@ -1444,7 +1444,10 @@ BOOL EmojiBoxWindow_HandleInput(EmojiBoxWindow *ebw)
             //printf("vk:%08x q:%08x\n",key,qualifiers);
             /* Intuition already applied dead-key/shift composition;
              * the low byte is the final character in the keymap encoding. */
-
+            if(key == 0x1b) { /* esc in vanilla */
+                EmojiBoxWindow_Close(ebw);
+                return TRUE;
+            }
             /*os3.2 completly not apply capslock when mapRawKey does it with correct dead keys !!!*/
             if((qualifiers & IEQUALIFIER_CAPSLOCK) &&
                 (key >=(ULONG)'a') && (key <=(ULONG)'z'))

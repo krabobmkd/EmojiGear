@@ -111,6 +111,8 @@ static void uted_do_layout( Class *cl, Object *o,
                 //           (int)inst->bmPool.size, (int)neededSize);
 
                 /* Return all borrowed bitmaps before touching the pool */
+        /* for safety */
+        Forbid();
                 for (line = (UniTextEditorLine *)inst->lines.mlh_Head;
                      line->node.mln_Succ;
                      line = (UniTextEditorLine *)line->node.mln_Succ)
@@ -127,6 +129,8 @@ static void uted_do_layout( Class *cl, Object *o,
                      * allocate only the additional slots needed. */
                     uted_pool_growalloc(&inst->bmPool, neededSize, useScreen);
                 }
+
+        Permit();
             }
         }
     }
@@ -137,6 +141,7 @@ static void uted_do_layout( Class *cl, Object *o,
         that will cut any graphics.library drawing cals using RastPort.
         Here we refresh a Region geometry that is used as clipping at draw.
       */
+
     if (inst->clipRegion)
     {
         struct Rectangle framerect;
@@ -182,6 +187,7 @@ ULONG UniTextEditor_OnLayout(Class *cl, Object *o, struct gpLayout *msg)
    from a regular process context , and layouting will ocuur from GM_RENDER.
 
 */
+
     if(FindTask(NULL) == inst->callerTask)
     {
         struct Screen     *screen = msg->gpl_GInfo ? msg->gpl_GInfo->gi_Screen : NULL;
@@ -284,6 +290,7 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
     if(!rp || !(msg->gpr_GInfo)) return TRUE;
     scr    = msg->gpr_GInfo->gi_Screen;
     if(!scr) return TRUE;
+
     /* there is a necessity to not draw from interuptions,
      * device contexts, etc...
      * No idea why, but my A1200 pistorm with OS 3.2.3+ P96 indivision
@@ -291,10 +298,10 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
      * When my UAE also OS3.2.3 , also P96 indi, wether it uses
      * AGA or P96, send it on regular task...
      */
-    // if(FindTask(NULL) != inst->callerTask)
-    // {
-    //     return TRUE;
-    // }
+    if(FindTask(NULL) != inst->callerTask)
+    {
+        return TRUE;
+    }
 
 // bdbprintf("UniTextEditor_OnRender t:%08x\n",(int)FindTask(NULL));
 
@@ -312,6 +319,8 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
                 uted_line_invalidate(line);
         }
     }
+    //OKTILLHERE
+
 
     if (inst->bevel) {
         ULONG v = 0;
@@ -325,6 +334,8 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
     textHeight = (WORD)((LONG)height - (LONG)inst->topMargin - (LONG)inst->bottomMargin);
     if (textWidth  < 0) textWidth  = 0;
     if (textHeight < 0) textHeight = 0;
+
+
 
     /* ------------------------------------------------------------------
      * Determine refresh scope BEFORE layout so a geometry change forces
@@ -360,6 +371,7 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
     {
         uted_do_layout(cl, o, width, height, scr);
     }
+
     /* Rebuild wrap map if text or width changed since last render */
     if (inst->wordWrap && inst->wrapMapDirty)
         uted_rebuild_wrap_map(inst);
@@ -629,7 +641,7 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
             ULONG _byteOff = uted_char_to_byte((line_)->utf8, (line_)->byteUsed, (firstChar_)); \
             WORD  _lineY   = (WORD)(absY + inst->lineAscent); \
             SetAPen(rp, (LONG)inst->halfwayPen); \
-            SetDrMd(rp, JAM1); \
+            SetDrMd(rp, JAM2); \
             for (_tci = (firstChar_); _tci < (lastChar_); _tci++) { \
                 unsigned char _b = (unsigned char)(line_)->utf8[_byteOff]; \
                 if (_b == 0x09) { \
@@ -645,7 +657,6 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
                 else if (_b < 0xF0) _byteOff += 3; \
                 else                _byteOff += 4; \
             } \
-            SetDrMd(rp, JAM2); \
         } \
     } while(0)
 
@@ -1088,6 +1099,31 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
         }
     }
 
+
+    /* Internal vertical scroll indicator ----------------------------------------
+     * Drawn last (over text, after bevel/margins) so nothing covers it.
+     * Only shown when text is taller than the visible area.
+     * Geometry: 4px wide, 1px gap from the right border of the gadget.
+     * Thumb height and Y position are proportional to the visible fraction
+     * and scroll position within the total rendered line count.           */
+    if (inst->displayInternalVScroll && textHeight > 0) {
+        ULONG totalRows = inst->wordWrap ? inst->wrapRowCount : inst->lineCount;
+        if (totalRows > (ULONG)inst->visibleLines) {
+            WORD thumbH = (WORD)((LONG)textHeight * (LONG)inst->visibleLines
+                                 / (LONG)totalRows);
+            WORD thumbY = (WORD)((LONG)textHeight * (LONG)inst->scrollTopLine
+                                 / (LONG)totalRows);
+            if (thumbH < 3) thumbH = 3;
+            if (thumbY < 0) thumbY = 0;
+            if (thumbY + thumbH > textHeight) thumbY = (WORD)(textHeight - thumbH);
+
+            SetAPen(rp, (LONG)inst->txtPen);
+            SetDrMd(rp, JAM1);
+            RectFill(rp,
+                (LONG)(left + width - 7), (LONG)(textTop + thumbY),
+                (LONG)(left + width - 4), (LONG)(textTop + thumbY + thumbH - 1));
+        }
+    }
 
     return 0;
 }

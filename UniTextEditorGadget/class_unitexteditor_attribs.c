@@ -486,7 +486,8 @@ ULONG UniTextEditor_OnNew(Class *cl, Object *o, struct opSet *msg)
 //    inst->refreshStartLine = 0;
     inst->refreshEndLine = ~0;
 
-    inst->searchCaseSensitive = TRUE;
+    inst->searchCaseSensitive    = TRUE;
+    inst->displayInternalVScroll = TRUE;
 //    inst->visibleTabs  = FALSE;
     inst->halfwayPen   = 0;
 
@@ -612,6 +613,7 @@ ULONG UniTextEditor_OnDispose(Class *cl, Object *o, Msg msg)
     }
 
     /* Release undo/redo stacks and all captured text */
+ Forbid();
     uted_undo_resize(inst, 0);
 
     /* Release word-wrap map */
@@ -629,7 +631,7 @@ ULONG UniTextEditor_OnDispose(Class *cl, Object *o, Msg msg)
     uted_pool_free_bitmapcache(&inst->bmPool);
     /* the part that has poblems on OS3.9 */
     uted_pool_free_layer(&inst->bmPool);
-
+ Permit();
     if (inst->dc) { URPDC_Release(inst->dc); inst->dc = NULL; }
 
     if (inst->clipRegion) {
@@ -649,20 +651,22 @@ ULONG UniTextEditor_OnDispose(Class *cl, Object *o, Msg msg)
  * between txtPen and bgPen.  Falls back to bgPen when no screen is set yet. */
 void uted_update_halfway_pen(UniTextEditorData *inst)
 {
-    ULONG rgb[6];
+    ULONG rgb[8];
     ULONG ncol;
+    int depth;
 
     if (!inst->screen) { inst->halfwayPen = inst->bgPen; return; }
-    GetRGB32(&inst->screen->ViewPort.ColorMap, inst->txtPen, 1, rgb);
-    GetRGB32(&inst->screen->ViewPort.ColorMap, inst->bgPen,  1, rgb + 3);
+    GetRGB32(&inst->screen->ViewPort.ColorMap, inst->txtPen, 1, &rgb[0]);
+    GetRGB32(&inst->screen->ViewPort.ColorMap, inst->bgPen,  1, &rgb[3]);
 
-    ncol = 1UL<<GetBitMapAttr( inst->screen->RastPort.BitMap,BMA_DEPTH);
+    depth = GetBitMapAttr( inst->screen->RastPort.BitMap,BMA_DEPTH);
+    ncol = 1L<<depth;
     if(ncol>256) ncol=256;
     inst->halfwayPen = (ULONG)FindColor(&inst->screen->ViewPort.ColorMap,
-        (rgb[0]>>1) + (rgb[3]>>1),
-        (rgb[1]>>1) + (rgb[4]>>1),
-        (rgb[2]>>1) + (rgb[5]>>1),
-        ncol-1
+        ((rgb[0]>>1) + (rgb[3]>>1)),
+        ((rgb[1]>>1) + (rgb[4]>>1)),
+        ((rgb[2]>>1) + (rgb[5]>>1)),
+        ncol
         );
 }
 
@@ -1344,6 +1348,17 @@ ULONG UniTextEditor_OnSet(Class *cl, Object *o, struct opSet *msg)
             break;
         }
 
+        case UTED_DisplayInternalVScroll:
+        {
+            BOOL newVal = tag->ti_Data ? TRUE : FALSE;
+            if (newVal != inst->displayInternalVScroll) {
+                inst->displayInternalVScroll = newVal;
+                redraw = TRUE;
+            }
+            result = 1;
+            break;
+        }
+
         case UTED_TabsAreSpaces:
             inst->tabsAreSpaces = tag->ti_Data ? TRUE : FALSE;
             result = 1;
@@ -1417,6 +1432,28 @@ ULONG UniTextEditor_OnSet(Class *cl, Object *o, struct opSet *msg)
 
         case UTED_FlushDebugOutput:
             flushbdbprint();
+            break;
+
+        case UTED_ApplyCopy:
+            uted_do_clipboard_copy(cl, o);
+            result = 1;
+            break;
+
+        case UTED_ApplyCut:
+            if (!inst->readOnly) {
+                if (uted_do_clipboard_cut(cl, o))
+                    redraw = TRUE;
+            }
+            result = 1;
+            break;
+
+        case UTED_ApplyPaste:
+            if (!inst->readOnly) {
+                if (uted_do_clipboard_paste(cl, o)) {
+                    redraw = TRUE;
+                }
+            }
+            result = 1;
             break;
 
         /* should be done by supeclass, but there's a OS3.9 bug*/
@@ -1664,6 +1701,10 @@ ULONG UniTextEditor_OnGet(Class *cl, Object *o, struct opGet *msg)
 
     case UTED_TabsAreSpaces:
         *msg->opg_Storage = (ULONG)inst->tabsAreSpaces;
+        return TRUE;
+
+    case UTED_DisplayInternalVScroll:
+        *msg->opg_Storage = (ULONG)inst->displayInternalVScroll;
         return TRUE;
 
     case UTED_ApplyAnsiEscapes:

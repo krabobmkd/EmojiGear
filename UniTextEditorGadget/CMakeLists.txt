@@ -21,6 +21,7 @@ set(UNITEXTEDITOR_SOURCES
     class_unitexteditor_lib.c
     class_unitexteditor_dispatch.c
     class_unitexteditor_attribs.c
+    class_unitexteditor_clipboard.c
     class_unitexteditor_text.c
     class_unitexteditor_lines.c
     class_unitexteditor_render.c

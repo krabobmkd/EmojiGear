@@ -531,6 +531,7 @@ ULONG UniTextEditor_OnGoActive(Class *cl, Object *o, struct gpInput *msg)
         // uted_notify(cl, o, msg->gpi_GInfo, UTED_SetPrivateActivation, TRUE);
         return GMR_MEACTIVE;
     }
+    bdbprintf("UniTextEditor_OnGoActive %08x\n",(int)ie->ie_Class);
 
     if(inst->useInternalRawKey && ie->ie_Class == IECLASS_RAWKEY)
     {
@@ -593,7 +594,11 @@ ULONG UniTextEditor_OnHandleInput(Class *cl, Object *o, struct gpInput *msg)
     UniTextEditorData *inst = UTED_DATA(cl, o);
     struct InputEvent *ie   = msg->gpi_IEvent;
 
+
+
     if (!ie) return GMR_MEACTIVE;
+
+bdbprintf("UniTextEditor_OnHandleInput %08x\n",(int)ie->ie_Class);
 
     if (ie->ie_Class == IECLASS_RAWKEY && !inst->useInternalRawKey) {
         /* External mode: keys belong to the window event loop, not here.

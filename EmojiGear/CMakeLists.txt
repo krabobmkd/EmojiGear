@@ -15,7 +15,7 @@ list(APPEND AMIGA_COMPILER_OPTIONS -mcpu=68020 -O1 )
 
 
 set(EMOJIGEAR_SOURCES
-    bdbprintf.c
+#    bdbprintf.c
     boopsimessage.c
     emojigear.c
     boopsimainwindow.c
@@ -30,6 +30,8 @@ set(EMOJIGEAR_SOURCES
     emojibox.c
     egsearchbox.c
     egtabs.c
+#    egtabs_safe.c
+#    egtabs_fallbackclass.c
 )
 
 # ---- Sub-libraries -------------------------------------------------------
@@ -70,4 +72,4 @@ if(NOT UNITEXTEDITOR_SHARED)
  target_link_libraries(EmojiGear PRIVATE unitexteditor unibutton)
 endif()
 
-target_compile_definitions(EmojiGear PRIVATE USE_DEBUG_BDBPRINT=1)
+# target_compile_definitions(EmojiGear PRIVATE USE_DEBUG_BDBPRINT=1)

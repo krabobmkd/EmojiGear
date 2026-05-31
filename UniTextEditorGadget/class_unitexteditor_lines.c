@@ -63,7 +63,8 @@ BOOL uted_pool_alloc(UTEDBitMapPool *pool, ULONG size,
 {
     ULONG i;
     struct BitMap *friendBM = screen ? screen->RastPort.BitMap : NULL;
-    ULONG depth = friendBM ? (ULONG)friendBM->Depth : 4;
+    ULONG         depth = 4;
+    if(friendBM) depth = GetBitMapAttr(friendBM,BMA_DEPTH);
 
     pool->bitmaps   = (struct BitMap **)AllocVec(size * sizeof(struct BitMap *),
                                                    MEMF_ANY | MEMF_CLEAR);
@@ -99,13 +100,14 @@ BOOL uted_pool_alloc(UTEDBitMapPool *pool, ULONG size,
     /* Create the single shared Layer+RastPort IF NOT DONE used when rendering tiles.
      * The layer is initialised with bitmaps[0] but rp->BitMap is swapped
      * to each tile's bitmap before every uted_line_render_chunk() call. */
+
     if(pool->layerInfo == NULL)
     {
         pool->layerInfo = NewLayerInfo();
         pool->layer = CreateUpfrontLayer(pool->layerInfo, pool->bitmaps[0],
                              0, 0,
                              LINE_CHUNK_WIDTH - 1, (LONG)lineHeight - 1,
-                             0, NULL);
+                             LAYERSIMPLE, NULL);
         if (!pool->layer) {uted_pool_free_layer(pool);  uted_pool_free_bitmapcache(pool);  return FALSE; }
 
         pool->rp = pool->layer->rp;
@@ -119,6 +121,7 @@ BOOL uted_pool_alloc(UTEDBitMapPool *pool, ULONG size,
             SizeLayer(0,pool->layer,0,dy);
         }
     }
+
 
     return TRUE;
 }
@@ -145,14 +148,17 @@ BOOL uted_pool_growalloc(UTEDBitMapPool *pool, ULONG newSize, struct Screen *scr
     struct BitMap **newBitmaps;
     struct BitMap **newFreeStack;
     struct BitMap *friendBM = screen ? screen->RastPort.BitMap : NULL;
-    ULONG         depth = friendBM ? (ULONG)friendBM->Depth : 4;
+    ULONG         depth = 4;
+
+    if(friendBM) depth = GetBitMapAttr(friendBM,BMA_DEPTH);
+    //  friendBM ? (ULONG)friendBM->Depth : 4;
 
     if (newSize <= oldSize) return (pool->freeCount > 0);
 
     newBitmaps = (struct BitMap **)AllocVec(newSize * sizeof(struct BitMap *),
                                              MEMF_ANY | MEMF_CLEAR);
     newFreeStack = (struct BitMap **)AllocVec(newSize * sizeof(struct BitMap *),
-                                               MEMF_ANY);
+                                               MEMF_ANY| MEMF_CLEAR);
     if (!newBitmaps || !newFreeStack) {
         if (newBitmaps)   FreeVec(newBitmaps);
         if (newFreeStack) FreeVec(newFreeStack);

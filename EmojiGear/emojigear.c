@@ -69,6 +69,7 @@
 #include "egsearchbox.h"
 #include "egfontsview.h"
 #include "egtabs.h"
+#include "egtabs_fallbackclass.h"
 
 #include <workbench/startup.h>
 
@@ -84,6 +85,8 @@
 /* our beloved utf8 freetype rendering engine */
 #include <libraries/utf8rastport.h>
 
+
+//#define HACKOS39SUPPORT 1
 
 struct Task *myTask = NULL;
 
@@ -163,11 +166,11 @@ static LibraryEntry libraryTable[] = {
     {"requester.class", 42, &RequesterBase},
     {"gadgets/palette.gadget",  44, &PaletteBase},
     {"gadgets/integer.gadget", 44, &IntegerBase},
-    {"gadgets/clicktab.gadget",44, &ClickTabBase},
+/* now optional and need v47    {"gadgets/clicktab.gadget",47, &ClickTabBase}, */
     {"gadgets/chooser.gadget", 44, &ChooserBase},
     /* ... and the one that are starred in this app */
-    {"gadgets/unitexteditor.gadget",1, &UniTextEditorBase},
-    {"gadgets/unibutton.gadget", 1, &UniButtonBase},
+    {"gadgets/unitexteditor.gadget",2, &UniTextEditorBase},
+    {"gadgets/unibutton.gadget", 2, &UniButtonBase},
 
     {NULL, 0, NULL} /* Terminator */
 };
@@ -357,6 +360,16 @@ int main(int argc, char **argv)
     /* optional libs, can return NULL */
     DataTypesBase = OpenLibrary("datatypes.library",39);
     CyberGfxBase  = OpenLibrary("cybergraphics.library", 1);
+    /* really need the OS3.2 47 version for this one, or will be replaced  */
+    ClickTabBase =  OpenLibrary("gadgets/clicktab.gadget", 47);
+    if (!ClickTabBase) {
+        cleanexit(
+        "gadgets/clicktab.gadget v47 is needed\n"
+        "Consider upgrading to OS3.2.x"
+        );
+        // EgTabsOps = &EgTabsSafeAPI;
+        // EgFakeTab_Init();
+    }
 
     /* Open locale.library (optional - soft failure) */
     LocaleBase = (struct LocaleBase *)OpenLibrary("locale.library", 38);
@@ -428,8 +441,9 @@ int main(int argc, char **argv)
         UTED_TabsAreSpaces,app->appSettings.tabsAreSpaces,
         UTED_VisibleTabs,app->appSettings.visualizeTabs,
 
-UTED_BevelStyle, BVS_FIELD,
-UTED_WordWrap,FALSE,// test
+    UTED_BevelStyle, BVS_FIELD,
+    UTED_WordWrap,FALSE,
+    UTED_DisplayInternalVScroll, FALSE,/* we have external scrollers */
 
         /* rawkey and vanilla key will be sent from window message
           with PutRawKey and PutVanillaKey.
@@ -500,10 +514,12 @@ UTED_WordWrap,FALSE,// test
                                                MEMF_ANY | MEMF_CLEAR);
         if (!app->tabList) cleanexit("Tab list alloc failed");
         NewList(app->tabList);
+
         /* We have to fill one tab and one "text stash context" */
         EgTabs_NewTab();
 
-
+        // if(ClickTabBase)
+        // {
             app->tabGadget = NewObject(CLICKTAB_GetClass(), NULL,
                 GA_ID,              GID_TABBAR,
                 GA_RelVerify,       TRUE,
@@ -511,7 +527,16 @@ UTED_WordWrap,FALSE,// test
                 CLICKTAB_Current,   0,
                 TAG_END);
             if (!app->tabGadget) cleanexit("ClickTab gadget creation failed");
-
+        // } else
+        // {
+        //     app->tabGadget = NewObject(EgFakeTab_GetClass(), NULL,
+        //         GA_ID,              GID_TABBAR,
+        //         GA_RelVerify,       TRUE,
+        //         CLICKTAB_Labels,    (ULONG)app->tabList,
+        //         CLICKTAB_Current,   0,
+        //         TAG_END);
+        //     if (!app->tabGadget) cleanexit("FakeTab gadget creation failed");
+        // }
     }
 
     /*
@@ -609,9 +634,7 @@ UTED_WordWrap,FALSE,// test
     //BMainWindow_SetTitle(&app->mainwindow,"EmojiGear v" EMOJIGEAR_VERSION);
     BMainWindow_SetTitleLocS(&app->mainwindow,MSG_WINDOW_TITLE_WITHFILE, "Unicode Text Editor v" EMOJIGEAR_VERSION);
     /*  Open the window or screen accoring to last prefs. */
-
     BMainWindow_Show(&app->mainwindow,app->window_obj,&app->appSettings);
-
 
     /* Load files passed on CLI: EmojiGear <path> [<path2> ...] [Latin1|Latin2] */
     if (argc > 1) {
@@ -857,6 +880,38 @@ UTED_WordWrap,FALSE,// test
                     ptag = FindTagItem(GA_ID, msg);
                     if (ptag) sender_ID = ptag->ti_Data;
 
+#ifdef HACKOS39SUPPORT
+                    if (!ClickTabBase)
+                    {
+                        if (sender_ID >= GID_TABBAR_SAFE_0 &&
+                            sender_ID < (ULONG)(GID_TABBAR_SAFE_0 + EG_MAX_TABS))
+                        {
+                            /* Fake tab button click — index encoded in GA_ID */
+                            int newIdx = (int)(sender_ID - GID_TABBAR_SAFE_0);
+                            SetAttrs(app->tabGadget,
+                                     CLICKTAB_Current, (ULONG)newIdx, TAG_END);
+                            EgTabs_SwitchTo(newIdx);
+                            continue;
+                        }
+                        else if (sender_ID == GID_TABBAR_SAFE_PREV)
+                        {
+                        printf("got GID_TABBAR_SAFE_PREV\n");
+                            SetGdAttrs(app->tabGadget,
+                                     FAKETAB_ScrollBy, (ULONG)-1, TAG_END);
+                            DoMethod(app->window_obj, WM_RETHINK);
+                            continue;
+                        }
+                        else if (sender_ID == GID_TABBAR_SAFE_NEXT)
+                        {
+                     printf("got GID_TABBAR_SAFE_NEXT\n");
+                            SetGdAttrs(app->tabGadget,
+                                     FAKETAB_ScrollBy, (ULONG)1, TAG_END);
+                            DoMethod(app->window_obj, WM_RETHINK);
+                            continue;
+                        }
+                    }
+#endif
+
                     switch (sender_ID) {
 
                         case GID_TABBAR:
@@ -1076,10 +1131,12 @@ void exitclose(void)
         /* Free tab bar resources */
         if (app->tabList) {
             struct Node *n, *next;
-            //int i;
-            for (n = app->tabList->lh_Head;
-                 (next = n->ln_Succ) != NULL; n = next)
-                FreeClickTabNode(n);
+            for (n = app->tabList->lh_Head; (next = n->ln_Succ) != NULL; n = next) {
+                if (ClickTabBase)
+                    FreeClickTabNode(n);  /* real clicktab-allocated nodes */
+                else
+                    FreeVec(n);           /* plain AllocVec'd nodes (safe path) */
+            }
             FreeVec(app->tabList);
             app->tabList = NULL;
         }
@@ -1127,6 +1184,9 @@ void exitclose(void)
     #else
      // TODO regular published  gadget exit.
     #endif
+    #ifdef HACKOS39SUPPORT
+        EgFakeTab_Free();
+    #endif
 
         /* Delete message port */
         if (app->app_port)
@@ -1144,8 +1204,9 @@ void exitclose(void)
     }
 
 
-    if(CyberGfxBase) CloseLibrary(CyberGfxBase);
-    if(DataTypesBase) CloseLibrary(DataTypesBase);
+    if(ClickTabBase)  { CloseLibrary(ClickTabBase);  ClickTabBase  = NULL; }
+    if(CyberGfxBase)  { CloseLibrary(CyberGfxBase);  CyberGfxBase  = NULL; }
+    if(DataTypesBase) { CloseLibrary(DataTypesBase); DataTypesBase = NULL; }
 
     /* Close all other libraries in reverse order */
     {

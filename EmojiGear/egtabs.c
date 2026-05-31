@@ -24,6 +24,7 @@
 
 #include <gadgets/unitexteditor.h>
 
+
 extern struct Library *ClickTabBase;
 
 /* Replace underscores with spaces: BOOPSI treats '_x' as a keyboard
@@ -34,12 +35,10 @@ static void egReplaceUnderscores(char *buf)
         if (*buf == '_') *buf = ' ';
 }
 
-/* Switch to tab by absolute index. No-op if already current or out of range. */
-
 /* Fill buf with a human-readable tab label for the given context key.
  * Synthetic keys ":n:N": N==1 → "New File"; N>1 → "New File N".
  * Real paths: just the filename part, with underscores replaced by spaces. */
-void EgTabs_FillLabel(char *buf, ULONG bufsz, const char *key)
+static void egTabsReal_FillLabel(char *buf, ULONG bufsz, const char *key)
 {
     if (!key || key[0] == '\0') {
         strncpy(buf, LOC(MSG_TAB_NEW_FILE), bufsz - 1);
@@ -73,9 +72,10 @@ static void egTabsRebuildGadget(void)
 
     for (i = 0; i < app->tabCount; i++) {
         struct Node *node;
-        EgTabs_FillLabel(app->tabLabels[i], sizeof(app->tabLabels[i]),
+        egTabsReal_FillLabel(app->tabLabels[i], sizeof(app->tabLabels[i]),
                        app->tabContextNames[i]);
         node = AllocClickTabNode(
+          //doesntwork TNA_CloseGadget, TRUE,
             TNA_Text,   (ULONG)app->tabLabels[i],
             TNA_Number, i,
             TAG_END);
@@ -108,7 +108,7 @@ static void egTabsRebuildGadget(void)
     app->tabList = newList;
 }
 
-void EgTabs_AddOrSelectTab(const char *contextKey)
+static void egTabsReal_AddOrSelectTab(const char *contextKey)
 {
     int i;
     char *keyCopy;
@@ -138,9 +138,11 @@ void EgTabs_AddOrSelectTab(const char *contextKey)
     if (!keyCopy) return;
     strcpy(keyCopy, contextKey);
 
-    EgTabs_FillLabel(app->tabLabels[app->tabCount], sizeof(app->tabLabels[0]),
+    egTabsReal_FillLabel(app->tabLabels[app->tabCount], sizeof(app->tabLabels[0]),
                    contextKey);
+
     node = AllocClickTabNode(
+      //doesntwork?  TNA_CloseGadget, TRUE,
         TNA_Text,   (ULONG)app->tabLabels[app->tabCount],
         TNA_Number, app->tabCount,
         TAG_END);
@@ -162,13 +164,13 @@ void EgTabs_AddOrSelectTab(const char *contextKey)
     }
 }
 
-void EgTabs_NewTab(void)
+static void egTabsReal_NewTab(void)
 {
-    char key[32];
+    char key[64];
     if (!app) return;
     app->tabNewSerial++;
     sprintf(key, ":n:%d", app->tabNewSerial);
-    EgTabs_AddOrSelectTab(key);
+    egTabsReal_AddOrSelectTab(key);
     /* Switch editor to fresh empty context */
     SetGdAttrs(app->textEditorObj,
                UTED_CurrentContext, (ULONG)key,
@@ -176,7 +178,10 @@ void EgTabs_NewTab(void)
                TAG_END);
 }
 
-void EgTabs_CloseCurrentTab(void)
+/* forward declaration needed: CloseCurrentTab calls SwitchTo defined below */
+static void egTabsReal_SwitchTo(int newIdx);
+
+static void egTabsReal_CloseCurrentTab(void)
 {
     int closingIdx, nextIdx, i;
     char *closingKey;
@@ -198,7 +203,7 @@ void EgTabs_CloseCurrentTab(void)
 
     /* Switch to the replacement tab.  This triggers UTED_CurrentContext on
      * the editor, which stashes the closing context under closingKey. */
-    EgTabs_SwitchTo(nextIdx);
+    egTabsReal_SwitchTo(nextIdx);
 
     /* Now the closing context is safely stashed – delete it from UniTextEditor */
     if (closingKey && closingKey[0])
@@ -221,7 +226,7 @@ void EgTabs_CloseCurrentTab(void)
     app->tabNodes[app->tabCount - 1]        = NULL;
     app->tabCount--;
 
-    /* EgTabs_SwitchTo set tabCurrentIndex = nextIdx.
+    /* egTabsReal_SwitchTo set tabCurrentIndex = nextIdx.
      * After removing closingIdx the surviving tabs shift left by one when
      * their original index was > closingIdx. */
     if (app->tabCurrentIndex > closingIdx)
@@ -239,7 +244,7 @@ void EgTabs_CloseCurrentTab(void)
                              app->tabLabels[app->tabCurrentIndex]);
 }
 
-void EgTabs_RenameCurrentTab(const char *newContextKey)
+static void egTabsReal_RenameCurrentTab(const char *newContextKey)
 {
     char *keyCopy;
     if (!app || !newContextKey) return;
@@ -252,7 +257,7 @@ void EgTabs_RenameCurrentTab(const char *newContextKey)
     FreeVec(app->tabContextNames[app->tabCurrentIndex]);
     app->tabContextNames[app->tabCurrentIndex] = keyCopy;
 
-    EgTabs_FillLabel(app->tabLabels[app->tabCurrentIndex],
+    egTabsReal_FillLabel(app->tabLabels[app->tabCurrentIndex],
                    sizeof(app->tabLabels[0]), newContextKey);
 
     /* Rename the UniTextEditor context so stash lookups use the new key */
@@ -264,7 +269,7 @@ void EgTabs_RenameCurrentTab(const char *newContextKey)
 }
 
 /* Switch to tab by absolute index. No-op if already current or out of range. */
-void EgTabs_SwitchTo(int newIdx)
+static void egTabsReal_SwitchTo(int newIdx)
 {
     const char *ctxKey;
     if (!app || newIdx < 0 || newIdx >= app->tabCount) return;
@@ -291,3 +296,14 @@ void EgTabs_SwitchTo(int newIdx)
                              MSG_WINDOW_TITLE_WITHFILE,
                              app->tabLabels[newIdx]);
 }
+
+const EgTabsAPI EgTabsRealAPI = {
+    egTabsReal_FillLabel,
+    egTabsReal_AddOrSelectTab,
+    egTabsReal_NewTab,
+    egTabsReal_RenameCurrentTab,
+    egTabsReal_CloseCurrentTab,
+    egTabsReal_SwitchTo,
+};
+
+const EgTabsAPI *EgTabsOps = &EgTabsRealAPI;

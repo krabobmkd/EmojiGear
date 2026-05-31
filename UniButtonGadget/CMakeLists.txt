@@ -24,7 +24,7 @@ set(UNIBUTTON_SOURCES
     class_unibutton_attribs.c
     class_unibutton_render.c
     class_unibutton_input.c
-    bdbprintf.c
+#    bdbprintf.c
 )
 if(UNIBUTTON_STATIC_LINK)
 	set(LIBNAME "unibutton")

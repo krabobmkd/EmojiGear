@@ -845,13 +845,15 @@ BOOL Action_FileQuit(struct App *ctx)
 }
 
 /* =========================================================================
- * Clipboard helpers
+ * Clipboard helpers (Latin-encoding variants only)
+ *
+ * Standard UTF-8 copy/paste is now handled by the gadget via UTED_ApplyCopy
+ * and UTED_ApplyPaste (class_unitexteditor_clipboard.c).  These static
+ * helpers remain only for the encoding-conversion variants (CopyLatin1/2,
+ * PasteLatin1/2) which must convert before writing or after reading.
  * =========================================================================
  */
 
-/* Write a byte buffer to the clipboard as IFF FTXT / CHRS.
- * The bytes are stored verbatim inside the CHRS chunk — callers choose the
- * encoding (UTF-8, Latin-1, or Latin-2) before calling. */
 static BOOL clipboard_write(const char *text, ULONG len)
 {
     struct MsgPort   *port;
@@ -1196,44 +1198,26 @@ BOOL Action_FileSaveLatin2(struct App *ctx)
 
 BOOL Action_EditCut(struct App *ctx)
 {
-    char      *selText = NULL;
-    BOOL       ok = FALSE;
-
     if (!ctx || !ctx->activeEditorObj) return FALSE;
-
-    GetAttr(UTED_GetSelectedText, ctx->activeEditorObj, (ULONG *)&selText);
-    if (!selText) return FALSE; /* nothing selected */
-
-    ok = clipboard_write(selText, (ULONG)strlen(selText));
-    FreeVec(selText);
-
-    if (ok) {
-        if(ctx->activeEditorObj == app->textEditorObj)
-        {
-            SetGdAttrs(ctx->activeEditorObj, UTED_DeleteSelection, 0UL, TAG_END);
-        } else if(app->searchBox.window)
-        {   /* those for the search box */
-            SetGadgetAttrs(ctx->activeEditorObj,app->searchBox.window,NULL,
-                UTED_DeleteSelection, 0UL, TAG_END);
-        }
-        UpdateStatusBar();
+    /* UTED_ApplyCut copies the selection to the clipboard and deletes it
+     * atomically inside the gadget.  No-op if nothing is selected. */
+    if (ctx->activeEditorObj == app->textEditorObj) {
+        SetGdAttrs(ctx->activeEditorObj, UTED_ApplyCut, TRUE, TAG_END);
+    } else if (app->searchBox.window) {
+        SetGadgetAttrs(ctx->activeEditorObj, app->searchBox.window, NULL,
+            UTED_ApplyCut, TRUE, TAG_END);
     }
-    return ok;
+    UpdateStatusBar();
+    return TRUE;
 }
 
 BOOL Action_EditCopy(struct App *ctx)
 {
-    char      *selText = NULL;
-    BOOL       ok;
-
     if (!ctx || !ctx->activeEditorObj) return FALSE;
-
-    GetAttr(UTED_GetSelectedText, ctx->activeEditorObj, (ULONG *)&selText);
-    if (!selText) return FALSE;
-
-    ok = clipboard_write(selText, (ULONG)strlen(selText));
-    FreeVec(selText);
-    return ok;
+    /* UTED_ApplyCopy reads the selection and writes UTF-8 to the clipboard.
+     * No rendering needed so SetAttrs (no window) is sufficient. */
+    SetAttrs((Object *)ctx->activeEditorObj, UTED_ApplyCopy, TRUE, TAG_END);
+    return TRUE;
 }
 
 BOOL Action_EditCopyLatin1(struct App *ctx)
@@ -1280,27 +1264,16 @@ BOOL Action_EditCopyLatin2(struct App *ctx)
 
 BOOL Action_EditPaste(struct App *ctx)
 {
-    char      *text;
-
     if (!ctx || !ctx->activeEditorObj) return FALSE;
-
-    text = clipboard_read();
-
-    if (!text) return FALSE;
-
-        if(ctx->activeEditorObj == app->textEditorObj)
-        {
-    SetGdAttrs(ctx->activeEditorObj, UTED_InsertText, (ULONG)text, TAG_END);
-        } else if(app->searchBox.window)
-        {   /* those for the search box */
-
-    SetGadgetAttrs(ctx->activeEditorObj,app->searchBox.window,NULL,
-            UTED_InsertText, (ULONG)text, TAG_END
-            );
-        }
-
-
-    FreeVec(text);
+    /* UTED_ApplyPaste reads clipboard, inserts at cursor and redraws.
+     * SetGadgetAttrs/SetGdAttrs provides GadgetInfo so the gadget's
+     * redraw runs immediately in the correct task context. */
+    if (ctx->activeEditorObj == app->textEditorObj) {
+        SetGdAttrs(ctx->activeEditorObj, UTED_ApplyPaste, TRUE, TAG_END);
+    } else if (app->searchBox.window) {
+        SetGadgetAttrs(ctx->activeEditorObj, app->searchBox.window, NULL,
+            UTED_ApplyPaste, TRUE, TAG_END);
+    }
     UpdateStatusBar();
     return TRUE;
 }
@@ -1406,12 +1379,17 @@ int EgSearchBox_GetCaseSensitive(EgSearchBox *sb);
 BOOL Action_NavFindNext(struct App *ctx)
 {
     const char *searchString;
+    char *searchStringCopy;
     ULONG searchIsCaseSensitive;
     ULONG lineBefore, charBefore, lineAfter, charAfter;
 
     if (!ctx || !ctx->textEditorObj) return FALSE;
     searchString = EgSearchBox_GetUTF8SearchString(&app->searchBox);
     if (!searchString || *searchString == 0) return TRUE;
+    searchStringCopy = AllocVec(strlen(searchString) + 1, MEMF_ANY);
+    if (!searchStringCopy) return FALSE;
+    strcpy(searchStringCopy, searchString);
+    searchString = searchStringCopy;
 
     searchIsCaseSensitive = EgSearchBox_GetCaseSensitive(&app->searchBox);
     SetGdAttrs(ctx->textEditorObj,
@@ -1437,8 +1415,9 @@ BOOL Action_NavFindNext(struct App *ctx)
         GetAttr(UTED_CursorLine, ctx->textEditorObj, &lineAfter);
         GetAttr(UTED_CursorChar, ctx->textEditorObj, &charAfter);
         if (lineAfter == lineBefore && charAfter == charBefore) {
-            DisplayBeep(CurrentMainScreen); /* not found anywhere */
+            //DisplayBeep(CurrentMainScreen); /* not found anywhere */
             UpdateStatusBar();
+            FreeVec(searchStringCopy);
             return TRUE;
         }
     }
@@ -1449,12 +1428,14 @@ BOOL Action_NavFindNext(struct App *ctx)
         TAG_END);
     SyncVScroller();
     UpdateStatusBar();
+    FreeVec(searchStringCopy);
     return TRUE;
 }
 
 BOOL Action_NavFindPrev(struct App *ctx)
 {
     const char *searchString;
+    char *searchStringCopy;
     ULONG searchIsCaseSensitive;
     ULONG lineBefore, charBefore, lineAfter, charAfter;
     ULONG lineCount;
@@ -1462,6 +1443,10 @@ BOOL Action_NavFindPrev(struct App *ctx)
     if (!ctx || !ctx->textEditorObj) return FALSE;
     searchString = EgSearchBox_GetUTF8SearchString(&app->searchBox);
     if (!searchString || *searchString == 0) return TRUE;
+    searchStringCopy = AllocVec(strlen(searchString) + 1, MEMF_ANY);
+    if (!searchStringCopy) return FALSE;
+    strcpy(searchStringCopy, searchString);
+    searchString = searchStringCopy;
 
     searchIsCaseSensitive = EgSearchBox_GetCaseSensitive(&app->searchBox);
     SetGdAttrs(ctx->textEditorObj,
@@ -1490,8 +1475,9 @@ BOOL Action_NavFindPrev(struct App *ctx)
         GetAttr(UTED_CursorLine, ctx->textEditorObj, &lineAfter);
         GetAttr(UTED_CursorChar, ctx->textEditorObj, &charAfter);
         if (lineAfter == lineBefore && charAfter == charBefore) {
-            DisplayBeep(CurrentMainScreen); /* not found anywhere */
+            //DisplayBeep(CurrentMainScreen); /* not found anywhere */
             UpdateStatusBar();
+            FreeVec(searchStringCopy);
             return TRUE;
         }
     }
@@ -1502,12 +1488,14 @@ BOOL Action_NavFindPrev(struct App *ctx)
         TAG_END);
     SyncVScroller();
     UpdateStatusBar();
+    FreeVec(searchStringCopy);
     return TRUE;
 }
 
 BOOL Action_NavReplace(struct App *ctx)
 {
     const char *searchString, *replaceString;
+    char *searchStringCopy, *replaceStringCopy;
     ULONG searchIsCaseSensitive;
     ULONG lineBefore, charBefore, lineAfter, charAfter;
 
@@ -1516,6 +1504,16 @@ BOOL Action_NavReplace(struct App *ctx)
     if (!searchString || *searchString == 0) return TRUE;
     replaceString = EgSearchBox_GetUTF8ReplaceString(&app->searchBox);
     if (!replaceString) replaceString = "";
+
+    searchStringCopy = AllocVec(strlen(searchString) + 1, MEMF_ANY);
+    if (!searchStringCopy) return FALSE;
+    strcpy(searchStringCopy, searchString);
+    searchString = searchStringCopy;
+
+    replaceStringCopy = AllocVec(strlen(replaceString) + 1, MEMF_ANY);
+    if (!replaceStringCopy) { FreeVec(searchStringCopy); return FALSE; }
+    strcpy(replaceStringCopy, replaceString);
+    replaceString = replaceStringCopy;
 
     searchIsCaseSensitive = EgSearchBox_GetCaseSensitive(&app->searchBox);
     SetGdAttrs(ctx->textEditorObj,
@@ -1543,6 +1541,8 @@ BOOL Action_NavReplace(struct App *ctx)
         SyncVScroller();
     }
     UpdateStatusBar();
+    FreeVec(searchStringCopy);
+    FreeVec(replaceStringCopy);
     return TRUE;
 
 }
@@ -1550,6 +1550,7 @@ BOOL Action_NavReplace(struct App *ctx)
 BOOL Action_NavReplaceAll(struct App *ctx)
 {
     const char *searchString, *replaceString;
+    char *searchStringCopy, *replaceStringCopy;
     ULONG replaceCount = 0;
     ULONG searchIsCaseSensitive;
     ULONG lineBefore, charBefore, lineAfter, charAfter;
@@ -1559,6 +1560,16 @@ BOOL Action_NavReplaceAll(struct App *ctx)
     if (!searchString || *searchString == 0) return TRUE;
     replaceString = EgSearchBox_GetUTF8ReplaceString(&app->searchBox);
     if (!replaceString) replaceString = "";
+
+    searchStringCopy = AllocVec(strlen(searchString) + 1, MEMF_ANY);
+    if (!searchStringCopy) return FALSE;
+    strcpy(searchStringCopy, searchString);
+    searchString = searchStringCopy;
+
+    replaceStringCopy = AllocVec(strlen(replaceString) + 1, MEMF_ANY);
+    if (!replaceStringCopy) { FreeVec(searchStringCopy); return FALSE; }
+    strcpy(replaceStringCopy, replaceString);
+    replaceString = replaceStringCopy;
 
     searchIsCaseSensitive = EgSearchBox_GetCaseSensitive(&app->searchBox);
     SetGdAttrs(ctx->textEditorObj,
@@ -1598,6 +1609,8 @@ BOOL Action_NavReplaceAll(struct App *ctx)
     } else {
         DisplayBeep(CurrentMainScreen);
     }
+    FreeVec(searchStringCopy);
+    FreeVec(replaceStringCopy);
     return TRUE;
 }
 

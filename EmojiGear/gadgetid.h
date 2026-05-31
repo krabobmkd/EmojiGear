@@ -21,6 +21,10 @@
 
 /* Tab bar */
 #define GID_TABBAR              1350
+/* Fake tab buttons (OS3.9 fallback): GID_TABBAR_SAFE_0 + index, up to EG_MAX_TABS */
+#define GID_TABBAR_SAFE_0       1380
+#define GID_TABBAR_SAFE_PREV    (GID_TABBAR_SAFE_0 + EG_MAX_TABS)
+#define GID_TABBAR_SAFE_NEXT    (GID_TABBAR_SAFE_0 + EG_MAX_TABS + 1)
 
 /* Status bar UniButton (emoji shortcut) */
 #define GID_EMOJI_BUTTON        1347

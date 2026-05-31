@@ -333,10 +333,16 @@ void uted_notify(Class *cl, Object *o, struct GadgetInfo *gi, ULONG tag, ULONG v
     struct opUpdate nmsg;
     ULONG tags[5];
 
+
+
     tags[0] = GA_ID;
     tags[1] = 0;
     //good on os3.2 GetAttr(GA_ID, o, &tags[1]);
     tags[1] = inst->ga_id;
+
+ //     bdbprintf("uted_notify GA_ID %08x !inst->target %08x\n",(int)ie->ie_Class);
+
+
     if (!tags[1] || !inst->target) return;
 
     tags[2] = tag;
