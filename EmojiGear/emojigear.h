@@ -25,6 +25,7 @@
 
 #define EG_MAX_TABS 20
 
+#define PIPE_INPUT_BUF 1024
 
 /* Application struct */
 struct App {
@@ -69,6 +70,8 @@ struct App {
     int          tabCount;
     int          tabCurrentIndex;
     int          tabNewSerial;                 /* counter for synthetic ":n:N" keys */
+
+    char pipeBuf[PIPE_INPUT_BUF];
 
 };
 

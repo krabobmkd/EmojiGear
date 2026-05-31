@@ -11,7 +11,7 @@
 ;
 
 (set #app-name    "EmojiGear")
-(set #app-version "v0.10")
+(set #app-version "v2.3")
 (set #app-default "Work:")
 
 ; Library/gadget versions we are shipping
@@ -303,21 +303,19 @@
 (complete 95)
 
 ; ---------------------------------------------------------------------------
-; Install icon files (skipped on update to preserve existing settings)
+; Install icon file (skipped silently if EmojiGear.info already exists,
+; so an upgrade never overwrites the user's saved settings)
 ; ---------------------------------------------------------------------------
-(if (exists (tackon #dest "EmojiGear.info"))
-    (
-        (message "Icon and settings already installed.")
-    )
+(if (not (exists (tackon #dest "EmojiGear.info")))
     (
         (set #icon-choice
             (askchoice
                 (prompt
                     (cat
-                        "Which icon(s) would you like to install?\n\n"
-                        "Each icon stores its own default display settings\n"
-                        "in its tooltypes -- you can keep both and switch\n"
-                        "between them at any time from the Settings menu."
+                        "Which icon would you like to install?\n\n"
+                        "The icon stores the default display settings in its\n"
+                        "tooltypes.  You can adjust everything later from\n"
+                        "EmojiGear's Settings and Font Settings menus."
                     )
                 )
                 (help
@@ -327,36 +325,32 @@
                         "  Best for OCS/ECS machines or low-colour screens.\n\n"
                         "High Quality:\n"
                         "  Antialiased fonts, colour Emoji support.\n"
-                        "  Recommended for AGA and RTG (Picasso, CyberGfx).\n\n"
-                        "Both are selected by default -- install both and\n"
-                        "pick the one that suits your setup."
+                        "  Recommended for AGA and RTG (Picasso, CyberGfx).\n"
                     )
                 )
                 (choices
                     "Low-end (2 colours) -- OCS/ECS friendly"
                     "High Quality -- AGA / RTG recommended"
                 )
-                (multiple)
-                (default 3)
+                (default 1)
             )
         )
 
-        (if (BITAND #icon-choice 1)
+        (if (= #icon-choice 0)
             (
-                (working "Installing low-colour icon ...")
+                (working "Installing icon (low-colour settings) ...")
                 (copyfiles
                     (source "bin/EmojiGearL.info")
                     (dest #dest)
+                    (newname "EmojiGear.info")
                 )
             )
-        )
-
-        (if (BITAND #icon-choice 2)
             (
-                (working "Installing high-quality icon ...")
+                (working "Installing icon (high-quality settings) ...")
                 (copyfiles
                     (source "bin/EmojiGearH.info")
                     (dest #dest)
+                    (newname "EmojiGear.info")
                 )
             )
         )

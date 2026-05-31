@@ -704,8 +704,8 @@ int main(int argc, char **argv)
          * sequences are never split when passed to UTED_InsertText.
          * pipeBufUsed tracks how many bytes are currently in the buffer;
          * incomplete sequences at the tail are kept for the next iteration. */
-#define PIPE_INPUT_BUF 1024
-        char pipeBuf[PIPE_INPUT_BUF];
+
+        char *pipeBuf = &app->pipeBuf[0];
         LONG pipeBufUsed = 0;
 
         GetAttr(WINDOW_SigMask, app->window_obj, &winsignal);

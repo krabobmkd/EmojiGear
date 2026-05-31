@@ -5,8 +5,8 @@
 @MASTER PROGDIR:EmojiGear.guide
 @NODE MAIN "EmojiGear - Unicode Text Editor"
 
-@{b}EmojiGear v2.3@{ub}
-Unicode Text Editor for AmigaOS 3.2.x (68k)
+@{b}EmojiGear v0.9@{ub}
+Unicode Text Editor for AmigaOS 3.2.x
 
 @{i}A UTF-8 text editor with full Emoji and Unicode support,@{ui}
 @{i}powered by a custom FreeType 2 rendering engine.@{ui}
@@ -24,7 +24,6 @@ Unicode Text Editor for AmigaOS 3.2.x (68k)
   @{" Settings          " LINK SETTINGS}    Editor preferences
   @{" Font Settings     " LINK FONTSETTINGS}Choosing fonts
   @{" File Formats      " LINK FORMATS}     Encoding support explained
-  @{" Pipe Input        " LINK PIPEINPUT}   Live Unix command output in EmojiGear
   @{" Workbench         " LINK WORKBENCH}   Running from Workbench / tooltypes
   @{" Requirements      " LINK REQUIRE}     What you need to run EmojiGear
 
@@ -40,12 +39,6 @@ EmojiGear is a Unicode-aware plain-text editor for AmigaOS 3.2.x (68k).
 It can open, edit, and save text files encoded as UTF-8, ISO Latin-1,
 or ISO Latin-2, and renders all characters -- including colour Emoji --
 using a built-in FreeType 2 engine.
-
-@{b}Note on compatibility:@{ub} EmojiGear itself requires AmigaOS 3.2 or later.
-It will @{b}not@{ub} run on AmigaOS 3.9 or earlier.  The two shared components
-it installs -- @{b}utf8rastport.library@{ub} and @{b}unibutton.gadget@{ub} -- are built
-to be compatible with AmigaOS 3.9 and can be used independently by any
-application targeting that older system.
 
 Unlike classic Amiga text editors that are limited to the system font
 and an 8-bit codepage, EmojiGear:
@@ -567,113 +560,6 @@ EmojiGear works internally in UTF-8 and converts on load and save.
 @ENDNODE
 
 
-@NODE PIPEINPUT "Pipe Input from Shell Commands"
-@TOC MAIN
-
-@{b}Piping Command Output into EmojiGear@{ub}
-
-AmigaDOS supports the pipe operator @{b}|@{ub}, which feeds the standard
-output of one program directly into the standard input of another.
-EmojiGear reads its standard input and inserts whatever it receives
-into the current document as UTF-8 text.
-
-This means you can use EmojiGear as a rich viewer for the output of
-any shell command -- with full Unicode, Emoji and ANSI colour support
-that the Amiga CLI window cannot display.
-
-------------------------------------------------------------------------------
-
-@{u}Basic usage@{uu}
-
-  1.Shell> @{b}some-command | EmojiGear@{ub}
-
-EmojiGear opens normally and the command's output streams into the
-editor as it arrives, character by character.
-
-------------------------------------------------------------------------------
-
-@{u}Example: live weather report with colours@{uu}
-
-  1.Shell> @{b}wget -O - http://wttr.in | EmojiGear@{ub}
-
-@{b}wttr.in@{ub} is a console-oriented weather service that responds with
-a fully formatted, ANSI-coloured, emoji-decorated weather report --
-the kind of output that looks like a jumble of escape codes in the
-standard Amiga CLI.
-
-In EmojiGear, with the right display options set, the same output
-is rendered exactly as a Unix shell would show it:
-
-  @{b}*@{ub}  Temperature colours, cloud icons, wind arrows -- all in colour.
-  @{b}*@{ub}  Weather emoji rendered at full size from the emoji font.
-  @{b}*@{ub}  Monospace columns aligned exactly as intended.
-
-------------------------------------------------------------------------------
-
-@{u}Setting up for the best result@{uu}
-
-Before piping ANSI-coloured output, enable these two options in the
-@{b}Settings@{ub} menu (or in the Settings window, Amiga-P):
-
-  @{b}1.  Force Monospace@{ub}
-         Makes every character occupy the same width, so tables and
-         columns line up correctly -- just as in a Unix terminal.
-         Toggle: @{b}Settings > Force Monospace@{ub}.
-
-  @{b}2.  ANSI Escape Rendering@{ub}
-         Tells EmojiGear to interpret VT100/ANSI colour and style codes
-         embedded in the text instead of displaying them as raw escape
-         characters.  Without this option the output looks like:
-           ESC[1;32mHello ESC[0m
-         With it, "Hello" is displayed in bold green.
-         Toggle: @{b}Settings > ANSI Escape Rendering@{ub}.
-
-  @{b}Optional: Use ANSI Unix Colors@{ub}
-         When also enabled, colour codes are resolved through the xterm
-         256-colour palette, giving the most accurate colour mapping on
-         RTG screens.  On a standard Workbench screen the basic 8-colour
-         ANSI mode is sufficient.
-         Toggle: @{b}Settings > Use ANSI Unix Colors@{ub}.
-
-Both settings are remembered between sessions (stored in tooltypes).
-
-------------------------------------------------------------------------------
-
-@{u}What you get that the Amiga CLI cannot show@{uu}
-
-The AmigaDOS CLI window uses the system console (CON:), which supports
-only plain 7-bit ASCII and the Topaz bitmap font.  It cannot:
-
-  @{b}*@{ub}  Render UTF-8 or Unicode characters.
-  @{b}*@{ub}  Display colour emoji.
-  @{b}*@{ub}  Interpret ANSI/VT100 colour escape sequences.
-  @{b}*@{ub}  Use proportional or TrueType fonts.
-
-EmojiGear with pipe input replaces the CLI window as a rich output
-viewer, bringing the visual quality of a modern Unix terminal to
-AmigaOS -- including colour weather maps, syntax-highlighted output
-from Unix tools, and emoji-decorated reports.
-
-------------------------------------------------------------------------------
-
-@{u}More examples@{uu}
-
-  Display the output of any tool that produces ANSI/UTF-8 text:
-
-    1.Shell> @{b}wget -O - http://wttr.in/London | EmojiGear@{ub}
-    1.Shell> @{b}wget -O - "http://rate.sx/" | EmojiGear@{ub}
-
-  View a local UTF-8 text file with ANSI colours already embedded:
-
-    1.Shell> @{b}type mylog.txt | EmojiGear@{ub}
-
-  The output streams in as it arrives; EmojiGear does not need to wait
-  for the command to finish before displaying the first lines.
-
-@{" Back to Contents " LINK MAIN}
-@ENDNODE
-
-
 @NODE WORKBENCH "Running from Workbench / Tooltypes"
 @TOC MAIN
 
@@ -721,11 +607,7 @@ Settings and Font Settings windows rather than editing them by hand.
 @{b}System Requirements@{ub}
 
   @{b}CPU:@{ub}          Motorola 68020 or better.
-  @{b}OS:@{ub}           @{b}AmigaOS 3.2 or later (v47+).@{ub}
-                 EmojiGear will @{b}not@{ub} run on AmigaOS 3.9 or earlier.
-                 It uses several BOOPSI classes introduced in OS 3.2
-                 (gadgets/clicktab.gadget v47, window.class v47, etc.)
-                 that are not present on older systems.
+  @{b}OS:@{ub}           AmigaOS 3.9 or 3.2.x (libraries v44+).
   @{b}Chip RAM:@{ub}     At least 1 MB recommended.
   @{b}Fast RAM:@{ub}     At least 4 MB recommended.
                  More RAM allows larger files and more tabs.
@@ -735,7 +617,7 @@ Settings and Font Settings windows rather than editing them by hand.
                    utf8rastport.library
                    gadgets/unitexteditor.gadget
                    gadgets/unibutton.gadget
-                   gadgets/clicktab.gadget     (requires OS 3.2)
+                   gadgets/clicktab.gadget
                    gadgets/layout.gadget
                    gadgets/button.gadget
                    gadgets/checkbox.gadget
@@ -743,17 +625,10 @@ Settings and Font Settings windows rather than editing them by hand.
                    gadgets/integer.gadget
                    gadgets/palette.gadget
                    gadgets/chooser.gadget
-                   window.class               (requires OS 3.2)
+                   window.class
                    images/label.image
                    requester.class
                    gadgets/scroller.gadget
-
-  @{b}Note for developers:@{ub}
-                 @{b}utf8rastport.library@{ub} and @{b}unibutton.gadget@{ub} are
-                 intentionally built for OS 3.9 compatibility so they
-                 can be used as standalone SDK components in applications
-                 that target older systems.  Only the EmojiGear
-                 application itself is OS 3.2-only.
 
   @{b}Fonts:@{ub}        EmojiGear requires at least one TrueType or
                  OpenType font file (.ttf / .otf) for text rendering.

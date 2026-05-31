@@ -11,9 +11,9 @@ target_include_directories(TestUtf8DrawText PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} $
 target_compile_options(TestUtf8DrawText PRIVATE ${AMIGA_COMPILER_OPTIONS} )
 
 
-add_executable(testgadget testgadget.c )
-target_include_directories(testgadget PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../include)
-target_compile_options(testgadget PRIVATE ${AMIGA_COMPILER_OPTIONS} )
+# add_executable(testgadget testgadget.c )
+# target_include_directories(testgadget PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../include)
+# target_compile_options(testgadget PRIVATE ${AMIGA_COMPILER_OPTIONS} )
 
 # add_executable(testoffscreenbm
 #     testoffscreenbm.c
@@ -37,10 +37,10 @@ target_compile_options(testunibutton PRIVATE ${AMIGA_COMPILER_OPTIONS} )
 set(MUI_INCLUDE_DIR "/home/krabob/Code/Amiga/MUI-5.0-20210831-os3/SDK/MUI/C/include"
     CACHE PATH "Path to MUI 5.0 C include directory")
 
-add_executable(testmuiuted testmuiuted.c)
-target_include_directories(testmuiuted PUBLIC
+add_executable(testMUIUniTextEditor testMUIUniTextEditor.c)
+target_include_directories(testMUIUniTextEditor PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../include
     ${MUI_INCLUDE_DIR}
 )
-target_compile_options(testmuiuted PRIVATE ${AMIGA_COMPILER_OPTIONS} )
+target_compile_options(testMUIUniTextEditor PRIVATE ${AMIGA_COMPILER_OPTIONS} )

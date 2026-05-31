@@ -11,7 +11,7 @@
 # Default output: ./EmojiGear_pkg  (deleted and recreated each run)
 #
 # The resulting directory can be archived as an LHA for distribution:
-#   cd EmojiGear_pkg && lha a ../EmojiGear_0.9.lha *
+#   cd EmojiGear_pkg && lha a ../EmojiGear_2.3.lha *
 #
 
 set -e
@@ -41,6 +41,9 @@ check_file "$BUILD/libutf8rastport/utf8rastport.library"
 check_file "$BUILD/UniButtonGadget/unibutton.gadget"
 check_file "$BUILD/UniTextEditorGadget/unitexteditor.gadget"
 check_file "$BUILD/EmojiGear"
+check_file "$BUILD/examples/testMUIUniTextEditor"
+check_file "$BUILD/examples/TestUtf8DrawText"
+check_file "$BUILD/examples/testunibutton"
 check_file "$SRC/EmojiGearL.info"
 check_file "$SRC/EmojiGearH.info"
 check_file "$SCRIPT_DIR/LICENSE"
@@ -129,6 +132,16 @@ echo "Copying SDK..."
 done
 
 # ---------------------------------------------------------------------------
+# SDK example binaries: copy compiled Amiga executables next to their sources
+# so the sdk/examples/ directory ships both code and ready-to-run binaries.
+# ---------------------------------------------------------------------------
+echo "Copying SDK example binaries..."
+mkdir -p "$PKG/sdk/examples"
+cp "$BUILD/examples/testMUIUniTextEditor" "$PKG/sdk/examples/testMUIUniTextEditor"
+cp "$BUILD/examples/TestUtf8DrawText"     "$PKG/sdk/examples/TestUtf8DrawText"
+cp "$BUILD/examples/testunibutton"        "$PKG/sdk/examples/testunibutton"
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""
@@ -138,4 +151,4 @@ echo "Contents:"
 find "$PKG" -not -type d | sort | sed "s|$PKG/||"
 echo ""
 echo "To create an LHA archive:"
-echo "  cd \"$PKG\" && lha a ../EmojiGear_0.9.lha *"
+echo "  cd \"$PKG\" && lha a ../EmojiGear_2.3.lha *"
