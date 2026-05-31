@@ -86,6 +86,8 @@
 #include <libraries/utf8rastport.h>
 
 
+#include <dos/dosextens.h>
+
 //#define HACKOS39SUPPORT 1
 
 struct Task *myTask = NULL;
@@ -205,6 +207,41 @@ void cleanexit(const char *pmessage)
  *
  * Must be called after LocaleBase has been opened.
  */
+/* Return the number of bytes at the start of buf that form only complete
+ * UTF-8 characters.  Any trailing incomplete multi-byte sequence is excluded.
+ * Used by the pipe reader to avoid splitting codepoints across InsertText calls.
+ *
+ * Algorithm: walk back from the end to find the last leading byte, check
+ * whether all its continuation bytes are present.  If yes, the whole buffer
+ * is safe.  If not, the boundary is just before that leading byte. */
+static LONG utf8_complete_len(const char *buf, LONG len)
+{
+    LONG     i = len;
+    unsigned char c;
+    int      seqLen;
+
+    if (len <= 0) return 0;
+
+    /* Find the last leading byte (not a continuation byte 10xxxxxx) */
+    while (i > 0) {
+        c = (unsigned char)buf[i - 1];
+        if ((c & 0xC0) != 0x80) break;
+        i--;
+    }
+    if (i == 0) return 0; /* buffer is all continuation bytes – broken stream */
+
+    c = (unsigned char)buf[i - 1];
+    if      (c < 0x80)           seqLen = 1;
+    else if ((c & 0xE0) == 0xC0) seqLen = 2;
+    else if ((c & 0xF0) == 0xE0) seqLen = 3;
+    else if ((c & 0xF8) == 0xF0) seqLen = 4;
+    else                          seqLen = 1; /* invalid leading byte */
+
+    /* Is the sequence fully present? */
+    if ((i - 1) + seqLen <= len) return len;   /* yes – whole buffer is safe */
+    else                         return i - 1;  /* no  – exclude the partial sequence */
+}
+
 static ULONG detect_vanilla_ansi_code(void)
 {
     ULONG ansiCode = UTED_VANILLAKEY_LATIN1;
@@ -290,6 +327,7 @@ void UpdateEditorFontsFromSettings()
                 UTED_FlushFonts,TRUE,
                 UTED_URPPrefs,  flags,
                 UTED_WordWrap,  (ULONG)app->appSettings.wordWrap,
+                UTED_ApplyAnsiEscapes, (ULONG)app->appSettings.applyAnsi,
                 UTED_PointSize, (ULONG)fontSizeTable[app->appSettings.currentFontSizeIndex],
                 UTED_AddFont,app->appSettings.primaryFontPath,
                 UTED_AddFont,app->appSettings.fallback1FontPath,
@@ -314,10 +352,9 @@ void CloseSearchBox();
 
 int main(int argc, char **argv)
 {
-
+    myTask = FindTask(NULL);
     {
-        struct Task *_t  = FindTask(NULL);
-        int _stacksize   = (int)((int)_t->tc_SPReg - (int)_t->tc_SPLower);
+        int _stacksize   = (int)((int)myTask->tc_SPReg - (int)myTask->tc_SPLower);
         if (_stacksize < EG_MIN_STACK) {
             printf("EmojiGear needs at least 32k stack. Use \"stack 32768\" or set it in the icon properties.\n");
             return 1;
@@ -329,7 +366,7 @@ int main(int argc, char **argv)
         {
             int   _sw_anchor = 0;
             int  *_sw_near   = (int *)((int)&_sw_anchor - 64);
-            int  *_sw_far    = (int *)((int)_t->tc_SPLower + 4);
+            int  *_sw_far    = (int *)((int)myTask->tc_SPLower + 4);
             int   _sw_i;
             for (_sw_i = 0; _sw_i < ((int)_sw_near - (int)_sw_far) / (int)sizeof(int); _sw_i++)
                 _sw_far[_sw_i] = (int)0xCAFEBABE;
@@ -337,7 +374,7 @@ int main(int argc, char **argv)
 #endif
     }
 
-    myTask = FindTask(NULL);
+
     atexit(&exitclose);
 
 
@@ -660,13 +697,22 @@ int main(int argc, char **argv)
     /* - - - Input Event Loop - - - */
     {
         ULONG winsignal;
+        BOOL  ok = TRUE;
 
-        BOOL ok = TRUE;
+        /* Persistent buffer for pipe / stdin UTF-8 input.
+         * Accumulates raw bytes across iterations so that multi-byte UTF-8
+         * sequences are never split when passed to UTED_InsertText.
+         * pipeBufUsed tracks how many bytes are currently in the buffer;
+         * incomplete sequences at the tail are kept for the next iteration. */
+#define PIPE_INPUT_BUF 1024
+        char pipeBuf[PIPE_INPUT_BUF];
+        LONG pipeBufUsed = 0;
 
         GetAttr(WINDOW_SigMask, app->window_obj, &winsignal);
 
         while (ok)
         {
+
             ULONG editorNeedRefresh=0;
             ULONG vscrollNeedRefresh=0;
             ULONG hscrollNeedRefresh=0;
@@ -691,6 +737,65 @@ int main(int argc, char **argv)
                 SIGBREAKF_CTRL_F;
 
             currentSignals = Wait(waitedSignals);
+
+        /* ---- Pipe / stdin input with UTF-8 boundary protection ----------------
+         * WaitForChar() does not work reliably on AmigaOS pipes/redirections,
+         * so it is not used.  Instead we rely on IsInteractive():
+         *
+         * Step 1 – read: only when Input() is NOT an interactive console
+         *   (IsInteractive() returns FALSE for PIPE: and file redirections).
+         *   On those handles Read() returns immediately with 0 bytes when no
+         *   data is available, so it does not block.  On a real CON: handle
+         *   Read() would block, hence the IsInteractive guard.
+         *
+         * Step 2 – flush: always runs, even when Step 1 reads nothing.
+         *   This drains bytes accumulated in previous iterations.
+         *   BUG FIX: pipeBuf[safeLen] is saved and restored around the NUL-
+         *   terminate so memmove does not shift a corrupted leading byte.
+         * ---------------------------------------------------------------------- */
+        {
+            BPTR inpt = Input();
+
+            /* Step 1: read from non-interactive handle (pipe / file redirect) */
+            if (inpt && !IsInteractive(inpt)) {
+                LONG canRead = PIPE_INPUT_BUF - pipeBufUsed - 1; /* reserve 1 for NUL */
+                if (canRead > 0) {
+                    LONG nread = Read(inpt, pipeBuf + pipeBufUsed, canRead);
+                    if (nread > 0)
+                        pipeBufUsed += nread;
+                }
+            }
+
+            /* Step 2: flush the largest complete-codepoint prefix of the buffer.
+             * Runs unconditionally so bytes left from a previous iteration are
+             * not stranded.  Always flushes here since we have no reliable way
+             * to know if more data is coming soon. */
+            if (pipeBufUsed > 0) {
+                LONG safeLen = utf8_complete_len(pipeBuf, pipeBufUsed);
+
+                /* Safety valve: broken stream, buffer almost full, no boundary */
+                if (safeLen == 0 && pipeBufUsed >= PIPE_INPUT_BUF - 4)
+                    safeLen = pipeBufUsed;
+
+                if (safeLen > 0) {
+                    LONG remaining = pipeBufUsed - safeLen;
+                    /* Save the byte at the boundary before NUL-terminating;
+                     * without this the memmove below would copy '\0' as the
+                     * first byte of the next (incomplete) sequence, losing
+                     * the leading byte of any pending multi-byte character. */
+                    char savedByte = (remaining > 0) ? pipeBuf[safeLen] : '\0';
+                    pipeBuf[safeLen] = '\0';
+                    SetGdAttrs(app->textEditorObj,
+                               UTED_InsertText, (ULONG)pipeBuf, TAG_END);
+                    if (remaining > 0) {
+                        pipeBuf[safeLen] = savedByte; /* restore before shift */
+                        memmove(pipeBuf, pipeBuf + safeLen, (size_t)remaining);
+                    }
+                    pipeBufUsed = remaining;
+                }
+            }
+        }
+
 
             /* exit app at any moment from Ctrl-C signal, atexit() magic does anything needed. */
             if(currentSignals & SIGBREAKF_CTRL_C) exit(0);

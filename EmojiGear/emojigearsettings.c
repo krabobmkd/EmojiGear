@@ -34,6 +34,7 @@ static char *StrDup(const char *s)
 #define TT_TABSARESPACES   "TABSARESPACES"   /* "1" or "0", default 0              */
 #define TT_WORDWRAP        "WORDWRAP"        /* "1" or "0", default 1              */
 #define TT_MONOSPACE       "FORCEMONOSPACE"  /* "1" or "0", default 0              */
+#define TT_APPLYANSI       "APPLYANSI"       /* "1" or "0", default 0              */
 #define TT_ANTIALIAS       "ANTIALIAS"       /* "1" or "0", default 0              */
 #define TT_EMOJIQUALITY    "EMOJIQUALITY"    /* "1" or "0", default 0              */
 #define TT_PRIMARYFONT     "PRIMARYFONT"     /* absolute path to .ttf/.odt file    */
@@ -168,6 +169,10 @@ void AppSettings_Load(AppSettings *as)
     val = ToolTypePrefs_Get(TT_MONOSPACE);
     if (val && val[0] == '1') as->monospace = 1;
 
+    as->applyAnsi = 0;
+    val = ToolTypePrefs_Get(TT_APPLYANSI);
+    if (val && val[0] == '1') as->applyAnsi = 1;
+
     as->antialias = FALSE;
     val = ToolTypePrefs_Get(TT_ANTIALIAS);
     if (val && val[0] == '1') as->antialias = TRUE;
@@ -293,6 +298,7 @@ void AppSettings_Save(AppSettings *as)
     /* Save font rendering settings */
     ToolTypePrefs_Set(TT_WORDWRAP,     as->wordWrap     ? "1" : "0");
     ToolTypePrefs_Set(TT_MONOSPACE,    as->monospace    ? "1" : "0");
+    ToolTypePrefs_Set(TT_APPLYANSI,    as->applyAnsi    ? "1" : "0");
     ToolTypePrefs_Set(TT_ANTIALIAS,    as->antialias    ? "1" : "0");
     ToolTypePrefs_Set(TT_EMOJIQUALITY, as->emojiQuality ? "1" : "0");
 

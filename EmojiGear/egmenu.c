@@ -200,6 +200,21 @@ BOOL EgMenu_Create(EgMenu *bm, struct Screen *screen, struct Window *window, App
         }
     }
 
+    /* Sync the Apply ANSI checkmark from appSettings */
+    {
+        int ansiOn = (app && app->appSettings.applyAnsi) ? 1 : 0;
+        for (i = 0; s_menuTemplate[i].nm_Type != NM_END; i++) {
+            ULONG udata = (ULONG)s_menuTemplate[i].nm_UserData;
+            if (udata > 0xFFFF && ((udata - (1 << 16)) >> 16) == ACTION_SETTINGS_APPLYANSI) {
+                if (ansiOn)
+                    s_menuTemplate[i].nm_Flags |=  CHECKED;
+                else
+                    s_menuTemplate[i].nm_Flags &= ~CHECKED;
+                break;
+            }
+        }
+    }
+
     resolveMenuLabels(s_menuTemplate);
 
     bm->menu = CreateMenus(s_menuTemplate, TAG_END);
