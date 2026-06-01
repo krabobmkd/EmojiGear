@@ -844,6 +844,19 @@ BOOL Action_FileQuit(struct App *ctx)
     return TRUE;
 }
 
+
+
+/* Write exactly 4 bytes (chunk ID literal or big-endian ULONG) to the stream. */
+static BOOL clip_write4(struct IOClipReq *ior, const void *data)
+{
+    ior->io_Data    = (STRPTR)data;
+    ior->io_Length  = 4;
+    ior->io_Command = CMD_WRITE;
+    DoIO((struct IORequest *)ior);
+    return (ior->io_Actual == 4 && !ior->io_Error);
+}
+
+
 /* =========================================================================
  * Clipboard helpers (Latin-encoding variants only)
  *
@@ -853,63 +866,67 @@ BOOL Action_FileQuit(struct App *ctx)
  * PasteLatin1/2) which must convert before writing or after reading.
  * =========================================================================
  */
-
 static BOOL clipboard_write(const char *text, ULONG len)
 {
     struct MsgPort   *port;
     struct IOClipReq  ior;
-    UBYTE            *buf;
-    ULONG             padLen, formSize, bufSize;
-    BOOL              ok = FALSE;
+    ULONG             formBodyLen;
+    BOOL              odd;
+    const UBYTE       zero = 0;
 
     if (!text || len == 0) return FALSE;
 
-    padLen   = (len + 1) & ~1UL;       /* CHRS data rounded up to even bytes */
-    formSize = 4 + 8 + padLen;         /* "FTXT" + "CHRS"+size + data         */
-    bufSize  = 8 + formSize;           /* "FORM"+size + body                   */
-
-    buf = (UBYTE *)AllocVec(bufSize, MEMF_ANY | MEMF_CLEAR);
-    if (!buf) return FALSE;
-
-    /* FORM header */
-    buf[0]='F'; buf[1]='O'; buf[2]='R'; buf[3]='M';
-    buf[4]=(UBYTE)(formSize>>24); buf[5]=(UBYTE)(formSize>>16);
-    buf[6]=(UBYTE)(formSize>>8);  buf[7]=(UBYTE)(formSize);
-    /* FTXT form type */
-    buf[8]='F'; buf[9]='T'; buf[10]='X'; buf[11]='T';
-    /* CHRS chunk */
-    buf[12]='C'; buf[13]='H'; buf[14]='R'; buf[15]='S';
-    buf[16]=(UBYTE)(len>>24); buf[17]=(UBYTE)(len>>16);
-    buf[18]=(UBYTE)(len>>8);  buf[19]=(UBYTE)(len);
-    CopyMem((APTR)(ULONG)text, &buf[20], len);
-
     port = CreateMsgPort();
-    if (!port) { FreeVec(buf); return FALSE; }
+    if (!port) return FALSE;
 
     memset(&ior, 0, sizeof(ior));
     ior.io_Message.mn_ReplyPort = port;
     ior.io_Message.mn_Length    = sizeof(ior);
 
-    if (OpenDevice("clipboard.device", 0, (struct IORequest *)&ior, 0) == 0) {
-        ior.io_Command = CMD_WRITE;
-        ior.io_ClipID  = 0;
-        ior.io_Offset  = 0;
-        ior.io_Data    = (STRPTR)buf;
-        ior.io_Length  = bufSize;
-        DoIO((struct IORequest *)&ior);
-
-        ior.io_Command = CBD_POST;
-        DoIO((struct IORequest *)&ior);
-
-        ok = (ior.io_Error == 0);
-        CloseDevice((struct IORequest *)&ior);
+    if (OpenDevice("clipboard.device", 0, (struct IORequest *)&ior, 0) != 0) {
+        DeleteMsgPort(port);
+        return FALSE;
     }
 
-    DeleteMsgPort(port);
-    FreeVec(buf);
-    return ok;
-}
+    odd = (len & 1);
+    /* FORM body = "FTXT"(4) + "CHRS"(4) + chunk-size(4) + data (+ optional pad) */
+    formBodyLen = 12 + (odd ? len + 1 : len);
 
+    ior.io_Offset = 0;
+    ior.io_Error  = 0;
+    ior.io_ClipID = 0;
+
+    /* IFF FORM header */
+    clip_write4(&ior, "FORM");
+    clip_write4(&ior, &formBodyLen);   /* big-endian on 68k – correct for IFF */
+    clip_write4(&ior, "FTXT");
+    /* CHRS chunk */
+    clip_write4(&ior, "CHRS");
+    clip_write4(&ior, &len);
+
+    /* text payload */
+    ior.io_Data    = (STRPTR)text;
+    ior.io_Length  = len;
+    ior.io_Command = CMD_WRITE;
+    DoIO((struct IORequest *)&ior);
+
+    /* IFF pad byte for odd-length chunks */
+    if (odd) {
+        ior.io_Data   = (STRPTR)&zero;
+        ior.io_Length = 1;
+        DoIO((struct IORequest *)&ior);
+    }
+
+    /* Commit: CMD_UPDATE tells the clipboard the write is complete.
+     * CBD_POST must NOT be used here – it is the deferred-post mechanism
+     * and expects io_Data to point to a SatisfyMsg MsgPort, not our buffer. */
+    ior.io_Command = CMD_UPDATE;
+    DoIO((struct IORequest *)&ior);
+
+    CloseDevice((struct IORequest *)&ior);
+    DeleteMsgPort(port);
+    return (ior.io_Error == 0);
+}
 /* Read raw bytes from the clipboard CHRS chunk.
  * Returns an AllocVec'd NUL-terminated buffer, or NULL if the clipboard
  * is empty, not IFF FTXT, or on error.  Caller must FreeVec the result.

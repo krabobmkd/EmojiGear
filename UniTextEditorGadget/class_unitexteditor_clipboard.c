@@ -9,6 +9,15 @@
  *
  * Both functions are called from UniTextEditor_OnSet in attribs.c when the
  * corresponding attribute tag is processed.
+ *
+ * Write protocol (matches RKM cbio.c):
+ *   - incremental CMD_WRITE calls, one per IFF field
+ *   - CMD_UPDATE to commit (NOT CBD_POST, which is the deferred-post mechanism
+ *     expecting io_Data to be a SatisfyMsg MsgPort – using it here crashes OS 3.9)
+ *
+ * Read protocol (matches RKM cbio.c):
+ *   - sequential CMD_READ calls, no manual io_Offset repositioning
+ *   - clip_read_done() drains remaining data so the device is left clean
  */
 
 #include <exec/types.h>
@@ -21,78 +30,124 @@
 #include "unitexteditor_private.h"
 
 /* =========================================================================
+ * Low-level clipboard I/O primitives
+ * =========================================================================
+ */
+
+/* Write exactly 4 bytes (chunk ID literal or big-endian ULONG) to the stream. */
+static BOOL clip_write4(struct IOClipReq *ior, const void *data)
+{
+    ior->io_Data    = (STRPTR)data;
+    ior->io_Length  = 4;
+    ior->io_Command = CMD_WRITE;
+    DoIO((struct IORequest *)ior);
+    return (ior->io_Actual == 4 && !ior->io_Error);
+}
+
+/* Read exactly 4 bytes from the stream into *out. Device advances io_Offset. */
+static BOOL clip_read4(struct IOClipReq *ior, ULONG *out)
+{
+    ior->io_Data    = (STRPTR)out;
+    ior->io_Length  = 4;
+    ior->io_Command = CMD_READ;
+    DoIO((struct IORequest *)ior);
+    return (ior->io_Actual == 4 && !ior->io_Error);
+}
+
+/* Drain remaining clipboard stream data to signal end-of-read to the device.
+ * Must be called after every read session, even on early exit (see cbio.c CBReadDone). */
+static void clip_read_done(struct IOClipReq *ior)
+{
+    char buf[256];
+    ior->io_Command = CMD_READ;
+    ior->io_Data    = (STRPTR)buf;
+    ior->io_Length  = sizeof(buf);
+    /* falls through immediately if io_Actual is already 0 */
+    while (ior->io_Actual)
+        if (DoIO((struct IORequest *)ior)) break;
+}
+
+/* =========================================================================
  * Internal clipboard device helpers
  * =========================================================================
  */
 
 /* Write a byte buffer to the clipboard as IFF FTXT/CHRS.
- * The bytes are stored verbatim — callers choose the encoding (UTF-8 here).
- * Mirrors the implementation in egaction.c; lives here so the gadget is
- * self-contained for standard UTF-8 copy/paste. */
+ * Uses incremental CMD_WRITE calls (one per IFF field) then CMD_UPDATE to
+ * commit, matching the cbio.c reference exactly. */
 static BOOL clipboard_write(const char *text, ULONG len)
 {
     struct MsgPort   *port;
     struct IOClipReq  ior;
-    UBYTE            *buf;
-    ULONG             padLen, formSize, bufSize;
-    BOOL              ok = FALSE;
+    ULONG             formBodyLen;
+    BOOL              odd;
+    const UBYTE       zero = 0;
 
     if (!text || len == 0) return FALSE;
 
-    padLen   = (len + 1) & ~1UL; /* align to 2 */
-    formSize = 4 + 8 + padLen;          /* "FTXT" + "CHRS"+size + data */
-    bufSize  = 8 + formSize;            /* "FORM"+size + body           */
-
-    buf = (UBYTE *)AllocVec(bufSize, MEMF_ANY | MEMF_CLEAR);
-    if (!buf) return FALSE;
-
-    buf[0]='F'; buf[1]='O'; buf[2]='R'; buf[3]='M';
-    buf[4]=(UBYTE)(formSize>>24); buf[5]=(UBYTE)(formSize>>16);
-    buf[6]=(UBYTE)(formSize>>8);  buf[7]=(UBYTE)(formSize);
-    buf[8]='F'; buf[9]='T'; buf[10]='X'; buf[11]='T';
-    buf[12]='C'; buf[13]='H'; buf[14]='R'; buf[15]='S';
-    buf[16]=(UBYTE)(len>>24); buf[17]=(UBYTE)(len>>16);
-    buf[18]=(UBYTE)(len>>8);  buf[19]=(UBYTE)(len);
-    CopyMem((APTR)(ULONG)text, &buf[20], len);
-
     port = CreateMsgPort();
-    if (!port) { FreeVec(buf); return FALSE; }
+    if (!port) return FALSE;
 
     memset(&ior, 0, sizeof(ior));
     ior.io_Message.mn_ReplyPort = port;
     ior.io_Message.mn_Length    = sizeof(ior);
 
-    if (OpenDevice("clipboard.device", 0, (struct IORequest *)&ior, 0) == 0) {
-        ior.io_Command = CMD_WRITE;
-        ior.io_ClipID  = 0;
-        ior.io_Offset  = 0;
-        ior.io_Data    = (STRPTR)buf;
-        ior.io_Length  = bufSize;
-        DoIO((struct IORequest *)&ior);
-
-        ior.io_Command = CBD_POST;
-        DoIO((struct IORequest *)&ior);
-
-        ok = (ior.io_Error == 0);
-        CloseDevice((struct IORequest *)&ior);
+    if (OpenDevice("clipboard.device", 0, (struct IORequest *)&ior, 0) != 0) {
+        DeleteMsgPort(port);
+        return FALSE;
     }
 
+    odd = (len & 1);
+    /* FORM body = "FTXT"(4) + "CHRS"(4) + chunk-size(4) + data (+ optional pad) */
+    formBodyLen = 12 + (odd ? len + 1 : len);
+
+    ior.io_Offset = 0;
+    ior.io_Error  = 0;
+    ior.io_ClipID = 0;
+
+    /* IFF FORM header */
+    clip_write4(&ior, "FORM");
+    clip_write4(&ior, &formBodyLen);   /* big-endian on 68k – correct for IFF */
+    clip_write4(&ior, "FTXT");
+    /* CHRS chunk */
+    clip_write4(&ior, "CHRS");
+    clip_write4(&ior, &len);
+
+    /* text payload */
+    ior.io_Data    = (STRPTR)text;
+    ior.io_Length  = len;
+    ior.io_Command = CMD_WRITE;
+    DoIO((struct IORequest *)&ior);
+
+    /* IFF pad byte for odd-length chunks */
+    if (odd) {
+        ior.io_Data   = (STRPTR)&zero;
+        ior.io_Length = 1;
+        DoIO((struct IORequest *)&ior);
+    }
+
+    /* Commit: CMD_UPDATE tells the clipboard the write is complete.
+     * CBD_POST must NOT be used here – it is the deferred-post mechanism
+     * and expects io_Data to point to a SatisfyMsg MsgPort, not our buffer. */
+    ior.io_Command = CMD_UPDATE;
+    DoIO((struct IORequest *)&ior);
+
+    CloseDevice((struct IORequest *)&ior);
     DeleteMsgPort(port);
-    FreeVec(buf);
-    return ok;
+    return (ior.io_Error == 0);
 }
 
 /* Read raw bytes from the clipboard CHRS chunk.
+ * Uses sequential CMD_READ calls (device advances io_Offset automatically)
+ * and calls clip_read_done() before closing so the device is left clean.
  * Returns an AllocVec'd NUL-terminated buffer, or NULL on empty/error.
  * Caller must FreeVec the result. */
 static char *clipboard_read(void)
 {
     struct MsgPort   *port;
     struct IOClipReq  ior;
-    UBYTE             hdr[8];
-    UBYTE            *body   = NULL;
+    ULONG             id, size;
     char             *result = NULL;
-    ULONG             formSize;
 
     port = CreateMsgPort();
     if (!port) return NULL;
@@ -101,63 +156,52 @@ static char *clipboard_read(void)
     ior.io_Message.mn_ReplyPort = port;
     ior.io_Message.mn_Length    = sizeof(ior);
 
-    if (OpenDevice("clipboard.device", 0, (struct IORequest *)&ior, 0)) {
+    if (OpenDevice("clipboard.device", 0, (struct IORequest *)&ior, 0) != 0) {
         DeleteMsgPort(port);
         return NULL;
     }
 
-    ior.io_Command = CMD_READ;
-    ior.io_Offset  = 0;
-    ior.io_Data    = (STRPTR)hdr;
-    ior.io_Length  = 8;
-    DoIO((struct IORequest *)&ior);
+    ior.io_Offset = 0;
+    ior.io_Error  = 0;
+    ior.io_ClipID = 0;
 
-    if (ior.io_Actual < 8)                                     goto done;
-    if (hdr[0]!='F'||hdr[1]!='O'||hdr[2]!='R'||hdr[3]!='M') goto done;
+    /* Expect "FORM" <formSize> "FTXT" */
+    if (!clip_read4(&ior, &id) || id != 0x464F524DUL) goto done; /* "FORM" */
+    if (!clip_read4(&ior, &size))                      goto done; /* form body size */
+    if (!clip_read4(&ior, &id) || id != 0x46545854UL) goto done; /* "FTXT" */
 
-    formSize = ((ULONG)hdr[4]<<24)|((ULONG)hdr[5]<<16)|
-               ((ULONG)hdr[6]<<8) |(ULONG)hdr[7];
+    /* Walk chunks, looking for the first non-empty CHRS */
+    for (;;) {
+        ULONG chunkId, chunkSize;
+        if (!clip_read4(&ior, &chunkId))   break;
+        if (!clip_read4(&ior, &chunkSize)) break;
 
-    if (formSize < 4 || formSize > 4UL*1024UL*1024UL) goto done;
-
-    body = (UBYTE *)AllocVec(formSize, MEMF_ANY);
-    if (!body) goto done;
-
-    ior.io_Command = CMD_READ;
-    ior.io_Offset  = 8;
-    ior.io_Data    = (STRPTR)body;
-    ior.io_Length  = formSize;
-    DoIO((struct IORequest *)&ior);
-
-    if (ior.io_Actual < 4)                                       goto done;
-    if (body[0]!='F'||body[1]!='T'||body[2]!='X'||body[3]!='T') goto done;
-
-    {
-        ULONG pos    = 4;
-        ULONG actual = ior.io_Actual;
-
-        while (pos + 8 <= actual) {
-            ULONG cid = ((ULONG)body[pos  ]<<24)|((ULONG)body[pos+1]<<16)|
-                        ((ULONG)body[pos+2]<< 8)|(ULONG)body[pos+3];
-            ULONG csz = ((ULONG)body[pos+4]<<24)|((ULONG)body[pos+5]<<16)|
-                        ((ULONG)body[pos+6]<< 8)|(ULONG)body[pos+7];
-            pos += 8;
-
-            if (cid == 0x43485253UL) { /* 'CHRS' */
-                ULONG avail = (actual > pos) ? (actual - pos) : 0;
-                ULONG len   = (csz < avail) ? csz : avail;
-                if (len > 0) {
-                    result = (char *)AllocVec(len + 1, MEMF_ANY);
-                    if (result) { CopyMem(&body[pos], result, len); result[len]='\0'; }
+        if (chunkId == 0x43485253UL && chunkSize > 0) { /* "CHRS" */
+            /* read chunkSize bytes plus optional IFF pad byte */
+            ULONG readLen = (chunkSize & 1) ? chunkSize + 1 : chunkSize;
+            result = (char *)AllocVec(chunkSize + 1, MEMF_ANY);
+            if (result) {
+                ior.io_Data    = (STRPTR)result;
+                ior.io_Length  = readLen;
+                ior.io_Command = CMD_READ;
+                DoIO((struct IORequest *)&ior);
+                if (ior.io_Actual >= chunkSize) {
+                    result[chunkSize] = '\0';
+                } else {
+                    FreeVec(result);
+                    result = NULL;
                 }
-                break;
             }
-            pos += (csz + 1) & ~1UL;
+            break;
+        } else {
+            /* skip unknown / zero-size chunk: advance past padded data */
+            ULONG skip = (chunkSize & 1) ? chunkSize + 1 : chunkSize;
+            ior.io_Offset += skip;
         }
     }
 
 done:
-    if (body) FreeVec(body);
+    clip_read_done(&ior); /* drain stream – device requires this even on early exit */
     CloseDevice((struct IORequest *)&ior);
     DeleteMsgPort(port);
     return result;
