@@ -213,6 +213,7 @@ if(UTF8RASTPORT_SHARED)
 		lib_amiga_crt.c
 		utf8rastport.c
 		urp_cgx_blend.c
+		bdbprintf.c
 	)
 
 target_link_options(${UTF8RPNAME} PRIVATE

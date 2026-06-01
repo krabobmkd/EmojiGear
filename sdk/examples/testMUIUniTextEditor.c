@@ -254,7 +254,7 @@ int main(int argc, char *argv[])
         UTED_BottomMargin,     3,
         UTED_Text,             (ULONG)INITIAL_TEXT,
         TAG_DONE);
-    printf("editor_obj: %08x\n", (unsigned int)editor_obj);
+  //  printf("editor_obj: %08x\n", (unsigned int)editor_obj);
 
     if(editor_obj)
     {   /* get the draw context with all fonts glyphs so we share it with buttons */
@@ -285,7 +285,7 @@ int main(int argc, char *argv[])
         */
         GA_Text,               (ULONG)"\xF0\x9F\x93\x8B Copy",   /* 📋 Copy  */
         TAG_DONE);
-    printf("copy_btn:   %08x\n", (unsigned int)copy_btn);
+ //   printf("copy_btn:   %08x\n", (unsigned int)copy_btn);
 
     /* --- paste button --- */
     paste_btn = MUI_NewObjectB(MUIC_Boopsi,
@@ -308,7 +308,7 @@ int main(int argc, char *argv[])
 
         GA_Text,               (ULONG)"\xF0\x9F\x93\x8C Paste",  /* 📌 Paste */
         TAG_DONE);
-    printf("paste_btn:  %08x\n", (unsigned int)paste_btn);
+ //   printf("paste_btn:  %08x\n", (unsigned int)paste_btn);
 
     /* --- quit button (pure MUI, no BOOPSI) --- */
     quit_btn = MUI_NewObjectB(MUIC_Text,
@@ -317,7 +317,7 @@ int main(int argc, char *argv[])
         MUIA_InputMode,     MUIV_InputMode_RelVerify,
         MUIA_Background,    MUII_ButtonBack,
         TAG_DONE);
-    printf("quit_btn:   %08x\n", (unsigned int)quit_btn);
+  //  printf("quit_btn:   %08x\n", (unsigned int)quit_btn);
 
     /* --- bottom bar: copy | paste | quit --- */
     hgroup = MUI_NewObjectB(MUIC_Group,
@@ -326,21 +326,21 @@ int main(int argc, char *argv[])
         MUIA_Group_Child, (ULONG)paste_btn,
         MUIA_Group_Child, (ULONG)quit_btn,
         TAG_DONE);
-    printf("hgroup:     %08x\n", (unsigned int)hgroup);
+  //  printf("hgroup:     %08x\n", (unsigned int)hgroup);
 
     /* --- outer vertical layout: editor on top, toolbar at bottom --- */
     vgroup = MUI_NewObjectB(MUIC_Group,
         MUIA_Group_Child, (ULONG)editor_obj,
         MUIA_Group_Child, (ULONG)hgroup,
         TAG_DONE);
-    printf("vgroup:     %08x\n", (unsigned int)vgroup);
+  //  printf("vgroup:     %08x\n", (unsigned int)vgroup);
 
     win_obj = MUI_NewObjectB(MUIC_Window,
         MUIA_Window_Title,      (ULONG)"MUI UniTextEditor + UniButton test",
         MUIA_Window_ID,         MAKE_ID('W','O','O','T'),
         MUIA_Window_RootObject, (ULONG)vgroup,
         TAG_DONE);
-    printf("win_obj:    %08x\n", (unsigned int)win_obj);
+ //   printf("win_obj:    %08x\n", (unsigned int)win_obj);
 
     app_obj = MUI_NewObjectB(MUIC_Application,
         MUIA_Application_Title,       (ULONG)"TestMUIUTED",
@@ -349,7 +349,7 @@ int main(int argc, char *argv[])
         MUIA_Application_Base,        (ULONG)"TESTMUIUTED",
         MUIA_Application_Window,      (ULONG)win_obj,
         TAG_DONE);
-    printf("app_obj:    %08x\n", (unsigned int)app_obj);
+  //  printf("app_obj:    %08x\n", (unsigned int)app_obj);
 
     if (!editor_obj || !copy_btn || !paste_btn || !quit_btn ||
         !hgroup || !vgroup || !win_obj || !app_obj) {
@@ -409,9 +409,11 @@ int main(int argc, char *argv[])
                      * system clipboard (clipboard.device) internally. */
                     if (btnCopyPressed && o_uted && w) {
                         btnCopyPressed = FALSE;
+
                         SetGadgetAttrs((struct Gadget *)o_uted, w, NULL,
                             UTED_ApplyCopy, TRUE,
                             TAG_DONE);
+
                         puts("copy: done");
                     }
 

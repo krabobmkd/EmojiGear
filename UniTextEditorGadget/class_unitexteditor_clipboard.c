@@ -39,7 +39,7 @@ static BOOL clipboard_write(const char *text, ULONG len)
 
     if (!text || len == 0) return FALSE;
 
-    padLen   = (len + 1) & ~1UL;
+    padLen   = (len + 1) & ~1UL; /* align to 2 */
     formSize = 4 + 8 + padLen;          /* "FTXT" + "CHRS"+size + data */
     bufSize  = 8 + formSize;            /* "FORM"+size + body           */
 

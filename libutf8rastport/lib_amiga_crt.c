@@ -14,7 +14,7 @@
  *   Strings   : strlen, strcmp, strncmp, strcpy, strncpy, strcat, strrchr, strstr
  *   Stdlib    : qsort, strtol, strtoul, getenv, abort
  *   setjmp    : setjmp, longjmp  (m68k asm, fits inside the 136-byte jmp_buf)
- *   stdio     : FILE, __sF, fprintf, fputc, fread, fwrite, fflush
+ *   stdio     : FILE, __sF, fprintf, fputc, fread, fwrite, fflush, vsnprintf, snprintf
  *   Time      : gmtime  (returns NULL; libpng skips the tIME chunk gracefully)
  *   libnix stubs: __initmalloc, __exitmalloc, __initstdio, __exitstdio
  *
@@ -401,6 +401,223 @@ int fprintf(FILE *fp, const char *fmt, ...)
     }
     va_end(args);
     return 0;
+}
+
+/* ------------------------------------------------------------------ *
+ * vsnprintf / snprintf                                                *
+ *                                                                     *
+ * Derived from the libnix __vfprintf_total_size parser (amiga-gcc    *
+ * tree, projects/libnix) — FILE/stdio/locking/float stripped out,    *
+ * replaced with a bounded buffer writer.                             *
+ *                                                                     *
+ * Supports: %s %c %d %i %u %x %X %o %p %%                           *
+ *           flags: - 0 + (space) #                                   *
+ *           width (numeric or *)                                      *
+ *           precision (numeric or *)                                  *
+ *           length: h  l                                              *
+ * ------------------------------------------------------------------ */
+
+/* PUTC writes one char into the bounded buffer (always increments total). */
+#define _VSPRINTF_PUTC(c) \
+    do { if (_rem > 1) { *_out++ = (char)(c); _rem--; } _total++; } while(0)
+
+int vsnprintf(char *buf, size_t size, const char *fmt, va_list args)
+{
+    char              *_out   = buf;
+    size_t             _rem   = size;
+    int                _total = 0;
+    const char        *ptr;
+
+    static const char  lohex[] = "0123456789abcdef";
+    static const char  uphex[] = "0123456789ABCDEF";
+
+    /* flags */
+#define _FL_ALT    1   /* '#' */
+#define _FL_ZERO   2   /* '0' */
+#define _FL_LALIGN 4   /* '-' */
+#define _FL_BLANK  8   /* ' ' */
+#define _FL_SIGN  16   /* '+' */
+
+    if (!buf || !size) return 0;
+
+    ptr = fmt;
+    while (*ptr) {
+        if (*ptr != '%') { _VSPRINTF_PUTC(*ptr++); continue; }
+        ptr++;   /* skip '%' */
+
+        /* --- flags --- */
+        int    flags = 0;
+        int    stop  = 0;
+        while (!stop) {
+            switch (*ptr) {
+            case '#': flags |= _FL_ALT;    ptr++; break;
+            case '0': flags |= _FL_ZERO;   ptr++; break;
+            case '-': flags |= _FL_LALIGN; ptr++; break;
+            case ' ': flags |= _FL_BLANK;  ptr++; break;
+            case '+': flags |= _FL_SIGN;   ptr++; break;
+            default:  stop = 1;            break;
+            }
+        }
+        if (flags & _FL_LALIGN) flags &= ~_FL_ZERO; /* '-' overrides '0' */
+
+        /* --- width --- */
+        int width = 0;
+        if (*ptr == '*') { width = va_arg(args, int); ptr++; if (width < 0) { flags |= _FL_LALIGN; width = -width; } }
+        else { while (*ptr >= '0' && *ptr <= '9') width = width * 10 + (*ptr++ - '0'); }
+
+        /* --- precision --- */
+        int preci = -1;
+        if (*ptr == '.') {
+            ptr++;
+            preci = 0;
+            if (*ptr == '*') { preci = va_arg(args, int); if (preci < 0) preci = -1; ptr++; }
+            else { while (*ptr >= '0' && *ptr <= '9') preci = preci * 10 + (*ptr++ - '0'); }
+        }
+
+        /* --- length modifier --- */
+        int lng = 0;
+        if      (*ptr == 'l') { lng = 1; ptr++; }
+        else if (*ptr == 'h') {          ptr++; }
+
+        char type = *ptr++;
+
+        /* --- format the value into a local buffer --- */
+        char         body[32];
+        const char  *bp      = body;
+        int          blen    = 0;
+        char         sign    = 0;
+        char         pre[3];
+        int          prelen  = 0;
+        pre[0] = pre[1] = pre[2] = 0;
+
+        switch (type) {
+
+        case 's': {
+            const char *s = va_arg(args, const char *);
+            int l;
+            if (!s) s = "(null)";
+            for (l = 0; s[l]; l++);
+            bp   = s;
+            blen = (preci >= 0 && preci < l) ? preci : l;
+            break;
+        }
+        case 'c':
+            body[0] = (char)va_arg(args, int);
+            blen = 1;
+            break;
+
+        case 'd': case 'i': {
+            long        v = lng ? va_arg(args, long) : (long)va_arg(args, int);
+            unsigned long uv;
+            int i;
+            if      (v < 0)             { sign = '-'; uv = (unsigned long)(-v); }
+            else if (flags & _FL_SIGN)  { sign = '+'; uv = (unsigned long)v; }
+            else if (flags & _FL_BLANK) { sign = ' '; uv = (unsigned long)v; }
+            else                        {              uv = (unsigned long)v; }
+            i = (int)sizeof(body) - 1; body[i] = '\0';
+            if (!uv) { body[--i] = '0'; }
+            else { while (uv) { body[--i] = (char)('0' + (int)(uv % 10)); uv /= 10; } }
+            bp = &body[i]; blen = (int)sizeof(body) - 1 - i;
+            break;
+        }
+        case 'u': {
+            unsigned long v = lng ? va_arg(args, unsigned long)
+                                  : (unsigned long)va_arg(args, unsigned int);
+            int i = (int)sizeof(body) - 1; body[i] = '\0';
+            if (!v) { body[--i] = '0'; }
+            else { while (v) { body[--i] = (char)('0' + (int)(v % 10)); v /= 10; } }
+            bp = &body[i]; blen = (int)sizeof(body) - 1 - i;
+            break;
+        }
+        case 'x': case 'X': {
+            const char *dig = (type == 'X') ? uphex : lohex;
+            unsigned long v = lng ? va_arg(args, unsigned long)
+                                  : (unsigned long)va_arg(args, unsigned int);
+            int i;
+            if ((flags & _FL_ALT) && v) { pre[0] = '0'; pre[1] = type; prelen = 2; }
+            i = (int)sizeof(body) - 1; body[i] = '\0';
+            if (!v) { body[--i] = '0'; }
+            else { while (v) { body[--i] = dig[v & 0xf]; v >>= 4; } }
+            bp = &body[i]; blen = (int)sizeof(body) - 1 - i;
+            break;
+        }
+        case 'o': {
+            unsigned long v = lng ? va_arg(args, unsigned long)
+                                  : (unsigned long)va_arg(args, unsigned int);
+            int i;
+            if ((flags & _FL_ALT) && v) { pre[0] = '0'; prelen = 1; }
+            i = (int)sizeof(body) - 1; body[i] = '\0';
+            if (!v) { body[--i] = '0'; }
+            else { while (v) { body[--i] = (char)('0' + (int)(v & 7)); v >>= 3; } }
+            bp = &body[i]; blen = (int)sizeof(body) - 1 - i;
+            break;
+        }
+        case 'p': {
+            unsigned long v = (unsigned long)va_arg(args, void *);
+            int i;
+            pre[0] = '0'; pre[1] = 'x'; prelen = 2;
+            i = (int)sizeof(body) - 1; body[i] = '\0';
+            if (!v) { body[--i] = '0'; }
+            else { while (v) { body[--i] = lohex[v & 0xf]; v >>= 4; } }
+            bp = &body[i]; blen = (int)sizeof(body) - 1 - i;
+            break;
+        }
+        case '%':
+            body[0] = '%'; blen = 1;
+            break;
+        default:
+            body[0] = '%'; body[1] = type; blen = type ? 2 : 1;
+            break;
+        }
+
+        /* --- emit with padding --- */
+        {
+            int signlen  = sign   ? 1 : 0;
+            int content  = signlen + prelen + blen;
+            int pad      = (width > content) ? width - content : 0;
+            int pi, si;
+
+            if (!(flags & _FL_LALIGN)) {
+                if (flags & _FL_ZERO) {
+                    /* zero-pad: sign + prefix first, then zeros */
+                    if (sign)  _VSPRINTF_PUTC(sign);
+                    for (pi = 0; pi < prelen; pi++) _VSPRINTF_PUTC(pre[pi]);
+                    for (pi = 0; pi < pad;    pi++) _VSPRINTF_PUTC('0');
+                } else {
+                    /* space-pad left */
+                    for (pi = 0; pi < pad;    pi++) _VSPRINTF_PUTC(' ');
+                    if (sign)  _VSPRINTF_PUTC(sign);
+                    for (pi = 0; pi < prelen; pi++) _VSPRINTF_PUTC(pre[pi]);
+                }
+            } else {
+                if (sign)  _VSPRINTF_PUTC(sign);
+                for (pi = 0; pi < prelen; pi++) _VSPRINTF_PUTC(pre[pi]);
+            }
+            for (si = 0; si < blen; si++) _VSPRINTF_PUTC(bp[si]);
+            if (flags & _FL_LALIGN)
+                for (pi = 0; pi < pad; pi++) _VSPRINTF_PUTC(' ');
+        }
+    }
+
+    *_out = '\0';
+    return _total;
+
+#undef _FL_ALT
+#undef _FL_ZERO
+#undef _FL_LALIGN
+#undef _FL_BLANK
+#undef _FL_SIGN
+}
+#undef _VSPRINTF_PUTC
+
+int snprintf(char *buf, size_t size, const char *fmt, ...)
+{
+    va_list args;
+    int r;
+    va_start(args, fmt);
+    r = vsnprintf(buf, size, fmt, args);
+    va_end(args);
+    return r;
 }
 
 int fputc(int c, FILE *fp)

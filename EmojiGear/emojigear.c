@@ -84,6 +84,7 @@
 #include <gadgets/unibutton.h>
 /* our beloved utf8 freetype rendering engine */
 #include <libraries/utf8rastport.h>
+#include <proto/utf8rastport.h>
 
 
 #include <dos/dosextens.h>
@@ -724,6 +725,7 @@ int main(int argc, char **argv)
             {
                 SetAttrs(app->textEditorObj,UTED_FlushDebugOutput,TRUE,TAG_END);
             }
+            URPDC_FlushGlyphCache(NULL);
 
             settingsSig  = EgSettingsView_GetSignalMask(&app->settingsView);
             fontsSig     = EgFontsView_GetSignalMask(&app->fontsView);

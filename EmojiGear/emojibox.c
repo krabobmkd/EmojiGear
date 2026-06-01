@@ -814,6 +814,7 @@ static ULONG EmojiGrid_OnRender(Class *cl, Object *o, struct gpRender *msg)
     /* ---- Emoji cells ---- */
     if (inst->emojis && inst->dc && inst->screen) {
 
+        URPDC_UpdateColorMap(inst->dc, inst->screen);
         URPDC_SetDrawColorFromPen(inst->dc, inst->screen,
                                   (LONG)inst->pens[EGPEN_TEXT], (LONG)inst->pens[EGPEN_BG]);
         SetAPen(rp, inst->pens[EGPEN_TEXT]);
@@ -839,6 +840,8 @@ static ULONG EmojiGrid_OnRender(Class *cl, Object *o, struct gpRender *msg)
                                + inst->fontAscent);
                 if (pos.x < cx)                     pos.x = cx;
                 if (pos.y < cy + inst->fontAscent)  pos.y = cy + inst->fontAscent;
+       URPDC_SetDrawColorFromPen(inst->dc, inst->screen,
+                                  (LONG)inst->pens[EGPEN_TEXT], (LONG)inst->pens[EGPEN_BG]);
 
                 URPDrawTextUTF8(rp, inst->dc, &pos, emoji, (ULONG)(-1));
             }

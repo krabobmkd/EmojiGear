@@ -83,12 +83,36 @@ BOOL uted_pool_alloc(UTEDBitMapPool *pool, ULONG size,
     pool->layer     = NULL;
     pool->rp        = NULL;
 
-    for (i = 0; i < size; i++) {
-        pool->bitmaps[i] = AllocBitMap(LINE_CHUNK_WIDTH, (ULONG)lineHeight,
-                                        depth, BMF_CLEAR, friendBM);
-        if (!pool->bitmaps[i]) break;   /* chip RAM exhausted */
-        pool->freeStack[pool->freeCount++] = pool->bitmaps[i];
-        pool->size++;
+    // if(GfxBase->LibNode.lib_Version>=47)
+    // {
+    //     ULONG abmtags[]= {
+    //        // BMATags_Friend,(ULONG)friendBM,
+    //         BMATags_Depth, depth,
+    //         BMATags_BitmapInvisible,TRUE,
+    //         TAG_END
+    //     };
+    //     /* New AllocBitMap, may alloc in fast */
+    //     for (i = 0; i < size; i++) {
+    //         pool->bitmaps[i] = AllocBitMap(LINE_CHUNK_WIDTH, (ULONG)lineHeight,
+    //                                 depth, BMF_CLEAR
+    //                                 /* want tags*/
+    //                                 | BMF_RTGTAGS|BMF_RTGCHECK|BMF_FRIENDISTAG
+    //                                 , (struct BitMap *)&abmtags[0]
+    //                                 );
+    //         if (!pool->bitmaps[i]) break;   /* chip RAM exhausted */
+    //         pool->freeStack[pool->freeCount++] = pool->bitmaps[i];
+    //         pool->size++;
+    //     }
+    // } else
+    {
+        /* antique AllocBitMap, surely in chipram if native mode */
+        for (i = 0; i < size; i++) {
+            pool->bitmaps[i] = AllocBitMap(LINE_CHUNK_WIDTH, (ULONG)lineHeight,
+                                            depth, BMF_CLEAR, friendBM);
+            if (!pool->bitmaps[i]) break;   /* chip RAM exhausted */
+            pool->freeStack[pool->freeCount++] = pool->bitmaps[i];
+            pool->size++;
+        }
     }
 
     if (pool->size == 0) {
@@ -171,11 +195,37 @@ BOOL uted_pool_growalloc(UTEDBitMapPool *pool, ULONG newSize, struct Screen *scr
 
     /* Allocate bitmaps for the newly added slots */
     allocCount = oldSize;
-    for (i = oldSize; i < newSize; i++) {
-        newBitmaps[i] = AllocBitMap(LINE_CHUNK_WIDTH, (ULONG)pool->height,
-                                     depth, BMF_CLEAR, friendBM);
-        if (!newBitmaps[i]) break;
-        allocCount++;
+
+
+    // if(GfxBase->LibNode.lib_Version>=47)
+    // {
+    //     ULONG abmtags[]= {
+    //        // BMATags_Friend,(ULONG)friendBM,
+    //         BMATags_Depth, depth,
+    //         BMATags_BitmapInvisible,TRUE,
+    //         TAG_END
+    //     };
+    //     /* New AllocBitMap, may alloc in fast */
+
+    //     for (i = oldSize; i < newSize; i++) {
+    //         newBitmaps[i] = AllocBitMap(LINE_CHUNK_WIDTH, (ULONG)pool->height,
+    //                                      depth, BMF_CLEAR
+    //                                 /* want tags*/
+    //                                 | BMF_RTGTAGS|BMF_RTGCHECK|BMF_FRIENDISTAG
+    //                                 , (struct BitMap *)&abmtags[0]
+    //                                 );
+    //         if (!newBitmaps[i]) break;
+    //         allocCount++;
+    //     }
+    // } else
+    {
+
+        for (i = oldSize; i < newSize; i++) {
+            newBitmaps[i] = AllocBitMap(LINE_CHUNK_WIDTH, (ULONG)pool->height,
+                                         depth, BMF_CLEAR, friendBM);
+            if (!newBitmaps[i]) break;
+            allocCount++;
+        }
     }
 
     /* All entries are free (precondition: caller evicted everything first) */

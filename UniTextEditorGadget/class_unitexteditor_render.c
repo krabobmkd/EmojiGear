@@ -101,8 +101,9 @@ static void uted_do_layout( Class *cl, Object *o,
                                   inst->bmPool.height != (UWORD)inst->lineHeightBase);
             BOOL tooSmall      = (!noPool && !heightChanged &&
                                   inst->bmPool.size < neededSize);
+            BOOL screenModechange = (screen != inst->screen);
 
-            if (noPool || heightChanged || tooSmall) {
+            if (noPool || heightChanged || tooSmall || screenModechange) {
                 UniTextEditorLine *line;
                 struct Screen *useScreen = screen ? screen : inst->screen;
 
@@ -131,6 +132,16 @@ static void uted_do_layout( Class *cl, Object *o,
                 }
 
         Permit();
+            }
+            if(screenModechange)
+            {
+                if(inst->dc && screen)
+                {
+                    URPDC_SetDrawScreen(inst->dc, screen);
+                }
+                uted_update_halfway_pen(inst);
+
+                inst->screen = screen;
             }
         }
     }
@@ -188,10 +199,11 @@ ULONG UniTextEditor_OnLayout(Class *cl, Object *o, struct gpLayout *msg)
 
 */
 
-    if(FindTask(NULL) == inst->callerTask)
+    if((FindTask(NULL) == inst->callerTask) &&  msg->gpl_GInfo && msg->gpl_GInfo->gi_Screen )
     {
-        struct Screen     *screen = msg->gpl_GInfo ? msg->gpl_GInfo->gi_Screen : NULL;
-        uted_do_layout(cl,o, G(o)->Width, G(o)->Height, screen);
+
+        uted_do_layout(cl,o, G(o)->Width, G(o)->Height, msg->gpl_GInfo->gi_Screen);
+
     }else
     if (msg->gpl_GInfo)
     {
@@ -307,23 +319,6 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
 
 // bdbprintf("UniTextEditor_OnRender t:%08x\n",(int)FindTask(NULL));
 
-    /* Refresh color map when screen changes */
-    if (scr && inst->dc && scr != inst->screen) {
-        inst->screen = scr;
-        URPDC_SetDrawScreen(inst->dc, scr);
-        uted_update_halfway_pen(inst);
-        /* Mark all lines dirty – CLUT mapping changed */
-        {
-            UniTextEditorLine *line;
-            for (line = (UniTextEditorLine *)inst->lines.mlh_Head;
-                 line->node.mln_Succ;
-                 line = (UniTextEditorLine *)line->node.mln_Succ)
-                uted_line_invalidate(line);
-        }
-    }
-    //OKTILLHERE
-
-
     if (inst->bevel) {
         ULONG v = 0;
         GetAttr(BEVEL_VertSize,  inst->bevel, &v); bevelLeft = (WORD)v;
@@ -338,7 +333,6 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
     if (textHeight < 0) textHeight = 0;
 
 
-
     /* ------------------------------------------------------------------
      * Determine refresh scope BEFORE layout so a geometry change forces
      * a full redraw regardless of the stored line range.
@@ -348,13 +342,6 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
     needLayout = (width  != inst->layoutedWidth  ||
                   height != inst->layoutedHeight ||
                   (scr && scr != inst->screen));
-    /* layouting need loud alloc can only be support from the correct context
-        well to please some video drivers
-    */
-    if(needLayout && (FindTask(NULL) != inst->callerTask))
-    {
-        return TRUE;
-    }
 
     if (msg->gpr_Redraw != GREDRAW_UPDATE || needLayout) {
         isFullRefresh = TRUE;

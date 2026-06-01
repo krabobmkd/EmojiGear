@@ -11,6 +11,8 @@
  * runs in the safe application task context.
  */
 
+#include <exec/memory.h>
+#include <proto/exec.h>
 #include <proto/graphics.h>
 #include <proto/intuition.h>
 #include <proto/keymap.h>
@@ -76,10 +78,36 @@ int uted_manage_rawkey_keycode(Class *cl, Object *o,ULONG codedata, struct Gadge
                         for (L = firstLine; L <= lastLine; L++) {
                             UniTextEditorLine *curLine = uted_get_line(inst, L);
                             if (!curLine) continue;
+                            UniTextEditorPos savedCursor = inst->cursor;
+                            UniTextEditorPos savedAnchor = inst->selAnchor;
+                            BOOL             savedHasSel = inst->hasSelection;
                             if (uted_line_insert_bytes(curLine, 0, insertStr, insertBytes)) {
                                 if (inst->cursor.line    == L) inst->cursor.ch    += insertChars;
                                 if (inst->selAnchor.line == L) inst->selAnchor.ch += insertChars;
                                 if (inst->selFloat.line  == L) inst->selFloat.ch  += insertChars;
+                                if (!inst->undoInProgress && inst->undoMax > 0) {
+                                    UTEDUndoEntry ue;
+                                    UniTextEditorPos ps, pe;
+                                    ps.line = L; ps.ch = 0;
+                                    pe.line = L; pe.ch = insertChars;
+                                    ue.opType       = UTED_UNDO_INSERT;
+                                    ue.delDir       = 0;
+                                    ue.atomic       = TRUE;
+                                    ue.cursorBefore = savedCursor;
+                                    ue.anchorBefore = savedAnchor;
+                                    ue.hasSelBefore = savedHasSel;
+                                    ue.posStart     = ps;
+                                    ue.posEnd       = pe;
+                                    ue.textBytes    = insertBytes;
+                                    ue.text = (char *)AllocVec(insertBytes + 1, MEMF_ANY);
+                                    if (ue.text) {
+                                        CopyMem((APTR)insertStr, ue.text, insertBytes);
+                                        ue.text[insertBytes] = '\0';
+                                    } else {
+                                        ue.textBytes = 0;
+                                    }
+                                    uted_undo_push(inst, &ue);
+                                }
                             }
                         }
                     } else {
@@ -108,17 +136,47 @@ int uted_manage_rawkey_keycode(Class *cl, Object *o,ULONG codedata, struct Gadge
                             } else {
                                 if (s[0] == '\t') { removeBytes = 1; removeChars = 1; }
                             }
-                            if (removeBytes &&
-                                uted_line_delete_bytes(curLine, 0, removeBytes)) {
-                                if (inst->cursor.line == L)
-                                    inst->cursor.ch = inst->cursor.ch > removeChars
-                                                    ? inst->cursor.ch - removeChars : 0;
-                                if (inst->selAnchor.line == L)
-                                    inst->selAnchor.ch = inst->selAnchor.ch > removeChars
-                                                       ? inst->selAnchor.ch - removeChars : 0;
-                                if (inst->selFloat.line == L)
-                                    inst->selFloat.ch = inst->selFloat.ch > removeChars
-                                                      ? inst->selFloat.ch - removeChars : 0;
+                            if (removeBytes) {
+                                char capBuf[13];
+                                UniTextEditorPos savedCursor = inst->cursor;
+                                UniTextEditorPos savedAnchor = inst->selAnchor;
+                                BOOL             savedHasSel = inst->hasSelection;
+                                CopyMem((APTR)s, capBuf, removeBytes);
+                                capBuf[removeBytes] = '\0';
+                                if (uted_line_delete_bytes(curLine, 0, removeBytes)) {
+                                    if (inst->cursor.line == L)
+                                        inst->cursor.ch = inst->cursor.ch > removeChars
+                                                        ? inst->cursor.ch - removeChars : 0;
+                                    if (inst->selAnchor.line == L)
+                                        inst->selAnchor.ch = inst->selAnchor.ch > removeChars
+                                                           ? inst->selAnchor.ch - removeChars : 0;
+                                    if (inst->selFloat.line == L)
+                                        inst->selFloat.ch = inst->selFloat.ch > removeChars
+                                                          ? inst->selFloat.ch - removeChars : 0;
+                                    if (!inst->undoInProgress && inst->undoMax > 0) {
+                                        UTEDUndoEntry ue;
+                                        UniTextEditorPos ps, pe;
+                                        ps.line = L; ps.ch = 0;
+                                        pe.line = L; pe.ch = removeChars;
+                                        ue.opType       = UTED_UNDO_DELETE;
+                                        ue.delDir       = 0;
+                                        ue.atomic       = TRUE;
+                                        ue.cursorBefore = savedCursor;
+                                        ue.anchorBefore = savedAnchor;
+                                        ue.hasSelBefore = savedHasSel;
+                                        ue.posStart     = ps;
+                                        ue.posEnd       = pe;
+                                        ue.textBytes    = removeBytes;
+                                        ue.text = (char *)AllocVec(removeBytes + 1, MEMF_ANY);
+                                        if (ue.text) {
+                                            CopyMem(capBuf, ue.text, removeBytes);
+                                            ue.text[removeBytes] = '\0';
+                                        } else {
+                                            ue.textBytes = 0;
+                                        }
+                                        uted_undo_push(inst, &ue);
+                                    }
+                                }
                             }
                         }
                     }
@@ -128,6 +186,7 @@ int uted_manage_rawkey_keycode(Class *cl, Object *o,ULONG codedata, struct Gadge
                     inst->refreshEndLine   = (LONG)lastLine;
                     uted_ensure_cursor_visible(inst);
                     uted_ensure_cursor_h_visible(inst);
+                    uted_undo_notify(cl, o, gi);
                 }
             }
             if (!didBlock) {
@@ -342,10 +401,36 @@ int uted_manage_vanilla_keycode(Class *cl, Object *o,ULONG codedata, struct Gadg
                         for (L = firstLine; L <= lastLine; L++) {
                             UniTextEditorLine *curLine = uted_get_line(inst, L);
                             if (!curLine) continue;
+                            UniTextEditorPos savedCursor = inst->cursor;
+                            UniTextEditorPos savedAnchor = inst->selAnchor;
+                            BOOL             savedHasSel = inst->hasSelection;
                             if (uted_line_insert_bytes(curLine, 0, insertStr, insertBytes)) {
                                 if (inst->cursor.line    == L) inst->cursor.ch    += insertChars;
                                 if (inst->selAnchor.line == L) inst->selAnchor.ch += insertChars;
                                 if (inst->selFloat.line  == L) inst->selFloat.ch  += insertChars;
+                                if (!inst->undoInProgress && inst->undoMax > 0) {
+                                    UTEDUndoEntry ue;
+                                    UniTextEditorPos ps, pe;
+                                    ps.line = L; ps.ch = 0;
+                                    pe.line = L; pe.ch = insertChars;
+                                    ue.opType       = UTED_UNDO_INSERT;
+                                    ue.delDir       = 0;
+                                    ue.atomic       = TRUE;
+                                    ue.cursorBefore = savedCursor;
+                                    ue.anchorBefore = savedAnchor;
+                                    ue.hasSelBefore = savedHasSel;
+                                    ue.posStart     = ps;
+                                    ue.posEnd       = pe;
+                                    ue.textBytes    = insertBytes;
+                                    ue.text = (char *)AllocVec(insertBytes + 1, MEMF_ANY);
+                                    if (ue.text) {
+                                        CopyMem((APTR)insertStr, ue.text, insertBytes);
+                                        ue.text[insertBytes] = '\0';
+                                    } else {
+                                        ue.textBytes = 0;
+                                    }
+                                    uted_undo_push(inst, &ue);
+                                }
                             }
                         }
                     } else {
@@ -369,17 +454,47 @@ int uted_manage_vanilla_keycode(Class *cl, Object *o,ULONG codedata, struct Gadg
                             } else {
                                 if (s[0] == '\t') { removeBytes = 1; removeChars = 1; }
                             }
-                            if (removeBytes &&
-                                uted_line_delete_bytes(curLine, 0, removeBytes)) {
-                                if (inst->cursor.line == L)
-                                    inst->cursor.ch = inst->cursor.ch > removeChars
-                                                    ? inst->cursor.ch - removeChars : 0;
-                                if (inst->selAnchor.line == L)
-                                    inst->selAnchor.ch = inst->selAnchor.ch > removeChars
-                                                       ? inst->selAnchor.ch - removeChars : 0;
-                                if (inst->selFloat.line == L)
-                                    inst->selFloat.ch = inst->selFloat.ch > removeChars
-                                                      ? inst->selFloat.ch - removeChars : 0;
+                            if (removeBytes) {
+                                char capBuf[13];
+                                UniTextEditorPos savedCursor = inst->cursor;
+                                UniTextEditorPos savedAnchor = inst->selAnchor;
+                                BOOL             savedHasSel = inst->hasSelection;
+                                CopyMem((APTR)s, capBuf, removeBytes);
+                                capBuf[removeBytes] = '\0';
+                                if (uted_line_delete_bytes(curLine, 0, removeBytes)) {
+                                    if (inst->cursor.line == L)
+                                        inst->cursor.ch = inst->cursor.ch > removeChars
+                                                        ? inst->cursor.ch - removeChars : 0;
+                                    if (inst->selAnchor.line == L)
+                                        inst->selAnchor.ch = inst->selAnchor.ch > removeChars
+                                                           ? inst->selAnchor.ch - removeChars : 0;
+                                    if (inst->selFloat.line == L)
+                                        inst->selFloat.ch = inst->selFloat.ch > removeChars
+                                                          ? inst->selFloat.ch - removeChars : 0;
+                                    if (!inst->undoInProgress && inst->undoMax > 0) {
+                                        UTEDUndoEntry ue;
+                                        UniTextEditorPos ps, pe;
+                                        ps.line = L; ps.ch = 0;
+                                        pe.line = L; pe.ch = removeChars;
+                                        ue.opType       = UTED_UNDO_DELETE;
+                                        ue.delDir       = 0;
+                                        ue.atomic       = TRUE;
+                                        ue.cursorBefore = savedCursor;
+                                        ue.anchorBefore = savedAnchor;
+                                        ue.hasSelBefore = savedHasSel;
+                                        ue.posStart     = ps;
+                                        ue.posEnd       = pe;
+                                        ue.textBytes    = removeBytes;
+                                        ue.text = (char *)AllocVec(removeBytes + 1, MEMF_ANY);
+                                        if (ue.text) {
+                                            CopyMem(capBuf, ue.text, removeBytes);
+                                            ue.text[removeBytes] = '\0';
+                                        } else {
+                                            ue.textBytes = 0;
+                                        }
+                                        uted_undo_push(inst, &ue);
+                                    }
+                                }
                             }
                         }
                     }
@@ -389,6 +504,7 @@ int uted_manage_vanilla_keycode(Class *cl, Object *o,ULONG codedata, struct Gadg
                     inst->refreshEndLine   = (LONG)lastLine;
                     uted_ensure_cursor_visible(inst);
                     uted_ensure_cursor_h_visible(inst);
+                    uted_undo_notify(cl, o, gi);
                 }
             }
             if (!didBlock) {

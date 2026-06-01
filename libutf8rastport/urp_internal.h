@@ -41,14 +41,21 @@
 
 struct URPGlyphEntry {
     ULONG  codepoint;
-    UBYTE  style;       /* URP_STYLE_* – part of the cache key */
-    int    pixelFmt;    /* URP_CACHE_MONO / GRAY / RGBA */
+    /* kepp 4b alignment as possible */
+    UBYTE   style;       /* URP_STYLE_* – part of the cache key */
+    UBYTE   pixelFmt;    /* URP_CACHE_MONO / GRAY / RGBA */
+    UBYTE   pixelsIsInChip; /* bool, may realloc pixels */
+    UBYTE   pad;
+
     WORD   width;
     WORD   rows;
+
     WORD   bearingX;
     WORD   bearingY;
+
     WORD   advanceX;
     WORD   pitch;
+
     UBYTE *pixels;
     struct BitMap *clutBitmap;
     struct BitMap *maskBitmap;
@@ -95,19 +102,13 @@ struct URPDrawContext {
     ULONG                prefFlags;
     struct URPGlyphCache cache;
 
-    /*OS3.9 graphics.library <=40 bitmap bliting functions
-     * can only blit from chip memory, which is a limitation of the
-     * blitter hardware. yet OS3.2 graphics can blit from fast ram to chip ram,
-     * and blit with cpu in that case.
-     * for 2 color glyphs and masks, Freetype produces an amiga compatible
-     *  correct "planar" 2byte aligned bitmap format in fast,
-     *  So to save chip memory the best solution is to do a quick copy in a
-     *  small chip buffer before blitting.
+    /* need blitting from chip if native mode...
+     * P96 hack something to blit chip from fast
+     * but it can be generalized.
      */
-    UWORD *tempChipRam;
-    ULONG tempChipRamSize;
-    /* This is totally guessed from graphics version number */
-    ULONG graphicsBlitNeedChipRamSource;
+    // UWORD *tempChipRam;
+
+    // ULONG tempChipRamSize;
 
     /* Foreground colour for GRAY glyph rendering (default white) */
     union {
