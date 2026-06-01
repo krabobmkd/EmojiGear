@@ -19,7 +19,7 @@ can have both a font for text and one for Emojis,
   - Load and save UTF-8, ISO Latin-1, ISO Latin-2; auto-detect UTF-16.
   - Find & Replace, Undo/Redo, 
   - optional word wrap
-  - optional ANSI escape rendering for unix shell compatibkle display
+  - optional ANSI escape rendering for unix shell compatible display
   - configurable font size with ctrl+- keys. 
   - Emoji Box allowing to choose 8 sets of 40 emojis mapped to F keys. 
   - You can "pipe" the output of another command into the editor.
