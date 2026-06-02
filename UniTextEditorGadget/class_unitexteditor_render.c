@@ -394,6 +394,27 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
         inst->pendingKeyCount = 0;
     }
 
+    /* Replay deferred internal scrollbar interaction.
+     * Scrollbar clicks and drags are stored as a gadget-relative Y; here we
+     * map that Y proportionally to a new scrollTopLine.  Must run before the
+     * text click/drag replay so a scroll triggered by the bar does not also
+     * reposition the text cursor. */
+    if (inst->pendingVScrollClick || inst->pendingVScrollDrag) {
+        ULONG totalRows = inst->wordWrap ? inst->wrapRowCount : inst->lineCount;
+        if (totalRows > (ULONG)inst->visibleLines && textHeight > 0) {
+            LONG relY = (LONG)inst->pendingVScrollY - (LONG)inst->topMargin;
+            if (relY < 0) relY = 0;
+            if (relY >= (LONG)textHeight) relY = (LONG)textHeight - 1;
+            ULONG newTop = (ULONG)((LONG)relY * (LONG)totalRows / (LONG)textHeight);
+            ULONG maxTop = totalRows - (ULONG)inst->visibleLines;
+            if (newTop > maxTop) newTop = maxTop;
+            inst->scrollTopLine = newTop;
+            uted_notify(cl, o, msg->gpr_GInfo, UTEDN_ScrollChanged, inst->scrollTopLine);
+        }
+        inst->pendingVScrollClick = FALSE;
+        inst->pendingVScrollDrag  = FALSE;
+    }
+
     if (inst->pendingClick || inst->pendingDrag) {
         ULONG hitLine = 0, hitCh = 0;
 

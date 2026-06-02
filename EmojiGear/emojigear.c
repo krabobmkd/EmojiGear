@@ -150,8 +150,8 @@ typedef struct {
 /* In this table are "mandatory" library and minimal versions */
 static LibraryEntry libraryTable[] = {
     /* System libraries */
-    {"graphics.library",  39, (struct Library **)&GfxBase},
-    {"intuition.library", 39, (struct Library **)&IntuitionBase},
+    {"graphics.library",  47, (struct Library **)&GfxBase},
+    {"intuition.library", 47, (struct Library **)&IntuitionBase},
     {"utility.library",   39, &UtilityBase},
     {"layers.library",    39, &LayersBase},
     {"icon.library",      39, &IconBase},
@@ -169,7 +169,8 @@ static LibraryEntry libraryTable[] = {
     {"requester.class", 42, &RequesterBase},
     {"gadgets/palette.gadget",  44, &PaletteBase},
     {"gadgets/integer.gadget", 44, &IntegerBase},
-/* now optional and need v47    {"gadgets/clicktab.gadget",47, &ClickTabBase}, */
+/* now optional and need v47    */
+    {"gadgets/clicktab.gadget",47, &ClickTabBase},
     {"gadgets/chooser.gadget", 44, &ChooserBase},
     /* ... and the one that are starred in this app */
     {"gadgets/unitexteditor.gadget",2, &UniTextEditorBase},
@@ -191,7 +192,7 @@ void refreshUI(void);
 void cleanexit(const char *pmessage)
 {
     if (pmessage) printf("%s\n", pmessage);
-
+    exit(0);
 }
 
 
@@ -353,6 +354,26 @@ void CloseSearchBox();
 
 int main(int argc, char **argv)
 {
+    atexit(&exitclose);
+    /* Open all required libraries via table */
+    {
+        LibraryEntry *entry;
+
+        for (entry = libraryTable; entry->name != NULL; entry++) {
+
+            *(entry->base) = OpenLibrary(entry->name, entry->version);
+
+            if (!*(entry->base)) {
+                printf( "Can't open %s v%d", entry->name,entry->version);
+                return 1;
+            }
+        }
+    }
+
+    /* optional libs, can return NULL */
+//    DataTypesBase = OpenLibrary("datatypes.library",39);
+//    CyberGfxBase  = OpenLibrary("cybergraphics.library", 1);
+
     myTask = FindTask(NULL);
     {
         int _stacksize   = (int)((int)myTask->tc_SPReg - (int)myTask->tc_SPLower);
@@ -375,39 +396,6 @@ int main(int argc, char **argv)
 #endif
     }
 
-
-    atexit(&exitclose);
-
-
-    /* Open all required libraries via table */
-    {
-        LibraryEntry *entry;
-        char errorMsg[80];
-
-        for (entry = libraryTable; entry->name != NULL; entry++) {
-
-            *(entry->base) = OpenLibrary(entry->name, entry->version);
-
-            if (!*(entry->base)) {
-                snprintf(errorMsg, 79, "Can't open %s", entry->name);
-                cleanexit(errorMsg);
-            }
-        }
-    }
-
-    /* optional libs, can return NULL */
-    DataTypesBase = OpenLibrary("datatypes.library",39);
-    CyberGfxBase  = OpenLibrary("cybergraphics.library", 1);
-    /* really need the OS3.2 47 version for this one, or will be replaced  */
-    ClickTabBase =  OpenLibrary("gadgets/clicktab.gadget", 47);
-    if (!ClickTabBase) {
-        cleanexit(
-        "gadgets/clicktab.gadget v47 is needed\n"
-        "Consider upgrading to OS3.2.x"
-        );
-        // EgTabsOps = &EgTabsSafeAPI;
-        // EgFakeTab_Init();
-    }
 
     /* Open locale.library (optional - soft failure) */
     LocaleBase = (struct LocaleBase *)OpenLibrary("locale.library", 38);
@@ -1217,9 +1205,9 @@ int main(int argc, char **argv)
 
 void exitclose(void)
 {
-    flushbdbprint();
+ //   flushbdbprint();
 
-   // printf("exitclose()\n");
+//   printf("exitclose() app:%08x\n",(int)app);
 
     if (app)
     {
@@ -1304,17 +1292,19 @@ void exitclose(void)
     }
 
     /* Close locale */
+// printf("locale things\n");
+
     EgLocale_Close();
     if (LocaleBase) {
         CloseLibrary((struct Library *)LocaleBase);
         LocaleBase = NULL;
     }
+// printf("aft locale things\n");
 
 
-    if(ClickTabBase)  { CloseLibrary(ClickTabBase);  ClickTabBase  = NULL; }
-    if(CyberGfxBase)  { CloseLibrary(CyberGfxBase);  CyberGfxBase  = NULL; }
-    if(DataTypesBase) { CloseLibrary(DataTypesBase); DataTypesBase = NULL; }
-
+    // if(CyberGfxBase)  { CloseLibrary(CyberGfxBase);  CyberGfxBase  = NULL; }
+    // if(DataTypesBase) { CloseLibrary(DataTypesBase); DataTypesBase = NULL; }
+// printf("bef closing\n");
     /* Close all other libraries in reverse order */
     {
         LibraryEntry *entry;

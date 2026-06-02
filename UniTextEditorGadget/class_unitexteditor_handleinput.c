@@ -633,6 +633,26 @@ int uted_manageFullRawKey(Class *cl, Object *o,
 }
 
 /* =========================================================================
+ * Internal scrollbar hit-test
+ * Returns TRUE when (x,y) (gadget-relative) falls inside the scrollbar track
+ * AND the scrollbar is currently shown (text taller than viewport).
+ * The scrollbar is rendered at gadget-relative x: gadWidth-7..gadWidth-4.
+ * We use an 8-px wide hit zone (gadWidth-8..gadWidth-1) for easier clicking.
+ * =========================================================================
+ */
+static BOOL uted_hit_vscroll(UniTextEditorData *inst, WORD x, WORD y)
+{
+    ULONG totalRows;
+    if (!inst->displayInternalVScroll) return FALSE;
+    totalRows = inst->wordWrap ? inst->wrapRowCount : inst->lineCount;
+    if (totalRows <= (ULONG)inst->visibleLines) return FALSE;
+    if (x < inst->gadWidth - 8) return FALSE;
+    if (y < (WORD)inst->topMargin || y >= inst->gadHeight - (WORD)inst->bottomMargin)
+        return FALSE;
+    return TRUE;
+}
+
+/* =========================================================================
  * GM_GOACTIVE  (left button down) – input.device context, no API calls
  * =========================================================================
  */
@@ -679,6 +699,19 @@ ULONG UniTextEditor_OnGoActive(Class *cl, Object *o, struct gpInput *msg)
         inst->lastClickMicro = (ULONG)ie->ie_TimeStamp.tv_micro;
         inst->lastClickX     = (WORD)msg->gpi_Mouse.X;
         inst->lastClickY     = (WORD)msg->gpi_Mouse.Y;
+    }
+
+    /* Scrollbar gets priority over text interaction */
+    if (uted_hit_vscroll(inst, msg->gpi_Mouse.X, msg->gpi_Mouse.Y)) {
+        inst->vScrollDragging     = TRUE;
+        inst->pendingVScrollClick = TRUE;
+        inst->pendingVScrollY     = msg->gpi_Mouse.Y;
+        inst->pendingDrag         = FALSE;
+        inst->dragging            = TRUE;
+        inst->gadgetActive        = TRUE;
+        uted_notify(cl, o, msg->gpi_GInfo, UTEDN_CursorMoved, inst->cursor.line);
+        uted_notify(cl, o, msg->gpi_GInfo, UTED_SetPrivateActivation, TRUE);
+        return GMR_MEACTIVE;
     }
 
     /* Record click; any previous pending drag is superseded by a new click */
@@ -756,6 +789,16 @@ bdbprintf("UniTextEditor_OnHandleInput %08x\n",(int)ie->ie_Class);
                 //uted_notify(cl, o, msg->gpi_GInfo, UTED_SetPrivateActivation, FALSE);
                 return GMR_REUSE;
             }
+            /* Scrollbar gets priority over text interaction */
+            if (uted_hit_vscroll(inst, msg->gpi_Mouse.X, msg->gpi_Mouse.Y)) {
+                inst->vScrollDragging     = TRUE;
+                inst->pendingVScrollClick = TRUE;
+                inst->pendingVScrollY     = msg->gpi_Mouse.Y;
+                inst->pendingDrag         = FALSE;
+                inst->dragging            = TRUE;
+                uted_notify(cl, o, msg->gpi_GInfo, UTEDN_CursorMoved, inst->cursor.line);
+                return GMR_MEACTIVE;
+            }
             /* Click inside: treat as a new click (cursor repositioning) */
             inst->pendingClick           = TRUE;
             inst->pendingClickX          = msg->gpi_Mouse.X;
@@ -768,11 +811,17 @@ bdbprintf("UniTextEditor_OnHandleInput %08x\n",(int)ie->ie_Class);
         }
 
         if (ie->ie_Code == (IECODE_LBUTTON | IECODE_UP_PREFIX)) {
-            inst->pendingDrag      = TRUE;
-            inst->pendingDragType  = UTED_MPEND_RELEASE;
-            inst->pendingDragX     = msg->gpi_Mouse.X;
-            inst->pendingDragY     = msg->gpi_Mouse.Y;
-            inst->dragging         = FALSE;
+            inst->dragging = FALSE;
+            if (inst->vScrollDragging) {
+                inst->vScrollDragging    = FALSE;
+                inst->pendingVScrollDrag = TRUE;
+                inst->pendingVScrollY    = msg->gpi_Mouse.Y;
+            } else {
+                inst->pendingDrag      = TRUE;
+                inst->pendingDragType  = UTED_MPEND_RELEASE;
+                inst->pendingDragX     = msg->gpi_Mouse.X;
+                inst->pendingDragY     = msg->gpi_Mouse.Y;
+            }
             uted_notify(cl, o, msg->gpi_GInfo, UTEDN_CursorMoved, inst->cursor.line);
             if (!inst->useInternalRawKey) {
                 /* External mode: release Boopsi activation so the window IDCMP
@@ -806,11 +855,15 @@ bdbprintf("UniTextEditor_OnHandleInput %08x\n",(int)ie->ie_Class);
         }
 
         if (inst->dragging) {
-            /* Mouse moved during drag */
-            inst->pendingDrag      = TRUE;
-            inst->pendingDragType  = UTED_MPEND_DRAG;
-            inst->pendingDragX     = msg->gpi_Mouse.X;
-            inst->pendingDragY     = msg->gpi_Mouse.Y;
+            if (inst->vScrollDragging) {
+                inst->pendingVScrollDrag = TRUE;
+                inst->pendingVScrollY    = msg->gpi_Mouse.Y;
+            } else {
+                inst->pendingDrag      = TRUE;
+                inst->pendingDragType  = UTED_MPEND_DRAG;
+                inst->pendingDragX     = msg->gpi_Mouse.X;
+                inst->pendingDragY     = msg->gpi_Mouse.Y;
+            }
             uted_notify(cl, o, msg->gpi_GInfo, UTEDN_CursorMoved, inst->cursor.line);
         }
     }
@@ -831,9 +884,12 @@ ULONG UniTextEditor_OnGoInactive(Class *cl, Object *o, struct gpGoInactive *msg)
 
     inst->dragging           = FALSE;
     inst->clickAnchorValid   = FALSE;
+    inst->vScrollDragging    = FALSE;
     /* Discard any pending input that never reached GM_RENDER */
-    inst->pendingClick    = FALSE;
-    inst->pendingDrag     = FALSE;
-    inst->pendingKeyCount = 0;
+    inst->pendingClick        = FALSE;
+    inst->pendingDrag         = FALSE;
+    inst->pendingKeyCount     = 0;
+    inst->pendingVScrollClick = FALSE;
+    inst->pendingVScrollDrag  = FALSE;
     return 0;
 }

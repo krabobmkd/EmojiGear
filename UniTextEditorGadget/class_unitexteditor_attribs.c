@@ -34,6 +34,9 @@ static void updateLineHeight(UniTextEditorData *inst);
 #define GA_Text (GA_Dummy + 0x0039)
 #endif
 
+#define G(o)             ((struct Gadget *)(o))
+
+
 /* =========================================================================
  * Search helpers
  * =========================================================================
@@ -1530,6 +1533,7 @@ ULONG UniTextEditor_OnGet(Class *cl, Object *o, struct opGet *msg)
     {
         UniTextEditorLine *line;
         ULONG maxW;
+
         if (inst->wordWrap) {
             *msg->opg_Storage = (ULONG)inst->gadWidth;
             return TRUE;
@@ -1544,6 +1548,7 @@ ULONG UniTextEditor_OnGet(Class *cl, Object *o, struct opGet *msg)
                 if (w > maxW) maxW = w;
             }
         }
+        // trick for test
         *msg->opg_Storage = maxW;
         return TRUE;
     }
@@ -1725,7 +1730,19 @@ ULONG UniTextEditor_OnGet(Class *cl, Object *o, struct opGet *msg)
     case UTED_CurrentContext:
         *msg->opg_Storage = (ULONG)inst->currentContextName;
         return TRUE;
-
+    /*DoSuperMethodA() totally rotten on OS3.9 !!! */
+    case GA_Width:
+        *msg->opg_Storage = (LONG) G(o)->Width;
+        return TRUE;
+    case GA_Height:
+        *msg->opg_Storage = (LONG) G(o)->Height;
+        return TRUE;
+    case GA_Top:
+        *msg->opg_Storage = (ULONG)((LONG) G(o)->TopEdge);
+        return TRUE;
+    case GA_Left:
+        *msg->opg_Storage = (ULONG)((LONG) G(o)->LeftEdge);
+        return TRUE;
     default:
         return DoSuperMethodA(cl, o, (APTR)msg);
     }

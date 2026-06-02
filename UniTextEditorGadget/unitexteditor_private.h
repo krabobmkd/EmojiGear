@@ -400,6 +400,18 @@ typedef struct UniTextEditorData {
     UBYTE pendingDragType;                /* UTED_MPEND_DRAG or UTED_MPEND_RELEASE */
     UBYTE _pad0;                          /* explicit alignment pad */
 
+    /* Internal scrollbar drag state.
+     * Set in input.device context (OnGoActive/OnHandleInput); replayed in
+     * the safe application-task context inside GM_RENDER, exactly like the
+     * pendingClick / pendingDrag pair for text interaction.
+     * vScrollDragging guards drag-move events so they go to the scrollbar
+     * rather than the text selection code path. */
+    BOOL  vScrollDragging;                /* TRUE = current drag is on the internal vscrollbar */
+    BOOL  pendingVScrollClick;            /* scrollbar click pending replay in GM_RENDER */
+    BOOL  pendingVScrollDrag;             /* scrollbar drag/release pending replay in GM_RENDER */
+    WORD  pendingVScrollY;                /* gadget-relative Y of the pending scroll event */
+    WORD  _padVS;
+
     /* Named context stash list */
     struct MinList        stashList;                        /* list of UTEDTextStash nodes */
     char                  currentContextName[UTED_CONTEXT_NAME_MAX]; /* "" = none set */

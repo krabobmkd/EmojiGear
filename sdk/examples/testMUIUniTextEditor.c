@@ -240,7 +240,6 @@ int main(int argc, char *argv[])
         MUIA_Boopsi_Remember,  UTED_PointSize,
         MUIA_Boopsi_Remember,  UTED_KeyMessageMode,
         MUIA_Frame,            MUIV_Frame_InputList,
-        GA_Left,   0, GA_Top,    0, GA_Width, 0, GA_Height, 0,
         GA_ID,                 ID_UNITEXTEDITOR,
         ICA_TARGET,            (ULONG)notifyTargetObj,
         UTED_PointSize,        (ULONG)pointSize,
