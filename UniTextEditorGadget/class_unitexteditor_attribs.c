@@ -838,6 +838,8 @@ ULONG UniTextEditor_OnSet(Class *cl, Object *o, struct opSet *msg)
             UniTextEditorLine *newLine;
             const char     *p, *nl;
 
+           // if(inst->callerTask != FindTask(NULL) ) break;
+
             /* Free existing lines (returns borrowed bitmaps to pool) */
             line = (UniTextEditorLine *)inst->lines.mlh_Head;
             while (line->node.mln_Succ) {
@@ -890,6 +892,7 @@ ULONG UniTextEditor_OnSet(Class *cl, Object *o, struct opSet *msg)
             /* Loading new text invalidates any prior undo/redo history and search state */
             uted_undo_flush(inst);
             inst->lastSearchValid = FALSE;
+
             redraw = TRUE;
             result = 1;
             break;

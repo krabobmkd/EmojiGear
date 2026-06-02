@@ -9,8 +9,10 @@ set(MUI_INCLUDE_DIR "/home/krabob/Code/Amiga/MUI-5.0-20210831-os3/SDK/MUI/C/incl
 # Source files.
 # eglocale.c and tooltypepref.c are reused directly from EmojiGear.
 set(MUIMOJIGEARSOURCES
-    muimojiGear.c
-    mmgboopsimessage.c
+    muimojiGear.c       muimojiGear.h
+    mmgboopsimessage.c  mmgboopsimessage.h
+    mmgsettings.c       mmgsettings.h
+    mmgaction.c         mmgaction.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../EmojiGear/eglocale.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../EmojiGear/tooltypepref.c
 )

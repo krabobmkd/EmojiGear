@@ -604,7 +604,19 @@ ULONG UniButton_OnGet(Class *cl, Object *o, struct opGet *msg)
     case UBT_BottomMargin:
         *msg->opg_Storage = (ULONG)(WORD)(inst->bottomMargin - inst->bevelH);
         return TRUE;
-
+    /*DoSuperMethodA() totally rotten on OS3.9 !!! */
+    case GA_Width:
+        *msg->opg_Storage = (LONG) G(o)->Width;
+        return TRUE;
+    case GA_Height:
+        *msg->opg_Storage = (LONG) G(o)->Height;
+        return TRUE;
+    case GA_Top:
+        *msg->opg_Storage = (ULONG)((LONG) G(o)->TopEdge);
+        return TRUE;
+    case GA_Left:
+        *msg->opg_Storage = (ULONG)((LONG) G(o)->LeftEdge);
+        return TRUE;
     default:
         return DoSuperMethodA(cl, o, (APTR)msg);
     }
