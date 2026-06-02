@@ -248,10 +248,10 @@ int main(int argc, char *argv[])
         UTED_AddFont,          (ULONG)"NotoColorEmoji32.ttf",
         UTED_KeyMessageMode,   UKM_Internal,
         UTED_BevelStyle,       BVS_NONE,
-        UTED_LeftMargin,       4,
-        UTED_RightMargin,      4,
-        UTED_TopMargin,        3,
-        UTED_BottomMargin,     3,
+        UTED_LeftMargin,       2, /* internal margin */
+        UTED_RightMargin,      0,
+        UTED_TopMargin,        0,
+        UTED_BottomMargin,     0,
         UTED_Text,             (ULONG)INITIAL_TEXT,
         TAG_DONE);
   //  printf("editor_obj: %08x\n", (unsigned int)editor_obj);
