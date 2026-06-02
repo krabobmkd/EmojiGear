@@ -208,6 +208,92 @@ done:
 }
 
 /* =========================================================================
+ * Encoding helpers for paste
+ * =========================================================================
+ */
+
+/* Returns TRUE when every byte sequence in the NUL-terminated string is
+ * well-formed UTF-8.  Rejects overlong encodings, surrogates, and any
+ * byte that cannot appear as a lead byte (0x80-0xBF, 0xC0, 0xC1, 0xF5-0xFF). */
+static BOOL is_valid_utf8(const char *s)
+{
+    const UBYTE *p = (const UBYTE *)s;
+    while (*p) {
+        UBYTE b = *p++;
+        ULONG extra;
+        if (b < 0x80) continue;
+        if (b < 0xC2 || b > 0xF4) return FALSE;
+        if      (b < 0xE0) extra = 1;
+        else if (b < 0xF0) extra = 2;
+        else               extra = 3;
+        while (extra--) {
+            if ((*p & 0xC0) != 0x80) return FALSE;
+            p++;
+        }
+    }
+    return TRUE;
+}
+
+/* ISO 8859-2 (Latin-2) codepoint table for bytes 0xA0-0xFF.
+ * Bytes 0x80-0x9F are C1 controls and are silently dropped. */
+static const ULONG cb_latin2_uni[96] = {
+    /* A0 */ 0x00A0, 0x0104, 0x02D8, 0x0141, 0x00A4, 0x013D, 0x015A, 0x00A7,
+    /* A8 */ 0x00A8, 0x0160, 0x015E, 0x0164, 0x0179, 0x00AD, 0x017D, 0x017B,
+    /* B0 */ 0x00B0, 0x0105, 0x02DB, 0x0142, 0x00B4, 0x013E, 0x015B, 0x02C7,
+    /* B8 */ 0x00B8, 0x0161, 0x015F, 0x0165, 0x017A, 0x02DD, 0x017E, 0x017C,
+    /* C0 */ 0x0154, 0x00C1, 0x00C2, 0x0102, 0x00C4, 0x0139, 0x0106, 0x00C7,
+    /* C8 */ 0x010C, 0x00C9, 0x0118, 0x00CB, 0x011A, 0x00CD, 0x00CE, 0x010E,
+    /* D0 */ 0x0110, 0x0143, 0x0147, 0x00D3, 0x00D4, 0x0150, 0x00D6, 0x00D7,
+    /* D8 */ 0x0158, 0x016E, 0x00DA, 0x0170, 0x00DC, 0x00DD, 0x0162, 0x00DF,
+    /* E0 */ 0x0155, 0x00E1, 0x00E2, 0x0103, 0x00E4, 0x013A, 0x0107, 0x00E7,
+    /* E8 */ 0x010D, 0x00E9, 0x0119, 0x00EB, 0x011B, 0x00ED, 0x00EE, 0x010F,
+    /* F0 */ 0x0111, 0x0144, 0x0148, 0x00F3, 0x00F4, 0x0151, 0x00F6, 0x00F7,
+    /* F8 */ 0x0159, 0x016F, 0x00FA, 0x0171, 0x00FC, 0x00FD, 0x0163, 0x02D9
+};
+
+/* Convert a NUL-terminated Latin-1 or Latin-2 string to a freshly
+ * AllocVec'd UTF-8 string.  Bytes 0x80-0x9F (C1 controls) are dropped.
+ * Returns NULL on allocation failure; caller must FreeVec the result. */
+static char *latin_to_utf8(const char *src, ULONG ansiCode)
+{
+    const UBYTE *s = (const UBYTE *)src;
+    ULONG srcLen = (ULONG)strlen(src);
+    /* Each input byte produces at most 3 UTF-8 bytes; guard against ULONG
+     * overflow on pathologically large inputs by capping at 16 MB. */
+    if (srcLen > 0x555554UL) srcLen = 0x555554UL;
+    ULONG maxOut = srcLen * 3 + 1;
+    char *dst = (char *)AllocVec(maxOut, MEMF_ANY);
+    if (!dst) return NULL;
+
+    char *d = dst;
+    while (*s && (ULONG)(d - dst) < maxOut - 3) {
+        UBYTE b = *s++;
+        if (b < 0x80) {
+            *d++ = (char)b;
+        } else if (b >= 0xA0) {
+            ULONG cp;
+            if (ansiCode == UTED_VANILLAKEY_LATIN2)
+                cp = cb_latin2_uni[b - 0xA0];
+            else
+                cp = (ULONG)b; /* Latin-1: codepoint == byte value */
+            if (cp < 0x80) {
+                *d++ = (char)cp;
+            } else if (cp < 0x800) {
+                *d++ = (char)(0xC0 | (cp >> 6));
+                *d++ = (char)(0x80 | (cp & 0x3F));
+            } else {
+                *d++ = (char)(0xE0 | (cp >> 12));
+                *d++ = (char)(0x80 | ((cp >> 6) & 0x3F));
+                *d++ = (char)(0x80 | (cp & 0x3F));
+            }
+        }
+        /* 0x80-0x9F: C1 controls – silently dropped */
+    }
+    *d = '\0';
+    return dst;
+}
+
+/* =========================================================================
  * Public action functions – called from UniTextEditor_OnSet
  * =========================================================================
  */
@@ -239,12 +325,24 @@ BOOL uted_do_clipboard_cut(Class *cl, Object *o)
 }
 
 /* UTED_ApplyPaste: read the system clipboard and insert at the cursor.
+ * If the clipboard content is not valid UTF-8 it is treated as encoded in
+ * the vanillaAnsiCode encoding (Latin-1 or Latin-2) and converted on the fly.
  * Returns TRUE if text was inserted (caller should trigger redraw). */
 BOOL uted_do_clipboard_paste(Class *cl, Object *o)
 {
+    UniTextEditorData *inst = UTED_DATA(cl, o);
     char *text = clipboard_read();
     if (!text) return FALSE;
-    UniTextEditor_DoInsertText(cl, o, text, -1);
-    FreeVec(text);
+
+    if (!is_valid_utf8(text)) {
+        char *converted = latin_to_utf8(text, inst->vanillaAnsiCode);
+        FreeVec(text);
+        if (!converted) return FALSE;
+        UniTextEditor_DoInsertText(cl, o, converted, -1);
+        FreeVec(converted);
+    } else {
+        UniTextEditor_DoInsertText(cl, o, text, -1);
+        FreeVec(text);
+    }
     return TRUE;
 }

@@ -273,8 +273,18 @@ void uted_ensure_cursor_visible(UniTextEditorData *inst)
 
     if (visRow < inst->scrollTopLine) {
         inst->scrollTopLine = visRow;
-    } else if (visRow >= inst->scrollTopLine + (ULONG)inst->visibleLines) {
-        inst->scrollTopLine = visRow - (ULONG)inst->visibleLines + 1;
+    } else {
+        /* visibleLines = floor(textH/lineHeight)+1, so the last slot is
+         * partially visible.  Reserve it as a context row: keep the cursor
+         * in a fully-shown slot and let the next line appear in the partial
+         * slot below.  With a single-slot gadget there is no choice, so fall
+         * back to the old one-slot behaviour. */
+        ULONG fullSlots = (inst->visibleLines > 1)
+                          ? (ULONG)inst->visibleLines - 1
+                          : 1;
+        if (visRow >= inst->scrollTopLine + fullSlots) {
+            inst->scrollTopLine = visRow - fullSlots + 1;
+        }
     }
 }
 
