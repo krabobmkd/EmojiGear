@@ -30,7 +30,7 @@ struct Library         *UtilityBase   ;
 struct Library         *LayersBase    ;
 struct Library         *CyberGfxBase  ;
 
-const char VersionString[] = "utf8rastport.library 2.2 ("__DATE__")";
+const char VersionString[] = "utf8rastport.library 2.4 ("__DATE__")";
 const char Lib_ID[]= "utf8rastport.library";
 
 

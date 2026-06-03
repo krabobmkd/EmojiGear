@@ -1005,7 +1005,18 @@ BOOL MmgAction_ToggleAntialias(void)
     if (!app || !app->miToggleAntialias) return FALSE;
     GetAttr(MUIA_Menuitem_Checked, app->miToggleAntialias, &checked);
     app->settings.antialias = checked ? 1 : 0;
- //   printf("app->settings.antialias:%d\n",app->settings.antialias);
+    getRaw(&g, &w);
+    AppSettings_ApplyToEditor(&app->settings, app->editorObj, g, w);
+    return TRUE;
+}
+
+BOOL MmgAction_ToggleMonospace(void)
+{
+    struct Gadget *g; struct Window *w;
+    ULONG checked = 0;
+    if (!app || !app->miToggleMonospace) return FALSE;
+    GetAttr(MUIA_Menuitem_Checked, app->miToggleMonospace, &checked);
+    app->settings.monospace = checked ? 1 : 0;
     getRaw(&g, &w);
     AppSettings_ApplyToEditor(&app->settings, app->editorObj, g, w);
     return TRUE;

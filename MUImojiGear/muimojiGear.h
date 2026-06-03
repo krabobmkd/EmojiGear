@@ -27,6 +27,10 @@ struct App {
     Object    *hScrollBar;
     Object    *emojiBtnObj;
 
+    /* Font settings sub-window */
+    Object    *fontViewWinObj;
+    Object    *miFontSettings;
+
     /* Emoji box sub-window objects */
     Object    *emojiBoxWinObj;   /* MUIC_Window – second SubWindow of the App */
     Object    *emojiBoxCycleObj; /* MUIC_Cycle  – emoji set selector           */
@@ -43,7 +47,7 @@ struct App {
 
     Object    *miColorPreset[6];     /* Colors menu – one item per preset (0 = System colors) */
     Object    *miSettFontSizePlus,  *miSettFontSizeMinus;
-    Object    *miToggleAntialias,   *miToggleWordWrap;
+    Object    *miToggleAntialias,   *miToggleMonospace, *miToggleWordWrap;
     Object    *miToggleApplyAnsi,   *miToggleVisualizeTabs, *miToggleTabsAreSpaces;
     Object    *miCut, *miCopy, *miCopyLat1, *miCopyLat2;
     Object    *miPaste, *miPasteLat1, *miPasteLat2;

@@ -43,6 +43,7 @@ void MmgAction_RebuildRecentMenu(void);
 BOOL MmgAction_OpenRecentFile(int slot);
 
 BOOL MmgAction_ToggleAntialias(void);
+BOOL MmgAction_ToggleMonospace(void);
 BOOL MmgAction_ToggleWordWrap(void);
 BOOL MmgAction_ToggleApplyAnsi(void);
 BOOL MmgAction_ToggleVisualizeTabs(void);

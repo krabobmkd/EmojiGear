@@ -56,6 +56,7 @@
 #include "../EmojiGear/tooltypepref.h"
 #include "mmgboopsimessage.h"
 #include "mmgemojibox.h"
+#include "mmgfontsview.h"
 #include "mmgaction.h"
 #include "muimojiGear.h"   /* struct App, app, App_GetRawEditorWin, App_UpdateStatus */
 
@@ -130,6 +131,7 @@ MUI_NewObjectB(const char *cl, Tag tags, ...)
 #define RID_TOGGLE_APPLYANSI   35
 #define RID_TOGGLE_VIZTABS     36
 #define RID_TOGGLE_TABSSPACES  37
+#define RID_TOGGLE_MONOSPACE   81
 #define RID_COLOR_BASE         38   /* 38..43: one per color preset (0=System colors) */
 #define MMG_NUM_COLOR_PRESETS   6
 #define RID_RECENT_BASE        44   /* 44..51: one per recent slot  */
@@ -367,6 +369,7 @@ int main(int argc, char *argv[])
 #ifndef DISABLE_EMOJIBOX
     MmgEmojiBox_BuildWindow();   /* stores result in app->emojiBoxWinObj */
 #endif
+    MmgFontsView_BuildWindow();  /* stores result in app->fontViewWinObj  */
     /* ------------------------------------------------------------------ */
     /* MUI menus                                                            */
     /* ------------------------------------------------------------------ */
@@ -440,6 +443,8 @@ int main(int argc, char *argv[])
                                       MUIA_Menuitem_Shortcut, (ULONG)"Y", TAG_DONE);
     app->miEmojiBox  = MUI_NewObjectB(MUIC_Menuitem, MUIA_Menuitem_Title, (ULONG)"Emoji Box",
                                       MUIA_Menuitem_Shortcut, (ULONG)"E", TAG_DONE);
+    app->miFontSettings = MUI_NewObjectB(MUIC_Menuitem, MUIA_Menuitem_Title, (ULONG)"Font Settings",
+                                      MUIA_Menuitem_Shortcut, (ULONG)"F", TAG_DONE);
     menuEdit = MUI_NewObjectB(MUIC_Menu,
         MUIA_Menu_Title,   (ULONG)LOC(MSG_MENU_EDIT),
         MUIA_Family_Child, (ULONG)app->miCut,
@@ -475,6 +480,12 @@ int main(int argc, char *argv[])
         MUIA_Menuitem_Toggle,  TRUE,
         MUIA_Menuitem_Checked, (ULONG)(app->settings.antialias    ? TRUE : FALSE),
         TAG_DONE);
+    app->miToggleMonospace = MUI_NewObjectB(MUIC_Menuitem,
+        MUIA_Menuitem_Title,   (ULONG)"Force Monospace",
+        MUIA_Menuitem_Checkit, TRUE,
+        MUIA_Menuitem_Toggle,  TRUE,
+        MUIA_Menuitem_Checked, (ULONG)(app->settings.monospace ? TRUE : FALSE),
+        TAG_DONE);
     app->miToggleWordWrap = MUI_NewObjectB(MUIC_Menuitem,
         MUIA_Menuitem_Title,   (ULONG)LOC(MSG_SETTINGS_WORDWRAP),
         MUIA_Menuitem_Checkit, TRUE,
@@ -506,10 +517,13 @@ int main(int argc, char *argv[])
         MUIA_Family_Child, (ULONG)app->miSettFontSizeMinus,
         MUIA_Family_Child, (ULONG)MUI_NewObjectB(MUIC_Menuitem, MUIA_Menuitem_Title, (ULONG)NM_BARLABEL, TAG_DONE),
         MUIA_Family_Child, (ULONG)app->miToggleAntialias,
+        MUIA_Family_Child, (ULONG)app->miToggleMonospace,
         MUIA_Family_Child, (ULONG)app->miToggleWordWrap,
         MUIA_Family_Child, (ULONG)app->miToggleApplyAnsi,
         MUIA_Family_Child, (ULONG)app->miToggleVisualizeTabs,
         MUIA_Family_Child, (ULONG)app->miToggleTabsAreSpaces,
+        MUIA_Family_Child, (ULONG)MUI_NewObjectB(MUIC_Menuitem, MUIA_Menuitem_Title, (ULONG)NM_BARLABEL, TAG_DONE),
+        MUIA_Family_Child, (ULONG)app->miFontSettings,
         TAG_DONE);
 
     /* Colors menu – label strings are the preset descriptions themselves */
@@ -654,6 +668,7 @@ int main(int argc, char *argv[])
  #ifndef DISABLE_EMOJIBOX
         MUIA_Application_Window,      (ULONG)app->emojiBoxWinObj,
  #endif
+        MUIA_Application_Window,      (ULONG)app->fontViewWinObj,
         MUIA_Application_Menustrip,   (ULONG)menustrip,
         TAG_DONE);
 
@@ -666,6 +681,7 @@ int main(int argc, char *argv[])
 #ifndef DISABLE_EMOJIBOX
     MmgEmojiBox_Init();
 #endif
+    MmgFontsView_Init();
     /* ------------------------------------------------------------------ */
     /* Notifications                                                        */
     /* ------------------------------------------------------------------ */
@@ -695,9 +711,11 @@ int main(int argc, char *argv[])
     NOTIFY(miUndo,             RID_UNDO);
     NOTIFY(miRedo,             RID_REDO);
     NOTIFY(miEmojiBox,         RID_EMOJI_BOX_MENU);
+    NOTIFY(miFontSettings,     RID_FONTS_WIN);
     NOTIFY(miSettFontSizePlus,    RID_FONTSIZE_P);
     NOTIFY(miSettFontSizeMinus,   RID_FONTSIZE_M);
     NOTIFY(miToggleAntialias,     RID_TOGGLE_ANTIALIAS);
+    NOTIFY(miToggleMonospace,     RID_TOGGLE_MONOSPACE);
     NOTIFY(miToggleWordWrap,      RID_TOGGLE_WORDWRAP);
     NOTIFY(miToggleApplyAnsi,     RID_TOGGLE_APPLYANSI);
     NOTIFY(miToggleVisualizeTabs, RID_TOGGLE_VIZTABS);
@@ -825,11 +843,20 @@ int main(int argc, char *argv[])
             case RID_REDO:       doEditAction(UTED_Redo);    reactivateEditor = TRUE;      break;
             case RID_FONTSIZE_P:        MmgAction_FontSizePlus();  reactivateEditor = TRUE;        break;
             case RID_FONTSIZE_M:        MmgAction_FontSizeMinus();  reactivateEditor = TRUE;       break;
-            case RID_TOGGLE_ANTIALIAS:  MmgAction_ToggleAntialias(); reactivateEditor = TRUE;      break;
+            case RID_TOGGLE_ANTIALIAS:  MmgAction_ToggleAntialias();  reactivateEditor = TRUE;     break;
+            case RID_TOGGLE_MONOSPACE:  MmgAction_ToggleMonospace();  reactivateEditor = TRUE;     break;
             case RID_TOGGLE_WORDWRAP:   MmgAction_ToggleWordWrap();  reactivateEditor = TRUE;      break;
             case RID_TOGGLE_APPLYANSI:  MmgAction_ToggleApplyAnsi();   reactivateEditor = TRUE;    break;
             case RID_TOGGLE_VIZTABS:    MmgAction_ToggleVisualizeTabs();  reactivateEditor = TRUE;  break;
             case RID_TOGGLE_TABSSPACES: MmgAction_ToggleTabsAreSpaces(); reactivateEditor = TRUE;  break;
+
+            case RID_FONTS_WIN: {
+                ULONG isOpen = 0;
+                if (app->fontViewWinObj)
+                    GetAttr(MUIA_Window_Open, app->fontViewWinObj, &isOpen);
+                if (isOpen) MmgFontsView_Close(); else MmgFontsView_Open();
+                break;
+            }
 
             case RID_EMOJI_SET_CHANGE:
 #ifndef DISABLE_EMOJIBOX
@@ -862,6 +889,18 @@ int main(int argc, char *argv[])
                     MmgAction_ApplyColorPreset((int)(r - RID_COLOR_BASE));
                     reactivateEditor = TRUE;
                     }
+                else if (r >= (ULONG)RID_FONTS_BROWSE_BASE &&
+                         r <  (ULONG)(RID_FONTS_BROWSE_BASE + MMG_FONTS_SLOTS))
+                    MmgFontsView_HandleBrowse((int)(r - RID_FONTS_BROWSE_BASE));
+                else if (r >= (ULONG)RID_FONTS_CLEAR_BASE &&
+                         r <  (ULONG)(RID_FONTS_CLEAR_BASE + MMG_FONTS_SLOTS))
+                    MmgFontsView_HandleClear((int)(r - RID_FONTS_CLEAR_BASE));
+                else if (r >= (ULONG)RID_FONTS_PRESET_BASE &&
+                         r <  (ULONG)(RID_FONTS_PRESET_BASE + MMG_FONTS_PRESETS))
+                    MmgFontsView_HandlePreset((int)(r - RID_FONTS_PRESET_BASE));
+                else if (r >= (ULONG)RID_FONTS_STR_BASE &&
+                         r <  (ULONG)(RID_FONTS_STR_BASE + MMG_FONTS_SLOTS))
+                    MmgFontsView_HandleStrEdit((int)(r - RID_FONTS_STR_BASE));
                 else if (r >= (ULONG)RID_EMOJI_ANSI_BASE &&
                          r <  (ULONG)(RID_EMOJI_ANSI_BASE + MMG_NUM_ANSI_BTNS))
                     {
@@ -1068,6 +1107,7 @@ cleanup:
 
 #ifndef DISABLE_EMOJIBOX
         MmgEmojiBox_Dispose();  /* free grid class + DC after MUI objects are gone */
+        MmgFontsView_Dispose();
 #endif
         AppSettings_Save(&app->settings);
         AppSettings_Close(&app->settings);
