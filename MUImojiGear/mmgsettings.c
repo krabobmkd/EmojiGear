@@ -21,6 +21,8 @@
 #include <intuition/screens.h>
 #include <gadgets/unitexteditor.h>
 #include <proto/unitexteditor.h>
+#include <gadgets/unibutton.h>
+#include <proto/unibutton.h>
 #include <libraries/utf8rastport.h>
 
 #include <stdio.h>
@@ -393,6 +395,35 @@ void AppSettings_ApplyToEditor(AppSettings *as, Object *editorMuiObj,
 
     if (rawG && rawW)
         RefreshGList(rawG, rawW, NULL, 1);
+}
+
+/* =========================================================================
+ * AppSettings_ApplyToEmojiButton
+ *
+ * Flush and reload fonts on the UniButton draw context (shared with the
+ * EmojiBox grid DC).  Point size is fixed at 16 regardless of the editor
+ * font size — the button is always a compact fixed-size widget.
+ * Monospace flag is intentionally omitted: irrelevant for emoji rendering.
+ * =========================================================================
+ */
+void AppSettings_ApplyToEmojiButton(AppSettings *as, Object *btnMuiObj)
+{
+    ULONG flags;
+    if (!as || !btnMuiObj) return;
+
+    flags = (as->antialias    ? URP_PREF_ANTIALIAS    : 0)
+          | (as->emojiQuality ? URP_PREF_HIGHFILTERING : 0)
+          | URP_PREF_CLUTMODE_NOMASK;
+
+    SetAttrs(btnMuiObj,
+        UBT_FlushFonts, TRUE,
+        UBT_URPPrefs,   flags,
+        UBT_PointSize,  16UL,
+        UBT_AddFont,    (ULONG)as->primaryFontPath,
+        UBT_AddFont,    (ULONG)as->fallback1FontPath,
+        UBT_AddFont,    (ULONG)as->fallback2FontPath,
+        UBT_AddFont,    (ULONG)as->emojiFontPath,
+        TAG_DONE);
 }
 
 /* =========================================================================

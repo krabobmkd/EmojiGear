@@ -72,6 +72,10 @@ void AppSettings_Close(AppSettings *as);
 void AppSettings_ApplyToEditor(AppSettings *as, Object *editorMuiObj,
                                struct Gadget *rawG, struct Window *rawW);
 
+/* Flush and reload fonts on the UniButton (emoji button) draw context.
+ * Point size is fixed at 16; monospace flag is not applied to buttons. */
+void AppSettings_ApplyToEmojiButton(AppSettings *as, Object *btnMuiObj);
+
 /* Recent-file management */
 void        AppSettings_AddRecentFile    (AppSettings *as, const char *path, int enc);
 int         AppSettings_GetRecentCount   (AppSettings *as);

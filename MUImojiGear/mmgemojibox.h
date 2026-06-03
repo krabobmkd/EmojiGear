@@ -84,6 +84,11 @@ void MmgEmojiBox_Close(void);
  * Redraws the emoji grid if a GM_RENDER was deferred due to wrong process. */
 void MmgEmojiBox_FlushPendingRender(void);
 
+/* Force a full redraw of the emoji grid when the shared DC fonts changed.
+ * Resets the grid's cached screen metrics so new font metrics are measured,
+ * then calls RefreshGList if the emoji box window is currently open. */
+void MmgEmojiBox_RefreshGrid(void);
+
 /* Handle an F-key press from the UTED_InternalRawKey_Code notification.
  *   code      – raw RAWKEY code (0x50..0x59 = F1..F10)
  *   qualifiers – ie_Qualifier bits from the packed notification value     */

@@ -22,6 +22,7 @@
 #include <stdlib.h>
 
 #include "mmgaction.h"
+#include "mmgemojibox.h"    /* MmgEmojiBox_RefreshGrid */
 #include "muimojiGear.h"       /* struct App *app, App_GetRawEditorWin, App_UpdateStatus */
 
 #include "../EmojiGear/eglocale.h"
@@ -1007,6 +1008,8 @@ BOOL MmgAction_ToggleAntialias(void)
     app->settings.antialias = checked ? 1 : 0;
     getRaw(&g, &w);
     AppSettings_ApplyToEditor(&app->settings, app->editorObj, g, w);
+    AppSettings_ApplyToEmojiButton(&app->settings, app->emojiBtnObj);
+    MmgEmojiBox_RefreshGrid();
     return TRUE;
 }
 
@@ -1019,6 +1022,8 @@ BOOL MmgAction_ToggleMonospace(void)
     app->settings.monospace = checked ? 1 : 0;
     getRaw(&g, &w);
     AppSettings_ApplyToEditor(&app->settings, app->editorObj, g, w);
+    AppSettings_ApplyToEmojiButton(&app->settings, app->emojiBtnObj);
+    MmgEmojiBox_RefreshGrid();
     return TRUE;
 }
 

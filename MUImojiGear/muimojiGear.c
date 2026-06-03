@@ -612,7 +612,7 @@ int main(int argc, char *argv[])
         GA_ID,                 GID_EMOJI_BUTTON,
         ICA_TARGET,            (ULONG)MmgTargetInstance,
         UBT_BevelStyle,        BVS_BUTTON,
-        UBT_PointSize,         14UL,
+        UBT_PointSize,         16UL,
         UBT_Transparent,       FALSE,
         UBT_LeftMargin,        3UL,
         UBT_RightMargin,       3UL,

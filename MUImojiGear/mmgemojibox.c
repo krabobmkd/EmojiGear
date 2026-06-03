@@ -741,6 +741,33 @@ void MmgEmojiBox_FlushPendingRender(void)
 }
 
 /* =========================================================================
+ * MmgEmojiBox_RefreshGrid
+ * Call after the shared DC fonts are updated (font settings change).
+ * Re-sets EGRID_URPDrawContext so inst->screen is cleared (forcing font
+ * metrics to be re-measured on the next GM_RENDER), then calls RefreshGList
+ * if the emoji box window is currently open.
+ * =========================================================================
+ */
+void MmgEmojiBox_RefreshGrid(void)
+{
+    ULONG isOpen = 0;
+    Object *rawGrid = NULL;
+    struct Window *emojiWin = NULL;
+
+    if (!app || !app->emojiBoxWinObj || !app->emojiBoxGridObj) return;
+    GetAttr(MUIA_Window_Open, app->emojiBoxWinObj, &isOpen);
+    if (!isOpen) return;
+
+    GetAttr(MUIA_Boopsi_Object, app->emojiBoxGridObj, (ULONG *)&rawGrid);
+    if (rawGrid && s_dc)
+        SetAttrs(rawGrid, EGRID_URPDrawContext, (ULONG)s_dc, TAG_DONE);
+
+    GetAttr(MUIA_Window_Window, app->emojiBoxWinObj, (ULONG *)&emojiWin);
+    if (emojiWin && rawGrid)
+        RefreshGList((struct Gadget *)rawGrid, emojiWin, NULL, 1);
+}
+
+/* =========================================================================
  * MmgEmojiBox_Open / Close
  * =========================================================================
  */
