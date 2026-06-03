@@ -61,6 +61,10 @@ BOOL EmojiBoxWindow_HandleInput(EmojiBoxWindow *ebw);
 /* Signal mask to OR into Wait(). Returns 0 when the window is closed. */
 ULONG EmojiBoxWindow_GetSignalMask(EmojiBoxWindow *ebw);
 
+/* Call from the main task when SIGBREAKF_CTRL_F fires.
+ * Redraws the emoji grid if GM_RENDER was deferred due to wrong process. */
+void EmojiBoxWindow_FlushPendingRender(EmojiBoxWindow *ebw);
+
 /* -------------------------------------------------------------------------
  * F-key emoji insertion (original functionality, kept here)
  * -------------------------------------------------------------------------*/

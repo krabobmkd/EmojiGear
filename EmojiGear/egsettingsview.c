@@ -89,11 +89,11 @@ UWORD rrggbbToPenIndex(struct Screen *scr, ULONG rrggbb)
     r = r * 0x01010101UL;
     g = g * 0x01010101UL;
     b = b * 0x01010101UL;
-    maxpens = (LONG)(1 << scr->RastPort.BitMap->Depth);
+//    maxpens = (LONG)(1 << scr->RastPort.BitMap->Depth);
 
-    if(maxpens>256) maxpens = 256;
+//    if(maxpens>256) maxpens = 256;
     /* hi people !! it's -1 lol */
-    found = FindColor(scr->ViewPort.ColorMap, r, g, b,maxpens-1);
+    found = FindColor(scr->ViewPort.ColorMap, r, g, b,/*maxpens*/-1);
 
     return (found >= 0) ? (UWORD)found : 0;
 }

@@ -53,4 +53,6 @@ BOOL MmgAction_CopyLatin2(void);
 BOOL MmgAction_PasteLatin1(void);
 BOOL MmgAction_PasteLatin2(void);
 
+void MmgAction_ApplyColorFromSettings();
+
 #endif /* MMGACTION_H */

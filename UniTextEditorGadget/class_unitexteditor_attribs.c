@@ -655,21 +655,21 @@ ULONG UniTextEditor_OnDispose(Class *cl, Object *o, Msg msg)
 void uted_update_halfway_pen(UniTextEditorData *inst)
 {
     ULONG rgb[8];
-    ULONG ncol;
-    int depth;
+    //ULONG ncol;
+    //int depth;
 
     if (!inst->screen) { inst->halfwayPen = inst->bgPen; return; }
     GetRGB32(&inst->screen->ViewPort.ColorMap, inst->txtPen, 1, &rgb[0]);
     GetRGB32(&inst->screen->ViewPort.ColorMap, inst->bgPen,  1, &rgb[3]);
 
-    depth = GetBitMapAttr( inst->screen->RastPort.BitMap,BMA_DEPTH);
-    ncol = 1L<<depth;
-    if(ncol>256) ncol=256;
+    // depth = GetBitMapAttr( inst->screen->RastPort.BitMap,BMA_DEPTH);
+    // ncol = 1L<<depth;
+    // if(ncol>256) ncol=256;
     inst->halfwayPen = (ULONG)FindColor(&inst->screen->ViewPort.ColorMap,
         ((rgb[0]>>1) + (rgb[3]>>1)),
         ((rgb[1]>>1) + (rgb[4]>>1)),
         ((rgb[2]>>1) + (rgb[5]>>1)),
-        ncol
+        -1
         );
 }
 

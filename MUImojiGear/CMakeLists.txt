@@ -6,6 +6,11 @@ set(CMAKE_C_STANDARD 11)
 set(MUI_INCLUDE_DIR "/home/krabob/Code/Amiga/MUI-5.0-20210831-os3/SDK/MUI/C/include"
     CACHE PATH "Path to MUI 5.0 C include directory")
 
+# Assembler output for debug; picked up by gadget sub-projects via scope
+list(APPEND AMIGA_COMPILER_OPTIONS -save-temps -Wall)
+list(APPEND AMIGA_COMPILER_OPTIONS -mcpu=68020 -Os )
+
+
 # Source files.
 # eglocale.c and tooltypepref.c are reused directly from EmojiGear.
 set(MUIMOJIGEARSOURCES
@@ -13,7 +18,7 @@ set(MUIMOJIGEARSOURCES
     mmgboopsimessage.c  mmgboopsimessage.h
     mmgsettings.c       mmgsettings.h
     mmgaction.c         mmgaction.h
-#    mmgemojibox.c       mmgemojibox.h
+    mmgemojibox.c       mmgemojibox.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../EmojiGear/eglocale.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../EmojiGear/tooltypepref.c
 )

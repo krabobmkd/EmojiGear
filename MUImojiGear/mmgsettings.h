@@ -34,6 +34,7 @@ typedef struct AppSettings {
     /* Editor display */
     ULONG editorBgColor;       /* 0x00RRGGBB; default = screen colour 0  */
     ULONG editorPenColor;      /* 0x00RRGGBB; default = black            */
+    int     colorsWereLoaded;
     int   tabSpaces;           /* spaces per tab, 2..12; default 4       */
     int   visualizeTabs;       /* draw tab markers; default FALSE        */
     int   tabsAreSpaces;       /* Tab key → spaces; default FALSE        */

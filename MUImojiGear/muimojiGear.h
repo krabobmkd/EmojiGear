@@ -28,9 +28,9 @@ struct App {
     Object    *emojiBtnObj;
 
     /* Emoji box sub-window objects */
-    // Object    *emojiBoxWinObj;   /* MUIC_Window – second SubWindow of the App */
-    // Object    *emojiBoxCycleObj; /* MUIC_Cycle  – emoji set selector           */
-    // Object    *emojiBoxGridObj;  /* MUIC_Boopsi – EmojiGrid gadget             */
+    Object    *emojiBoxWinObj;   /* MUIC_Window – second SubWindow of the App */
+    Object    *emojiBoxCycleObj; /* MUIC_Cycle  – emoji set selector           */
+    Object    *emojiBoxGridObj;  /* MUIC_Boopsi – EmojiGrid gadget             */
 
     /* Menu items (kept for DoMethod notifications) */
     Object    *miNewFile;
@@ -41,7 +41,7 @@ struct App {
     Object    *miRecentItem[APPSETTINGS_MAX_RECENT];      /* one per slot */
     char       recentItemLabels[APPSETTINGS_MAX_RECENT][64]; /* stable buffers for MUI title ptrs */
 
-    Object    *miColorPreset[5];     /* Colors menu – one item per preset */
+    Object    *miColorPreset[6];     /* Colors menu – one item per preset (0 = System colors) */
     Object    *miSettFontSizePlus,  *miSettFontSizeMinus;
     Object    *miToggleAntialias,   *miToggleWordWrap;
     Object    *miToggleApplyAnsi,   *miToggleVisualizeTabs, *miToggleTabsAreSpaces;

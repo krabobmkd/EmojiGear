@@ -11,7 +11,7 @@ option(UNITEXTEDITOR_SHARED "link utf8rastport as amiga shared lib"  ON)
 
 # Assembler output for debug; picked up by gadget sub-projects via scope
 list(APPEND AMIGA_COMPILER_OPTIONS -save-temps -Wall)
-list(APPEND AMIGA_COMPILER_OPTIONS -mcpu=68020 -O1 )
+list(APPEND AMIGA_COMPILER_OPTIONS -mcpu=68020 -Os )
 
 
 set(EMOJIGEAR_SOURCES

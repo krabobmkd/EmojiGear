@@ -34,6 +34,7 @@
 #include <proto/dos.h>
 #include <proto/icon.h>
 #include <proto/locale.h>
+#include <proto/asl.h>
 #include <proto/muimaster.h>
 #include <proto/alib.h>
 #include <libraries/locale.h>
@@ -58,7 +59,7 @@
 #include "mmgaction.h"
 #include "muimojiGear.h"   /* struct App, app, App_GetRawEditorWin, App_UpdateStatus */
 
-#define DISABLE_EMOJIBOX 1
+//was a test #define DISABLE_EMOJIBOX 1
 
 /* =========================================================================
  * Library bases – must be global for the SDK proto/inline headers
@@ -94,7 +95,8 @@ MUI_NewObjectB(const char *cl, Tag tags, ...)
  * Application constants
  * =========================================================================
  */
-#define MMG_APPBASE  "MUIMOJIGEAIR"
+#define MMG_APPBASE       "MUIMOJIGEAR"
+#define PIPE_INPUT_BUF    1024
 #define MMG_VERSION  "$VER: MUImojiGear 0.1 (2026)"
 #define GID_EDITOR        1
 #define GID_EMOJI_BUTTON  2
@@ -128,14 +130,37 @@ MUI_NewObjectB(const char *cl, Tag tags, ...)
 #define RID_TOGGLE_APPLYANSI   35
 #define RID_TOGGLE_VIZTABS     36
 #define RID_TOGGLE_TABSSPACES  37
-#define RID_COLOR_BASE         38   /* 38..42: one per color preset */
-#define MMG_NUM_COLOR_PRESETS   5
-#define RID_RECENT_BASE        43   /* 43..50: one per recent slot  */
+#define RID_COLOR_BASE         38   /* 38..43: one per color preset (0=System colors) */
+#define MMG_NUM_COLOR_PRESETS   6
+#define RID_RECENT_BASE        44   /* 44..51: one per recent slot  */
 
 /* =========================================================================
  * Shared utilities  (declared in muimojiGear.h; used by mmgaction.c too)
  * =========================================================================
  */
+
+/* Returns the length of the longest NUL-safe UTF-8 prefix of buf[0..len-1]
+ * that ends on a complete codepoint boundary (no split multi-byte sequences). */
+static LONG utf8_complete_len(const char *buf, LONG len)
+{
+    LONG i = len;
+    unsigned char c;
+    int seqLen;
+    if (len <= 0) return 0;
+    while (i > 0) {
+        c = (unsigned char)buf[i - 1];
+        if ((c & 0xC0) != 0x80) break;
+        i--;
+    }
+    if (i == 0) return 0;
+    c = (unsigned char)buf[i - 1];
+    if      (c < 0x80)           seqLen = 1;
+    else if ((c & 0xE0) == 0xC0) seqLen = 2;
+    else if ((c & 0xF0) == 0xE0) seqLen = 3;
+    else if ((c & 0xF8) == 0xF0) seqLen = 4;
+    else                          seqLen = 1;
+    return ((i - 1) + seqLen <= len) ? len : i - 1;
+}
 
 void App_GetRawEditorWin(struct Gadget **gOut, struct Window **wOut)
 {
@@ -275,8 +300,6 @@ int main(int argc, char *argv[])
     /* ------------------------------------------------------------------ */
     /* Libraries                                                            */
     /* ------------------------------------------------------------------ */
-    UtilityBase = OpenLibrary("utility.library", 37L);
-    if (!UtilityBase) { puts("ERROR: utility.library v37+"); exitCode=1; goto cleanup; }
 
     GfxBase = (struct GfxBase *)OpenLibrary("graphics.library", 39L);
     if (!GfxBase) { puts("ERROR: graphics.library v39+"); exitCode=1; goto cleanup; }
@@ -284,19 +307,24 @@ int main(int argc, char *argv[])
     IntuitionBase = (struct IntuitionBase *)OpenLibrary("intuition.library", 39L);
     if (!IntuitionBase) { puts("ERROR: intuition.library v39+"); exitCode=1; goto cleanup; }
 
+    UtilityBase = OpenLibrary("utility.library", 37L);
+    if (!UtilityBase) { puts("ERROR: utility.library v37+"); exitCode=1; goto cleanup; }
+
+    MUIMasterBase = OpenLibrary("muimaster.library", 19L);
+    if (!MUIMasterBase) { puts("ERROR: muimaster.library v19+ (MUI 3.8+)"); exitCode=1; goto cleanup; }
+
     UniTextEditorBase = OpenLibrary("gadgets/unitexteditor.gadget", 2L);
     if (!UniTextEditorBase) { puts("ERROR: unitexteditor.gadget v2+"); exitCode=1; goto cleanup; }
 
     UniButtonBase = OpenLibrary("gadgets/unibutton.gadget", 2L);
     if (!UniButtonBase) { puts("ERROR: unibutton.gadget v2+"); exitCode=1; goto cleanup; }
 
-    AslBase = OpenLibrary("asl.library", 38L);
-    if (!AslBase) { puts("ERROR: asl.library v38+"); exitCode=1; goto cleanup; }
-
-    MUIMasterBase = OpenLibrary("muimaster.library", 19L);
-    if (!MUIMasterBase) { puts("ERROR: muimaster.library v19+ (MUI 3.8+)"); exitCode=1; goto cleanup; }
+    AslBase = OpenLibrary("asl.library", 39UL);
+    if (!AslBase) { puts("ERROR: asl.library v39"); exitCode=1; goto cleanup; }
 
     LocaleBase = (struct LocaleBase *)OpenLibrary("locale.library", 38L);
+    if (!LocaleBase) { puts("ERROR: locale.library v38"); exitCode=1; goto cleanup; }
+
     IconBase   = OpenLibrary("icon.library", 37L);
 
     /* ------------------------------------------------------------------ */
@@ -309,6 +337,7 @@ int main(int argc, char *argv[])
     /* Locale + settings                                                    */
     /* ------------------------------------------------------------------ */
     EgLocale_Init("muimojiGear.catalog", 1);
+
     if (IconBase) {
         if (argc > 0) {
             ToolTypePrefs_Init(argv[0]);
@@ -486,6 +515,7 @@ int main(int argc, char *argv[])
     /* Colors menu – label strings are the preset descriptions themselves */
     {
         static const char * const presetNames[MMG_NUM_COLOR_PRESETS] = {
+            "System colors",        /* idx 0: reads pens 0+1 via FindColor */
             "Grey / Black",
             "Black / White",
             "White / Black",
@@ -501,10 +531,12 @@ int main(int argc, char *argv[])
         menuColors = MUI_NewObjectB(MUIC_Menu,
             MUIA_Menu_Title,   (ULONG)"Colors",
             MUIA_Family_Child, (ULONG)app->miColorPreset[0],
+            MUIA_Family_Child, (ULONG)MUI_NewObjectB(MUIC_Menuitem, MUIA_Menuitem_Title, (ULONG)NM_BARLABEL, TAG_DONE),
             MUIA_Family_Child, (ULONG)app->miColorPreset[1],
             MUIA_Family_Child, (ULONG)app->miColorPreset[2],
             MUIA_Family_Child, (ULONG)app->miColorPreset[3],
             MUIA_Family_Child, (ULONG)app->miColorPreset[4],
+            MUIA_Family_Child, (ULONG)app->miColorPreset[5],
             TAG_DONE);
     }
 
@@ -572,7 +604,7 @@ int main(int argc, char *argv[])
         UBT_RightMargin,       3UL,
         UBT_TopMargin,         0UL,
         UBT_BottomMargin,      3UL,
-        GA_Text,               (ULONG)"\xF0\x9F\x98\x80",   /* 😀 U+1F600 */
+        GA_Text,               (ULONG)"\xF0\x9F\x98\x80",
         TAG_DONE);
 
     /* Load emoji + fallback fonts into the button draw context */
@@ -637,6 +669,7 @@ int main(int argc, char *argv[])
     /* ------------------------------------------------------------------ */
     /* Notifications                                                        */
     /* ------------------------------------------------------------------ */
+
     DoMethod(app->winObj, MUIM_Notify, MUIA_Window_CloseRequest, TRUE,
              app->appObj, 2, MUIM_Application_ReturnID, RID_QUIT);
 
@@ -696,6 +729,8 @@ int main(int argc, char *argv[])
     if (app->hScrollBar) DoMethod(app->hScrollBar, MUIM_Notify, MUIA_Prop_First, MUIV_EveryTime,
                                   app->appObj, 2, MUIM_Application_ReturnID, RID_HSCROLL);
 
+
+
     /* Window resize: re-sync scrollbar domains (Entries/Visible) when the
      * editor's visible area changes.  Both Width and Height are needed:
      * a taller window changes VisibleLines; a wider one changes the visible
@@ -706,8 +741,10 @@ int main(int argc, char *argv[])
     DoMethod(app->winObj, MUIM_Notify, MUIA_Window_Height, MUIV_EveryTime,
              app->appObj, 2, MUIM_Application_ReturnID, RID_RESIZE);
 */
-    syncVScrollbar();
-    syncHScrollbar();
+    /*,not now
+     syncVScrollbar();
+     syncHScrollbar();
+     */
 
     /* Populate recent files menu from loaded settings */
     MmgAction_RebuildRecentMenu();
@@ -719,6 +756,12 @@ int main(int argc, char *argv[])
         MUIA_Window_Open,         TRUE,
         MUIA_Window_ActiveObject, (ULONG)app->editorObj,
         TAG_DONE);
+
+    /* colors from settiongs need to be applied when window have a screen */
+    if(app->settings.colorsWereLoaded)
+    {
+        MmgAction_ApplyColorFromSettings();
+    }
 
     /* ------------------------------------------------------------------ */
     /* Load file passed on CLI: MUImojiGear [Latin1|Latin2] <path>        */
@@ -743,10 +786,17 @@ int main(int argc, char *argv[])
         ULONG muisigs    = 0;
         BOOL  running = TRUE;
         BOOL reactivateEditor=FALSE;
+        char  pipeBuf[PIPE_INPUT_BUF];
+        LONG  pipeBufUsed = 0;
 
         while (running) {
             ULONG r;
+           while(muisigs == 0)
+            {
+           // printf("bef MUIM_Application_NewInput\n");
             r = DoMethod(app->appObj, MUIM_Application_NewInput, &muisigs);
+         //   if(!muisigs) printf("actual no sig\n");
+           // printf("aft MUIM_Application_NewInput\n");
             switch (r) {
             case RID_QUIT:
             case MUIV_Application_ReturnID_Quit:
@@ -867,9 +917,47 @@ int main(int argc, char *argv[])
             //     syncHScrollbar();
             //     break;
             }
-
-
+                if (!running) break;
+            } // end while muisigs == 0
             if (!running) break;
+
+            /* ---- Pipe / stdin UTF-8 input (non-blocking) ----
+             * Read from non-interactive handles (PIPE:, file redirect).
+             * IsInteractive() guards against blocking on CON: handles.
+             * Incomplete multi-byte sequences at the tail are kept in
+             * pipeBuf for the next iteration via utf8_complete_len(). */
+            {
+                BPTR inpt = Input();
+                if (inpt && !IsInteractive(inpt)) {
+                    LONG canRead = PIPE_INPUT_BUF - pipeBufUsed - 1;
+                    if (canRead > 0) {
+                        LONG nread = Read(inpt, pipeBuf + pipeBufUsed, canRead);
+                        if (nread > 0) pipeBufUsed += nread;
+                    }
+                }
+                if (pipeBufUsed > 0) {
+                    LONG safeLen = utf8_complete_len(pipeBuf, pipeBufUsed);
+                    if (safeLen == 0 && pipeBufUsed >= PIPE_INPUT_BUF - 4)
+                        safeLen = pipeBufUsed; /* safety valve: broken stream */
+                    if (safeLen > 0) {
+                        LONG remaining = pipeBufUsed - safeLen;
+                        char savedByte  = (remaining > 0) ? pipeBuf[safeLen] : '\0';
+                        struct Gadget *pg = NULL; struct Window *pw = NULL;
+                        pipeBuf[safeLen] = '\0';
+                        App_GetRawEditorWin(&pg, &pw);
+                        if (pg && pw) {
+                            SetGadgetAttrs(pg, pw, NULL,
+                                           UTED_InsertText, (ULONG)pipeBuf, TAG_DONE);
+                            RefreshGList(pg, pw, NULL, 1);
+                        }
+                        if (remaining > 0) {
+                            pipeBuf[safeLen] = savedByte;
+                            memmove(pipeBuf, pipeBuf + safeLen, (size_t)remaining);
+                        }
+                        pipeBufUsed = remaining;
+                    }
+                }
+            }
 
             if(muisigs)
             {
@@ -880,6 +968,7 @@ int main(int argc, char *argv[])
                 App_GetRawEditorWin(&g, &w);
 
                 sigs = Wait(muisigs | SIGBREAKF_CTRL_C | SIGBREAKF_CTRL_F);
+
                 if (sigs & SIGBREAKF_CTRL_C) { running = FALSE; break; }
 
                 if (sigs & SIGBREAKF_CTRL_F) {
@@ -951,6 +1040,7 @@ int main(int argc, char *argv[])
                         syncHScrollbar();
                     }
                     if (needStatus) App_UpdateStatus();
+                    MmgEmojiBox_FlushPendingRender();
                 }
                 if( reactivateEditor && w && g)
                 {
@@ -964,6 +1054,7 @@ int main(int argc, char *argv[])
                 }
 
             } /* if ever MUI messages */
+            muisigs = 0;
 
         }/* end while running*/
     }
@@ -974,6 +1065,7 @@ cleanup:
             MUI_DisposeObject(app->appObj);
         else if (app->winObj)
             MUI_DisposeObject(app->winObj);
+
 #ifndef DISABLE_EMOJIBOX
         MmgEmojiBox_Dispose();  /* free grid class + DC after MUI objects are gone */
 #endif
@@ -987,15 +1079,23 @@ cleanup:
     MmgBoopsi_Close();
     EgLocale_Close();
 
-    if (MUIMasterBase)     CloseLibrary(MUIMasterBase);
+   if (LocaleBase)        CloseLibrary((struct Library *)LocaleBase);
+
     if (AslBase)           CloseLibrary(AslBase);
+
+   if (UniButtonBase)     CloseLibrary(UniButtonBase);
+
     if (UniTextEditorBase) CloseLibrary(UniTextEditorBase);
-    if (UniButtonBase)     CloseLibrary(UniButtonBase);
+
+    if (MUIMasterBase)     CloseLibrary(MUIMasterBase);
+
+    if (UtilityBase)       CloseLibrary(UtilityBase);
+
     if (IconBase)          CloseLibrary(IconBase);
-    if (LocaleBase)        CloseLibrary((struct Library *)LocaleBase);
+
     if (IntuitionBase)     CloseLibrary((struct Library *)IntuitionBase);
     if (GfxBase)           CloseLibrary((struct Library *)GfxBase);
-    if (UtilityBase)       CloseLibrary(UtilityBase);
+
 
     return exitCode;
 }

@@ -2,6 +2,7 @@
 
 #include <proto/exec.h>
 #include <proto/icon.h>
+#include <proto/dos.h>
 #include <workbench/workbench.h>
 #include <string.h>
 
@@ -22,6 +23,7 @@ int ToolTypePrefs_Init(const char *exename)
     int count = 0;
     int i;
     char **src;
+    if(exename) exename = FilePart(exename); /* there/me -> me */
 
     // Clone exename with "PROGDIR:" prefix
     {
@@ -257,7 +259,7 @@ void ToolTypePrefs_Remove(const char *prefid)
 void ToolTypePrefs_Save()
 {
     char **previousValues;
-    if(!AppDiskObject || !CToolType) return;
+     if(!AppDiskObject || !CToolType) return;
 
     // that's how we save tooltypes prefs in icons..
     previousValues = AppDiskObject->do_ToolTypes;

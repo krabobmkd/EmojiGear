@@ -12,6 +12,7 @@
  */
 
 #include <string.h>
+#include <stdio.h>
 
 #include <exec/memory.h>
 #include <proto/exec.h>
@@ -45,6 +46,12 @@ static struct Library *URPBase = NULL;
 #include "mmgemojibox.h"
 #include "mmgboopsimessage.h"   /* MmgTargetInstance */
 #include "muimojiGear.h"        /* struct App *app, App_GetRawEditorWin */
+
+extern struct Task *mmgMainTask;  /* defined in muimojiGear.c */
+
+/* Set by EmojiGrid_OnRender when called from a wrong process context;
+ * cleared by MmgEmojiBox_FlushPendingRender() from the main task. */
+static volatile BOOL s_pendingRender = FALSE;
 
 /* =========================================================================
  * Register calling convention (same as mmgboopsimessage.c)
@@ -279,6 +286,15 @@ static ULONG EmojiGrid_OnRender(Class *cl, Object *o, struct gpRender *msg)
     WORD gx = g->LeftEdge, gy = g->TopEdge, gw = g->Width, gh = g->Height;
     WORD col, row, fontH, baseLine;
     (void)cl;
+
+    /* utf8rastport requires the correct process context.
+     * If called from any other task (e.g. Intuition refresh in input context),
+     * defer by flagging a pending render and waking the main task. */
+    if (FindTask(NULL) != mmgMainTask) {
+        s_pendingRender = TRUE;
+        if (mmgMainTask) Signal(mmgMainTask, SIGBREAKF_CTRL_F);
+        return 0;
+    }
 
     if (!rp || gw <= 0 || gh <= 0) return 0;
     if (dri) {
@@ -528,7 +544,7 @@ static const char * const s_ansiLabels[MMG_NUM_ANSI_BTNS] = {
 static Class                *s_gridClass  = NULL;
 static struct URPDrawContext *s_dc         = NULL;
 static int                   s_currentSet = 0;
-static Object               *s_ansiBtn[MMG_NUM_ANSI_BTNS]; /* stored for Init wiring */
+static Object               *s_ansiBtn[MMG_NUM_ANSI_BTNS];
 
 static Object *make_ansi_btn(const char *label)
 {
@@ -703,6 +719,28 @@ void MmgEmojiBox_Dispose(void)
 }
 
 /* =========================================================================
+ * MmgEmojiBox_FlushPendingRender
+ * Call from the main task (SIGBREAKF_CTRL_F handler) after draining the
+ * BOOPSI queue.  If a GM_RENDER was skipped due to wrong-process context,
+ * this triggers a safe RefreshGList from the correct task.
+ * =========================================================================
+ */
+void MmgEmojiBox_FlushPendingRender(void)
+{
+    struct Window *emojiWin = NULL;
+    Object        *rawGrid  = NULL;
+
+    if (!s_pendingRender || !app) return;
+    s_pendingRender = FALSE;
+
+    if (!app->emojiBoxWinObj || !app->emojiBoxGridObj) return;
+    GetAttr(MUIA_Window_Window,  app->emojiBoxWinObj,  (ULONG *)&emojiWin);
+    GetAttr(MUIA_Boopsi_Object,  app->emojiBoxGridObj, (ULONG *)&rawGrid);
+    if (emojiWin && rawGrid)
+        RefreshGList((struct Gadget *)rawGrid, emojiWin, NULL, 1);
+}
+
+/* =========================================================================
  * MmgEmojiBox_Open / Close
  * =========================================================================
  */
@@ -721,7 +759,21 @@ void MmgEmojiBox_Open(void)
 void MmgEmojiBox_Close(void)
 {
     if(app && app->emojiBoxWinObj)
+    {
+        struct Window  *w = NULL;
         SetAttrs(app->emojiBoxWinObj, MUIA_Window_Open, FALSE, TAG_DONE);
+        /* super heavy unlock */
+        if (app && app->winObj)
+            GetAttr(MUIA_Window_Window, app->winObj, (ULONG *)&w);
+        if(w)
+        {
+            SizeWindow(w,-1,-1);
+            SizeWindow(w,1,1);
+            ActivateWindow(w);
+        }
+
+
+    }
 }
 
 /* =========================================================================
@@ -770,10 +822,12 @@ void MmgEmojiBox_HandleSetChange(void)
     ULONG active=0;
     Object *rawGrid=NULL;
     struct Window *emojibox_win=NULL;
+
     if(!app||!app->emojiBoxCycleObj||!app->emojiBoxGridObj) return;
     GetAttr(MUIA_Cycle_Active, app->emojiBoxCycleObj, &active);
     if((int)active>=EMOJIBOX_NUM_SETS) return;
     s_currentSet=(int)active;
+
 
     GetAttr(MUIA_Boopsi_Object, app->emojiBoxGridObj, (ULONG *)&rawGrid);
 
@@ -783,10 +837,12 @@ void MmgEmojiBox_HandleSetChange(void)
     if(rawGrid && emojibox_win)
     {
         //SetAttrs(rawGrid, EGRID_EmojiSet,(ULONG)emojiSets[s_currentSet].emojis, TAG_DONE);
-        SetGadgetAttrs(rawGrid,emojibox_win,
+        SetGadgetAttrs(rawGrid,emojibox_win,NULL,
             EGRID_EmojiSet,(ULONG)emojiSets[s_currentSet].emojis, TAG_DONE
             );
+        RefreshGList(rawGrid,emojibox_win,NULL,TAG_END);
     }
+
 }
 
 /* =========================================================================

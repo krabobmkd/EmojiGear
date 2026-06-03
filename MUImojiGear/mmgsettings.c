@@ -27,6 +27,8 @@
 #include <string.h>
 #include <stdlib.h>
 
+#include "mmgaction.h"
+
 /* =========================================================================
  * Font size table (matches EmojiGear/egaction.c)
  * =========================================================================
@@ -77,12 +79,12 @@ void AppSettings_Load(AppSettings *as)
     int i;
     const char *val;
     char key[24];
-
+    BOOL colorBGLoaded = FALSE;
+    BOOL colorPenLoaded = FALSE;
     if (!as) return;
 
     /* ---- Editor background colour ---- */
     {
-        BOOL colorLoaded = FALSE;
         as->editorBgColor = 0x00AAAAAAUL; /* grey Amiga default */
 
         val = ToolTypePrefs_Get(TT_EDITORBGCOLOR);
@@ -90,10 +92,10 @@ void AppSettings_Load(AppSettings *as)
             unsigned long parsed = 0;
             if (val[0] == '#' && sscanf(val, "#%lX", &parsed)) {
                 as->editorBgColor = (ULONG)parsed;
-                colorLoaded = TRUE;
+                colorBGLoaded = TRUE;
             }
         }
-        if (!colorLoaded) {
+        if (!colorBGLoaded) {
             /* Fall back to public screen colour 0 */
             struct Screen *scr = LockPubScreen(NULL);
             if (scr) {
@@ -114,7 +116,9 @@ void AppSettings_Load(AppSettings *as)
         unsigned long parsed = 0;
         sscanf(val, "#%lX", &parsed);
         as->editorPenColor = (ULONG)parsed;
+        colorPenLoaded = TRUE;
     }
+    as->colorsWereLoaded = (colorBGLoaded && colorPenLoaded);
 
     /* ---- Tab settings ---- */
     as->tabSpaces = 4;
@@ -364,6 +368,12 @@ void AppSettings_ApplyToEditor(AppSettings *as, Object *editorMuiObj,
     if (idx < 0) idx = 0;
     if (idx >= mmgFontSizeTableCount) idx = mmgFontSizeTableCount - 1;
 
+// printf("colorsWereLoaded %d\n",as->colorsWereLoaded);
+ /*need to be done after open
+    if(as->colorsWereLoaded)
+    {
+        MmgAction_ApplyColorFromSettings();
+    }*/
     SetAttrs(editorMuiObj,
         UTED_FlushFonts,        TRUE,
         UTED_URPPrefs,          flags,
@@ -378,6 +388,8 @@ void AppSettings_ApplyToEditor(AppSettings *as, Object *editorMuiObj,
         UTED_AddFont,           (ULONG)as->fallback2FontPath,
         UTED_AddFont,           (ULONG)as->emojiFontPath,
         TAG_DONE);
+
+
 
     if (rawG && rawW)
         RefreshGList(rawG, rawW, NULL, 1);

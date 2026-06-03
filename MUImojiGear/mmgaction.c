@@ -468,11 +468,11 @@ static BOOL load_file(const char *path, int encoding, int *actual_enc)
             return FALSE;
         }
         normalize_line_endings(utf8, &textLen); /* textLen reused as scratch */
-        //re
-        // if(rawW)
-        //     SetGadgetAttrs(rawG,rawW,NULL, UTED_Text, (ULONG)utf8, TAG_DONE);
-        // else
-        //     SetAttrs(rawG, UTED_Text, (ULONG)utf8, TAG_DONE);
+
+        if(rawW)
+            SetGadgetAttrs(rawG,rawW,NULL, UTED_Text, (ULONG)utf8, TAG_DONE);
+        else
+            SetAttrs(rawG, UTED_Text, (ULONG)utf8, TAG_DONE);
 
         FreeVec(utf8);
     }
@@ -485,11 +485,7 @@ static BOOL load_file(const char *path, int encoding, int *actual_enc)
     if (conv) FreeVec(conv);
     FreeVec(buf);
 
- //doesnt help
-// DoMethod(app->appObj, MUIM_Application_CheckRefresh);
 
-    //printf("ok\n");
-  //test  if (mmgMainTask) Signal(mmgMainTask, SIGBREAKF_CTRL_F);
     return ok;
 }
 
@@ -631,16 +627,19 @@ BOOL MmgAction_SaveLatin2(void) { return save_file(LOC(MSG_FILE_SAVE_LATIN2), 2)
  * =========================================================================
  */
 
-#define MMG_NUM_COLOR_PRESETS 5
+/* idx 0 is "System colors" (dynamic – no table entry).
+ * idx 1-5 map to static presets[0-4]. */
+#define MMG_NUM_COLOR_PRESETS 6
+#define MMG_NUM_STATIC_PRESETS 5
 
 static const struct {
     ULONG bg;    /* 0x00RRGGBB editor background */
     ULONG txt;   /* 0x00RRGGBB editor text pen   */
-} mmgColorPresets[MMG_NUM_COLOR_PRESETS] = {
+} mmgColorPresets[MMG_NUM_STATIC_PRESETS] = {
     { 0x00AAAAAA, 0x00000000 }, /* Grey / Black         – Amiga default feel */
     { 0x00000000, 0x00FFFFFF }, /* Black / White        – terminal classic    */
     { 0x00FFFFFF, 0x00000000 }, /* White / Black        – paper feel          */
-    { 0x00300A24, 0x00FFFFFF }, /* Dark Purple / White  – Ubuntu terminal     */
+    { 0x00400A34, 0x00FFFFFF }, /* Dark Purple / White  – Ubuntu terminal     */
     { 0x00001B35, 0x00FFFFFF }, /* Dark Blue / White    – deep navy           */
 };
 
@@ -651,11 +650,18 @@ static ULONG rrggbbToPen(struct Screen *scr, ULONG rrggbb)
     ULONG r = ((rrggbb >> 16) & 0xFF) * 0x01010101UL;
     ULONG g = ((rrggbb >>  8) & 0xFF) * 0x01010101UL;
     ULONG b = ( rrggbb        & 0xFF) * 0x01010101UL;
-    LONG  maxPens = (LONG)(1 << scr->RastPort.BitMap->Depth);
     LONG  found;
-    if (maxPens > 256) maxPens = 256;
-    found = FindColor(scr->ViewPort.ColorMap, r, g, b, maxPens - 1);
+    found = FindColor(scr->ViewPort.ColorMap, r, g, b, -1);
     return (found >= 0) ? (ULONG)found : 0;
+}
+
+/* Read the actual 0x00RRGGBB value of a pen index from the screen's colormap.
+ * Uses GetRGB32 which returns each component as a 32-bit fraction (0..0xFFFFFFFF). */
+static ULONG penToRRGGBB(struct Screen *scr, ULONG pen)
+{
+    ULONG rgb[3];
+    GetRGB32(scr->ViewPort.ColorMap, pen, 1, rgb);
+    return ((rgb[0] >> 24) << 16) | ((rgb[1] >> 24) << 8) | (rgb[2] >> 24);
 }
 
 BOOL MmgAction_ApplyColorPreset(int idx)
@@ -667,15 +673,26 @@ BOOL MmgAction_ApplyColorPreset(int idx)
     if (idx < 0 || idx >= MMG_NUM_COLOR_PRESETS) return FALSE;
     if (!app || !app->editorObj) return FALSE;
 
-    app->settings.editorBgColor  = mmgColorPresets[idx].bg;
-    app->settings.editorPenColor = mmgColorPresets[idx].txt;
-
     getRaw(&g, &w);
     if (!g || !w) return FALSE;
-
     scr = w->WScreen;
-    bgPen  = rrggbbToPen(scr, mmgColorPresets[idx].bg);
-    txtPen = rrggbbToPen(scr, mmgColorPresets[idx].txt);
+
+    if (idx == 0) {
+        /* System colors: read the actual RRGGBB of pen 0 (background) and
+         * pen 1 (text) from the current screen palette and save them.
+         * This preserves the user's Intuition color prefs at the time of
+         * selection, so they survive screen mode changes via ApplyColorFromSettings. */
+        app->settings.editorBgColor  = penToRRGGBB(scr, 0);
+        app->settings.editorPenColor = penToRRGGBB(scr, 1);
+        bgPen  = 0;
+        txtPen = 1;
+    } else {
+        int si = idx - 1; /* map menu idx 1-5 to static table 0-4 */
+        app->settings.editorBgColor  = mmgColorPresets[si].bg;
+        app->settings.editorPenColor = mmgColorPresets[si].txt;
+        bgPen  = rrggbbToPen(scr, mmgColorPresets[si].bg);
+        txtPen = rrggbbToPen(scr, mmgColorPresets[si].txt);
+    }
 
     SetGadgetAttrs(g, w, NULL,
                    UTED_BgPen,   bgPen,
@@ -683,6 +700,36 @@ BOOL MmgAction_ApplyColorPreset(int idx)
                    TAG_DONE);
     RefreshGList(g, w, NULL, 1);
     return TRUE;
+}
+
+void MmgAction_ApplyColorFromSettings()
+{
+    struct Gadget *g; struct Window *w;
+    struct Screen *scr;
+    ULONG bgPen, txtPen;
+    if (!app || !app->editorObj) return;
+
+    getRaw(&g, &w);
+    if (!g || !w) return FALSE;
+
+    scr = w->WScreen;
+    bgPen  = rrggbbToPen(scr, app->settings.editorBgColor);
+    txtPen = rrggbbToPen(scr, app->settings.editorPenColor);
+
+    if(w)
+    {
+        SetGadgetAttrs(g, w, NULL,
+                   UTED_BgPen,   bgPen,
+                   UTED_TextPen, txtPen,
+                   TAG_DONE);
+    } else
+    {
+        /* important because sent before opening */
+         SetAttrs(g,UTED_BgPen,   bgPen,
+                   UTED_TextPen, txtPen,
+                   TAG_DONE);
+    }
+
 }
 
 /* =========================================================================
@@ -958,6 +1005,7 @@ BOOL MmgAction_ToggleAntialias(void)
     if (!app || !app->miToggleAntialias) return FALSE;
     GetAttr(MUIA_Menuitem_Checked, app->miToggleAntialias, &checked);
     app->settings.antialias = checked ? 1 : 0;
+ //   printf("app->settings.antialias:%d\n",app->settings.antialias);
     getRaw(&g, &w);
     AppSettings_ApplyToEditor(&app->settings, app->editorObj, g, w);
     return TRUE;

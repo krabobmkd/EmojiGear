@@ -52,10 +52,10 @@
  * Define here so both mmgemojibox.c and muimojiGear.c share the same values.
  * =========================================================================
  */
-#define RID_EMOJI_SET_CHANGE  51          /* MUIA_Cycle_Active changed          */
-#define RID_EMOJI_ANSI_BASE   52          /* 52..62: one per ANSI button (×11)  */
+#define RID_EMOJI_SET_CHANGE  52          /* MUIA_Cycle_Active changed          */
+#define RID_EMOJI_ANSI_BASE   53          /* 53..63: one per ANSI button (×11)  */
 #define MMG_NUM_ANSI_BTNS     11
-#define RID_EMOJI_BOX_MENU    63          /* "Emoji Box" Edit menu item         */
+#define RID_EMOJI_BOX_MENU    64          /* "Emoji Box" Edit menu item         */
 
 /* =========================================================================
  * Public API
@@ -79,6 +79,10 @@ void MmgEmojiBox_Dispose(void);
 /* Open / close the emoji box window (sets MUIA_Window_Open). */
 void MmgEmojiBox_Open(void);
 void MmgEmojiBox_Close(void);
+
+/* Call from the SIGBREAKF_CTRL_F handler after draining the BOOPSI queue.
+ * Redraws the emoji grid if a GM_RENDER was deferred due to wrong process. */
+void MmgEmojiBox_FlushPendingRender(void);
 
 /* Handle an F-key press from the UTED_InternalRawKey_Code notification.
  *   code      – raw RAWKEY code (0x50..0x59 = F1..F10)

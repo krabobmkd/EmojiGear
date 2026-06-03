@@ -354,6 +354,11 @@ void CloseSearchBox();
 
 int main(int argc, char **argv)
 {
+    if(SysBase->LibNode.lib_Version<47) {
+        printf("need OS3.2 (v47), you may upgrade, or try MUImojiGear\n");
+        return 1;
+    }
+
     atexit(&exitclose);
     /* Open all required libraries via table */
     {
@@ -789,6 +794,10 @@ int main(int argc, char **argv)
 
             /* exit app at any moment from Ctrl-C signal, atexit() magic does anything needed. */
             if(currentSignals & SIGBREAKF_CTRL_C) exit(0);
+
+            /* Flush any deferred emoji-grid render (wrong-process guard in GM_RENDER). */
+            if (currentSignals & SIGBREAKF_CTRL_F)
+                EmojiBoxWindow_FlushPendingRender(&app->emojiBoxWindow);
 
             /* Handle settings window input when its signal fires */
             if (currentSignals & settingsSig) {

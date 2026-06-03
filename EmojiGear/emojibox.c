@@ -673,6 +673,14 @@ typedef struct {
 #define EGRID_INST(cl,o) ((EmojiGridInst *)INST_DATA((cl),(o)))
 #define G(o)             ((struct Gadget *)(o))
 
+/* Main task pointer – used by the process guard in EmojiGrid_OnRender.
+ * Defined in emojigear.c; set before any window opens. */
+extern struct Task *myTask;
+
+/* Set when GM_RENDER is called from the wrong process context.
+ * Cleared by EmojiBoxWindow_FlushPendingRender() from the main task. */
+static volatile BOOL s_pendingGridRender = FALSE;
+
 /* Column and row header strings */
 static const char *colLabels[10] = {
     "F1","F2","F3","F4","F5","F6","F7","F8","F9","F10"
@@ -695,6 +703,14 @@ static ULONG EmojiGrid_OnRender(Class *cl, Object *o, struct gpRender *msg)
     WORD gw = g->Width,    gh = g->Height;
     WORD col, row;
     WORD fontH, baseLine;
+
+    /* utf8rastport must run in the correct process context.
+     * If Intuition calls us from a different task, defer and wake the main task. */
+    if (FindTask(NULL) != myTask) {
+        s_pendingGridRender = TRUE;
+        if (myTask) Signal(myTask, SIGBREAKF_CTRL_F);
+        return 0;
+    }
 
     if (!rp || gw <= 0 || gh <= 0) return 0;
 
@@ -1561,6 +1577,21 @@ ULONG EmojiBoxWindow_GetSignalMask(EmojiBoxWindow *ebw)
 {
     if (!ebw || !ebw->window) return 0;
     return (1UL << ebw->window->UserPort->mp_SigBit);
+}
+
+/* =========================================================================
+ * EmojiBoxWindow_FlushPendingRender
+ * Call from the main task when SIGBREAKF_CTRL_F fires.
+ * If a GM_RENDER was skipped due to a wrong-process call, this retriggers
+ * it safely via RefreshGList from the correct task context.
+ * =========================================================================
+ */
+void EmojiBoxWindow_FlushPendingRender(EmojiBoxWindow *ebw)
+{
+    if (!s_pendingGridRender) return;
+    s_pendingGridRender = FALSE;
+    if (!ebw || !ebw->window || !ebw->gridGadget) return;
+    RefreshGList((struct Gadget *)ebw->gridGadget, ebw->window, NULL, 1);
 }
 
 /* =========================================================================
