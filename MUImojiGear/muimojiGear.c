@@ -47,6 +47,8 @@
 
 #include <gadgets/unitexteditor.h>
 #include <proto/unitexteditor.h>
+#include <gadgets/unibutton.h>
+#include <proto/unibutton.h>
 
 #include "../EmojiGear/eglocale.h"
 #include "../EmojiGear/tooltypepref.h"
@@ -65,6 +67,7 @@ struct Library       *UtilityBase       = NULL;
 struct LocaleBase    *LocaleBase        = NULL;
 struct Library       *IconBase          = NULL;
 struct Library       *UniTextEditorBase = NULL;
+struct Library       *UniButtonBase     = NULL;
 struct Library       *AslBase           = NULL;
 
 /* Exposed to mmgboopsimessage.c */
@@ -89,7 +92,8 @@ MUI_NewObjectB(const char *cl, Tag tags, ...)
  */
 #define MMG_APPBASE  "MUIMOJIGEAIR"
 #define MMG_VERSION  "$VER: MUImojiGear 0.1 (2026)"
-#define GID_EDITOR   1
+#define GID_EDITOR        1
+#define GID_EMOJI_BUTTON  2
 
 /* MUIM_Application_ReturnID values */
 #define RID_QUIT        10
@@ -108,6 +112,20 @@ MUI_NewObjectB(const char *cl, Tag tags, ...)
 #define RID_SAVE_LATIN1 24
 #define RID_SAVE_LATIN2 25
 #define RID_RESIZE      26
+#define RID_COPY_LAT1   27
+#define RID_COPY_LAT2   28
+#define RID_PASTE_LAT1  29
+#define RID_PASTE_LAT2  30
+#define RID_FONTSIZE_P         31   /* Font size +  (Amiga++) */
+#define RID_FONTSIZE_M         32   /* Font size -  (Amiga+-) */
+#define RID_TOGGLE_ANTIALIAS   33
+#define RID_TOGGLE_WORDWRAP    34
+#define RID_TOGGLE_APPLYANSI   35
+#define RID_TOGGLE_VIZTABS     36
+#define RID_TOGGLE_TABSSPACES  37
+#define RID_COLOR_BASE         38   /* 38..42: one per color preset */
+#define MMG_NUM_COLOR_PRESETS   5
+#define RID_RECENT_BASE        43   /* 43..50: one per recent slot  */
 
 /* =========================================================================
  * Shared utilities  (declared in muimojiGear.h; used by mmgaction.c too)
@@ -136,7 +154,7 @@ void App_UpdateStatus(void)
 }
 
 /* =========================================================================
- * Scrollbar sync helpers (internal only)
+ * Scrollbar sync helpers
  * =========================================================================
  */
 
@@ -167,6 +185,9 @@ static void syncHScrollbar(void)
     GetAttr(UTED_ScrollLeft,   (Object *)g, &left);
     GetAttr(UTED_MaxLineWidth, (Object *)g, &maxWidth);
     GetAttr(GA_Width,          (Object *)g, &visible);
+
+  //  printf("ml:%d w:%d gw:%d\n",maxWidth,visible,(int)g->Width);
+
     if (visible == 0) return;
     if (maxWidth < visible) maxWidth = visible;
     SetAttrs(app->hScrollBar,
@@ -176,10 +197,23 @@ static void syncHScrollbar(void)
         TAG_DONE);
 }
 
+void App_SyncScrollbars(void) { syncVScrollbar(); syncHScrollbar(); }
+
 /* =========================================================================
  * Edit dispatch
  * =========================================================================
  */
+
+/* Re-activate the editor after a menu action stripped BOOPSI focus.
+ * MUIA_Window_ActiveObject requires MUIA_CycleChain=1 on the editor (set at
+ * creation) to work; it lets MUI handle the activation at the right moment,
+ * after it has finished processing any other pending IDCMP events. */
+void App_ReactivateEditor(void)
+{
+    if (app && app->winObj && app->editorObj)
+        SetAttrs(app->winObj, MUIA_Window_ActiveObject,
+                 (ULONG)app->editorObj, TAG_DONE);
+}
 
 static void doEditAction(ULONG attr)
 {
@@ -187,7 +221,7 @@ static void doEditAction(ULONG attr)
     App_GetRawEditorWin(&g, &w);
     if (g && w) {
         SetGadgetAttrs(g, w, NULL, attr, (ULONG)TRUE, TAG_DONE);
-        SetAttrs(app->winObj, MUIA_Window_ActiveObject, (ULONG)app->editorObj, TAG_DONE);
+       // App_ReactivateEditor();
     }
 }
 
@@ -201,9 +235,12 @@ int main(int argc, char *argv[])
 
     /* Intermediate layout objects (not stored in app – not needed after init) */
     Object *editorAndVGroup = NULL;
+    Object *statusBarGroup  = NULL;
     Object *menustrip       = NULL;
     Object *menuProj        = NULL;
     Object *menuEdit        = NULL;
+    Object *menuSettings    = NULL;
+    Object *menuColors      = NULL;
 
     (void)argc; (void)argv;
 
@@ -221,6 +258,9 @@ int main(int argc, char *argv[])
 
     UniTextEditorBase = OpenLibrary("gadgets/unitexteditor.gadget", 2L);
     if (!UniTextEditorBase) { puts("ERROR: unitexteditor.gadget v2+"); exitCode=1; goto cleanup; }
+
+    UniButtonBase = OpenLibrary("gadgets/unibutton.gadget", 2L);
+    if (!UniButtonBase) { puts("ERROR: unibutton.gadget v2+"); exitCode=1; goto cleanup; }
 
     AslBase = OpenLibrary("asl.library", 38L);
     if (!AslBase) { puts("ERROR: asl.library v38+"); exitCode=1; goto cleanup; }
@@ -268,6 +308,32 @@ int main(int argc, char *argv[])
     app->miSaveLat2 = MUI_NewObjectB(MUIC_Menuitem, MUIA_Menuitem_Title, (ULONG)LOC(MSG_FILE_SAVE_LATIN2), TAG_DONE);
     app->miQuit     = MUI_NewObjectB(MUIC_Menuitem, MUIA_Menuitem_Title, (ULONG)LOC(MSG_MENU_QUIT),
                                      MUIA_Menuitem_Shortcut, (ULONG)"Q", TAG_DONE);
+
+    /* Open Recent submenu – pre-allocate APPSETTINGS_MAX_RECENT slots,
+     * all disabled initially; MmgAction_RebuildRecentMenu() fills them. */
+    {
+        int i;
+        for (i = 0; i < APPSETTINGS_MAX_RECENT; i++) {
+            app->recentItemLabels[i][0] = '\0';
+            app->miRecentItem[i] = MUI_NewObjectB(MUIC_Menuitem,
+                MUIA_Menuitem_Title,   (ULONG)app->recentItemLabels[i],
+                MUIA_Menuitem_Enabled, FALSE,
+                TAG_DONE);
+        }
+        app->miOpenRecent = MUI_NewObjectB(MUIC_Menuitem,
+            MUIA_Menuitem_Title,   (ULONG)LOC(MSG_OPEN_RECENT),
+            MUIA_Menuitem_Enabled, FALSE,
+            MUIA_Family_Child, (ULONG)app->miRecentItem[0],
+            MUIA_Family_Child, (ULONG)app->miRecentItem[1],
+            MUIA_Family_Child, (ULONG)app->miRecentItem[2],
+            MUIA_Family_Child, (ULONG)app->miRecentItem[3],
+            MUIA_Family_Child, (ULONG)app->miRecentItem[4],
+            MUIA_Family_Child, (ULONG)app->miRecentItem[5],
+            MUIA_Family_Child, (ULONG)app->miRecentItem[6],
+            MUIA_Family_Child, (ULONG)app->miRecentItem[7],
+            TAG_DONE);
+    }
+
     menuProj = MUI_NewObjectB(MUIC_Menu,
         MUIA_Menu_Title,   (ULONG)LOC(MSG_MENU_PROJECT),
         MUIA_Family_Child, (ULONG)app->miNewFile,
@@ -275,6 +341,7 @@ int main(int argc, char *argv[])
         MUIA_Family_Child, (ULONG)app->miLoadUTF8,
         MUIA_Family_Child, (ULONG)app->miLoadLat1,
         MUIA_Family_Child, (ULONG)app->miLoadLat2,
+        MUIA_Family_Child, (ULONG)app->miOpenRecent,
         MUIA_Family_Child, (ULONG)MUI_NewObjectB(MUIC_Menuitem, MUIA_Menuitem_Title, (ULONG)NM_BARLABEL, TAG_DONE),
         MUIA_Family_Child, (ULONG)app->miSaveUTF8,
         MUIA_Family_Child, (ULONG)app->miSaveLat1,
@@ -283,28 +350,120 @@ int main(int argc, char *argv[])
         MUIA_Family_Child, (ULONG)app->miQuit,
         TAG_DONE);
 
-    app->miCut   = MUI_NewObjectB(MUIC_Menuitem, MUIA_Menuitem_Title, (ULONG)LOC(MSG_EDIT_CUT),
-                                  MUIA_Menuitem_Shortcut, (ULONG)"X", TAG_DONE);
-    app->miCopy  = MUI_NewObjectB(MUIC_Menuitem, MUIA_Menuitem_Title, (ULONG)LOC(MSG_EDIT_COPY),
-                                  MUIA_Menuitem_Shortcut, (ULONG)"C", TAG_DONE);
-    app->miPaste = MUI_NewObjectB(MUIC_Menuitem, MUIA_Menuitem_Title, (ULONG)LOC(MSG_EDIT_PASTE),
-                                  MUIA_Menuitem_Shortcut, (ULONG)"V", TAG_DONE);
-    app->miUndo  = MUI_NewObjectB(MUIC_Menuitem, MUIA_Menuitem_Title, (ULONG)LOC(MSG_EDIT_UNDO),
-                                  MUIA_Menuitem_Shortcut, (ULONG)"Z", TAG_DONE);
-    app->miRedo  = MUI_NewObjectB(MUIC_Menuitem, MUIA_Menuitem_Title, (ULONG)LOC(MSG_EDIT_REDO),
-                                  MUIA_Menuitem_Shortcut, (ULONG)"Y", TAG_DONE);
+    app->miCut       = MUI_NewObjectB(MUIC_Menuitem, MUIA_Menuitem_Title, (ULONG)LOC(MSG_EDIT_CUT),
+                                      MUIA_Menuitem_Shortcut, (ULONG)"X", TAG_DONE);
+    app->miCopy      = MUI_NewObjectB(MUIC_Menuitem, MUIA_Menuitem_Title, (ULONG)LOC(MSG_EDIT_COPY),
+                                      MUIA_Menuitem_Shortcut, (ULONG)"C", TAG_DONE);
+    app->miCopyLat1  = MUI_NewObjectB(MUIC_Menuitem, MUIA_Menuitem_Title, (ULONG)LOC(MSG_EDIT_COPY_LATIN1), TAG_DONE);
+    app->miCopyLat2  = MUI_NewObjectB(MUIC_Menuitem, MUIA_Menuitem_Title, (ULONG)LOC(MSG_EDIT_COPY_LATIN2), TAG_DONE);
+    app->miPaste     = MUI_NewObjectB(MUIC_Menuitem, MUIA_Menuitem_Title, (ULONG)LOC(MSG_EDIT_PASTE),
+                                      MUIA_Menuitem_Shortcut, (ULONG)"V", TAG_DONE);
+    app->miPasteLat1 = MUI_NewObjectB(MUIC_Menuitem, MUIA_Menuitem_Title, (ULONG)LOC(MSG_EDIT_PASTE_LATIN1), TAG_DONE);
+    app->miPasteLat2 = MUI_NewObjectB(MUIC_Menuitem, MUIA_Menuitem_Title, (ULONG)LOC(MSG_EDIT_PASTE_LATIN2), TAG_DONE);
+    app->miUndo      = MUI_NewObjectB(MUIC_Menuitem, MUIA_Menuitem_Title, (ULONG)LOC(MSG_EDIT_UNDO),
+                                      MUIA_Menuitem_Shortcut, (ULONG)"Z", TAG_DONE);
+    app->miRedo      = MUI_NewObjectB(MUIC_Menuitem, MUIA_Menuitem_Title, (ULONG)LOC(MSG_EDIT_REDO),
+                                      MUIA_Menuitem_Shortcut, (ULONG)"Y", TAG_DONE);
     menuEdit = MUI_NewObjectB(MUIC_Menu,
         MUIA_Menu_Title,   (ULONG)LOC(MSG_MENU_EDIT),
         MUIA_Family_Child, (ULONG)app->miCut,
         MUIA_Family_Child, (ULONG)app->miCopy,
+        MUIA_Family_Child, (ULONG)app->miCopyLat1,
+        MUIA_Family_Child, (ULONG)app->miCopyLat2,
+        MUIA_Family_Child, (ULONG)MUI_NewObjectB(MUIC_Menuitem, MUIA_Menuitem_Title, (ULONG)NM_BARLABEL, TAG_DONE),
         MUIA_Family_Child, (ULONG)app->miPaste,
+        MUIA_Family_Child, (ULONG)app->miPasteLat1,
+        MUIA_Family_Child, (ULONG)app->miPasteLat2,
         MUIA_Family_Child, (ULONG)MUI_NewObjectB(MUIC_Menuitem, MUIA_Menuitem_Title, (ULONG)NM_BARLABEL, TAG_DONE),
         MUIA_Family_Child, (ULONG)app->miUndo,
         MUIA_Family_Child, (ULONG)app->miRedo,
         TAG_DONE);
+    app->miSettFontSizePlus  = MUI_NewObjectB(MUIC_Menuitem,
+        MUIA_Menuitem_Title,    (ULONG)LOC(MSG_SETTING_FONTSIZEP),
+        MUIA_Menuitem_Shortcut, (ULONG)"+",
+        TAG_DONE);
+    app->miSettFontSizeMinus = MUI_NewObjectB(MUIC_Menuitem,
+        MUIA_Menuitem_Title,    (ULONG)LOC(MSG_SETTING_FONTSIZEM),
+        MUIA_Menuitem_Shortcut, (ULONG)"-",
+        TAG_DONE);
+
+    /* Checkit + Toggle items: Checkit shows the checkmark area, Toggle sets
+     * the Intuition MENUTOGGLE flag so the checked state flips on every
+     * selection.  Without Toggle, Intuition only ever sets the mark, never
+     * clears it.  Initial state comes from the loaded AppSettings. */
+    app->miToggleAntialias = MUI_NewObjectB(MUIC_Menuitem,
+        MUIA_Menuitem_Title,   (ULONG)LOC(MSG_FONTSETTINGS_ANTIALIAS),
+        MUIA_Menuitem_Checkit, TRUE,
+        MUIA_Menuitem_Toggle,  TRUE,
+        MUIA_Menuitem_Checked, (ULONG)(app->settings.antialias    ? TRUE : FALSE),
+        TAG_DONE);
+    app->miToggleWordWrap = MUI_NewObjectB(MUIC_Menuitem,
+        MUIA_Menuitem_Title,   (ULONG)LOC(MSG_SETTINGS_WORDWRAP),
+        MUIA_Menuitem_Checkit, TRUE,
+        MUIA_Menuitem_Toggle,  TRUE,
+        MUIA_Menuitem_Checked, (ULONG)(app->settings.wordWrap     ? TRUE : FALSE),
+        TAG_DONE);
+    app->miToggleApplyAnsi = MUI_NewObjectB(MUIC_Menuitem,
+        MUIA_Menuitem_Title,   (ULONG)LOC(MSG_SETTINGS_APPLYANSI),
+        MUIA_Menuitem_Checkit, TRUE,
+        MUIA_Menuitem_Toggle,  TRUE,
+        MUIA_Menuitem_Checked, (ULONG)(app->settings.applyAnsi    ? TRUE : FALSE),
+        TAG_DONE);
+    app->miToggleVisualizeTabs = MUI_NewObjectB(MUIC_Menuitem,
+        MUIA_Menuitem_Title,   (ULONG)LOC(MSG_SETTINGS_VISUALIZETABS),
+        MUIA_Menuitem_Checkit, TRUE,
+        MUIA_Menuitem_Toggle,  TRUE,
+        MUIA_Menuitem_Checked, (ULONG)(app->settings.visualizeTabs ? TRUE : FALSE),
+        TAG_DONE);
+    app->miToggleTabsAreSpaces = MUI_NewObjectB(MUIC_Menuitem,
+        MUIA_Menuitem_Title,   (ULONG)LOC(MSG_SETTINGS_TABSARESPACES),
+        MUIA_Menuitem_Checkit, TRUE,
+        MUIA_Menuitem_Toggle,  TRUE,
+        MUIA_Menuitem_Checked, (ULONG)(app->settings.tabsAreSpaces ? TRUE : FALSE),
+        TAG_DONE);
+
+    menuSettings = MUI_NewObjectB(MUIC_Menu,
+        MUIA_Menu_Title,   (ULONG)LOC(MSG_SETTINGS),
+        MUIA_Family_Child, (ULONG)app->miSettFontSizePlus,
+        MUIA_Family_Child, (ULONG)app->miSettFontSizeMinus,
+        MUIA_Family_Child, (ULONG)MUI_NewObjectB(MUIC_Menuitem, MUIA_Menuitem_Title, (ULONG)NM_BARLABEL, TAG_DONE),
+        MUIA_Family_Child, (ULONG)app->miToggleAntialias,
+        MUIA_Family_Child, (ULONG)app->miToggleWordWrap,
+        MUIA_Family_Child, (ULONG)app->miToggleApplyAnsi,
+        MUIA_Family_Child, (ULONG)app->miToggleVisualizeTabs,
+        MUIA_Family_Child, (ULONG)app->miToggleTabsAreSpaces,
+        TAG_DONE);
+
+    /* Colors menu – label strings are the preset descriptions themselves */
+    {
+        static const char * const presetNames[MMG_NUM_COLOR_PRESETS] = {
+            "Grey / Black",
+            "Black / White",
+            "White / Black",
+            "Dark Purple / White",
+            "Dark Blue / White",
+        };
+        int i;
+        for (i = 0; i < MMG_NUM_COLOR_PRESETS; i++)
+            app->miColorPreset[i] = MUI_NewObjectB(MUIC_Menuitem,
+                MUIA_Menuitem_Title, (ULONG)presetNames[i],
+                TAG_DONE);
+
+        menuColors = MUI_NewObjectB(MUIC_Menu,
+            MUIA_Menu_Title,   (ULONG)"Colors",
+            MUIA_Family_Child, (ULONG)app->miColorPreset[0],
+            MUIA_Family_Child, (ULONG)app->miColorPreset[1],
+            MUIA_Family_Child, (ULONG)app->miColorPreset[2],
+            MUIA_Family_Child, (ULONG)app->miColorPreset[3],
+            MUIA_Family_Child, (ULONG)app->miColorPreset[4],
+            TAG_DONE);
+    }
+
     menustrip = MUI_NewObjectB(MUIC_Menustrip,
         MUIA_Family_Child, (ULONG)menuProj,
         MUIA_Family_Child, (ULONG)menuEdit,
+        MUIA_Family_Child, (ULONG)menuSettings,
+        MUIA_Family_Child, (ULONG)menuColors,
         TAG_DONE);
 
     /* ------------------------------------------------------------------ */
@@ -318,9 +477,10 @@ int main(int argc, char *argv[])
         MUIA_Boopsi_Remember,         UTED_PointSize,
         MUIA_Boopsi_Remember,         UTED_KeyMessageMode,
         MUIA_Frame,                   MUIV_Frame_InputList,
-        GA_Left,   0, GA_Top, 0, GA_Width, 0, GA_Height, 0,
+//        GA_Left,   0, GA_Top, 0, GA_Width, 0, GA_Height, 0,
         GA_ID,                        GID_EDITOR,
         ICA_TARGET,                   (ULONG)MmgTargetInstance,
+        MUIA_CycleChain,              1,
         UTED_KeyMessageMode,          UKM_Internal,
         UTED_BevelStyle,              BVS_NONE,
         UTED_LeftMargin,              2,
@@ -343,12 +503,54 @@ int main(int argc, char *argv[])
     app->hScrollBar = MUI_NewObjectB(MUIC_Scrollbar, MUIA_Group_Horiz, TRUE, TAG_DONE);
     app->vScrollBar = MUI_NewObjectB(MUIC_Scrollbar, TAG_DONE);
 
+    /* Emoji button – compact, fixed to minimum size, anchored at right of status bar */
+    app->emojiBtnObj = MUI_NewObjectB(MUIC_Boopsi,
+        MUIA_Boopsi_Class,     (ULONG)UNIBUTTON_GetClass(),
+        MUIA_Boopsi_MinWidth,  24,
+        MUIA_Boopsi_MinHeight, 24,
+        MUIA_Boopsi_Smart,     TRUE,
+        MUIA_Boopsi_Remember,  UBT_PointSize,
+        MUIA_Frame,            MUIV_Frame_None,
+        MUIA_Weight,           0,
+       //no GA_Left,   0, GA_Top, 0, GA_Width, 0, GA_Height, 0,
+        GA_ID,                 GID_EMOJI_BUTTON,
+        ICA_TARGET,            (ULONG)MmgTargetInstance,
+        UBT_BevelStyle,        BVS_BUTTON,
+        UBT_PointSize,         14UL,
+        UBT_Transparent,       FALSE,
+        UBT_LeftMargin,        3UL,
+        UBT_RightMargin,       3UL,
+        UBT_TopMargin,         0UL,
+        UBT_BottomMargin,      3UL,
+        GA_Text,               (ULONG)"\xF0\x9F\x98\x80",   /* 😀 U+1F600 */
+        TAG_DONE);
+
+    /* Load emoji + fallback fonts into the button draw context */
+    if (app->emojiBtnObj) {
+        if (app->settings.emojiFontPath)
+            SetAttrs(app->emojiBtnObj, UBT_AddFont, (ULONG)app->settings.emojiFontPath, TAG_DONE);
+        if (app->settings.primaryFontPath)
+            SetAttrs(app->emojiBtnObj, UBT_AddFont, (ULONG)app->settings.primaryFontPath, TAG_DONE);
+    }
+
     editorAndVGroup = MUI_NewObjectB(MUIC_Group,
         MUIA_Group_Horiz,    TRUE,
         MUIA_Group_Spacing,  1,
         MUIA_Group_Child,    (ULONG)app->editorObj,
         MUIA_Group_Child,    (ULONG)app->vScrollBar,
         TAG_DONE);
+
+    /* Status bar: [status text, fills space] [emoji button, compact right] */
+    if (app->emojiBtnObj) {
+        statusBarGroup = MUI_NewObjectB(MUIC_Group,
+            MUIA_Group_Horiz,   TRUE,
+            MUIA_Group_Spacing, 2,
+            MUIA_Group_Child,   (ULONG)app->statusObj,
+            MUIA_Group_Child,   (ULONG)app->emojiBtnObj,
+            TAG_DONE);
+    } else {
+        statusBarGroup = app->statusObj;
+    }
 
     app->winObj = MUI_NewObjectB(MUIC_Window,
         MUIA_Window_Title,      (ULONG)"MUImojiGear",
@@ -357,7 +559,7 @@ int main(int argc, char *argv[])
             MUIA_Group_Spacing, 0,
             MUIA_Group_Child,   (ULONG)editorAndVGroup,
             MUIA_Group_Child,   (ULONG)app->hScrollBar,
-            MUIA_Group_Child,   (ULONG)app->statusObj,
+            MUIA_Group_Child,   (ULONG)statusBarGroup,
             TAG_DONE),
         TAG_DONE);
 
@@ -393,11 +595,42 @@ int main(int argc, char *argv[])
     NOTIFY(miSaveLat1, RID_SAVE_LATIN1);
     NOTIFY(miSaveLat2, RID_SAVE_LATIN2);
     NOTIFY(miQuit,     RID_QUIT);
-    NOTIFY(miCut,      RID_CUT);
-    NOTIFY(miCopy,     RID_COPY);
-    NOTIFY(miPaste,    RID_PASTE);
-    NOTIFY(miUndo,     RID_UNDO);
-    NOTIFY(miRedo,     RID_REDO);
+    NOTIFY(miCut,       RID_CUT);
+    NOTIFY(miCopy,      RID_COPY);
+    NOTIFY(miCopyLat1,  RID_COPY_LAT1);
+    NOTIFY(miCopyLat2,  RID_COPY_LAT2);
+    NOTIFY(miPaste,     RID_PASTE);
+    NOTIFY(miPasteLat1, RID_PASTE_LAT1);
+    NOTIFY(miPasteLat2, RID_PASTE_LAT2);
+    NOTIFY(miUndo,             RID_UNDO);
+    NOTIFY(miRedo,             RID_REDO);
+    NOTIFY(miSettFontSizePlus,    RID_FONTSIZE_P);
+    NOTIFY(miSettFontSizeMinus,   RID_FONTSIZE_M);
+    NOTIFY(miToggleAntialias,     RID_TOGGLE_ANTIALIAS);
+    NOTIFY(miToggleWordWrap,      RID_TOGGLE_WORDWRAP);
+    NOTIFY(miToggleApplyAnsi,     RID_TOGGLE_APPLYANSI);
+    NOTIFY(miToggleVisualizeTabs, RID_TOGGLE_VIZTABS);
+    NOTIFY(miToggleTabsAreSpaces, RID_TOGGLE_TABSSPACES);
+
+    {
+        int i;
+        for (i = 0; i < APPSETTINGS_MAX_RECENT; i++)
+            if (app->miRecentItem[i])
+                DoMethod(app->miRecentItem[i], MUIM_Notify,
+                         MUIA_Menuitem_Trigger, MUIV_EveryTime,
+                         app->appObj, 2, MUIM_Application_ReturnID,
+                         (ULONG)(RID_RECENT_BASE + i));
+    }
+
+    {
+        int i;
+        for (i = 0; i < MMG_NUM_COLOR_PRESETS; i++)
+            if (app->miColorPreset[i])
+                DoMethod(app->miColorPreset[i], MUIM_Notify,
+                         MUIA_Menuitem_Trigger, MUIV_EveryTime,
+                         app->appObj, 2, MUIM_Application_ReturnID,
+                         (ULONG)(RID_COLOR_BASE + i));
+    }
 #undef NOTIFY
 
     if (app->vScrollBar) DoMethod(app->vScrollBar, MUIM_Notify, MUIA_Prop_First, MUIV_EveryTime,
@@ -409,13 +642,17 @@ int main(int argc, char *argv[])
      * editor's visible area changes.  Both Width and Height are needed:
      * a taller window changes VisibleLines; a wider one changes the visible
      * pixel width used by the horizontal bar. */
+/* no too early, get resize from editor.
     DoMethod(app->winObj, MUIM_Notify, MUIA_Window_Width,  MUIV_EveryTime,
              app->appObj, 2, MUIM_Application_ReturnID, RID_RESIZE);
     DoMethod(app->winObj, MUIM_Notify, MUIA_Window_Height, MUIV_EveryTime,
              app->appObj, 2, MUIM_Application_ReturnID, RID_RESIZE);
-
+*/
     syncVScrollbar();
     syncHScrollbar();
+
+    /* Populate recent files menu from loaded settings */
+    MmgAction_RebuildRecentMenu();
 
     /* ------------------------------------------------------------------ */
     /* Open window                                                          */
@@ -431,6 +668,7 @@ int main(int argc, char *argv[])
     {
         ULONG muisigs    = 0;
         BOOL  running = TRUE;
+        BOOL reactivateEditor=FALSE;
 
         while (running) {
             ULONG r;
@@ -452,18 +690,44 @@ int main(int argc, char *argv[])
                 break;
             }
 
-            case RID_CUT:   doEditAction(UTED_ApplyCut);   break;
-            case RID_COPY:  doEditAction(UTED_ApplyCopy);  break;
-            case RID_PASTE: doEditAction(UTED_ApplyPaste); break;
-            case RID_UNDO:  doEditAction(UTED_Undo);       break;
-            case RID_REDO:  doEditAction(UTED_Redo);       break;
+            case RID_CUT:        doEditAction(UTED_ApplyCut); reactivateEditor = TRUE;   break;
+            case RID_COPY:       doEditAction(UTED_ApplyCopy);  reactivateEditor = TRUE;   break;
+            case RID_COPY_LAT1:  MmgAction_CopyLatin1();  reactivateEditor = TRUE;         break;
+            case RID_COPY_LAT2:  MmgAction_CopyLatin2();   reactivateEditor = TRUE;        break;
+            case RID_PASTE:      doEditAction(UTED_ApplyPaste); reactivateEditor = TRUE;   break;
+            case RID_PASTE_LAT1: MmgAction_PasteLatin1();    reactivateEditor = TRUE;      break;
+            case RID_PASTE_LAT2: MmgAction_PasteLatin2();   reactivateEditor = TRUE;       break;
+            case RID_UNDO:       doEditAction(UTED_Undo);   reactivateEditor = TRUE;       break;
+            case RID_REDO:       doEditAction(UTED_Redo);    reactivateEditor = TRUE;      break;
+            case RID_FONTSIZE_P:        MmgAction_FontSizePlus();  reactivateEditor = TRUE;        break;
+            case RID_FONTSIZE_M:        MmgAction_FontSizeMinus();  reactivateEditor = TRUE;       break;
+            case RID_TOGGLE_ANTIALIAS:  MmgAction_ToggleAntialias(); reactivateEditor = TRUE;      break;
+            case RID_TOGGLE_WORDWRAP:   MmgAction_ToggleWordWrap();  reactivateEditor = TRUE;      break;
+            case RID_TOGGLE_APPLYANSI:  MmgAction_ToggleApplyAnsi();   reactivateEditor = TRUE;    break;
+            case RID_TOGGLE_VIZTABS:    MmgAction_ToggleVisualizeTabs();  reactivateEditor = TRUE;  break;
+            case RID_TOGGLE_TABSSPACES: MmgAction_ToggleTabsAreSpaces(); reactivateEditor = TRUE;  break;
 
-            case RID_LOAD_UTF8:   MmgAction_LoadUTF8();   break;
-            case RID_LOAD_LATIN1: MmgAction_LoadLatin1(); break;
-            case RID_LOAD_LATIN2: MmgAction_LoadLatin2(); break;
-            case RID_SAVE_UTF8:   MmgAction_SaveUTF8();   break;
-            case RID_SAVE_LATIN1: MmgAction_SaveLatin1(); break;
-            case RID_SAVE_LATIN2: MmgAction_SaveLatin2(); break;
+            default:
+                if (r >= RID_RECENT_BASE &&
+                    r <  RID_RECENT_BASE + APPSETTINGS_MAX_RECENT)
+                    {
+                    MmgAction_OpenRecentFile((int)(r - RID_RECENT_BASE));
+                    reactivateEditor = TRUE;
+                    }
+                else if (r >= RID_COLOR_BASE &&
+                         r <  RID_COLOR_BASE + MMG_NUM_COLOR_PRESETS)
+                    {
+                    MmgAction_ApplyColorPreset((int)(r - RID_COLOR_BASE));
+                    reactivateEditor = TRUE;
+                    }
+                break;
+
+            case RID_LOAD_UTF8:   MmgAction_LoadUTF8();  reactivateEditor = TRUE;   break;
+            case RID_LOAD_LATIN1: MmgAction_LoadLatin1();  reactivateEditor = TRUE; break;
+            case RID_LOAD_LATIN2: MmgAction_LoadLatin2(); reactivateEditor = TRUE;  break;
+            case RID_SAVE_UTF8:   MmgAction_SaveUTF8();   reactivateEditor = TRUE;  break;
+            case RID_SAVE_LATIN1: MmgAction_SaveLatin1(); reactivateEditor = TRUE;  break;
+            case RID_SAVE_LATIN2: MmgAction_SaveLatin2();  reactivateEditor = TRUE; break;
 
             case RID_VSCROLL: {
                 ULONG newTop = 0;
@@ -487,50 +751,79 @@ int main(int argc, char *argv[])
                 }
                 break;
             }
-
-            case RID_RESIZE:
-                /* Window was resized: update scrollbar domains to reflect
-                 * the new visible area without waiting for a BOOPSI notification. */
-                syncVScrollbar();
-                syncHScrollbar();
-                break;
+            /* finaly not, need layout resize, not window */
+            // case RID_RESIZE:
+            //     /* Window was resized: update scrollbar domains to reflect
+            //      * the new visible area without waiting for a BOOPSI notification. */
+            //      printf("RID_RESIZE\n");
+            //     syncVScrollbar();
+            //     syncHScrollbar();
+            //     break;
             }
+
 
             if (!running) break;
 
-            if (muisigs) {
+            if(muisigs)
+            {
                 ULONG sigs;
-          //      printf("bef w\n");
+                struct Gadget  *g = NULL;
+                struct Window  *w = NULL;
+
+                App_GetRawEditorWin(&g, &w);
+
                 sigs = Wait(muisigs | SIGBREAKF_CTRL_C | SIGBREAKF_CTRL_F);
                 if (sigs & SIGBREAKF_CTRL_C) { running = FALSE; break; }
 
                 if (sigs & SIGBREAKF_CTRL_F) {
                     struct TagItem *msg;
-                    struct Gadget  *g = NULL;
-                    struct Window  *w = NULL;
+
                     BOOL needRedraw = FALSE, needStatus = FALSE;
-  //  printf("boopsi mess!\n");
-                    App_GetRawEditorWin(&g, &w);
+
                     while ((msg = MmgBoopsi_NextMessage()) != NULL) {
-                //     printf("one bmess!\n");
-                        if (FindTagItem(UTEDN_CursorMoved,  msg) ||
-                            FindTagItem(UTEDN_ScrollChanged, msg) ||
-                            FindTagItem(UTED_ScrollLeft,     msg))
+
+                        if (FindTagItem(UTEDN_CursorMoved,       msg) ||
+                            FindTagItem(UTEDN_ScrollChanged,      msg) ||
+                            FindTagItem(UTED_ScrollLeft,          msg) ||
+                            FindTagItem(UTED_SetPrivateActivation, msg))
                             needRedraw = TRUE;
                         if (FindTagItem(UTEDN_TextChanged, msg) ||
                             FindTagItem(UTED_Modified,     msg))
                         { needRedraw = TRUE; needStatus = TRUE; }
+
+                        /* Emoji button click: GA_Selected=TRUE from GID_EMOJI_BUTTON */
+                        {
+                            struct TagItem *idTag = FindTagItem(GA_ID, msg);
+                            if (idTag && idTag->ti_Data == GID_EMOJI_BUTTON &&
+                                FindTagItem(GA_Selected, msg))
+                                {
+                                //printf("emoji button clicked!\n");
+                                }
+                        }
                     }
-  //  printf("needRedraw %d needStatus:%d\n",(int)needRedraw,needStatus);
-                    if (needRedraw && g && w) {
+
+                    if (needRedraw && g && w)
+                    {
                         RefreshGList(g, w, NULL, 1);
                         syncVScrollbar();
                         syncHScrollbar();
                     }
                     if (needStatus) App_UpdateStatus();
                 }
-            }
-        } /* end while running*/
+                if( reactivateEditor && w && g)
+                {
+                    if((g->Activation & GACT_ACTIVEGADGET)==0 )
+                    {
+                        /* This will make the canva receive mouse move. */
+                        //App_ReactivateEditor();
+                        ActivateGadget(g,w,NULL );
+                    }
+                    reactivateEditor = NULL;
+                }
+
+            } /* if ever MUI messages */
+
+        }/* end while running*/
     }
 
 cleanup:
@@ -553,6 +846,7 @@ cleanup:
     if (MUIMasterBase)     CloseLibrary(MUIMasterBase);
     if (AslBase)           CloseLibrary(AslBase);
     if (UniTextEditorBase) CloseLibrary(UniTextEditorBase);
+    if (UniButtonBase)     CloseLibrary(UniButtonBase);
     if (IconBase)          CloseLibrary(IconBase);
     if (LocaleBase)        CloseLibrary((struct Library *)LocaleBase);
     if (IntuitionBase)     CloseLibrary((struct Library *)IntuitionBase);

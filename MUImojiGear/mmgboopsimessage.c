@@ -66,6 +66,7 @@ static const ULONG delayedAttribs[] = {
     UTED_CursorChar,
     UTED_ScrollLeft,      /* horizontal scroll position changed */
     UTED_SetPrivateActivation,
+    GA_Selected,          /* UniButton press notification */
 };
 
 #define N_DELAYED ((ULONG)(sizeof(delayedAttribs) / sizeof(delayedAttribs[0])))

@@ -181,7 +181,6 @@ static void uted_do_layout( Class *cl, Object *o,
         inst->redrawBevel = TRUE;
     }
 
-
 }
 
 /* =========================================================================
@@ -203,7 +202,11 @@ ULONG UniTextEditor_OnLayout(Class *cl, Object *o, struct gpLayout *msg)
     {
 
         uted_do_layout(cl,o, G(o)->Width, G(o)->Height, msg->gpl_GInfo->gi_Screen);
-
+        /* MUI integration need scroller refresh at this level */
+        // if (msg->gpl_GInfo)
+        // {
+        //     uted_notify(cl, o, msg->gpl_GInfo, UTEDN_ScrollChanged, inst->scrollTopLine);
+        // }
     }else
     if (msg->gpl_GInfo)
     {

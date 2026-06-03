@@ -35,12 +35,17 @@
 #include <dos/dos.h>
 #include <libraries/mui.h>     /* MUIA_Boopsi_Object, MUIA_Window_Window constants */
 #include <libraries/asl.h>
+#include <devices/clipboard.h>  /* struct IOClipReq, CMD_UPDATE */
+#include <proto/graphics.h>     /* FindColor */
+#include <graphics/view.h>      /* struct ColorMap */
+#include <intuition/screens.h>  /* struct Screen */
 #include <gadgets/unitexteditor.h>
 #include <proto/unitexteditor.h>
 
 /* Library bases are opened (and owned) by muimojiGear.c */
 extern struct Library       *AslBase;
 extern struct IntuitionBase *IntuitionBase;
+extern struct GfxBase       *GfxBase;     /* needed by FindColor */
 
 extern struct Task *mmgMainTask;
 
@@ -113,7 +118,7 @@ static char *asl_request_file(const char *title, BOOL saveMode)
         ULONG fileLen = (ULONG)strlen(req->fr_File);
         ULONG total   = dirLen + 1 + fileLen + 1;
 
-  //re,test      if (app) AppSettings_SetLastDir(&app->settings, req->fr_Drawer);
+        if (app) AppSettings_SetLastDir(&app->settings, req->fr_Drawer);
 
         result = (char *)AllocVec(total, MEMF_ANY);
         if (result) {
@@ -448,9 +453,7 @@ static BOOL load_file(const char *path, int encoding, int *actual_enc)
         } else {
             if(rawW)
             {
-             printf("before SetGadgetAttrs UTED_Text\n");
                 SetGadgetAttrs(rawG,rawW,NULL, UTED_Text, (ULONG)text, TAG_DONE);
-             printf("aft SetGadgetAttrs UTED_Text\n");
             }
             else
                 SetAttrs(rawG, UTED_Text, (ULONG)text, TAG_DONE);
@@ -477,16 +480,15 @@ static BOOL load_file(const char *path, int encoding, int *actual_enc)
     ok = TRUE;
 
     // if (rawG && rawW) RefreshGList(rawG, rawW, NULL, 1);
-    printf("bef App_UpdateStatus\n");
     App_UpdateStatus();
-    printf("aft App_UpdateStatus\n");
+
     if (conv) FreeVec(conv);
     FreeVec(buf);
 
  //doesnt help
 // DoMethod(app->appObj, MUIM_Application_CheckRefresh);
 
-    printf("ok\n");
+    //printf("ok\n");
   //test  if (mmgMainTask) Signal(mmgMainTask, SIGBREAKF_CTRL_F);
     return ok;
 }
@@ -548,6 +550,7 @@ static BOOL save_file(const char *title, int encoding)
             /* Clear modified flag */
             SetAttrs(app->editorObj, UTED_Modified, FALSE, TAG_DONE);
             AppSettings_AddRecentFile(&app->settings, path, encoding);
+            MmgAction_RebuildRecentMenu();
             ok = TRUE;
         } else {
             printf("%s: %s\n", LOC(MSG_ERROR_SAVEFILE), path);
@@ -578,9 +581,8 @@ BOOL MmgAction_LoadUTF8(void)
 
     if (!path) return FALSE;
     ok = load_file(path, 0, &enc);
-    if (ok) AppSettings_AddRecentFile(&app->settings, path, enc);
-
-   FreeVec(path);
+    if (ok) { AppSettings_AddRecentFile(&app->settings, path, enc); MmgAction_RebuildRecentMenu(); }
+    FreeVec(path);
     return ok;
 }
 
@@ -592,7 +594,7 @@ BOOL MmgAction_LoadLatin1(void)
     path = asl_request_file(LOC(MSG_FILE_LOAD_LATIN1), FALSE);
     if (!path) return FALSE;
     ok = load_file(path, 1, NULL);
-    if (ok) AppSettings_AddRecentFile(&app->settings, path, 1);
+    if (ok) { AppSettings_AddRecentFile(&app->settings, path, 1); MmgAction_RebuildRecentMenu(); }
     FreeVec(path);
     return ok;
 }
@@ -605,7 +607,7 @@ BOOL MmgAction_LoadLatin2(void)
     path = asl_request_file(LOC(MSG_FILE_LOAD_LATIN2), FALSE);
     if (!path) return FALSE;
     ok = load_file(path, 2, NULL);
-    if (ok) AppSettings_AddRecentFile(&app->settings, path, 2);
+    if (ok) { AppSettings_AddRecentFile(&app->settings, path, 2); MmgAction_RebuildRecentMenu(); }
     FreeVec(path);
     return ok;
 }
@@ -613,3 +615,456 @@ BOOL MmgAction_LoadLatin2(void)
 BOOL MmgAction_SaveUTF8(void)   { return save_file(LOC(MSG_FILE_SAVE_UTF8),   0); }
 BOOL MmgAction_SaveLatin1(void) { return save_file(LOC(MSG_FILE_SAVE_LATIN1), 1); }
 BOOL MmgAction_SaveLatin2(void) { return save_file(LOC(MSG_FILE_SAVE_LATIN2), 2); }
+
+/* =========================================================================
+ * Color presets
+ * =========================================================================
+ */
+
+#define MMG_NUM_COLOR_PRESETS 5
+
+static const struct {
+    ULONG bg;    /* 0x00RRGGBB editor background */
+    ULONG txt;   /* 0x00RRGGBB editor text pen   */
+} mmgColorPresets[MMG_NUM_COLOR_PRESETS] = {
+    { 0x00AAAAAA, 0x00000000 }, /* Grey / Black         – Amiga default feel */
+    { 0x00000000, 0x00FFFFFF }, /* Black / White        – terminal classic    */
+    { 0x00FFFFFF, 0x00000000 }, /* White / Black        – paper feel          */
+    { 0x00300A24, 0x00FFFFFF }, /* Dark Purple / White  – Ubuntu terminal     */
+    { 0x00001B35, 0x00FFFFFF }, /* Dark Blue / White    – deep navy           */
+};
+
+/* Convert a 0x00RRGGBB value to the nearest available pen index on *scr.
+ * Each 8-bit component is expanded to 32-bit for FindColor (Amiga convention). */
+static ULONG rrggbbToPen(struct Screen *scr, ULONG rrggbb)
+{
+    ULONG r = ((rrggbb >> 16) & 0xFF) * 0x01010101UL;
+    ULONG g = ((rrggbb >>  8) & 0xFF) * 0x01010101UL;
+    ULONG b = ( rrggbb        & 0xFF) * 0x01010101UL;
+    LONG  maxPens = (LONG)(1 << scr->RastPort.BitMap->Depth);
+    LONG  found;
+    if (maxPens > 256) maxPens = 256;
+    found = FindColor(scr->ViewPort.ColorMap, r, g, b, maxPens - 1);
+    return (found >= 0) ? (ULONG)found : 0;
+}
+
+BOOL MmgAction_ApplyColorPreset(int idx)
+{
+    struct Gadget *g; struct Window *w;
+    struct Screen *scr;
+    ULONG bgPen, txtPen;
+
+    if (idx < 0 || idx >= MMG_NUM_COLOR_PRESETS) return FALSE;
+    if (!app || !app->editorObj) return FALSE;
+
+    app->settings.editorBgColor  = mmgColorPresets[idx].bg;
+    app->settings.editorPenColor = mmgColorPresets[idx].txt;
+
+    getRaw(&g, &w);
+    if (!g || !w) return FALSE;
+
+    scr = w->WScreen;
+    bgPen  = rrggbbToPen(scr, mmgColorPresets[idx].bg);
+    txtPen = rrggbbToPen(scr, mmgColorPresets[idx].txt);
+
+    SetGadgetAttrs(g, w, NULL,
+                   UTED_BgPen,   bgPen,
+                   UTED_TextPen, txtPen,
+                   TAG_DONE);
+    RefreshGList(g, w, NULL, 1);
+    return TRUE;
+}
+
+/* =========================================================================
+ * Clipboard I/O helpers for Latin copy/paste
+ * (Standard UTF-8 copy/paste is handled by the gadget via UTED_ApplyCopy /
+ * UTED_ApplyPaste.  These helpers are only for encoding-converted variants.)
+ * =========================================================================
+ */
+
+static BOOL clip_write4(struct IOClipReq *ior, const void *data)
+{
+    ior->io_Data    = (STRPTR)data;
+    ior->io_Length  = 4;
+    ior->io_Command = CMD_WRITE;
+    DoIO((struct IORequest *)ior);
+    return (ior->io_Actual == 4 && !ior->io_Error);
+}
+
+static BOOL clipboard_write(const char *text, ULONG len)
+{
+    struct MsgPort   *port;
+    struct IOClipReq  ior;
+    ULONG             formBodyLen;
+    BOOL              odd;
+    const UBYTE       zero = 0;
+
+    if (!text || len == 0) return FALSE;
+    port = CreateMsgPort();
+    if (!port) return FALSE;
+
+    memset(&ior, 0, sizeof(ior));
+    ior.io_Message.mn_ReplyPort = port;
+    ior.io_Message.mn_Length    = sizeof(ior);
+
+    if (OpenDevice("clipboard.device", 0, (struct IORequest *)&ior, 0) != 0) {
+        DeleteMsgPort(port);
+        return FALSE;
+    }
+
+    odd = (len & 1);
+    formBodyLen = 12 + (odd ? len + 1 : len);
+    ior.io_Offset = 0; ior.io_Error = 0; ior.io_ClipID = 0;
+
+    clip_write4(&ior, "FORM");
+    clip_write4(&ior, &formBodyLen);
+    clip_write4(&ior, "FTXT");
+    clip_write4(&ior, "CHRS");
+    clip_write4(&ior, &len);
+
+    ior.io_Data    = (STRPTR)text;
+    ior.io_Length  = len;
+    ior.io_Command = CMD_WRITE;
+    DoIO((struct IORequest *)&ior);
+
+    if (odd) {
+        ior.io_Data   = (STRPTR)&zero;
+        ior.io_Length = 1;
+        DoIO((struct IORequest *)&ior);
+    }
+    ior.io_Command = CMD_UPDATE;
+    DoIO((struct IORequest *)&ior);
+
+    CloseDevice((struct IORequest *)&ior);
+    DeleteMsgPort(port);
+    return (ior.io_Error == 0);
+}
+
+static char *clipboard_read(void)
+{
+    struct MsgPort   *port;
+    struct IOClipReq  ior;
+    UBYTE             hdr[8];
+    UBYTE            *body   = NULL;
+    char             *result = NULL;
+    ULONG             formSize;
+
+    port = CreateMsgPort();
+    if (!port) return NULL;
+
+    memset(&ior, 0, sizeof(ior));
+    ior.io_Message.mn_ReplyPort = port;
+    ior.io_Message.mn_Length    = sizeof(ior);
+
+    if (OpenDevice("clipboard.device", 0, (struct IORequest *)&ior, 0)) {
+        DeleteMsgPort(port);
+        return NULL;
+    }
+
+    ior.io_Command = CMD_READ;
+    ior.io_Offset  = 0;
+    ior.io_Data    = (STRPTR)hdr;
+    ior.io_Length  = 8;
+    DoIO((struct IORequest *)&ior);
+
+    if (ior.io_Actual < 8)                                         goto done;
+    if (hdr[0]!='F'||hdr[1]!='O'||hdr[2]!='R'||hdr[3]!='M')     goto done;
+
+    formSize = ((ULONG)hdr[4]<<24)|((ULONG)hdr[5]<<16)|
+               ((ULONG)hdr[6]<<8) |(ULONG)hdr[7];
+    if (formSize < 4 || formSize > 4UL*1024UL*1024UL)              goto done;
+
+    body = (UBYTE *)AllocVec(formSize, MEMF_ANY);
+    if (!body)                                                      goto done;
+
+    ior.io_Command = CMD_READ;
+    ior.io_Offset  = 8;
+    ior.io_Data    = (STRPTR)body;
+    ior.io_Length  = formSize;
+    DoIO((struct IORequest *)&ior);
+
+    if (ior.io_Actual < 4)                                         goto done;
+    if (body[0]!='F'||body[1]!='T'||body[2]!='X'||body[3]!='T')  goto done;
+
+    {
+        ULONG pos    = 4;
+        ULONG actual = ior.io_Actual;
+        while (pos + 8 <= actual) {
+            ULONG cid = ((ULONG)body[pos  ]<<24)|((ULONG)body[pos+1]<<16)|
+                        ((ULONG)body[pos+2]<< 8)| (ULONG)body[pos+3];
+            ULONG csz = ((ULONG)body[pos+4]<<24)|((ULONG)body[pos+5]<<16)|
+                        ((ULONG)body[pos+6]<< 8)| (ULONG)body[pos+7];
+            pos += 8;
+            if (cid == 0x43485253UL) { /* 'CHRS' */
+                ULONG avail = (actual > pos) ? (actual - pos) : 0;
+                ULONG len   = (csz < avail) ? csz : avail;
+                if (len > 0) {
+                    result = (char *)AllocVec(len + 1, MEMF_ANY);
+                    if (result) { CopyMem(&body[pos], result, len); result[len] = '\0'; }
+                }
+                break;
+            }
+            pos += (csz + 1) & ~1UL;
+        }
+    }
+
+done:
+    if (body) FreeVec(body);
+    CloseDevice((struct IORequest *)&ior);
+    DeleteMsgPort(port);
+    return result;
+}
+
+/* =========================================================================
+ * Copy / Paste as Latin-1 or Latin-2
+ * =========================================================================
+ */
+
+static BOOL copy_encoded(int encoding)
+{
+    struct Gadget *g = NULL; struct Window *w = NULL;
+    char  *selText = NULL;
+    ULONG  textPtr = 0;
+    char  *conv;
+    ULONG  convLen = 0;
+    BOOL   ok;
+
+    App_GetRawEditorWin(&g, &w);
+    if (!g) return FALSE;
+
+    GetAttr(UTED_GetSelectedText, (Object *)g, &textPtr);
+    selText = (char *)textPtr;
+    if (!selText) return FALSE;
+
+    conv = (encoding == 2)
+         ? utf8_to_latin2(selText, (ULONG)strlen(selText), &convLen)
+         : utf8_to_latin1(selText, (ULONG)strlen(selText), &convLen);
+    FreeVec(selText);
+    if (!conv) return FALSE;
+
+    ok = clipboard_write(conv, convLen);
+    FreeVec(conv);
+    App_ReactivateEditor();
+    return ok;
+}
+
+static BOOL paste_encoded(int encoding)
+{
+    struct Gadget *g = NULL; struct Window *w = NULL;
+    char  *raw;
+    char  *utf8;
+
+    App_GetRawEditorWin(&g, &w);
+    if (!g) return FALSE;
+
+    raw = clipboard_read();
+    if (!raw) return FALSE;
+
+    utf8 = convert_to_utf8(raw, (LONG)strlen(raw), encoding);
+    FreeVec(raw);
+    if (!utf8) return FALSE;
+
+    SetAttrs(app->editorObj, UTED_InsertText, (ULONG)utf8, TAG_DONE);
+    FreeVec(utf8);
+
+    if (g && w) RefreshGList(g, w, NULL, 1);
+    App_UpdateStatus();
+    App_ReactivateEditor();
+    return TRUE;
+}
+
+BOOL MmgAction_CopyLatin1(void)  { return copy_encoded(1); }
+BOOL MmgAction_CopyLatin2(void)  { return copy_encoded(2); }
+BOOL MmgAction_PasteLatin1(void) { return paste_encoded(1); }
+BOOL MmgAction_PasteLatin2(void) { return paste_encoded(2); }
+
+/* =========================================================================
+ * Font size actions
+ * Mirrors EmojiGear's Action_SettingsFontSizePlus / Minus.
+ * Changes currentFontSizeIndex and applies UTED_PointSize immediately.
+ * =========================================================================
+ */
+
+static BOOL font_size_step(int delta)
+{
+    struct Gadget *g; struct Window *w;
+    int newIdx;
+
+    if (!app || !app->editorObj) return FALSE;
+
+    newIdx = app->settings.currentFontSizeIndex + delta;
+    if (newIdx < 0 || newIdx >= mmgFontSizeTableCount) return FALSE;
+
+    app->settings.currentFontSizeIndex = newIdx;
+
+    /* Apply the new point size.  The gadget remembers its font paths so we
+     * only need to change the size, not flush/reload the whole font stack. */
+    getRaw(&g, &w);
+    if (g && w) {
+        SetGadgetAttrs(g, w, NULL,
+                       UTED_PointSize, (ULONG)mmgFontSizeTable[newIdx],
+                       TAG_DONE);
+        RefreshGList(g, w, NULL, 1);
+    } else {
+        SetAttrs(app->editorObj,
+                 UTED_PointSize, (ULONG)mmgFontSizeTable[newIdx],
+                 TAG_DONE);
+    }
+    App_UpdateStatus();
+    return TRUE;
+}
+
+BOOL MmgAction_FontSizePlus(void)  { return font_size_step(+1); }
+BOOL MmgAction_FontSizeMinus(void) { return font_size_step(-1); }
+
+/* =========================================================================
+ * Boolean setting toggles
+ *
+ * MUI automatically flips MUIA_Menuitem_Checked when a Checkit item is
+ * selected, so we read the new state from the item, store it in
+ * app->settings, and apply it to the editor.
+ *
+ * antialias affects the URP rendering flags → full AppSettings_ApplyToEditor.
+ * The remaining booleans map to a single UTED_ attribute each.
+ * =========================================================================
+ */
+
+static void apply_single_bool(ULONG attr, ULONG value)
+{
+    struct Gadget *g; struct Window *w;
+    getRaw(&g, &w);
+    if (g && w) {
+        SetGadgetAttrs(g, w, NULL, attr, value, TAG_DONE);
+        RefreshGList(g, w, NULL, 1);
+    } else {
+        SetAttrs(app->editorObj, attr, value, TAG_DONE);
+    }
+}
+
+BOOL MmgAction_ToggleAntialias(void)
+{
+    struct Gadget *g; struct Window *w;
+    ULONG checked = 0;
+    if (!app || !app->miToggleAntialias) return FALSE;
+    GetAttr(MUIA_Menuitem_Checked, app->miToggleAntialias, &checked);
+    app->settings.antialias = checked ? 1 : 0;
+    getRaw(&g, &w);
+    AppSettings_ApplyToEditor(&app->settings, app->editorObj, g, w);
+    return TRUE;
+}
+
+BOOL MmgAction_ToggleWordWrap(void)
+{
+    ULONG checked = 0;
+    if (!app || !app->miToggleWordWrap) return FALSE;
+    GetAttr(MUIA_Menuitem_Checked, app->miToggleWordWrap, &checked);
+    app->settings.wordWrap = checked ? 1 : 0;
+    apply_single_bool(UTED_WordWrap, (ULONG)app->settings.wordWrap);
+    /* Word wrap rebuilds the visual line map → scroll domain changes */
+    App_SyncScrollbars();
+    return TRUE;
+}
+
+BOOL MmgAction_ToggleApplyAnsi(void)
+{
+    ULONG checked = 0;
+    if (!app || !app->miToggleApplyAnsi) return FALSE;
+    GetAttr(MUIA_Menuitem_Checked, app->miToggleApplyAnsi, &checked);
+    app->settings.applyAnsi = checked ? 1 : 0;
+    apply_single_bool(UTED_ApplyAnsiEscapes, (ULONG)app->settings.applyAnsi);
+    return TRUE;
+}
+
+BOOL MmgAction_ToggleVisualizeTabs(void)
+{
+    ULONG checked = 0;
+    if (!app || !app->miToggleVisualizeTabs) return FALSE;
+    GetAttr(MUIA_Menuitem_Checked, app->miToggleVisualizeTabs, &checked);
+    app->settings.visualizeTabs = checked ? 1 : 0;
+    apply_single_bool(UTED_VisibleTabs, (ULONG)app->settings.visualizeTabs);
+    return TRUE;
+}
+
+BOOL MmgAction_ToggleTabsAreSpaces(void)
+{
+    ULONG checked = 0;
+    if (!app || !app->miToggleTabsAreSpaces) return FALSE;
+    GetAttr(MUIA_Menuitem_Checked, app->miToggleTabsAreSpaces, &checked);
+    app->settings.tabsAreSpaces = checked ? 1 : 0;
+    apply_single_bool(UTED_TabsAreSpaces, (ULONG)app->settings.tabsAreSpaces);
+    return TRUE;
+}
+
+/* =========================================================================
+ * Recent files menu
+ * =========================================================================
+ */
+
+/* Update the "Open Recent" submenu items to reflect app->settings.recentFiles[].
+ *
+ * Each slot gets a label like "filename.ext [UTF-8]" when occupied, or is
+ * disabled and blanked when empty.  The parent "Open Recent" item is enabled
+ * iff at least one slot is occupied.
+ *
+ * MUI title pointers must remain valid: we write into app->recentItemLabels[]
+ * which live for the application's lifetime.  MUIA_Menuitem_Title is isg so
+ * SetAttrs() propagates the change to the underlying Intuition menu. */
+void MmgAction_RebuildRecentMenu(void)
+{
+    int i, count;
+    if (!app) return;
+
+    count = app->settings.recentCount;
+
+    for (i = 0; i < APPSETTINGS_MAX_RECENT; i++) {
+        Object *item = app->miRecentItem[i];
+        if (!item) continue;
+
+        if (i < count && app->settings.recentFiles[i]) {
+            const char *encName =
+                (app->settings.recentEncodings[i] == 1) ? "Latin-1" :
+                (app->settings.recentEncodings[i] == 2) ? "Latin-2" : "UTF-8";
+            /* FilePart returns a pointer into path — just the filename */
+            const char *fp = (const char *)FilePart((STRPTR)app->settings.recentFiles[i]);
+            snprintf(app->recentItemLabels[i], sizeof(app->recentItemLabels[i]) - 1,
+                     "%s [%s]", fp ? fp : app->settings.recentFiles[i], encName);
+            app->recentItemLabels[i][sizeof(app->recentItemLabels[i]) - 1] = '\0';
+
+            SetAttrs(item,
+                MUIA_Menuitem_Title,   (ULONG)app->recentItemLabels[i],
+                MUIA_Menuitem_Enabled, TRUE,
+                TAG_DONE);
+        } else {
+            SetAttrs(item,
+                MUIA_Menuitem_Title,   (ULONG)"",
+                MUIA_Menuitem_Enabled, FALSE,
+                TAG_DONE);
+        }
+    }
+
+    /* Enable the "Open Recent" parent only when the list is non-empty */
+    if (app->miOpenRecent)
+        SetAttrs(app->miOpenRecent,
+                 MUIA_Menuitem_Enabled, (ULONG)(count > 0 ? TRUE : FALSE),
+                 TAG_DONE);
+}
+
+BOOL MmgAction_OpenRecentFile(int slot)
+{
+    const char *path;
+    int         encoding;
+    BOOL        ok;
+
+    if (!app || slot < 0 || slot >= app->settings.recentCount) return FALSE;
+
+    path     = AppSettings_GetRecentFile    (&app->settings, slot);
+    encoding = AppSettings_GetRecentEncoding(&app->settings, slot);
+    if (!path) return FALSE;
+
+    ok = load_file(path, encoding, &encoding);
+    if (ok) {
+        AppSettings_AddRecentFile(&app->settings, path, encoding);
+        MmgAction_RebuildRecentMenu();
+    }
+    return ok;
+}
