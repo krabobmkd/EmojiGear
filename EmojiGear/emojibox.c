@@ -979,6 +979,7 @@ static ULONG EmojiGrid_OnNew(Class *cl, Object *o, struct opSet *msg)
  * -------------------------------------------------------------------------*/
 static ULONG EmojiGrid_OnDispose(Class *cl, Object *o, Msg msg)
 {
+
     return DoSuperMethodA(cl, o, (APTR)msg);
 }
 
@@ -1012,6 +1013,7 @@ static ULONG EmojiGrid_OnSet(Class *cl, Object *o, struct opSet *msg)
             DoMethod(o, GM_RENDER, msg->ops_GInfo, rp, GREDRAW_REDRAW);
             ReleaseGIRPort(rp);
         }
+
     }
     return DoSuperMethodA(cl, o, (APTR)msg);
 }

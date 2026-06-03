@@ -1199,6 +1199,9 @@ ULONG UniTextEditor_OnSet(Class *cl, Object *o, struct opSet *msg)
         case UTED_KeyMessageMode:
             inst->useInternalRawKey = (ULONG)tag->ti_Data;
             break;
+        case UTED_InternalRawKey_SendBack:
+            inst->rawKeySendBack = tag->ti_Data ? TRUE : FALSE;
+            break;
         case UTED_PutRawKey:
         {
             if(!inst->useInternalRawKey)
@@ -1713,6 +1716,14 @@ ULONG UniTextEditor_OnGet(Class *cl, Object *o, struct opGet *msg)
 
     case UTED_DisplayInternalVScroll:
         *msg->opg_Storage = (ULONG)inst->displayInternalVScroll;
+        return TRUE;
+
+    case UTED_InternalRawKey_SendBack:
+        *msg->opg_Storage = (ULONG)inst->rawKeySendBack;
+        return TRUE;
+
+    case UTED_InternalRawKey_Code:
+        *msg->opg_Storage = inst->rawKeyLastCode;
         return TRUE;
 
     case UTED_ApplyAnsiEscapes:

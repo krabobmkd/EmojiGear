@@ -40,6 +40,7 @@
 #include <libraries/mui.h>
 #include <libraries/gadtools.h>   /* NM_BARLABEL */
 #include <workbench/workbench.h>
+#include <workbench/startup.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -53,8 +54,11 @@
 #include "../EmojiGear/eglocale.h"
 #include "../EmojiGear/tooltypepref.h"
 #include "mmgboopsimessage.h"
+#include "mmgemojibox.h"
 #include "mmgaction.h"
 #include "muimojiGear.h"   /* struct App, app, App_GetRawEditorWin, App_UpdateStatus */
+
+#define DISABLE_EMOJIBOX 1
 
 /* =========================================================================
  * Library bases – must be global for the SDK proto/inline headers
@@ -80,7 +84,7 @@ struct App *app = NULL;
  * GCC-safe MUI_NewObject wrapper (noinline forces a real m68k stack frame)
  * =========================================================================
  */
-static Object * __attribute__((noinline))
+Object * __attribute__((noinline))
 MUI_NewObjectB(const char *cl, Tag tags, ...)
 {
     return MUI_NewObjectA(cl, (struct TagItem *) &tags);
@@ -94,6 +98,7 @@ MUI_NewObjectB(const char *cl, Tag tags, ...)
 #define MMG_VERSION  "$VER: MUImojiGear 0.1 (2026)"
 #define GID_EDITOR        1
 #define GID_EMOJI_BUTTON  2
+#define GID_EMOJI_GRID    3
 
 /* MUIM_Application_ReturnID values */
 #define RID_QUIT        10
@@ -225,6 +230,9 @@ static void doEditAction(ULONG attr)
     }
 }
 
+/* #define STACK_WATCH 1 */
+#define MMG_MIN_STACK (28 * 1024)
+
 /* =========================================================================
  * main
  * =========================================================================
@@ -242,7 +250,27 @@ int main(int argc, char *argv[])
     Object *menuSettings    = NULL;
     Object *menuColors      = NULL;
 
-    (void)argc; (void)argv;
+    /* ------------------------------------------------------------------ */
+    /* Stack size check                                                     */
+    /* ------------------------------------------------------------------ */
+    {
+        struct Task *_t      = FindTask(NULL);
+        int          _stacksize = (int)((int)_t->tc_SPReg - (int)_t->tc_SPLower);
+        if (_stacksize < MMG_MIN_STACK) {
+            puts("MUImojiGear needs at least 32k stack. Use \"stack 32768\" or set it in the icon properties.");
+            return 1;
+        }
+#ifdef STACK_WATCH
+        {
+            int   _sw_anchor = 0;
+            int  *_sw_near   = (int *)((int)&_sw_anchor - 64);
+            int  *_sw_far    = (int *)((int)_t->tc_SPLower + 4);
+            int   _sw_i;
+            for (_sw_i = 0; _sw_i < ((int)_sw_near - (int)_sw_far) / (int)sizeof(int); _sw_i++)
+                _sw_far[_sw_i] = (int)0xCAFEBABE;
+        }
+#endif
+    }
 
     /* ------------------------------------------------------------------ */
     /* Libraries                                                            */
@@ -281,7 +309,18 @@ int main(int argc, char *argv[])
     /* Locale + settings                                                    */
     /* ------------------------------------------------------------------ */
     EgLocale_Init("muimojiGear.catalog", 1);
-    if (IconBase) ToolTypePrefs_Init("MUImojiGear");
+    if (IconBase) {
+        if (argc > 0) {
+            ToolTypePrefs_Init(argv[0]);
+        } else if (argc == 0 && argv != NULL) {
+            /* Launched from Workbench: argv is actually a WBStartup pointer */
+            struct WBStartup *wbmsg = (struct WBStartup *)argv;
+            struct WBArg     *wbarg = wbmsg->sm_ArgList;
+            int i;
+            for (i = 0; i < (int)wbmsg->sm_NumArgs; i++, wbarg++)
+                if (*wbarg->wa_Name && ToolTypePrefs_Init(wbarg->wa_Name)) break;
+        }
+    }
     AppSettings_Load(&app->settings);
 
     /* ------------------------------------------------------------------ */
@@ -293,6 +332,12 @@ int main(int argc, char *argv[])
         exitCode = 1; goto cleanup;
     }
 
+    /* ------------------------------------------------------------------ */
+    /* Emoji box window (built before Application so it can be SubWindow)  */
+    /* ------------------------------------------------------------------ */
+#ifndef DISABLE_EMOJIBOX
+    MmgEmojiBox_BuildWindow();   /* stores result in app->emojiBoxWinObj */
+#endif
     /* ------------------------------------------------------------------ */
     /* MUI menus                                                            */
     /* ------------------------------------------------------------------ */
@@ -364,6 +409,8 @@ int main(int argc, char *argv[])
                                       MUIA_Menuitem_Shortcut, (ULONG)"Z", TAG_DONE);
     app->miRedo      = MUI_NewObjectB(MUIC_Menuitem, MUIA_Menuitem_Title, (ULONG)LOC(MSG_EDIT_REDO),
                                       MUIA_Menuitem_Shortcut, (ULONG)"Y", TAG_DONE);
+    app->miEmojiBox  = MUI_NewObjectB(MUIC_Menuitem, MUIA_Menuitem_Title, (ULONG)"Emoji Box",
+                                      MUIA_Menuitem_Shortcut, (ULONG)"E", TAG_DONE);
     menuEdit = MUI_NewObjectB(MUIC_Menu,
         MUIA_Menu_Title,   (ULONG)LOC(MSG_MENU_EDIT),
         MUIA_Family_Child, (ULONG)app->miCut,
@@ -377,6 +424,8 @@ int main(int argc, char *argv[])
         MUIA_Family_Child, (ULONG)MUI_NewObjectB(MUIC_Menuitem, MUIA_Menuitem_Title, (ULONG)NM_BARLABEL, TAG_DONE),
         MUIA_Family_Child, (ULONG)app->miUndo,
         MUIA_Family_Child, (ULONG)app->miRedo,
+        MUIA_Family_Child, (ULONG)MUI_NewObjectB(MUIC_Menuitem, MUIA_Menuitem_Title, (ULONG)NM_BARLABEL, TAG_DONE),
+        MUIA_Family_Child, (ULONG)app->miEmojiBox,
         TAG_DONE);
     app->miSettFontSizePlus  = MUI_NewObjectB(MUIC_Menuitem,
         MUIA_Menuitem_Title,    (ULONG)LOC(MSG_SETTING_FONTSIZEP),
@@ -482,6 +531,7 @@ int main(int argc, char *argv[])
         ICA_TARGET,                   (ULONG)MmgTargetInstance,
         MUIA_CycleChain,              1,
         UTED_KeyMessageMode,          UKM_Internal,
+        UTED_InternalRawKey_SendBack, TRUE, /* to get rawkey for function keys */
         UTED_BevelStyle,              BVS_NONE,
         UTED_LeftMargin,              2,
         UTED_RightMargin,             0,
@@ -569,6 +619,9 @@ int main(int argc, char *argv[])
         MUIA_Application_Description, (ULONG)"OS3.9-compatible unicode text editor",
         MUIA_Application_Base,        (ULONG)MMG_APPBASE,
         MUIA_Application_Window,      (ULONG)app->winObj,
+ #ifndef DISABLE_EMOJIBOX
+        MUIA_Application_Window,      (ULONG)app->emojiBoxWinObj,
+ #endif
         MUIA_Application_Menustrip,   (ULONG)menustrip,
         TAG_DONE);
 
@@ -577,6 +630,10 @@ int main(int argc, char *argv[])
         exitCode = 1; goto cleanup;
     }
 
+    /* Wire emoji box MUI notifications now that appObj exists */
+#ifndef DISABLE_EMOJIBOX
+    MmgEmojiBox_Init();
+#endif
     /* ------------------------------------------------------------------ */
     /* Notifications                                                        */
     /* ------------------------------------------------------------------ */
@@ -604,6 +661,7 @@ int main(int argc, char *argv[])
     NOTIFY(miPasteLat2, RID_PASTE_LAT2);
     NOTIFY(miUndo,             RID_UNDO);
     NOTIFY(miRedo,             RID_REDO);
+    NOTIFY(miEmojiBox,         RID_EMOJI_BOX_MENU);
     NOTIFY(miSettFontSizePlus,    RID_FONTSIZE_P);
     NOTIFY(miSettFontSizeMinus,   RID_FONTSIZE_M);
     NOTIFY(miToggleAntialias,     RID_TOGGLE_ANTIALIAS);
@@ -663,6 +721,22 @@ int main(int argc, char *argv[])
         TAG_DONE);
 
     /* ------------------------------------------------------------------ */
+    /* Load file passed on CLI: MUImojiGear [Latin1|Latin2] <path>        */
+    /* ------------------------------------------------------------------ */
+    if (argc > 1) {
+        int   encoding = 0;
+        const char *filePath = NULL;
+        int i;
+        for (i = 1; i < argc; i++) {
+            if (!argv[i] || argv[i][0] == '\0') continue;
+            if      (strcasecmp(argv[i], "latin1") == 0) encoding = 1;
+            else if (strcasecmp(argv[i], "latin2") == 0) encoding = 2;
+            else if (!filePath)                          filePath = argv[i];
+        }
+        if (filePath) MmgAction_LoadFromPath(filePath, encoding);
+    }
+
+    /* ------------------------------------------------------------------ */
     /* Event loop                                                          */
     /* ------------------------------------------------------------------ */
     {
@@ -707,6 +781,24 @@ int main(int argc, char *argv[])
             case RID_TOGGLE_VIZTABS:    MmgAction_ToggleVisualizeTabs();  reactivateEditor = TRUE;  break;
             case RID_TOGGLE_TABSSPACES: MmgAction_ToggleTabsAreSpaces(); reactivateEditor = TRUE;  break;
 
+            case RID_EMOJI_SET_CHANGE:
+#ifndef DISABLE_EMOJIBOX
+                MmgEmojiBox_HandleSetChange();
+#endif
+                break;
+
+            case RID_EMOJI_BOX_MENU: {
+                ULONG isOpen = 0;
+#ifndef DISABLE_EMOJIBOX
+                if (app->emojiBoxWinObj)
+                    GetAttr(MUIA_Window_Open, app->emojiBoxWinObj, &isOpen);
+
+                if (isOpen) MmgEmojiBox_Close();
+                else        MmgEmojiBox_Open();
+#endif
+                break;
+            }
+
             default:
                 if (r >= RID_RECENT_BASE &&
                     r <  RID_RECENT_BASE + APPSETTINGS_MAX_RECENT)
@@ -719,6 +811,21 @@ int main(int argc, char *argv[])
                     {
                     MmgAction_ApplyColorPreset((int)(r - RID_COLOR_BASE));
                     reactivateEditor = TRUE;
+                    }
+                else if (r >= (ULONG)RID_EMOJI_ANSI_BASE &&
+                         r <  (ULONG)(RID_EMOJI_ANSI_BASE + MMG_NUM_ANSI_BTNS))
+                    {
+#ifndef DISABLE_EMOJIBOX
+                    const char *seq = MmgEmojiBox_GetAnsiString(
+                                          (int)(r - RID_EMOJI_ANSI_BASE));
+                    if (seq) {
+                        struct Gadget *g; struct Window *w;
+                        App_GetRawEditorWin(&g, &w);
+                        if (g && w)
+                            SetGadgetAttrs(g, w, NULL,
+                                           UTED_InsertText, (ULONG)seq, TAG_DONE);
+                    }
+#endif
                     }
                 break;
 
@@ -777,6 +884,7 @@ int main(int argc, char *argv[])
 
                 if (sigs & SIGBREAKF_CTRL_F) {
                     struct TagItem *msg;
+                     struct TagItem *tag;
 
                     BOOL needRedraw = FALSE, needStatus = FALSE;
 
@@ -791,15 +899,49 @@ int main(int argc, char *argv[])
                             FindTagItem(UTED_Modified,     msg))
                         { needRedraw = TRUE; needStatus = TRUE; }
 
-                        /* Emoji button click: GA_Selected=TRUE from GID_EMOJI_BUTTON */
+                        /* we asked unitexteditor, in UKM_Internal mode,
+                         * to notify us back rawkey codes and qualifiers */
+                         if((tag = FindTagItem(UTED_InternalRawKey_Code, msg))!=NULL)
+                         {
+                            ULONG qulkey = tag->ti_Data;
+                            int isUp = 0x0080 & qulkey;
+                            UWORD key = (UWORD)(0x007f & qulkey);
+                            UWORD qualifiers = (UWORD)(qulkey>>16);
+#ifndef DISABLE_EMOJIBOX
+                            if(!isUp && key>=0x50 && key<=0x59)
+                                MmgEmojiBox_HandleFKey(key, qualifiers);
+#endif
+                         }
+
+
+                        /* Emoji button click: toggle emoji box */
+#ifndef DISABLE_EMOJIBOX
                         {
                             struct TagItem *idTag = FindTagItem(GA_ID, msg);
                             if (idTag && idTag->ti_Data == GID_EMOJI_BUTTON &&
                                 FindTagItem(GA_Selected, msg))
                                 {
-                                //printf("emoji button clicked!\n");
+                                ULONG isOpen = 0;
+                                if (app->emojiBoxWinObj)
+                                    GetAttr(MUIA_Window_Open, app->emojiBoxWinObj, &isOpen);
+
+                                if (isOpen) MmgEmojiBox_Close();
+                                else        MmgEmojiBox_Open();
+
                                 }
                         }
+#endif
+                        /* Grid click: emoji cell selected */
+#ifndef DISABLE_EMOJIBOX
+                        {
+                            struct TagItem *idTag = FindTagItem(GA_ID, msg);
+                            if (idTag && idTag->ti_Data == GID_EMOJI_GRID) {
+                                struct TagItem *cidxTag = FindTagItem(EGRID_ClickedIdx, msg);
+                                if (cidxTag)
+                                    MmgEmojiBox_HandleGridClick((int)cidxTag->ti_Data);
+                            }
+                        }
+#endif
                     }
 
                     if (needRedraw && g && w)
@@ -832,7 +974,9 @@ cleanup:
             MUI_DisposeObject(app->appObj);
         else if (app->winObj)
             MUI_DisposeObject(app->winObj);
-
+#ifndef DISABLE_EMOJIBOX
+        MmgEmojiBox_Dispose();  /* free grid class + DC after MUI objects are gone */
+#endif
         AppSettings_Save(&app->settings);
         AppSettings_Close(&app->settings);
 

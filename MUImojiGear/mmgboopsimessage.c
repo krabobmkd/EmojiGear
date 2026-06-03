@@ -10,6 +10,7 @@
  */
 
 #include "mmgboopsimessage.h"
+#include "mmgemojibox.h"    /* EGRID_ClickedIdx, EGRID_ClickSeq */
 
 #include <string.h>
 #include <proto/exec.h>
@@ -66,7 +67,10 @@ static const ULONG delayedAttribs[] = {
     UTED_CursorChar,
     UTED_ScrollLeft,      /* horizontal scroll position changed */
     UTED_SetPrivateActivation,
+    UTED_InternalRawKey_Code,
     GA_Selected,          /* UniButton press notification */
+    EGRID_ClickedIdx,     /* EmojiGrid cell click         */
+    EGRID_ClickSeq,       /* EmojiGrid click counter      */
 };
 
 #define N_DELAYED ((ULONG)(sizeof(delayedAttribs) / sizeof(delayedAttribs[0])))

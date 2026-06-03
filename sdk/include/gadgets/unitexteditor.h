@@ -485,6 +485,26 @@ typedef struct UTEDTextPosition {
  *              the indicator is drawn on top of the text. */
 #define UTED_DisplayInternalVScroll (UTED_Dummy + 67)
 
+/* [IS] (BOOL) When TRUE and UTED_KeyMessageMode is UKM_Internal, every raw key
+ *             press processed inside GM_RENDER triggers an OM_NOTIFY with
+ *             UTED_InternalRawKey_Code so the application can observe or
+ *             intercept keys without polling.
+ *             Has no effect when UTED_KeyMessageMode is UKM_External (the app
+ *             already receives keys directly from the window IDCMP in that mode).
+ *             Default: FALSE. */
+#define UTED_InternalRawKey_SendBack (UTED_Dummy + 68)
+
+/* [G]  (ULONG) Notified (via OM_NOTIFY / ICA_TARGET) each time a raw key is
+ *              processed in UKM_Internal mode and UTED_InternalRawKey_SendBack
+ *              is TRUE.  Encoding matches UTED_PutRawKey:
+ *                bits 15:0  – Intuition RAWKEY ie_Code (key-down, bit 7 clear)
+ *                bits 31:16 – Intuition ie_Qualifier flags
+ *              Key-up events (ie_Code bit 7 set) are never notified.
+ *              Read this attribute from your ICA_TARGET / IDCMP_IDCMPUPDATE
+ *              handler after receiving a UTEDN_* or UTED_InternalRawKey_Code
+ *              notification. */
+#define UTED_InternalRawKey_Code     (UTED_Dummy + 69)
+
 
 
 

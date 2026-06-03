@@ -392,8 +392,10 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
     /* Drain deferred keyboard events (pushed by GM_HANDLEINPUT in input.device context) */
     if (inst->pendingKeyCount > 0) {
         UBYTE i;
-        for (i = 0; i < inst->pendingKeyCount; i++)
-            uted_manageFullRawKey(cl, o, &inst->pendingKeys[i], msg->gpr_GInfo);
+        for (i = 0; i < inst->pendingKeyCount; i++) {
+            struct InputEvent *pie = &inst->pendingKeys[i];
+            uted_manageFullRawKey(cl, o, pie, msg->gpr_GInfo);          
+        }
         inst->pendingKeyCount = 0;
     }
 

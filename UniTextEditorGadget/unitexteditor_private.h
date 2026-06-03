@@ -431,6 +431,8 @@ typedef struct UniTextEditorData {
     ULONG  ga_id;
 
     ULONG useInternalRawKey;
+    BOOL  rawKeySendBack;   /* UTED_InternalRawKey_SendBack: notify code after each key in UKM_Internal */
+    ULONG rawKeyLastCode;   /* UTED_InternalRawKey_Code: last notified (qualifier<<16)|keycode */
 
     /* Deferred keyboard input from input.device context.
      * GM_HANDLEINPUT copies raw InputEvents here; GM_RENDER drains them via

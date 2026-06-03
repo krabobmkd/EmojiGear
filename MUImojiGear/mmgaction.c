@@ -570,6 +570,16 @@ static BOOL save_file(const char *title, int encoding)
  * =========================================================================
  */
 
+BOOL MmgAction_LoadFromPath(const char *path, int encoding)
+{
+    int  enc = encoding;
+    BOOL ok;
+    if (!app->editorObj || !path || !path[0]) return FALSE;
+    ok = load_file(path, encoding, &enc);
+    if (ok) { AppSettings_AddRecentFile(&app->settings, path, enc); MmgAction_RebuildRecentMenu(); }
+    return ok;
+}
+
 BOOL MmgAction_LoadUTF8(void)
 {
     char *path;

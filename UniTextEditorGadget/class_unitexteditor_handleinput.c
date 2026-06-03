@@ -757,6 +757,11 @@ ULONG UniTextEditor_OnHandleInput(Class *cl, Object *o, struct gpInput *msg)
 
     if(inst->useInternalRawKey && ie->ie_Class == IECLASS_RAWKEY)
     {
+        if (inst->rawKeySendBack) {
+            inst->rawKeyLastCode = ((ULONG)ie->ie_Qualifier << 16) | (ULONG)ie->ie_Code;
+            uted_notify(cl, o, msg->gpi_GInfo, UTED_InternalRawKey_Code, inst->rawKeyLastCode);
+        }
+
         /* Amiga+key = menu shortcut: let Intuition handle it, app re-activates after MENUPICK */
         /* also ctrl */
         if (ie->ie_Qualifier & (IEQUALIFIER_LCOMMAND | IEQUALIFIER_RCOMMAND | IEQUALIFIER_CONTROL))

@@ -19,6 +19,7 @@
  * These functions access app->editorObj, app->winObj and app->settings
  * directly via the global `app` pointer (muimojiGear.h / muimojiGear.c).
  * No separate Init call is needed. */
+BOOL MmgAction_LoadFromPath(const char *path, int encoding);
 BOOL MmgAction_LoadUTF8(void);
 BOOL MmgAction_LoadLatin1(void);
 BOOL MmgAction_LoadLatin2(void);

@@ -27,6 +27,11 @@ struct App {
     Object    *hScrollBar;
     Object    *emojiBtnObj;
 
+    /* Emoji box sub-window objects */
+    // Object    *emojiBoxWinObj;   /* MUIC_Window – second SubWindow of the App */
+    // Object    *emojiBoxCycleObj; /* MUIC_Cycle  – emoji set selector           */
+    // Object    *emojiBoxGridObj;  /* MUIC_Boopsi – EmojiGrid gadget             */
+
     /* Menu items (kept for DoMethod notifications) */
     Object    *miNewFile;
     Object    *miLoadUTF8, *miLoadLat1, *miLoadLat2;
@@ -43,6 +48,7 @@ struct App {
     Object    *miCut, *miCopy, *miCopyLat1, *miCopyLat2;
     Object    *miPaste, *miPasteLat1, *miPasteLat2;
     Object    *miUndo, *miRedo;
+    Object    *miEmojiBox;
 
     /* Application settings (font paths, rendering flags, …) */
     AppSettings settings;
@@ -50,6 +56,9 @@ struct App {
 
 /* Single global instance – defined in muimojiGear.c */
 extern struct App *app;
+
+/* GCC-safe MUI_NewObject wrapper – defined in muimojiGear.c, shared across modules */
+Object *MUI_NewObjectB(const char *cl, Tag tags, ...);
 
 /* =========================================================================
  * Utility functions used by multiple modules

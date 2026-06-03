@@ -13,6 +13,7 @@ set(MUIMOJIGEARSOURCES
     mmgboopsimessage.c  mmgboopsimessage.h
     mmgsettings.c       mmgsettings.h
     mmgaction.c         mmgaction.h
+#    mmgemojibox.c       mmgemojibox.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../EmojiGear/eglocale.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../EmojiGear/tooltypepref.c
 )
