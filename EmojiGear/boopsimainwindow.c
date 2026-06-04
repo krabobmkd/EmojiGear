@@ -539,6 +539,7 @@ void SetGdAttrsA(Object *g, CONST struct TagItem * tags)
     }
 }
 
-void SetGdAttrs(Object *g, ULONG tag, ... ) {
+void  __attribute__((noinline))
+    SetGdAttrs(Object *g, ULONG tag, ... ) {
     SetGdAttrsA(g, ( struct TagItem *)&tag);
 }

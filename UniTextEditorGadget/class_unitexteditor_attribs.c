@@ -1491,6 +1491,8 @@ ULONG UniTextEditor_OnSet(Class *cl, Object *o, struct opSet *msg)
         }
     }
 
+    ReleaseSemaphore(&inst->textSem);
+
     if(changepens)
     {
         uted_invalidate_all_line_caches(inst);
@@ -1512,7 +1514,6 @@ ULONG UniTextEditor_OnSet(Class *cl, Object *o, struct opSet *msg)
             uted_notify(cl, o, msg->ops_GInfo, UTEDN_ScrollChanged, inst->scrollTopLine);
     }
 
-    ReleaseSemaphore(&inst->textSem);
     return result;
 }
 

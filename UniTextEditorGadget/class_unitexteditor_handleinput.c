@@ -769,9 +769,13 @@ ULONG UniTextEditor_OnHandleInput(Class *cl, Object *o, struct gpInput *msg)
 
 
         /* Defer to application-task context (GM_RENDER) where FreeType is safe */
-        if (inst->pendingKeyCount < UTED_PENDING_KEY_MAX) {
-            inst->pendingKeys[inst->pendingKeyCount] = *ie;
-            inst->pendingKeyCount++;
+        {
+            ULONG pendingKeyCount = inst->pendingKeyCount;
+            if (pendingKeyCount < UTED_PENDING_KEY_MAX) {
+                inst->pendingKeys[pendingKeyCount] = *ie;
+                pendingKeyCount++;
+                inst->pendingKeyCount = pendingKeyCount;
+            }
         }
         uted_notify(cl, o, msg->gpi_GInfo, UTEDN_CursorMoved, inst->cursor.line);
         return GMR_MEACTIVE;

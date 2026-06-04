@@ -1174,14 +1174,16 @@ int main(int argc, char **argv)
             {
                 RefreshGList(app->textEditorObj, CurrentMainWindow, NULL, 1);
                 UpdateStatusBar();
-            }
-            if(vscrollNeedRefresh)
+            } else
             {
-                SyncVScroller();
-            }
-            if(hscrollNeedRefresh)
-            {
-                SyncHScroller();
+                if(vscrollNeedRefresh)
+                {
+                    SyncVScroller();
+                }
+                if(hscrollNeedRefresh)
+                {
+                    SyncHScroller();
+                }
             }
         // if(app->doRefreshUI>0)
         // {
@@ -1389,7 +1391,9 @@ void UpdateStatusBar()
 
     snprintf(buf, sizeof(buf)-1, " Line %lu, Col %lu  |  %lu lines",
              curLine + 1, curChar + 1, lineCount);
-    SetGdAttrs(app->statusBarLabel, GA_Text, &buf[0]);
+
+
+    SetGdAttrs(app->statusBarLabel, GA_Text, &buf[0],TAG_END);
 
     SyncVScroller();
     SyncHScroller();

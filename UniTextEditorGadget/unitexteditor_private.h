@@ -445,7 +445,7 @@ typedef struct UniTextEditorData {
     /* Deferred keyboard input from input.device context.
      * GM_HANDLEINPUT copies raw InputEvents here; GM_RENDER drains them via
      * uted_manageFullRawKey(), which is safe in the application task context. */
-#define UTED_PENDING_KEY_MAX 4
+#define UTED_PENDING_KEY_MAX 8
     struct InputEvent pendingKeys[UTED_PENDING_KEY_MAX];
     UBYTE             pendingKeyCount;
     UBYTE             _padKey[3];

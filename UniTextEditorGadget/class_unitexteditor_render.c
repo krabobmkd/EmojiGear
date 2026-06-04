@@ -112,7 +112,7 @@ static void uted_do_layout( Class *cl, Object *o,
                 //           (int)inst->bmPool.size, (int)neededSize);
 
                 /* Return all borrowed bitmaps before touching the pool */
-        ObtainSemaphore(&inst->cacheSem);
+    ObtainSemaphore(&inst->cacheSem);
                 for (line = (UniTextEditorLine *)inst->lines.mlh_Head;
                      line->node.mln_Succ;
                      line = (UniTextEditorLine *)line->node.mln_Succ)
@@ -130,7 +130,7 @@ static void uted_do_layout( Class *cl, Object *o,
                     uted_pool_growalloc(&inst->bmPool, neededSize, useScreen);
                 }
 
-        ReleaseSemaphore(&inst->cacheSem);
+    ReleaseSemaphore(&inst->cacheSem);
             }
             if(screenModechange)
             {
@@ -375,8 +375,8 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
          SetAPen(rp, (LONG)inst->bgPen);
          RectFill(rp, (LONG)left, (LONG)top,
                   (LONG)(left + width - 1), (LONG)(top + height - 1));
-        ReleaseSemaphore(&inst->cacheSem);
-        ReleaseSemaphore(&inst->textSem);
+    ReleaseSemaphore(&inst->cacheSem);
+    ReleaseSemaphore(&inst->textSem);
         return 0;
     }
 

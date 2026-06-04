@@ -69,7 +69,7 @@ ULONG BMainWindow_GetBackFillFromSettings(struct AppSettings *appSettings);
 
 /* SetGadgetAttrs, but check CurrentMainWindow is currently opened, use SetGadgetAttrs() or SetAttrs() accordingly. */
 void SetGdAttrsA(Object *g, CONST struct TagItem * tags);
-void SetGdAttrs(Object *g, ULONG tag, ... );
+void  __attribute__((noinline)) SetGdAttrs(Object *g, ULONG tag, ... );
 
 
 /* Intuition level Window */

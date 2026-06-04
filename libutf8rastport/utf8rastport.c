@@ -1124,7 +1124,7 @@ int URPDC_AddFont(REG(a0, struct URPDrawContext *dc),
     }
 
     if (err) {
-        ReleaseSemaphore(&dc->sem);
+    ReleaseSemaphore(&dc->sem);
         return 0;
     }
 
@@ -1160,7 +1160,7 @@ void URPDC_RemoveFont(REG(a0, struct URPDrawContext *dc),
             dc->numFonts--;
             memset(&dc->fonts[dc->numFonts], 0, sizeof(dc->fonts[0]));
             dc->monoAdvanceX = 0;
-            ReleaseSemaphore(&dc->sem);
+    ReleaseSemaphore(&dc->sem);
             return;
         }
     }
