@@ -42,7 +42,7 @@ check_file "$BUILD/UniButtonGadget/unibutton.gadget"
 check_file "$BUILD/UniTextEditorGadget/unitexteditor.gadget"
 check_file "$BUILD/EmojiGear"
 check_file "$BUILD/MUImojiGear/MUImojiGear"
-check_file "$SRC/MUImojiGear/MUImojiGear.info"
+check_file "$SCRIPT_DIR/MUImojiGear/MUImojiGear.info"
 check_file "$BUILD/examples/testMUIUniTextEditor"
 check_file "$BUILD/examples/TestUtf8DrawText"
 check_file "$BUILD/examples/testunibutton"
@@ -90,7 +90,7 @@ cp "$SRC/EmojiGearH.info" "$PKG/bin/EmojiGearH.info"
 
 echo "Copying MUImojiGear binary and icon..."
 cp "$BUILD/MUImojiGear/MUImojiGear"      "$PKG/bin/MUImojiGear"
-cp "$SRC/MUImojiGear/MUImojiGear.info" "$PKG/bin/MUImojiGear.info"
+cp "$SCRIPT_DIR/MUImojiGear/MUImojiGear.info" "$PKG/bin/MUImojiGear.info"
 
 # ---------------------------------------------------------------------------
 # Documentation
