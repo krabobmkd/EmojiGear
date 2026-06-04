@@ -128,13 +128,19 @@ BOOL uted_pool_alloc(UTEDBitMapPool *pool, ULONG size,
     if(pool->layerInfo == NULL)
     {
         pool->layerInfo = NewLayerInfo();
-        pool->layer = CreateUpfrontLayer(pool->layerInfo, pool->bitmaps[0],
-                             0, 0,
-                             LINE_CHUNK_WIDTH - 1, (LONG)lineHeight - 1,
-                             LAYERSIMPLE, NULL);
-        if (!pool->layer) {uted_pool_free_layer(pool);  uted_pool_free_bitmapcache(pool);  return FALSE; }
+        if(pool->layerInfo)
+        {
+           //test
+           LockLayerInfo(pool->layerInfo);
+            pool->layer = CreateUpfrontLayer(pool->layerInfo, pool->bitmaps[0],
+                                 0, 0,
+                                 LINE_CHUNK_WIDTH - 1, (LONG)lineHeight - 1,
+                                 LAYERSIMPLE, NULL);
+            if (!pool->layer) {uted_pool_free_layer(pool);  uted_pool_free_bitmapcache(pool);  return FALSE; }
 
-        pool->rp = pool->layer->rp;
+            pool->rp = pool->layer->rp;
+        }
+
     } else
     {
         /* clipping layer already created, but may have to be resized (if font size change) */
@@ -268,7 +274,11 @@ void uted_pool_free_bitmapcache(UTEDBitMapPool *pool)
 void uted_pool_free_layer(UTEDBitMapPool *pool)
 {
     if (pool->layer)     { DeleteLayer(0, pool->layer);       pool->layer     = NULL; }
-    if (pool->layerInfo) { DisposeLayerInfo(pool->layerInfo); pool->layerInfo = NULL; }
+    if (pool->layerInfo) {
+      //was test
+      UnlockLayerInfo(pool->layerInfo);
+        DisposeLayerInfo(pool->layerInfo); pool->layerInfo = NULL;
+     }
     pool->rp = NULL;
 }
 
@@ -319,6 +329,7 @@ void uted_line_evict_distant_chunks(UniTextEditorData *inst,
  */
 void uted_line_free_cache(UniTextEditorData *inst, UniTextEditorLine *line)
 {
+    ObtainSemaphore(&inst->cacheSem);
     if (line->chunks) {
         uted_line_evict_chunks(inst, line);
         FreeVec(line->chunks);
@@ -329,6 +340,7 @@ void uted_line_free_cache(UniTextEditorData *inst, UniTextEditorLine *line)
     if (line->ansiRuns) { FreeVec(line->ansiRuns); line->ansiRuns = NULL; }
     line->ansiRunCount = 0;
     line->ansiRunAlloc = 0;
+    ReleaseSemaphore(&inst->cacheSem);
 }
 
 /* =========================================================================

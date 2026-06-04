@@ -9,6 +9,7 @@
 #define URP_INTERNAL_H
 
 #include <exec/types.h>
+#include <exec/semaphores.h>
 #include <graphics/rastport.h>
 #include <graphics/gfx.h>
 
@@ -88,6 +89,7 @@ struct URPFontEntry {
 struct sARGB { UBYTE A, R, G, B; };
 
 struct URPDrawContext {
+    struct SignalSemaphore sem;
     ULONG               useCount;
     FT_Library           library;
     struct URPFontEntry  fonts[URP_MAX_FONTS];

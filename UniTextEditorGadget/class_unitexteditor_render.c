@@ -112,8 +112,7 @@ static void uted_do_layout( Class *cl, Object *o,
                 //           (int)inst->bmPool.size, (int)neededSize);
 
                 /* Return all borrowed bitmaps before touching the pool */
-        /* for safety */
-        Forbid();
+        ObtainSemaphore(&inst->cacheSem);
                 for (line = (UniTextEditorLine *)inst->lines.mlh_Head;
                      line->node.mln_Succ;
                      line = (UniTextEditorLine *)line->node.mln_Succ)
@@ -131,7 +130,7 @@ static void uted_do_layout( Class *cl, Object *o,
                     uted_pool_growalloc(&inst->bmPool, neededSize, useScreen);
                 }
 
-        Permit();
+        ReleaseSemaphore(&inst->cacheSem);
             }
             if(screenModechange)
             {
@@ -320,6 +319,9 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
         return TRUE;
     }
 
+    ObtainSemaphore(&inst->textSem);
+    ObtainSemaphore(&inst->cacheSem);
+
 // bdbprintf("UniTextEditor_OnRender t:%08x\n",(int)FindTask(NULL));
 
     if (inst->bevel) {
@@ -373,6 +375,8 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
          SetAPen(rp, (LONG)inst->bgPen);
          RectFill(rp, (LONG)left, (LONG)top,
                   (LONG)(left + width - 1), (LONG)(top + height - 1));
+        ReleaseSemaphore(&inst->cacheSem);
+        ReleaseSemaphore(&inst->textSem);
         return 0;
     }
 
@@ -1140,5 +1144,7 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
         }
     }
 
+    ReleaseSemaphore(&inst->cacheSem);
+    ReleaseSemaphore(&inst->textSem);
     return 0;
 }

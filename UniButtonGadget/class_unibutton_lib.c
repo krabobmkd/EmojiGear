@@ -23,7 +23,7 @@ struct Library *URPBase=NULL;
         struct Library        *__UtilityBase=NULL; // amiga gcc2.95 with noixemul and 68000, and our gadget startup needs that.
     #endif
 
-const char VersionString[] = "unibutton.gadget 2.4 (" __DATE__ ")";
+const char VersionString[] = "unibutton.gadget 3.1 (" __DATE__ ")";
 const char Lib_ID[]= "unibutton.gadget";
 
 #endif
@@ -57,7 +57,7 @@ int UniButton_Init(void)
         LayersBase = OpenLibrary("layers.library",39);
         if(!LayersBase) goto failinit;
 
-        URPBase = OpenLibrary("utf8rastport.library",1);
+        URPBase = OpenLibrary("utf8rastport.library",3);
         if(!URPBase) goto failinit;
 
         /* accept failure over this one */

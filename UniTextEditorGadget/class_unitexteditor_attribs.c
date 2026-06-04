@@ -27,6 +27,7 @@
 #endif
 
 static void updateLineHeight(UniTextEditorData *inst);
+ ULONG UniTextEditor_OnPreDispose(Class *cl, Object *o);
 
 /* GA_Text is a standard tag in newer gadgetclass versions (OS 3.5+).
  * Provide a fallback definition if the SDK does not declare it. */
@@ -464,6 +465,9 @@ ULONG UniTextEditor_OnNew(Class *cl, Object *o, struct opSet *msg)
     /* Zero-initialise */
     memset(inst, 0, sizeof(UniTextEditorData));
 
+    InitSemaphore(&inst->textSem);
+    InitSemaphore(&inst->cacheSem);
+
     /*krb note, commented the 0 and false values done by memset, to optimize */
     /* Defaults */
     inst->pointSize  = 12;
@@ -598,8 +602,8 @@ fail:
  * OM_DISPOSE
  * =========================================================================
  */
-ULONG UniTextEditor_OnDispose(Class *cl, Object *o, Msg msg)
-{
+ ULONG UniTextEditor_OnPreDispose(Class *cl, Object *o)
+ {
     UniTextEditorData *inst = UTED_DATA(cl, o);
     UniTextEditorLine *line;
     UniTextEditorLine *next;
@@ -616,7 +620,8 @@ ULONG UniTextEditor_OnDispose(Class *cl, Object *o, Msg msg)
     }
 
     /* Release undo/redo stacks and all captured text */
- Forbid();
+    ObtainSemaphore(&inst->textSem);
+    ObtainSemaphore(&inst->cacheSem);
     uted_undo_resize(inst, 0);
 
     /* Release word-wrap map */
@@ -634,7 +639,8 @@ ULONG UniTextEditor_OnDispose(Class *cl, Object *o, Msg msg)
     uted_pool_free_bitmapcache(&inst->bmPool);
     /* the part that has poblems on OS3.9 */
     uted_pool_free_layer(&inst->bmPool);
- Permit();
+    ReleaseSemaphore(&inst->cacheSem);
+    ReleaseSemaphore(&inst->textSem);
     if (inst->dc) { URPDC_Release(inst->dc); inst->dc = NULL; }
 
     if (inst->clipRegion) {
@@ -647,6 +653,11 @@ ULONG UniTextEditor_OnDispose(Class *cl, Object *o, Msg msg)
         inst->bevel = NULL;
     }
 
+ }
+
+ULONG UniTextEditor_OnDispose(Class *cl, Object *o, Msg msg)
+{
+    UniTextEditor_OnPreDispose(cl,o);
     return DoSuperMethodA(cl, o, (APTR)msg);
 }
 
@@ -711,6 +722,8 @@ ULONG UniTextEditor_OnSet(Class *cl, Object *o, struct opSet *msg)
     BOOL            changepens = FALSE;
     ULONG           scrollTopBefore  = inst->scrollTopLine;
     ULONG           scrollLeftBefore = inst->scrollLeftPx;
+
+    ObtainSemaphore(&inst->textSem);
 
     /* Process UTED_CurrentContext first so that any UTED_Text tag that
      * follows in the same call operates on the newly activated context. */
@@ -1465,7 +1478,7 @@ ULONG UniTextEditor_OnSet(Class *cl, Object *o, struct opSet *msg)
             result = 1;
             break;
 
-        /* should be done by supeclass, but there's a OS3.9 bug*/
+        /* should be done by supeclass, but there's a OS3.9 bu with super method */
         case ICA_TARGET:
             inst->target = (Object*)tag->ti_Data;
             result = 1;
@@ -1499,6 +1512,7 @@ ULONG UniTextEditor_OnSet(Class *cl, Object *o, struct opSet *msg)
             uted_notify(cl, o, msg->ops_GInfo, UTEDN_ScrollChanged, inst->scrollTopLine);
     }
 
+    ReleaseSemaphore(&inst->textSem);
     return result;
 }
 

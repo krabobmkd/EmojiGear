@@ -1,11 +1,11 @@
 @DATABASE EmojiGear.guide
-@$VER: EmojiGear.guide 2.3 (31.05.2026)
+@$VER: EmojiGear.guide 3.1 (04.06.2026)
 @AUTHOR krabobmkd
 @(C) 2026 krabobmkd
 @MASTER PROGDIR:EmojiGear.guide
 @NODE MAIN "EmojiGear - Unicode Text Editor"
 
-@{b}EmojiGear v2.3@{ub}
+@{b}EmojiGear v3.1@{ub}
 Unicode Text Editor for AmigaOS 3.2.x (68k)
 
 @{i}A UTF-8 text editor with full Emoji and Unicode support,@{ui}
@@ -27,6 +27,8 @@ Unicode Text Editor for AmigaOS 3.2.x (68k)
   @{" Pipe Input        " LINK PIPEINPUT}   Live Unix command output in EmojiGear
   @{" Workbench         " LINK WORKBENCH}   Running from Workbench / tooltypes
   @{" Requirements      " LINK REQUIRE}     What you need to run EmojiGear
+  @{" OS 3.9 Notes      " LINK OS39COMPAT} AmigaOS 3.9 compatibility notes
+  @{" MUImojiGear       " LINK MUIALT}    The MUI alternative
 
 @ENDNODE
 
@@ -36,16 +38,18 @@ Unicode Text Editor for AmigaOS 3.2.x (68k)
 
 @{b}What is EmojiGear?@{ub}
 
+@{b}Version 3:@{ub} three memory corruption bugs present in version 2 have been
+corrected.  Applications, gadgets and the library are significantly
+safer as a result.
+
 EmojiGear is a Unicode-aware plain-text editor for AmigaOS 3.2.x (68k).
 It can open, edit, and save text files encoded as UTF-8, ISO Latin-1,
 or ISO Latin-2, and renders all characters -- including colour Emoji --
 using a built-in FreeType 2 engine.
 
-@{b}Note on compatibility:@{ub} EmojiGear itself requires AmigaOS 3.2 or later.
-It will @{b}not@{ub} run on AmigaOS 3.9 or earlier.  The two shared components
-it installs -- @{b}utf8rastport.library@{ub} and @{b}unibutton.gadget@{ub} -- are built
-to be compatible with AmigaOS 3.9 and can be used independently by any
-application targeting that older system.
+@{b}Note on compatibility:@{ub} EmojiGear requires AmigaOS 3.2 or later.
+Shared components may work on older systems.
+@{" See OS 3.9 Compatibility Notes " LINK OS39COMPAT}
 
 Unlike classic Amiga text editors that are limited to the system font
 and an 8-bit codepage, EmojiGear:
@@ -763,6 +767,117 @@ Settings and Font Settings windows rather than editing them by hand.
   @{b}Screens:@{ub}      Works on the Workbench screen or a custom AGA/
                  RTG screen.  RTG screens with 24-bit colour give the
                  best results for antialiased text and colour emoji.
+
+@{" Back to Contents " LINK MAIN}
+@ENDNODE
+
+
+@NODE OS39COMPAT "AmigaOS 3.9 Compatibility"
+@TOC MAIN
+
+@{b}AmigaOS 3.9 Compatibility Notes@{ub}
+
+@{u}EmojiGear application and unitexteditor.gadget@{uu}
+
+Full OS 3.9 compatibility for @{b}unitexteditor.gadget@{ub} cannot be achieved.
+The gadget relies on offscreen bitmap tile rendering (a pool of chip-RAM
+bitmaps drawn via a shared Layer/RastPort), and there is a long-standing
+bug in @{b}layers.library@{ub} on OS 3.9 that prevents this pattern from working
+safely.  The bug was fixed in AmigaOS 3.2.  As a consequence, using
+@{b}unitexteditor.gadget@{ub} or the @{b}EmojiGear@{ub} application on OS 3.9 can lead
+to display corruption, crashes or system instability.
+
+@{u}utf8rastport.library and unibutton.gadget@{uu}
+
+@{b}utf8rastport.library@{ub} and @{b}unibutton.gadget@{ub} do not use offscreen
+Layer rendering and are expected to work correctly on AmigaOS 3.9 and
+even AmigaOS 3.1.  They can be used independently by any application
+targeting those older systems.
+
+@{u}MUImojiGear on OS 3.9@{uu}
+
+OS 3.9 users may try @{b}MUImojiGear@{ub}, the MUI-based variant included in
+this package.  MUI manages its own rendering pipeline and avoids the
+layers.library issue.  However, because it still pulls in
+@{b}utf8rastport.library@{ub} and performs intensive Unicode rendering, it may
+eventually cause system instability on OS 3.9 under heavy use.
+Use it at your own risk and save your work frequently.
+
+@{u}Upgrading from OS 3.9 to OS 3.2@{uu}
+
+The best solution is to upgrade.  Hyperion Entertainment provides an
+official @{b}AmigaOS 3.2@{ub} installer that can be applied to any existing
+OS 3.9 installation.  OS 3.2 corrects a large number of bugs present in
+OS 3.9 -- including the layers.library issue -- and is the recommended
+base for all current Amiga software development.
+
+Information and purchase: @{b}http://www.hyperion-entertainment.com@{ub}
+
+@{" Back to Contents " LINK MAIN}
+@ENDNODE
+
+
+@NODE MUIALT "MUImojiGear - The MUI Alternative"
+@TOC MAIN
+
+@{b}MUImojiGear -- The MUI Alternative@{ub}
+
+MUImojiGear is a MUI-based variant of EmojiGear included in this
+package.  It was created to reach closer to OS 3.9 compatibility:
+MUI manages its own window and gadget rendering, working around the
+incomplete or buggy BOOPSI classes found on AmigaOS 3.0, 3.1, 3.5
+and 3.9 that prevent EmojiGear from running on those systems.
+
+@{u}Remaining OS 3.9 limitation@{uu}
+
+MUImojiGear is still affected by the @{b}layers.library@{ub} bug present in
+OS 3.9 (see @{" OS 3.9 Notes " LINK OS39COMPAT}).  In practice the editor
+may run and appear stable during normal use, but the bug can manifest
+at quit time or under heavy rendering load, making the system unstable.
+OS 3.9 users should save their work frequently and be aware of this
+risk.  OS 3.2 users can of course run MUImojiGear without any of these
+concerns.
+
+@{u}Open source -- contributions welcome@{uu}
+
+Both @{b}EmojiGear@{ub} and @{b}MUImojiGear@{ub} are open source and openly available
+for further development.  If you are familiar with AmigaOS internals
+and feel daring enough to tackle the OS 3.9 layers.library issue, your
+contributions are very welcome.
+
+  Source code: @{b}https://github.com/krabobmkd/EmojiGear@{ub}
+
+@{u}Features present in MUImojiGear@{uu}
+
+Most of what EmojiGear offers is available in MUImojiGear in the
+same way:
+
+  @{b}*@{ub}  UTF-8, ISO Latin-1 and ISO Latin-2 encoding support.
+  @{b}*@{ub}  Full emoji rendering via the Emoji Box (F-key assignment).
+  @{b}*@{ub}  Cut, Copy, Paste (UTF-8 and Latin encodings).
+  @{b}*@{ub}  Undo and Redo.
+  @{b}*@{ub}  Font settings and all rendering options (antialias, monospace,
+     high-quality emoji scaling, ANSI escape rendering).
+  @{b}*@{ub}  Pipe input from Shell commands.
+
+@{u}Known differences and quirks@{uu}
+
+  @{b}*@{ub}  @{b}Font size shortcuts:@{ub} Amiga++ and Amiga+- change the font size
+     on the fly, as in EmojiGear.  The key combinations work the same
+     way but MUI intercepts some modifier combinations differently
+     depending on your MUI version and keyboard setup, so the exact
+     feel may vary slightly.
+
+  @{b}*@{ub}  @{b}Keyboard focus:@{ub} MUI routes keyboard input through its own
+     focus system.  After interacting with a button, menu or requester
+     you may need to click inside the text area again to restore
+     keyboard focus to the editor.  This is normal MUI behaviour.
+
+@{u}Features not yet present in MUImojiGear@{uu}
+
+  @{b}*@{ub}  @{b}Multi-file support:@{ub} only one document can be open at a time;
+     there is no tab bar.
+  @{b}*@{ub}  @{b}Find & Replace:@{ub} text search and replace are not available.
 
 @{" Back to Contents " LINK MAIN}
 @ENDNODE

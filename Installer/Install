@@ -1,23 +1,27 @@
 ; EmojiGear Installer Script
 ; For use with the standard Amiga 'Installer' tool (v43+).
 ;
-; Installs:
-;   - EmojiGear                    (UTF-8 Unicode text editor)
+; Always installs:
 ;   - utf8rastport.library  -> Libs:
 ;   - unitexteditor.gadget  -> SYS:Classes/Gadgets/
 ;   - unibutton.gadget      -> SYS:Classes/Gadgets/
 ;   - 4 TrueType fonts      -> Fonts:
-;   - example text files    -> <dest>/examples_text/  (optional)
+;
+; Optional (user selects):
+;   - EmojiGear             (requires AmigaOS 3.2 or later)
+;   - MUImojiGear           (AmigaOS 3.0-3.9 compatible, requires MUI 3.8+)
+;   - example text files    -> <dest>/examples_text/
+;   - SDK
 ;
 
 (set #app-name    "EmojiGear")
-(set #app-version "v2.3")
+(set #app-version "v3.1")
 (set #app-default "Work:")
 
 ; Library/gadget versions we are shipping
-(set #urp-ver   (+ (* 2 65536) 3))   ; utf8rastport.library  v2.3
-(set #uted-ver  (+ (* 2 65536) 3))   ; unitexteditor.gadget  v2.3
-(set #ubtn-ver  (+ (* 2 65536) 3))   ; unibutton.gadget      v2.3
+(set #urp-ver   (+ (* 3 65536) 1))   ; utf8rastport.library  v3.1
+(set #uted-ver  (+ (* 3 65536) 1))   ; unitexteditor.gadget  v3.1
+(set #ubtn-ver  (+ (* 3 65536) 1))   ; unibutton.gadget      v3.1
 
 ; ---------------------------------------------------------------------------
 ; Welcome
@@ -25,17 +29,53 @@
 (message
     (cat
         "Welcome to the " #app-name " " #app-version " installer!\n\n"
-        #app-name " is a Unicode UTF-8 text editor -- quite possibly the\n"
-        "most futuristic text editor ever to grace a 68k processor.\n"
-        "It renders TrueType fonts, supports the full Unicode range,\n"
-        "and yes, it displays full-colour Emoji. On an Amiga. In 2026.\n\n"
-        "We will also install the shared components that power it:\n"
+        "This package brings full Unicode and Emoji rendering to your\n"
+        "Amiga, powered by FreeType 2.  Two applications are included:\n\n"
+        "  EmojiGear     -- requires AmigaOS 3.2 or later\n"
+        "  MUImojiGear   -- compatible with AmigaOS 3.0 to 3.9\n"
+        "                   (requires MUI 3.8 or later)\n\n"
+        "The shared components below will always be installed:\n"
         "  utf8rastport.library  (FreeType 2 rendering for any app)\n"
         "  unitexteditor.gadget  (reusable Unicode editor BOOPSI gadget)\n"
         "  unibutton.gadget      (Unicode-label push-button gadget)\n\n"
-        "Click Proceed and let's make history!"
+        "Click Proceed to choose what to install."
     )
     (all)
+)
+
+; ---------------------------------------------------------------------------
+; Choose which applications to install
+; (askoptions returns a bitmask: bit 0 = EmojiGear, bit 1 = MUImojiGear)
+; ---------------------------------------------------------------------------
+(set #install-apps
+    (askoptions
+        (prompt
+            (cat
+                "Which applications would you like to install?\n\n"
+                "The shared library and gadgets are always installed\n"
+                "regardless of your choice here."
+            )
+        )
+        (help
+            (cat
+                "EmojiGear:\n"
+                "  The full-featured editor with multi-file tab support,\n"
+                "  Find & Replace, and all settings.\n"
+                "  Requires AmigaOS 3.2 or later.\n\n"
+                "MUImojiGear:\n"
+                "  A MUI-based variant that runs on AmigaOS 3.0 to 3.9.\n"
+                "  Requires MUI 3.8 or later.\n"
+                "  Note: may cause instability at quit on OS 3.9 due to a\n"
+                "  known layers.library bug fixed only in OS 3.2.\n\n"
+                "You may install both at the same time."
+            )
+        )
+        (choices
+            "EmojiGear  (requires AmigaOS 3.2 or later)"
+            "MUImojiGear  (AmigaOS 3.0-3.9, requires MUI 3.8+)"
+        )
+        (default 3)
+    )
 )
 
 ; ---------------------------------------------------------------------------
@@ -169,16 +209,10 @@
 (complete 60)
 
 ; ---------------------------------------------------------------------------
-; Create destination drawer and install EmojiGear
+; Create destination drawer and install selected applications
 ; ---------------------------------------------------------------------------
 (working (cat "Creating " #dest " ..."))
 (makedir #dest)
-
-(working (cat "Copying " #app-name " ..."))
-(copyfiles
-    (source "bin/EmojiGear")
-    (dest #dest)
-)
 
 (working "Copying documentation ...")
 (copyfiles
@@ -189,6 +223,28 @@
 (copyfiles
     (source "LICENSE")
     (dest #dest)
+)
+
+; --- EmojiGear (bit 0) ------------------------------------------------------
+(if (BITAND #install-apps 1)
+    (
+        (working "Copying EmojiGear ...")
+        (copyfiles
+            (source "bin/EmojiGear")
+            (dest #dest)
+        )
+    )
+)
+
+; --- MUImojiGear (bit 1) ----------------------------------------------------
+(if (BITAND #install-apps 2)
+    (
+        (working "Copying MUImojiGear ...")
+        (copyfiles
+            (source "bin/MUImojiGear")
+            (dest #dest)
+        )
+    )
 )
 
 (complete 75)
@@ -303,55 +359,72 @@
 (complete 95)
 
 ; ---------------------------------------------------------------------------
-; Install icon file (skipped silently if EmojiGear.info already exists,
-; so an upgrade never overwrites the user's saved settings)
+; EmojiGear icon (skipped if EmojiGear.info already exists so an upgrade
+; never overwrites the user's saved settings)
 ; ---------------------------------------------------------------------------
-(if (not (exists (tackon #dest "EmojiGear.info")))
-    (
-        (set #icon-choice
-            (askchoice
-                (prompt
-                    (cat
-                        "Which icon would you like to install?\n\n"
-                        "The icon stores the default display settings in its\n"
-                        "tooltypes.  You can adjust everything later from\n"
-                        "EmojiGear's Settings and Font Settings menus."
+(if (BITAND #install-apps 1)
+    (if (not (exists (tackon #dest "EmojiGear.info")))
+        (
+            (set #icon-choice
+                (askchoice
+                    (prompt
+                        (cat
+                            "Which EmojiGear icon would you like to install?\n\n"
+                            "The icon stores the default display settings in its\n"
+                            "tooltypes.  You can adjust everything later from\n"
+                            "EmojiGear's Settings and Font Settings menus."
+                        )
+                    )
+                    (help
+                        (cat
+                            "Low-end (2 colours):\n"
+                            "  Monochrome rendering, no antialiasing.\n"
+                            "  Best for OCS/ECS machines or low-colour screens.\n\n"
+                            "High Quality:\n"
+                            "  Antialiased fonts, colour Emoji support.\n"
+                            "  Recommended for AGA and RTG (Picasso, CyberGfx).\n"
+                        )
+                    )
+                    (choices
+                        "Low-end (2 colours) -- OCS/ECS friendly"
+                        "High Quality -- AGA / RTG recommended"
+                    )
+                    (default 1)
+                )
+            )
+
+            (if (= #icon-choice 0)
+                (
+                    (working "Installing EmojiGear icon (low-colour settings) ...")
+                    (copyfiles
+                        (source "bin/EmojiGearL.info")
+                        (dest #dest)
+                        (newname "EmojiGear.info")
                     )
                 )
-                (help
-                    (cat
-                        "Low-end (2 colours):\n"
-                        "  Monochrome rendering, no antialiasing.\n"
-                        "  Best for OCS/ECS machines or low-colour screens.\n\n"
-                        "High Quality:\n"
-                        "  Antialiased fonts, colour Emoji support.\n"
-                        "  Recommended for AGA and RTG (Picasso, CyberGfx).\n"
+                (
+                    (working "Installing EmojiGear icon (high-quality settings) ...")
+                    (copyfiles
+                        (source "bin/EmojiGearH.info")
+                        (dest #dest)
+                        (newname "EmojiGear.info")
                     )
                 )
-                (choices
-                    "Low-end (2 colours) -- OCS/ECS friendly"
-                    "High Quality -- AGA / RTG recommended"
-                )
-                (default 1)
             )
         )
+    )
+)
 
-        (if (= #icon-choice 0)
-            (
-                (working "Installing icon (low-colour settings) ...")
-                (copyfiles
-                    (source "bin/EmojiGearL.info")
-                    (dest #dest)
-                    (newname "EmojiGear.info")
-                )
-            )
-            (
-                (working "Installing icon (high-quality settings) ...")
-                (copyfiles
-                    (source "bin/EmojiGearH.info")
-                    (dest #dest)
-                    (newname "EmojiGear.info")
-                )
+; ---------------------------------------------------------------------------
+; MUImojiGear icon (skipped if already exists)
+; ---------------------------------------------------------------------------
+(if (BITAND #install-apps 2)
+    (if (not (exists (tackon #dest "MUImojiGear.info")))
+        (
+            (working "Installing MUImojiGear icon ...")
+            (copyfiles
+                (source "bin/MUImojiGear.info")
+                (dest #dest)
             )
         )
     )
@@ -365,10 +438,11 @@
 (exit
     (cat
         "  * * *  Installation complete!  * * *\n\n"
-        #app-name " " #app-version " has landed in:\n\n"
-        "  " #dest "\n\n"
-        "The following shared components are now available\n"
-        "to all applications on your system:\n"
+        "Installed in:  " #dest "\n\n"
+        (if (BITAND #install-apps 1) "  EmojiGear        (requires AmigaOS 3.2+)\n" "")
+        (if (BITAND #install-apps 2) "  MUImojiGear      (AmigaOS 3.0-3.9 + MUI)\n" "")
+        "\n"
+        "Shared components now available to all applications:\n"
         "  Libs:utf8rastport.library\n"
         "  SYS:Classes/Gadgets/unitexteditor.gadget\n"
         "  SYS:Classes/Gadgets/unibutton.gadget\n\n"

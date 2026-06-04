@@ -157,7 +157,7 @@ static LibraryEntry libraryTable[] = {
     {"icon.library",      39, &IconBase},
     {"asl.library",       39, &AslBase},
     {"gadtools.library",  39, &GadToolsBase},
-    {"utf8rastport.library",1, &URPBase},
+    {"utf8rastport.library",3, &URPBase},
 
     /* BOOPSI class libraries - with minimal version of OS3.9 (not related to os!) */
     {"window.class",           42, &WindowBase},
@@ -173,8 +173,8 @@ static LibraryEntry libraryTable[] = {
     {"gadgets/clicktab.gadget",47, &ClickTabBase},
     {"gadgets/chooser.gadget", 44, &ChooserBase},
     /* ... and the one that are starred in this app */
-    {"gadgets/unitexteditor.gadget",2, &UniTextEditorBase},
-    {"gadgets/unibutton.gadget", 2, &UniButtonBase},
+    {"gadgets/unitexteditor.gadget",3, &UniTextEditorBase},
+    {"gadgets/unibutton.gadget", 3, &UniButtonBase},
 
     {NULL, 0, NULL} /* Terminator */
 };

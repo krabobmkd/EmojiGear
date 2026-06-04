@@ -2,10 +2,15 @@ Short:        UTF-8 Unicode text editor with Emoji + gadgets
 Author:       krabobmkd
 Uploader:     victorien.ferry@free.fr
 Type:         text/edit
-Version:      2.3
+Version:      3.1
 Architecture: m68k-amigaos >= 3.2
 Requires:     68020, AmigaOS 3.2.x, 8 MB Fast RAM
 
+Version 3 corrects three causes of memory corruption present in version 2.x:
+the rendering library, the text editor gadget, and the button gadget now all
+use proper Exec Signal Semaphores for inter-process safety instead of
+Forbid()/Permit() pairs.  Applications, gadgets and the library are all
+significantly more stable as a result.
 
 EmojiGear is a UTF-8 Unicode text editor for AmigaOS 3.2.x (68020+).
 It renders TrueType/OpenType fonts and displays full-colour Emoji,
@@ -41,14 +46,28 @@ that any developer can open from their own application:
  License is GPL for the lib and LGPL for the gadgets.
 
 
-About OS3.9 compatibility:
+About OS 3.9 compatibility:
 
-utf8rastport.library and unibutton.gadget are already os3.9 compatible,
- but unitexteditor.gadget and EmojiGear uses 
- intuition and layers.library features that are bugged on OS3.9: 
- Remember you can upgrade any OS3.9 with an OS3.2.
- 
- 
+utf8rastport.library and unibutton.gadget are expected to work correctly
+on AmigaOS 3.9 and even AmigaOS 3.1, and can be used as standalone SDK
+components by applications targeting those older systems.
+
+Full compatibility for unitexteditor.gadget cannot be achieved on OS 3.9.
+The gadget uses offscreen bitmap tile rendering via a shared Layer, and
+there is a known bug in layers.library on OS 3.9 that makes this pattern
+unsafe.  This bug was fixed in AmigaOS 3.2.  Using unitexteditor.gadget
+or the EmojiGear application on OS 3.9 may cause display corruption or
+system instability.
+
+OS 3.9 users may try the MUImojiGear variant included in this package.
+MUI manages its own rendering and avoids the layers issue, but intensive
+Unicode rendering may eventually make the system unstable on OS 3.9.
+
+The best solution is to upgrade: the official AmigaOS 3.2 installer from
+Hyperion Entertainment can be applied to any OS 3.9 system and corrects
+a large number of OS 3.9 bugs including the layers.library issue.
+
+
  
 ---------------------------------------------------------------------------
 

@@ -6,7 +6,7 @@ project(UniButtonGadget C)
 set(CMAKE_C_STANDARD 11)
 
 list(APPEND AMIGA_COMPILER_OPTIONS -save-temps -Wall)
-list(APPEND AMIGA_COMPILER_OPTIONS -mcpu=68020 -O1 )
+list(APPEND AMIGA_COMPILER_OPTIONS -mcpu=68020 -O2 )
 
 
 option(UTF8RASTPORT_SHARED "link utf8rastport as amiga shared lib"  ON)

@@ -105,7 +105,7 @@ int main(int argc, char *argv[])
     }
 
     /* this is the actual library to render utf8 text */
-    URPBase  = OpenLibrary("utf8rastport.library", 1);
+    URPBase  = OpenLibrary("utf8rastport.library", 3);
     if (!URPBase) {
         puts("ERROR: cannot open utf8rastport.library");
         goto cleanup;

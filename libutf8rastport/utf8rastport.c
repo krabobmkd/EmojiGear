@@ -1027,11 +1027,13 @@ struct URPDrawContext *URPDC_Create(REG(a0, const char *name))
 {
     struct URPDrawContext *dc;
     FT_Error err;
-    dc = (struct URPDrawContext *)AllocVec(sizeof(*dc), MEMF_CLEAR);
+    dc = (struct URPDrawContext *)AllocVec(sizeof(*dc), MEMF_PUBLIC|MEMF_CLEAR);
     if (!dc) return NULL;
 
     err = FT_Init_FreeType(&dc->library);
     if (err) { FreeVec(dc); return NULL; }
+
+    InitSemaphore(&dc->sem);
 
     dc->numFonts     = 0;
     dc->lastFriendBitmap = NULL;
@@ -1065,6 +1067,8 @@ void URPDC_Release(REG(a0, struct URPDrawContext *dc))
     /* if some other object still use it, do not delete */
     if(dc->useCount>0 ) return;
 
+    ObtainSemaphore(&dc->sem);
+
     urp_cache_free_all(&dc->cache);
 
     for (i = 0; i < dc->numFonts; i++) {
@@ -1078,6 +1082,7 @@ void URPDC_Release(REG(a0, struct URPDrawContext *dc))
 
     FT_Done_FreeType(dc->library);
 
+    ReleaseSemaphore(&dc->sem);
     FreeVec(dc);
 }
 
@@ -1093,6 +1098,8 @@ int URPDC_AddFont(REG(a0, struct URPDrawContext *dc),
 
     if (!dc || !fontPath) return 0;
     if (dc->numFonts >= URP_MAX_FONTS) return 0;
+
+    ObtainSemaphore(&dc->sem);
 
     fe = &dc->fonts[dc->numFonts];
 
@@ -1116,7 +1123,10 @@ int URPDC_AddFont(REG(a0, struct URPDrawContext *dc),
         err = FT_New_Face(dc->library, fontPath, 0, &fe->face);
     }
 
-    if (err) return 0;
+    if (err) {
+        ReleaseSemaphore(&dc->sem);
+        return 0;
+    }
 
     strncpy(fe->path, fontPath, URP_PATH_MAX - 1);
     fe->path[URP_PATH_MAX - 1] = '\0';
@@ -1127,6 +1137,7 @@ int URPDC_AddFont(REG(a0, struct URPDrawContext *dc),
 
     dc->numFonts++;
     dc->monoAdvanceX = 0; /* invalidate: primary font may have changed */
+    ReleaseSemaphore(&dc->sem);
     return 1;
 }
 
@@ -1138,6 +1149,7 @@ void URPDC_RemoveFont(REG(a0, struct URPDrawContext *dc),
     int i, j;
     if (!dc || !fontPath) return;
 
+    ObtainSemaphore(&dc->sem);
     for (i = 0; i < dc->numFonts; i++) {
         if (dc->fonts[i].pointSize == pointSize &&
             strcmp(dc->fonts[i].path, fontPath) == 0)
@@ -1148,9 +1160,11 @@ void URPDC_RemoveFont(REG(a0, struct URPDrawContext *dc),
             dc->numFonts--;
             memset(&dc->fonts[dc->numFonts], 0, sizeof(dc->fonts[0]));
             dc->monoAdvanceX = 0;
+            ReleaseSemaphore(&dc->sem);
             return;
         }
     }
+    ReleaseSemaphore(&dc->sem);
 }
 
 void URPDC_FlushFonts(REG(a0, struct URPDrawContext *dc))
@@ -1158,6 +1172,7 @@ void URPDC_FlushFonts(REG(a0, struct URPDrawContext *dc))
     int i;
 
     if (!dc) return;
+    ObtainSemaphore(&dc->sem);
     for (i = 0; i < dc->numFonts; i++) {
         if (dc->fonts[i].face)
             FT_Done_Face(dc->fonts[i].face);
@@ -1165,7 +1180,8 @@ void URPDC_FlushFonts(REG(a0, struct URPDrawContext *dc))
     memset(dc->fonts, 0, sizeof(dc->fonts));
     dc->numFonts     = 0;
     dc->monoAdvanceX = 0;
-    URPDC_FlushGlyphCache(dc);
+    urp_cache_free_all(&dc->cache);
+    ReleaseSemaphore(&dc->sem);
 }
 
 void URPDC_ChangeFontsSize(REG(a0, struct URPDrawContext *dc),
@@ -1180,6 +1196,7 @@ void URPDC_ChangeFontsSize(REG(a0, struct URPDrawContext *dc),
     if(nPointSize<8) nPointSize=8;
     if(nPointSize>64) nPointSize=64;
 
+    ObtainSemaphore(&dc->sem);
      for (i = 0; i < dc->numFonts; i++) {
         if ((fontMaskBit &fontMask) &&
             dc->fonts[i].face &&
@@ -1195,7 +1212,7 @@ void URPDC_ChangeFontsSize(REG(a0, struct URPDrawContext *dc),
         dc->monoAdvanceX = 0;
         urp_cache_free_all(&dc->cache);
     }
-
+    ReleaseSemaphore(&dc->sem);
 }
 
 
@@ -1228,13 +1245,17 @@ void URPDC_FlushGlyphCache(REG(a0, struct URPDrawContext *dc))
         flushbdbprint();
         return;
     }
+    ObtainSemaphore(&dc->sem);
     urp_cache_free_all(&dc->cache);
+    ReleaseSemaphore(&dc->sem);
 }
 
 void URPDC_SetStyle(REG(a0, struct URPDrawContext *dc), REG(d0, ULONG styleBits))
 {
     if (!dc) return;
+    ObtainSemaphore(&dc->sem);
     dc->currentStyle = (UBYTE)(styleBits & (URP_STYLE_BOLD | URP_STYLE_ITALIC));
+    ReleaseSemaphore(&dc->sem);
 }
 
 void  URPDC_SetDrawColor(REG(a0, struct URPDrawContext *dc),
@@ -1301,38 +1322,9 @@ void  URPDC_SetDrawColorFromPen(
 
     dc->lastFriendBitmap = screen->RastPort.BitMap;
 }
-ULONG URPDC_UpdateColorMap(REG(a0, struct URPDrawContext *dc), REG(a1, struct Screen *screen));
-
-/* like URPDC_UpdateColorMap(), but only act if screen change  */
-ULONG URPDC_SetDrawScreen(REG(a0, struct URPDrawContext *dc), REG(a1, struct Screen *screen))
-{
-    ULONG ndepth;
-
-    if (!dc || !screen || !screen->RastPort.BitMap ) return 0;
-
-    ndepth = GetBitMapAttr(screen->RastPort.BitMap,BMA_DEPTH);
-
-    if(dc->lastScreen == screen && ndepth == dc->lastScreenDepth) return 0;
-
-    dc->lastScreen = screen;
-    dc->lastScreenDepth = ndepth;
-
-    return URPDC_UpdateColorMap( dc, screen );
-
-}
-
-/*
- * URPDC_UpdateColorMap() – rebuild the RGB444→CLUT pen remap table from the
- * current screen palette and discard all cached CLUT glyph bitmaps so they
- * are regenerated on the next draw call.
- *
- * The remap table has 4096 entries, one for each possible combination of
- * 4-bit red, green and blue values (index = (R>>4)<<8 | (G>>4)<<4 | (B>>4)).
- * For each entry the nearest screen pen is found by minimising the squared
- * Euclidean distance in RGB space after expanding the 4-bit channels back to
- * 8 bits via replication (e.g. R4=0xA → R8=0xAA).
- */
-ULONG URPDC_UpdateColorMap(REG(a0, struct URPDrawContext *dc), REG(a1, struct Screen *screen))
+/* Internal implementation shared by URPDC_SetDrawScreen and URPDC_UpdateColorMap.
+ * Must be called with dc->sem already held. */
+static ULONG urp_update_color_map(struct URPDrawContext *dc, struct Screen *screen)
 {
     UBYTE clut_r[256], clut_g[256], clut_b[256];
     ULONG rgb[3];
@@ -1389,6 +1381,46 @@ ULONG URPDC_UpdateColorMap(REG(a0, struct URPDrawContext *dc), REG(a1, struct Sc
     urp_flush_clut_bitmaps(&dc->cache);
 
     return TRUE;
+}
+
+/* like URPDC_UpdateColorMap(), but only act if screen changed */
+ULONG URPDC_SetDrawScreen(REG(a0, struct URPDrawContext *dc), REG(a1, struct Screen *screen))
+{
+    ULONG ndepth;
+    ULONG result = 0;
+
+    if (!dc || !screen || !screen->RastPort.BitMap) return 0;
+
+    ObtainSemaphore(&dc->sem);
+    ndepth = GetBitMapAttr(screen->RastPort.BitMap, BMA_DEPTH);
+    if (dc->lastScreen != screen || ndepth != dc->lastScreenDepth) {
+        dc->lastScreen      = screen;
+        dc->lastScreenDepth = ndepth;
+        result = urp_update_color_map(dc, screen);
+    }
+    ReleaseSemaphore(&dc->sem);
+    return result;
+}
+
+/*
+ * URPDC_UpdateColorMap() – rebuild the RGB444→CLUT pen remap table from the
+ * current screen palette and discard all cached CLUT glyph bitmaps so they
+ * are regenerated on the next draw call.
+ *
+ * The remap table has 4096 entries, one for each possible combination of
+ * 4-bit red, green and blue values (index = (R>>4)<<8 | (G>>4)<<4 | (B>>4)).
+ * For each entry the nearest screen pen is found by minimising the squared
+ * Euclidean distance in RGB space after expanding the 4-bit channels back to
+ * 8 bits via replication (e.g. R4=0xA → R8=0xAA).
+ */
+ULONG URPDC_UpdateColorMap(REG(a0, struct URPDrawContext *dc), REG(a1, struct Screen *screen))
+{
+    ULONG result;
+    if (!dc) return 0;
+    ObtainSemaphore(&dc->sem);
+    result = urp_update_color_map(dc, screen);
+    ReleaseSemaphore(&dc->sem);
+    return result;
 }
 
 
@@ -1542,6 +1574,7 @@ void URPDC_TextSizeUTF8(REG(a0, struct URPDrawContext *dc),
     out->width = out->height = out->baseX = out->baseY = 0;
     if (!dc || !utf8) return;
 
+    ObtainSemaphore(&dc->sem);
     p         = (const unsigned char *)utf8;
     remaining = (maxChars < 0) ? INT_MAX : maxChars;
 
@@ -1633,6 +1666,7 @@ void URPDC_TextSizeUTF8(REG(a0, struct URPDrawContext *dc),
     out->baseY  = maxAscender;
     }
     }
+    ReleaseSemaphore(&dc->sem);
 }
 
 void URPDC_GetFontLineMetrics(REG(a0, struct URPDrawContext *dc),
@@ -1646,6 +1680,7 @@ void URPDC_GetFontLineMetrics(REG(a0, struct URPDrawContext *dc),
     out->width = out->height = out->baseX = out->baseY = 0;
     if (!dc || dc->numFonts == 0) return;
 
+    ObtainSemaphore(&dc->sem);
     for (i = 0; i < dc->numFonts; i++) {
         struct URPFontEntry *fe = &dc->fonts[i];
         FT_Pos raw_dsc;
@@ -1692,6 +1727,7 @@ void URPDC_GetFontLineMetrics(REG(a0, struct URPDrawContext *dc),
 
     out->height = (WORD)(maxAscend + maxDescend);
     out->baseY  = (WORD)maxAscend;
+    ReleaseSemaphore(&dc->sem);
 }
 
 /*

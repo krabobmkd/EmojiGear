@@ -506,8 +506,6 @@ typedef struct UTEDTextPosition {
 #define UTED_InternalRawKey_Code     (UTED_Dummy + 69)
 
 
-
-
 /* =========================================================================
  * Notification attribute tags   (base TAG_USER | 0x05C0)
  *

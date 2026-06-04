@@ -213,7 +213,7 @@ if(UTF8RASTPORT_SHARED)
 		lib_amiga_crt.c
 		utf8rastport.c
 		urp_cgx_blend.c
-		bdbprintf.c
+#		bdbprintf.c
 	)
 
 target_link_options(${UTF8RPNAME} PRIVATE
@@ -262,6 +262,6 @@ endif()
 if(AMIGA)
     target_compile_options(${UTF8RPNAME} PRIVATE ${AMIGA_CPU_FLAGS})
 endif()
-target_compile_definitions(${UTF8RPNAME} PRIVATE USE_DEBUG_BDBPRINT=1)
+#target_compile_definitions(${UTF8RPNAME} PRIVATE USE_DEBUG_BDBPRINT=1)
 
 

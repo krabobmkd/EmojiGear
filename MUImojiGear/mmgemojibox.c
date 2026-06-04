@@ -568,7 +568,7 @@ Object *MmgEmojiBox_BuildWindow(void)
     int i;
 
     /* Open utf8rastport.library for our local URPBase (shared gadget mode) */
-    if(!URPBase) URPBase = OpenLibrary("utf8rastport.library", 1);
+    if(!URPBase) URPBase = OpenLibrary("utf8rastport.library", 3);
     if(!URPBase) { /* emoji rendering won't work but we can still show the window */ }
 
     /* Grid BOOPSI class */

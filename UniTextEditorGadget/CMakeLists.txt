@@ -7,10 +7,10 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
 list(APPEND AMIGA_COMPILER_OPTIONS -save-temps -Wall)
-list(APPEND AMIGA_COMPILER_OPTIONS -mcpu=68020 -O1 )
+list(APPEND AMIGA_COMPILER_OPTIONS -mcpu=68020 -O2 )
 
 option(UTF8RASTPORT_SHARED "link utf8rastport as amiga shared lib"  ON)
-option(UNITEXTEDTORDEBUG "woot"  ON)
+option(UNITEXTEDTORDEBUG "woot"  OFF)
 # When ON the gadget is compiled into a static library linked directly by
 # the host application.  When OFF (future) the gadget would be a relocatable
 # .gadget binary with its own startup; that path is not implemented yet.

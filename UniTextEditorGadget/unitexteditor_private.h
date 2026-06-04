@@ -26,6 +26,7 @@
 
 #include <exec/lists.h>
 #include <exec/memory.h>
+#include <exec/semaphores.h>
 #include <graphics/rastport.h>
 #include <graphics/gfx.h>
 #include <intuition/screens.h>
@@ -261,6 +262,13 @@ typedef struct UTEDTextStash {
  * =========================================================================
  */
 typedef struct UniTextEditorData {
+
+    /* Per-instance semaphores.
+     * Always acquire in order: textSem first, then cacheSem.
+     * textSem  – protects line list, text content, undo stack, cursor/selection.
+     * cacheSem – protects bmPool and per-line chunks[] arrays. */
+    struct SignalSemaphore textSem;
+    struct SignalSemaphore cacheSem;
 
     /* Font & draw context — dc lives for the gadget's whole lifetime */
     struct URPDrawContext *dc;

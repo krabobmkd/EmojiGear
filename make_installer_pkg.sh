@@ -11,7 +11,7 @@
 # Default output: ./EmojiGear_pkg  (deleted and recreated each run)
 #
 # The resulting directory can be archived as an LHA for distribution:
-#   cd EmojiGear_pkg && lha a ../EmojiGear_2.3.lha *
+#   cd EmojiGear_pkg && lha a ../EmojiGear_3.1.lha *
 #
 
 set -e
@@ -41,6 +41,8 @@ check_file "$BUILD/libutf8rastport/utf8rastport.library"
 check_file "$BUILD/UniButtonGadget/unibutton.gadget"
 check_file "$BUILD/UniTextEditorGadget/unitexteditor.gadget"
 check_file "$BUILD/EmojiGear"
+check_file "$BUILD/MUImojiGear/MUImojiGear"
+check_file "$BUILD/MUImojiGear/MUImojiGear.info"
 check_file "$BUILD/examples/testMUIUniTextEditor"
 check_file "$BUILD/examples/TestUtf8DrawText"
 check_file "$BUILD/examples/testunibutton"
@@ -79,12 +81,16 @@ cp "$BUILD/UniButtonGadget/unibutton.gadget"        "$PKG/bin/unibutton.gadget"
 cp "$BUILD/UniTextEditorGadget/unitexteditor.gadget" "$PKG/bin/unitexteditor.gadget"
 
 # ---------------------------------------------------------------------------
-# Main application binary and icons
+# Application binaries and icons
 # ---------------------------------------------------------------------------
 echo "Copying EmojiGear binary and icons..."
 cp "$BUILD/EmojiGear"     "$PKG/bin/EmojiGear"
 cp "$SRC/EmojiGearL.info" "$PKG/bin/EmojiGearL.info"
 cp "$SRC/EmojiGearH.info" "$PKG/bin/EmojiGearH.info"
+
+echo "Copying MUImojiGear binary and icon..."
+cp "$BUILD/MUImojiGear/MUImojiGear"      "$PKG/bin/MUImojiGear"
+cp "$BUILD/MUImojiGear/MUImojiGear.info" "$PKG/bin/MUImojiGear.info"
 
 # ---------------------------------------------------------------------------
 # Documentation
@@ -151,4 +157,4 @@ echo "Contents:"
 find "$PKG" -not -type d | sort | sed "s|$PKG/||"
 echo ""
 echo "To create an LHA archive:"
-echo "  cd \"$PKG\" && lha a ../EmojiGear_2.3.lha *"
+echo "  cd \"$PKG\" && lha a ../EmojiGear_3.1.lha *"
