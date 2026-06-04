@@ -278,16 +278,21 @@ int uted_manage_rawkey_keycode(Class *cl, Object *o,ULONG codedata, struct Gadge
         navHandled = TRUE; break;
     case RAWKEY_DOWN:
         if (ctrl) {
-            ULONG curVisRow  = uted_cursor_visual_row(inst);
-            ULONG vis        = (ULONG)(inst->visibleLines > 1 ? inst->visibleLines - 1 : 1);
-            ULONG lastVisRow = inst->scrollTopLine + vis;
-            if (curVisRow < lastVisRow) {
-                /* move cursor to last visible row */
+            ULONG curVisRow   = uted_cursor_visual_row(inst);
+            /* fullSlots mirrors uted_ensure_cursor_visible: the cursor is
+             * considered fully visible in [scrollTopLine .. scrollTopLine+fullSlots-1].
+             * Target that last fully-visible slot on the first press so
+             * ensure_cursor_visible leaves scrollTopLine unchanged, giving a
+             * clean full-page jump on every subsequent press. */
+            ULONG fullSlots   = (ULONG)(inst->visibleLines > 1 ? inst->visibleLines - 1 : 1);
+            ULONG lastFullRow = inst->scrollTopLine + fullSlots - 1;
+            if (curVisRow < lastFullRow) {
+                /* move cursor to last fully visible row */
                 UniTextEditor_DoMoveCursor(cl, o, 0,
-                    (LONG)(lastVisRow - curVisRow), shift);
+                    (LONG)(lastFullRow - curVisRow), shift);
             } else {
                 /* already at bottom of page: scroll one full page down */
-                UniTextEditor_DoMoveCursor(cl, o, 0, (LONG)vis, shift);
+                UniTextEditor_DoMoveCursor(cl, o, 0, (LONG)fullSlots, shift);
             }
         } else {
             UniTextEditor_DoMoveCursor(cl, o,  0,  1, shift);

@@ -873,6 +873,28 @@ same way:
      you may need to click inside the text area again to restore
      keyboard focus to the editor.  This is normal MUI behaviour.
 
+@{u}Settings via icon tooltypes@{uu}
+
+Some options that have no dedicated UI in MUImojiGear can be set
+directly in the tooltypes of the @{b}MUImojiGear@{ub} icon.  Open the icon
+information window from Workbench (@{b}Icons > Information...@{ub}) and add
+or edit the relevant tooltypes there.  They are read on every launch.
+
+This is particularly useful for colours: MUImojiGear does not have a
+colour-picker panel, but you can set the editor text and background
+colours precisely by adding the following tooltypes:
+
+  @{b}EDITORPENCOLOR=0xRRGGBB@{ub}    text (foreground) colour as 24-bit hex
+  @{b}EDITORBGCOLOR=0xRRGGBB@{ub}     background colour as 24-bit hex
+
+Example: white text on a dark blue background:
+
+  EDITORPENCOLOR=0xEEEEEE
+  EDITORBGCOLOR=0x002244
+
+All other persistent settings (fonts, rendering options, word wrap,
+etc.) are also stored as tooltypes and can be tweaked the same way.
+
 @{u}Features not yet present in MUImojiGear@{uu}
 
   @{b}*@{ub}  @{b}Multi-file support:@{ub} only one document can be open at a time;

@@ -175,11 +175,17 @@ void App_UpdateStatus(void)
 {
     static char buf[128];
     struct Gadget *g = NULL; struct Window *w = NULL;
-    ULONG modified = 0;
+    ULONG modified = 0, curLine = 0, curChar = 0, lineCount = 0;
     App_GetRawEditorWin(&g, &w);
-    if (g) GetAttr(UTED_Modified, (Object *)g, &modified);
-    strncpy(buf, modified ? LOC(MSG_STATUS_MODIFIED)
-                          : LOC(MSG_STATUS_READY), sizeof(buf) - 1);
+    if (g) {
+        GetAttr(UTED_Modified,   (Object *)g, &modified);
+        GetAttr(UTED_CursorLine, (Object *)g, &curLine);
+        GetAttr(UTED_CursorChar, (Object *)g, &curChar);
+        GetAttr(UTED_LineCount,  (Object *)g, &lineCount);
+    }
+    snprintf(buf, sizeof(buf) - 1, " Line %lu, Col %lu  |  %lu lines",
+        /*no need     modified ? LOC(MSG_STATUS_MODIFIED) : LOC(MSG_STATUS_READY),*/
+             curLine + 1, curChar + 1, lineCount);
     buf[sizeof(buf) - 1] = '\0';
     if (app && app->statusObj)
         SetAttrs(app->statusObj, MUIA_Text_Contents, (ULONG)buf, TAG_DONE);
@@ -1022,7 +1028,7 @@ int main(int argc, char *argv[])
                             FindTagItem(UTEDN_ScrollChanged,      msg) ||
                             FindTagItem(UTED_ScrollLeft,          msg) ||
                             FindTagItem(UTED_SetPrivateActivation, msg))
-                            needRedraw = TRUE;
+                        { needRedraw = TRUE; needStatus = TRUE; }
                         if (FindTagItem(UTEDN_TextChanged, msg) ||
                             FindTagItem(UTED_Modified,     msg))
                         { needRedraw = TRUE; needStatus = TRUE; }
