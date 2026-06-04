@@ -261,6 +261,9 @@ void uted_pool_free_bitmapcache(UTEDBitMapPool *pool)
 {
     ULONG i;
     if (pool->bitmaps) {
+        /* in case there is some rendering on bitmap */
+        WaitBlit();
+
         for (i = 0; i < pool->size; i++)
             if (pool->bitmaps[i]) FreeBitMap(pool->bitmaps[i]);
         FreeVec(pool->bitmaps);
