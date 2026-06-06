@@ -554,12 +554,10 @@ ULONG UniTextEditor_OnNew(Class *cl, Object *o, struct opSet *msg)
         }
     }
 
-
-
+    /* need to redefine clipping rect inside window rastport
+     to gadget bounds, using that. reconfigured on layout,
+     installed/uninstalled at render */
     inst->clipRegion = NewRegion();
-
-
-
 
     /* Undo/redo stacks – default 64 entries */
     uted_undo_resize(inst, 64);
@@ -635,10 +633,12 @@ fail:
         line = next;
     }
 
+    /* the part that has poblems on OS3.9 - must be done before uted_pool_free_bitmapcache() */
+    uted_pool_free_layer(&inst->bmPool);
+
     /* All bitmaps returned; now release the pool itself */
     uted_pool_free_bitmapcache(&inst->bmPool);
-    /* the part that has poblems on OS3.9 */
-    uted_pool_free_layer(&inst->bmPool);
+
     ReleaseSemaphore(&inst->cacheSem);
     ReleaseSemaphore(&inst->textSem);
     if (inst->dc) { URPDC_Release(inst->dc); inst->dc = NULL; }

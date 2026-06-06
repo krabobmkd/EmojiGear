@@ -319,8 +319,6 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
         return TRUE;
     }
 
-    ObtainSemaphore(&inst->textSem);
-    ObtainSemaphore(&inst->cacheSem);
 
 // bdbprintf("UniTextEditor_OnRender t:%08x\n",(int)FindTask(NULL));
 
@@ -375,8 +373,7 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
          SetAPen(rp, (LONG)inst->bgPen);
          RectFill(rp, (LONG)left, (LONG)top,
                   (LONG)(left + width - 1), (LONG)(top + height - 1));
-    ReleaseSemaphore(&inst->cacheSem);
-    ReleaseSemaphore(&inst->textSem);
+
         return 0;
     }
 
@@ -402,6 +399,10 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
         }
         inst->pendingKeyCount = 0;
     }
+
+    ObtainSemaphore(&inst->textSem);
+    ObtainSemaphore(&inst->cacheSem);
+
 
     /* Replay deferred internal scrollbar interaction.
      * Scrollbar clicks and drags are stored as a gadget-relative Y; here we
@@ -528,7 +529,6 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
         }
     }
 
-
     /* CLUT (indexed palette) screens need special selection/cursor rendering.
      * COMPLEMENT on a palette index produces arbitrary colors, not inversions. */
     {
@@ -540,7 +540,7 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
     /* allow final blits on the rastport to be really clipped
       to the gadget frame rectangle. oldClipRegion can be NULL
      but must be restored in all case after draw */
-    oldClipRegion = InstallClipRegion( rp->Layer, inst->clipRegion);
+   oldClipRegion = InstallClipRegion( rp->Layer, inst->clipRegion);
 
     /* ------------------------------------------------------------------
      * Eviction sweep: return chunk bitmaps that are no longer needed back
@@ -1058,6 +1058,9 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
 
     } /* end non-wrap else */
 
+    ReleaseSemaphore(&inst->cacheSem);
+    ReleaseSemaphore(&inst->textSem);
+
     /* Fill remaining pixels below last rendered line (within text area) */
     if (isFullRefresh || rEnd == ~0UL) {
         WORD usedH = (WORD)(inst->visibleLines * inst->lineHeight);
@@ -1144,7 +1147,6 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
         }
     }
 
-    ReleaseSemaphore(&inst->cacheSem);
-    ReleaseSemaphore(&inst->textSem);
+
     return 0;
 }
