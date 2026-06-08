@@ -312,13 +312,25 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
      * When my UAE also OS3.2.3 , also P96 indi, wether it uses
      * AGA or P96, send it on regular task...
      */
-    if(FindTask(NULL) != inst->callerTask)
+    if(FindTask(NULL) != inst->callerTask
+     )
     {
         /* sorry, but on the right process will you ? */
         uted_notify(cl, o, msg->gpr_GInfo, UTEDN_ScrollChanged, inst->scrollTopLine);
         return TRUE;
     }
 
+/*
+ for note:
+     GREDRAW_REDRAW
+        Redraw the entire gadget.
+
+    GREDRAW_UPDATE
+        The user has manipulated the gadget changing the imagery. Update only that part of the gadget‚Äôs imagery that is effected by the user manipulating the gadget (for example, the knob and scrolling field of the prop gadget).
+
+    GREDRAW_TOGGLE
+        If this gadget supports it, toggle to or from the highlighting imagery.
+*/
 
 // bdbprintf("UniTextEditor_OnRender t:%08x\n",(int)FindTask(NULL));
 
@@ -410,7 +422,9 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
      * text click/drag replay so a scroll triggered by the bar does not also
      * reposition the text cursor. */
     if (inst->pendingVScrollClick || inst->pendingVScrollDrag) {
-        ULONG totalRows = inst->wordWrap ? inst->wrapRowCount : inst->lineCount;
+        /* +1: virtual extra line at bottom matches ensure_cursor_visible's
+         * "reserve last slot" so scroll positions it requires are reachable. */
+        ULONG totalRows = (inst->wordWrap ? inst->wrapRowCount : inst->lineCount) + 1;
         if (totalRows > (ULONG)inst->visibleLines && textHeight > 0) {
             LONG relY = (LONG)inst->pendingVScrollY - (LONG)inst->topMargin;
             if (relY < 0) relY = 0;
@@ -540,6 +554,7 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
     /* allow final blits on the rastport to be really clipped
       to the gadget frame rectangle. oldClipRegion can be NULL
      but must be restored in all case after draw */
+
    oldClipRegion = InstallClipRegion( rp->Layer, inst->clipRegion);
 
     /* ------------------------------------------------------------------
@@ -1129,7 +1144,7 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
      * Thumb height and Y position are proportional to the visible fraction
      * and scroll position within the total rendered line count.           */
     if (inst->displayInternalVScroll && textHeight > 0) {
-        ULONG totalRows = inst->wordWrap ? inst->wrapRowCount : inst->lineCount;
+        ULONG totalRows = (inst->wordWrap ? inst->wrapRowCount : inst->lineCount) + 1;
         if (totalRows > (ULONG)inst->visibleLines) {
             WORD thumbH = (WORD)((LONG)textHeight * (LONG)inst->visibleLines
                                  / (LONG)totalRows);

@@ -1639,9 +1639,12 @@ ULONG UniTextEditor_OnGet(Class *cl, Object *o, struct opGet *msg)
         return TRUE;
 
     case UTED_RenderedLineCount:
+        /* +1: virtual extra line at bottom so external scrollbars accept the
+         * scroll position that ensure_cursor_visible's "reserve last slot"
+         * logic requires (avoids prop-gadget snap-back dance). */
         *msg->opg_Storage = (inst->wordWrap && inst->wrapMap)
-                            ? inst->wrapRowCount
-                            : inst->lineCount;
+                            ? inst->wrapRowCount + 1
+                            : inst->lineCount + 1;
         return TRUE;
 
     case UTED_MaxDisplayLines:
