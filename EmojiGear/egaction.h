@@ -87,6 +87,14 @@ enum {
 BOOL load_utf8_from_path(struct App *ctx, const char *path, int *actual_encoding);
 BOOL load_encoded_from_path(struct App *ctx, const char *path, int encoding);
 
+/* Returns TRUE if buf[0..len-1] is valid UTF-8 (see egaction.c for details). */
+BOOL is_valid_utf8(const char *buf, LONG len);
+
+/* Convert a single-byte legacy encoding buffer to a UTF-8 AllocVec string.
+ * encoding == 1 -> ISO 8859-1 (Latin-1), encoding == 2 -> ISO 8859-2 (Latin-2).
+ * Caller must FreeVec() the result. Returns NULL on allocation failure. */
+char *convert_to_utf8(const char *src, LONG srcLen, int encoding);
+
 /* Initialize: caches localized action names from MSG_* strings */
 void        EgAction_Init(void);
 

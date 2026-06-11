@@ -258,12 +258,12 @@ static char *utf16_to_utf8(const char *src, LONG srcBytes, int be, LONG *outLen)
 }
 
 /* forward declaration – defined after the Latin table below */
-static char *convert_to_utf8(const char *src, LONG srcLen, int encoding);
+char *convert_to_utf8(const char *src, LONG srcLen, int encoding);
 
 /* Returns TRUE if buf[0..len-1] is valid UTF-8.
  * Any stray 0x80-0xFF byte that is not part of a legal multi-byte sequence
  * causes an immediate FALSE, which is exactly what Latin-1 files trigger. */
-static BOOL is_valid_utf8(const char *buf, LONG len)
+BOOL is_valid_utf8(const char *buf, LONG len)
 {
     LONG i = 0;
     while (i < len) {
@@ -460,7 +460,7 @@ static const unsigned short latin2_unicode[128] = {
  * most 2 UTF-8 bytes.  Output buffer is AllocVec(srcLen*2+1, MEMF_ANY).
  * Caller must FreeVec() the result.  Returns NULL on allocation failure.
  * -------------------------------------------------------------------------*/
-static char *convert_to_utf8(const char *src, LONG srcLen, int encoding)
+char *convert_to_utf8(const char *src, LONG srcLen, int encoding)
 {
     char *out, *p;
     LONG  i;

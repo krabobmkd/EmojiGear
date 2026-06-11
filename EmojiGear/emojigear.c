@@ -780,8 +780,27 @@ int main(int argc, char **argv)
                      * the leading byte of any pending multi-byte character. */
                     char savedByte = (remaining > 0) ? pipeBuf[safeLen] : '\0';
                     pipeBuf[safeLen] = '\0';
-                    SetGdAttrs(app->textEditorObj,
-                               UTED_InsertText, (ULONG)pipeBuf, TAG_END);
+
+                    /* AmigaDOS pipes/redirections may carry plain 8-bit
+                     * Latin-1 text (e.g. `echo "â" | EmojiGear`) instead of
+                     * UTF-8.  utf8_complete_len() only checks sequence
+                     * *length*, not validity, so a Latin-1 byte such as 0xE2
+                     * followed by ASCII can look "complete" while being
+                     * illegal UTF-8 and crashing UTED_InsertText.  Detect
+                     * this and re-encode the chunk from Latin-1 to UTF-8
+                     * before handing it to the editor. */
+                    if (is_valid_utf8(pipeBuf, safeLen)) {
+                        SetGdAttrs(app->textEditorObj,
+                                   UTED_InsertText, (ULONG)pipeBuf, TAG_END);
+                    } else {
+                        char *latin1 = convert_to_utf8(pipeBuf, safeLen, 1);
+                        if (latin1) {
+                            SetGdAttrs(app->textEditorObj,
+                                       UTED_InsertText, (ULONG)latin1, TAG_END);
+                            FreeVec(latin1);
+                        }
+                    }
+
                     if (remaining > 0) {
                         pipeBuf[safeLen] = savedByte; /* restore before shift */
                         memmove(pipeBuf, pipeBuf + safeLen, (size_t)remaining);
