@@ -101,7 +101,13 @@ static void uted_do_layout( Class *cl, Object *o,
                                   inst->bmPool.height != (UWORD)inst->lineHeightBase);
             BOOL tooSmall      = (!noPool && !heightChanged &&
                                   inst->bmPool.size < neededSize);
-            BOOL screenModechange = (screen != inst->screen);
+            BOOL screenModechange;
+            ULONG modeid = GetVPModeID(&screen->ViewPort);
+            ULONG sdepth = GetBitMapAttr(screen->RastPort.BitMap,BMA_DEPTH);
+            screenModechange = (screen != inst->screen ||
+                                modeid != inst->screen_last_mode ||
+                                sdepth !=  inst->screen_last_depth
+                                );
 
             if (noPool || heightChanged || tooSmall || screenModechange) {
                 UniTextEditorLine *line;
@@ -118,7 +124,7 @@ static void uted_do_layout( Class *cl, Object *o,
                      line = (UniTextEditorLine *)line->node.mln_Succ)
                     uted_line_evict_chunks(inst, line);
 
-                if (noPool || heightChanged) {
+                if (noPool || heightChanged || screenModechange) {
                     /* Line height changed (font resize) or first alloc:
                      * existing bitmaps have the wrong dimensions – rebuild. */
 
@@ -150,6 +156,8 @@ static void uted_do_layout( Class *cl, Object *o,
                 uted_update_halfway_pen(inst);
 
                 inst->screen = screen;
+                inst->screen_last_depth = sdepth;
+                inst->screen_last_mode = modeid;
             }
         }
     }
@@ -351,9 +359,17 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
      * gpr_Redraw == GREDRAW_UPDATE  → triggered by SetGadgetAttrs (edit)
      * gpr_Redraw == GREDRAW_REDRAW  → triggered by Intuition (expose, resize)
      * ------------------------------------------------------------------ */
-    needLayout = (width  != inst->layoutedWidth  ||
-                  height != inst->layoutedHeight ||
-                  (scr && scr != inst->screen));
+    {
+        ULONG modeid = GetVPModeID(&scr->ViewPort);
+        ULONG sdepth = GetBitMapAttr(scr->RastPort.BitMap,BMA_DEPTH);
+
+        needLayout = (width  != inst->layoutedWidth  ||
+                      height != inst->layoutedHeight ||
+                      (scr != inst->screen) ||
+                      modeid != inst->screen_last_mode ||
+                      sdepth != inst->screen_last_depth
+                      );
+    }
 
     if (msg->gpr_Redraw != GREDRAW_UPDATE || needLayout) {
         isFullRefresh = TRUE;

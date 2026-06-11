@@ -374,6 +374,8 @@ typedef struct UniTextEditorData {
     ULONG                 vanillaAnsiCode; /* encoding for UTED_PutVanillaKey 0xA0-0xFF bytes;
                                            * UTED_VANILLAKEY_LATIN1=1 or UTED_VANILLAKEY_LATIN2=2 */
     struct Screen        *screen;         /* for URPDC_UpdateColorMap + AllocBitMap */
+    ULONG               screen_last_mode;
+    ULONG               screen_last_depth;
 
     LONG   refreshStartLine;
     LONG   refreshEndLine;

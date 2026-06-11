@@ -941,17 +941,21 @@ int main(int argc, char *argv[])
 
             /* ---- Pipe / stdin UTF-8/ANSI input (non-blocking) ---- */
             {
-                BOOL needsFree;
-                const char *chunk = EgPipeInput_Poll(pipeBuf, PIPE_INPUT_BUF, &pipeBufUsed, &needsFree);
-                if (chunk) {
-                    struct Gadget *pg = NULL; struct Window *pw = NULL;
-                    App_GetRawEditorWin(&pg, &pw);
-                    if (pg && pw) {
-                        SetGadgetAttrs(pg, pw, NULL,
-                                       UTED_InsertText, (ULONG)chunk, TAG_DONE);
-                        RefreshGList(pg, pw, NULL, 1);
+                BPTR inpt = Input();
+                if (inpt && !IsInteractive(inpt))
+                {
+                    BOOL needsFree;
+                    const char *chunk = EgPipeInput_Poll(pipeBuf, PIPE_INPUT_BUF, &pipeBufUsed, &needsFree);
+                    if (chunk) {
+                        struct Gadget *pg = NULL; struct Window *pw = NULL;
+                        App_GetRawEditorWin(&pg, &pw);
+                        if (pg && pw) {
+                            SetGadgetAttrs(pg, pw, NULL,
+                                           UTED_InsertText, (ULONG)chunk, TAG_DONE);
+                            RefreshGList(pg, pw, NULL, 1);
+                        }
+                        if (needsFree) FreeVec((char *)chunk);
                     }
-                    if (needsFree) FreeVec((char *)chunk);
                 }
             }
 

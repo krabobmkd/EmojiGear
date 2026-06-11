@@ -718,14 +718,18 @@ int main(int argc, char **argv)
          * block), and it keeps multi-byte UTF-8 sequences from being split
          * across iterations, converting plain 8-bit Latin-1 input to UTF-8
          * on the fly. */
-        {
-            BOOL needsFree;
-            const char *chunk = EgPipeInput_Poll(pipeBuf, PIPE_INPUT_BUF, &pipeBufUsed, &needsFree);
-            if (chunk) {
-                SetGdAttrs(app->textEditorObj, UTED_InsertText, (ULONG)chunk, TAG_END);
-                if (needsFree) FreeVec((char *)chunk);
+            {
+                BPTR inpt = Input();
+                if (inpt && !IsInteractive(inpt))
+                {
+                    BOOL needsFree;
+                    const char *chunk = EgPipeInput_Poll(pipeBuf, PIPE_INPUT_BUF, &pipeBufUsed, &needsFree);
+                    if (chunk) {
+                        SetGdAttrs(app->textEditorObj, UTED_InsertText, (ULONG)chunk, TAG_END);
+                        if (needsFree) FreeVec((char *)chunk);
+                    }
+                }
             }
-        }
 
 
             /* exit app at any moment from Ctrl-C signal, atexit() magic does anything needed. */
@@ -841,10 +845,9 @@ int main(int argc, char **argv)
                     break;
 
                     case WMHI_CLOSEWINDOW:
-                        /* now close button would just close the current text context */
-                        EgTabs_CloseCurrentTab();
-                        /* old: direct quitting ok = FALSE; */
-
+                        /* was ok to kill by current atb: EgTabs_CloseCurrentTab(); */
+                        /* direct quit */
+                        ok = FALSE;
                         break;
 
                     case WMHI_GADGETUP:

@@ -53,7 +53,7 @@ static const UBYTE closeSelectedData[] = {
 static const ULONG closePalette[] = {
     4,
     0, 0, 0, /*       */
-    0x88000000, 0x88000000, 0xdd000000, /* 1: bluish face          */
+    0x88888888, 0x88888888, 0xdddddddd, /* 1: bluish face          */
     0, 0, 0, /* 2: frame, normal        */
     0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, /* 3: frame, selected      */
 };
@@ -67,6 +67,7 @@ struct Image *CloseButton_CreateImage(struct Screen *scr)
         PENMAP_SelectData,  (ULONG)closeSelectedData,
         PENMAP_Palette,     (ULONG)closePalette,
         PENMAP_Screen,      (ULONG)scr,
+      PENMAP_ColorMap,(ULONG)scr->ViewPort.ColorMap,
         PENMAP_Transparent, TRUE,
         PENMAP_MaskBlit,    TRUE,
         TAG_END);

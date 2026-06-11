@@ -129,14 +129,7 @@ const char *EgPipeInput_Poll(char *buf, ULONG bufSize, LONG *pUsed, BOOL *needsF
 
     {
         LONG remaining = used - safeLen;
-        /* Save the byte at the boundary before NUL-terminating; otherwise
-         * the memmove below would copy '\0' as the first byte of the next
-         * (incomplete) sequence, losing the leading byte of any pending
-         * multi-byte character. */
-        char savedByte = (remaining > 0) ? buf[safeLen] : '\0';
-        const char *result = buf;
-
-        buf[safeLen] = '\0';
+        char *result;
 
         /* AmigaDOS pipes/redirections may carry plain 8-bit Latin-1 text
          * (e.g. `echo "â" | EmojiGear`) instead of UTF-8.
@@ -145,19 +138,22 @@ const char *EgPipeInput_Poll(char *buf, ULONG bufSize, LONG *pUsed, BOOL *needsF
          * "complete" while being illegal UTF-8.  Detect this and re-encode
          * the chunk from Latin-1 to UTF-8 before handing it to the editor. */
         if (!is_valid_utf8(buf, safeLen)) {
-            char *converted = latin1_to_utf8(buf, safeLen);
-            if (converted) {
-                result = converted;
-                *needsFree = TRUE;
-            } else {
-                result = NULL;
+            result = latin1_to_utf8(buf, safeLen);
+        } else {
+            /* Copy out the chunk so buf is free to be rearranged below
+             * without corrupting the returned data or its NUL terminator. */
+            result = (char *)AllocVec((ULONG)safeLen + 1, MEMF_ANY);
+            if (result) {
+                CopyMem(buf, result, (ULONG)safeLen);
+                result[safeLen] = '\0';
             }
         }
+        if (result) *needsFree = TRUE;
 
-        if (remaining > 0) {
-            buf[safeLen] = savedByte; /* restore before shift */
+        /* Shift any incomplete trailing sequence to the front of buf so it
+         * can be completed on a later call. */
+        if (remaining > 0)
             memmove(buf, buf + safeLen, (size_t)remaining);
-        }
         *pUsed = remaining;
 
         return result;
