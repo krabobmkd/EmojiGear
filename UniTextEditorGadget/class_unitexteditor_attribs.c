@@ -915,12 +915,8 @@ ULONG UniTextEditor_OnSet(Class *cl, Object *o, struct opSet *msg)
 
         case UTED_ScrollTop:
         {
-            ULONG top = (ULONG)tag->ti_Data;
-            ULONG maxTop;
-            if (inst->wordWrap && inst->wrapMap && inst->wrapRowCount > 0)
-                maxTop = inst->wrapRowCount - 1;
-            else
-                maxTop = inst->lineCount > 0 ? inst->lineCount - 1 : 0;
+            ULONG top    = (ULONG)tag->ti_Data;
+            ULONG maxTop = uted_scroll_max_top(inst);
             if (top > maxTop) top = maxTop;
             if (inst->scrollTopLine != top)
             {
@@ -1636,9 +1632,10 @@ ULONG UniTextEditor_OnGet(Class *cl, Object *o, struct opGet *msg)
         return TRUE;
 
     case UTED_RenderedLineCount:
-        *msg->opg_Storage = (inst->wordWrap && inst->wrapMap)
-                            ? inst->wrapRowCount
-                            : inst->lineCount;
+        /* Total - Visible must equal uted_scroll_max_top() so external
+         * scrollbars (PGA_Total/PGA_Visible) allow scrollTopLine to reach
+         * the same range as uted_ensure_cursor_visible. */
+        *msg->opg_Storage = uted_scroll_max_top(inst) + (ULONG)inst->visibleLines;
         return TRUE;
 
     case UTED_MaxDisplayLines:

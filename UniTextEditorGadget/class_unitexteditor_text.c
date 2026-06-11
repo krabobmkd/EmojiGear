@@ -288,6 +288,27 @@ void uted_ensure_cursor_visible(UniTextEditorData *inst)
     }
 }
 
+/* uted_scroll_total_rows: number of existing visual rows (logical lines in
+ * non-wrap mode, wrap-map rows in wordWrap mode). */
+ULONG uted_scroll_total_rows(UniTextEditorData *inst)
+{
+    return (inst->wordWrap && inst->wrapMap && inst->wrapRowCount > 0)
+           ? inst->wrapRowCount : inst->lineCount;
+}
+
+/* uted_scroll_max_top: highest scrollTopLine that uted_ensure_cursor_visible
+ * can produce.  fullSlots mirrors the logic above: a non-existing extra row
+ * is counted past the end of the text so the last real row can land in the
+ * last fully-visible slot instead of the partially-cropped one. */
+ULONG uted_scroll_max_top(UniTextEditorData *inst)
+{
+    ULONG totalRows = uted_scroll_total_rows(inst);
+    ULONG fullSlots = (inst->visibleLines > 1)
+                      ? (ULONG)inst->visibleLines - 1
+                      : 1;
+    return (totalRows > fullSlots) ? totalRows - fullSlots : 0;
+}
+
 void uted_ensure_cursor_h_visible(UniTextEditorData *inst)
 {
     UniTextEditorLine *line;

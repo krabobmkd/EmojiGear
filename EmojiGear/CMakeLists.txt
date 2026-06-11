@@ -23,6 +23,7 @@ set(EMOJIGEAR_SOURCES
     borderscrollers.c
     egmenu.c
     egaction.c
+    egpipeinput.c
     eglocale.c
     egsettingsview.c
     egfontsview.c

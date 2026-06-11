@@ -58,6 +58,7 @@
 #include "eglocale.h"
 #include "egaction.h"
 #include "egmenu.h"
+#include "egpipeinput.h"
 
 #include "boopsimessage.h"
 #include "boopsimainwindow.h"
@@ -209,41 +210,6 @@ void cleanexit(const char *pmessage)
  *
  * Must be called after LocaleBase has been opened.
  */
-/* Return the number of bytes at the start of buf that form only complete
- * UTF-8 characters.  Any trailing incomplete multi-byte sequence is excluded.
- * Used by the pipe reader to avoid splitting codepoints across InsertText calls.
- *
- * Algorithm: walk back from the end to find the last leading byte, check
- * whether all its continuation bytes are present.  If yes, the whole buffer
- * is safe.  If not, the boundary is just before that leading byte. */
-static LONG utf8_complete_len(const char *buf, LONG len)
-{
-    LONG     i = len;
-    unsigned char c;
-    int      seqLen;
-
-    if (len <= 0) return 0;
-
-    /* Find the last leading byte (not a continuation byte 10xxxxxx) */
-    while (i > 0) {
-        c = (unsigned char)buf[i - 1];
-        if ((c & 0xC0) != 0x80) break;
-        i--;
-    }
-    if (i == 0) return 0; /* buffer is all continuation bytes – broken stream */
-
-    c = (unsigned char)buf[i - 1];
-    if      (c < 0x80)           seqLen = 1;
-    else if ((c & 0xE0) == 0xC0) seqLen = 2;
-    else if ((c & 0xF0) == 0xE0) seqLen = 3;
-    else if ((c & 0xF8) == 0xF0) seqLen = 4;
-    else                          seqLen = 1; /* invalid leading byte */
-
-    /* Is the sequence fully present? */
-    if ((i - 1) + seqLen <= len) return len;   /* yes – whole buffer is safe */
-    else                         return i - 1;  /* no  – exclude the partial sequence */
-}
-
 static ULONG detect_vanilla_ansi_code(void)
 {
     ULONG ansiCode = UTED_VANILLAKEY_LATIN1;
@@ -551,11 +517,15 @@ int main(int argc, char **argv)
 
         // if(ClickTabBase)
         // {
+
             app->tabGadget = NewObject(CLICKTAB_GetClass(), NULL,
                 GA_ID,              GID_TABBAR,
                 GA_RelVerify,       TRUE,
+                ICA_TARGET,         (ULONG)TargetInstance,
                 CLICKTAB_Labels,    (ULONG)app->tabList,
                 CLICKTAB_Current,   0,
+                    // (app->tabGadget_closeImage)?(CLICKTAB_CloseImage):(TAG_IGNORE),
+                    // (ULONG)app->tabGadget_closeImage,
                 TAG_END);
             if (!app->tabGadget) cleanexit("ClickTab gadget creation failed");
         // } else
@@ -633,7 +603,7 @@ int main(int argc, char **argv)
         WINDOW_ParentGroup, (ULONG)app->mainvlayout,
         WINDOW_IconifyGadget, TRUE,
         WINDOW_IconTitle, (ULONG)"EmojiGear",
-        WINDOW_AppPort, (ULONG)app->app_port,
+        WINDOW_AppPort, (ULONG)app->app_port, /* needed for iconizing */
         lasttag,lastValue,
         TAG_END);
 
@@ -666,6 +636,11 @@ int main(int argc, char **argv)
     BMainWindow_SetTitleLocS(&app->mainwindow,MSG_WINDOW_TITLE_WITHFILE, "Unicode Text Editor v" EMOJIGEAR_VERSION);
     /*  Open the window or screen accoring to last prefs. */
     BMainWindow_Show(&app->mainwindow,app->window_obj,&app->appSettings);
+
+    /* try refresh close button of clicktabs */
+    if(app->tabGadget)
+        SetGadgetAttrs(app->tabGadget,CurrentMainWindow,NULL,
+                    CLICKTAB_Labels, (ULONG)app->tabList, TAG_END);
 
     /* Load files passed on CLI: EmojiGear <path> [<path2> ...] [Latin1|Latin2] */
     if (argc > 1) {
@@ -735,78 +710,18 @@ int main(int argc, char **argv)
 
         /* ---- Pipe / stdin input with UTF-8 boundary protection ----------------
          * WaitForChar() does not work reliably on AmigaOS pipes/redirections,
-         * so it is not used.  Instead we rely on IsInteractive():
-         *
-         * Step 1 – read: only when Input() is NOT an interactive console
-         *   (IsInteractive() returns FALSE for PIPE: and file redirections).
-         *   On those handles Read() returns immediately with 0 bytes when no
-         *   data is available, so it does not block.  On a real CON: handle
-         *   Read() would block, hence the IsInteractive guard.
-         *
-         * Step 2 – flush: always runs, even when Step 1 reads nothing.
-         *   This drains bytes accumulated in previous iterations.
-         *   BUG FIX: pipeBuf[safeLen] is saved and restored around the NUL-
-         *   terminate so memmove does not shift a corrupted leading byte.
-         * ---------------------------------------------------------------------- */
+         * so it is not used.  EgPipeInput_Poll() relies on IsInteractive()
+         * instead: PIPE: and file redirections return 0 bytes immediately
+         * from Read() when no data is available (a real CON: handle would
+         * block), and it keeps multi-byte UTF-8 sequences from being split
+         * across iterations, converting plain 8-bit Latin-1 input to UTF-8
+         * on the fly. */
         {
-            BPTR inpt = Input();
-
-            /* Step 1: read from non-interactive handle (pipe / file redirect) */
-            if (inpt && !IsInteractive(inpt)) {
-                LONG canRead = PIPE_INPUT_BUF - pipeBufUsed - 1; /* reserve 1 for NUL */
-                if (canRead > 0) {
-                    LONG nread = Read(inpt, pipeBuf + pipeBufUsed, canRead);
-                    if (nread > 0)
-                        pipeBufUsed += nread;
-                }
-            }
-
-            /* Step 2: flush the largest complete-codepoint prefix of the buffer.
-             * Runs unconditionally so bytes left from a previous iteration are
-             * not stranded.  Always flushes here since we have no reliable way
-             * to know if more data is coming soon. */
-            if (pipeBufUsed > 0) {
-                LONG safeLen = utf8_complete_len(pipeBuf, pipeBufUsed);
-
-                /* Safety valve: broken stream, buffer almost full, no boundary */
-                if (safeLen == 0 && pipeBufUsed >= PIPE_INPUT_BUF - 4)
-                    safeLen = pipeBufUsed;
-
-                if (safeLen > 0) {
-                    LONG remaining = pipeBufUsed - safeLen;
-                    /* Save the byte at the boundary before NUL-terminating;
-                     * without this the memmove below would copy '\0' as the
-                     * first byte of the next (incomplete) sequence, losing
-                     * the leading byte of any pending multi-byte character. */
-                    char savedByte = (remaining > 0) ? pipeBuf[safeLen] : '\0';
-                    pipeBuf[safeLen] = '\0';
-
-                    /* AmigaDOS pipes/redirections may carry plain 8-bit
-                     * Latin-1 text (e.g. `echo "â" | EmojiGear`) instead of
-                     * UTF-8.  utf8_complete_len() only checks sequence
-                     * *length*, not validity, so a Latin-1 byte such as 0xE2
-                     * followed by ASCII can look "complete" while being
-                     * illegal UTF-8 and crashing UTED_InsertText.  Detect
-                     * this and re-encode the chunk from Latin-1 to UTF-8
-                     * before handing it to the editor. */
-                    if (is_valid_utf8(pipeBuf, safeLen)) {
-                        SetGdAttrs(app->textEditorObj,
-                                   UTED_InsertText, (ULONG)pipeBuf, TAG_END);
-                    } else {
-                        char *latin1 = convert_to_utf8(pipeBuf, safeLen, 1);
-                        if (latin1) {
-                            SetGdAttrs(app->textEditorObj,
-                                       UTED_InsertText, (ULONG)latin1, TAG_END);
-                            FreeVec(latin1);
-                        }
-                    }
-
-                    if (remaining > 0) {
-                        pipeBuf[safeLen] = savedByte; /* restore before shift */
-                        memmove(pipeBuf, pipeBuf + safeLen, (size_t)remaining);
-                    }
-                    pipeBufUsed = remaining;
-                }
+            BOOL needsFree;
+            const char *chunk = EgPipeInput_Poll(pipeBuf, PIPE_INPUT_BUF, &pipeBufUsed, &needsFree);
+            if (chunk) {
+                SetGdAttrs(app->textEditorObj, UTED_InsertText, (ULONG)chunk, TAG_END);
+                if (needsFree) FreeVec((char *)chunk);
             }
         }
 
@@ -935,6 +850,7 @@ int main(int argc, char **argv)
                         /* Queue gadget-up event for dispatch on main task context,
                          * alongside OM_NOTIFY messages from ICA_TARGET gadgets. */
                         ULONG senderId = result & WMHI_GADGETMASK;
+
                         BoopsiDelay_BeginMessage(DelayQueue, senderId);
                         BoopsiDelay_AddTag(DelayQueue, WMHI_GADGETUP, 1);
                         BoopsiDelay_EndMessage(DelayQueue);
@@ -1039,9 +955,20 @@ int main(int argc, char **argv)
 
                         case GID_TABBAR:
                         {
-                            ULONG newIdx = 0;
-                            GetAttr(CLICKTAB_Current, app->tabGadget, &newIdx);
-                            EgTabs_SwitchTo((int)newIdx);
+                            ptag = FindTagItem(CLICKTAB_NodeClosed, msg);
+                            if(ptag)
+                            {
+                                struct Node *tabToClose=(struct Node *)ptag->ti_Data;
+                                if(tabToClose)
+                                {   /* this is the tabs close button action ! */
+                                    EgTabs_CloseTabByNode(tabToClose);
+                                }
+                            } else {
+                                /*other clicktab interaction means: change current tab */
+                                ULONG newIdx = 0;
+                                GetAttr(CLICKTAB_Current, app->tabGadget, &newIdx);
+                                EgTabs_SwitchTo((int)newIdx);
+                            }
                             break;
                         }
 

@@ -33,8 +33,16 @@ typedef struct BoopsiMainWindow {
 
     EgMenu menu; /* GadTools menu */
 
+    /* Screen draw-info (GetScreenDrawInfo / FreeScreenDrawInfo) */
+    struct DrawInfo  *drawInfo;
+
+    /* is a resource attached to screen */
+    struct Image *closeImage;
+
     //struct DrawInfo *drawInfo; // informations on how to draw on the screen, passed to gagdets.
     char title[80];
+
+
 
 } BoopsiMainWindow;
 
@@ -43,7 +51,7 @@ struct AppSettings;
 
 
 /* once at init */
-void BMainWindow_Init(struct BoopsiMainWindow *mw);
+//void BMainWindow_Init(struct BoopsiMainWindow *mw);
 void BMainWindow_SwitchToFullScreen(struct BoopsiMainWindow *mw,Object *window_obj,struct AppSettings *appSettings);
 void BMainWindow_SwitchToWB(struct BoopsiMainWindow *mw,Object *window_obj,struct AppSettings *appSettings);
 /* would either set the window title or Screen title according to mode */
@@ -70,6 +78,9 @@ ULONG BMainWindow_GetBackFillFromSettings(struct AppSettings *appSettings);
 /* SetGadgetAttrs, but check CurrentMainWindow is currently opened, use SetGadgetAttrs() or SetAttrs() accordingly. */
 void SetGdAttrsA(Object *g, CONST struct TagItem * tags);
 void  __attribute__((noinline)) SetGdAttrs(Object *g, ULONG tag, ... );
+
+
+
 
 
 /* Intuition level Window */

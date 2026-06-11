@@ -504,6 +504,8 @@ UniTextEditorLine *uted_get_line        (UniTextEditorData *inst, ULONG index);
 void               uted_ensure_cursor_visible  (UniTextEditorData *inst);
 void               uted_ensure_cursor_h_visible(UniTextEditorData *inst);
 void               uted_invalidate_all_line_caches(UniTextEditorData *inst);
+ULONG              uted_scroll_total_rows(UniTextEditorData *inst);
+ULONG              uted_scroll_max_top   (UniTextEditorData *inst);
 
 /* Action handlers (also in class_texteditor_text.c) */
 ULONG UniTextEditor_DoInsertText     (Class *cl, Object *o, const char *text, LONG length);

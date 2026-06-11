@@ -54,6 +54,7 @@
 
 #include "../EmojiGear/eglocale.h"
 #include "../EmojiGear/tooltypepref.h"
+#include "../EmojiGear/egpipeinput.h"
 #include "mmgboopsimessage.h"
 #include "mmgemojibox.h"
 #include "mmgfontsview.h"
@@ -135,34 +136,6 @@ MUI_NewObjectB(const char *cl, Tag tags, ...)
 #define RID_COLOR_BASE         38   /* 38..43: one per color preset (0=System colors) */
 #define MMG_NUM_COLOR_PRESETS   6
 #define RID_RECENT_BASE        44   /* 44..51: one per recent slot  */
-
-/* =========================================================================
- * Shared utilities  (declared in muimojiGear.h; used by mmgaction.c too)
- * =========================================================================
- */
-
-/* Returns the length of the longest NUL-safe UTF-8 prefix of buf[0..len-1]
- * that ends on a complete codepoint boundary (no split multi-byte sequences). */
-static LONG utf8_complete_len(const char *buf, LONG len)
-{
-    LONG i = len;
-    unsigned char c;
-    int seqLen;
-    if (len <= 0) return 0;
-    while (i > 0) {
-        c = (unsigned char)buf[i - 1];
-        if ((c & 0xC0) != 0x80) break;
-        i--;
-    }
-    if (i == 0) return 0;
-    c = (unsigned char)buf[i - 1];
-    if      (c < 0x80)           seqLen = 1;
-    else if ((c & 0xE0) == 0xC0) seqLen = 2;
-    else if ((c & 0xF0) == 0xE0) seqLen = 3;
-    else if ((c & 0xF8) == 0xF0) seqLen = 4;
-    else                          seqLen = 1;
-    return ((i - 1) + seqLen <= len) ? len : i - 1;
-}
 
 void App_GetRawEditorWin(struct Gadget **gOut, struct Window **wOut)
 {
@@ -966,41 +939,19 @@ int main(int argc, char *argv[])
             } // end while muisigs == 0
             if (!running) break;
 
-            /* ---- Pipe / stdin UTF-8 input (non-blocking) ----
-             * Read from non-interactive handles (PIPE:, file redirect).
-             * IsInteractive() guards against blocking on CON: handles.
-             * Incomplete multi-byte sequences at the tail are kept in
-             * pipeBuf for the next iteration via utf8_complete_len(). */
+            /* ---- Pipe / stdin UTF-8/ANSI input (non-blocking) ---- */
             {
-                BPTR inpt = Input();
-                if (inpt && !IsInteractive(inpt)) {
-                    LONG canRead = PIPE_INPUT_BUF - pipeBufUsed - 1;
-                    if (canRead > 0) {
-                        LONG nread = Read(inpt, pipeBuf + pipeBufUsed, canRead);
-                        if (nread > 0) pipeBufUsed += nread;
+                BOOL needsFree;
+                const char *chunk = EgPipeInput_Poll(pipeBuf, PIPE_INPUT_BUF, &pipeBufUsed, &needsFree);
+                if (chunk) {
+                    struct Gadget *pg = NULL; struct Window *pw = NULL;
+                    App_GetRawEditorWin(&pg, &pw);
+                    if (pg && pw) {
+                        SetGadgetAttrs(pg, pw, NULL,
+                                       UTED_InsertText, (ULONG)chunk, TAG_DONE);
+                        RefreshGList(pg, pw, NULL, 1);
                     }
-                }
-                if (pipeBufUsed > 0) {
-                    LONG safeLen = utf8_complete_len(pipeBuf, pipeBufUsed);
-                    if (safeLen == 0 && pipeBufUsed >= PIPE_INPUT_BUF - 4)
-                        safeLen = pipeBufUsed; /* safety valve: broken stream */
-                    if (safeLen > 0) {
-                        LONG remaining = pipeBufUsed - safeLen;
-                        char savedByte  = (remaining > 0) ? pipeBuf[safeLen] : '\0';
-                        struct Gadget *pg = NULL; struct Window *pw = NULL;
-                        pipeBuf[safeLen] = '\0';
-                        App_GetRawEditorWin(&pg, &pw);
-                        if (pg && pw) {
-                            SetGadgetAttrs(pg, pw, NULL,
-                                           UTED_InsertText, (ULONG)pipeBuf, TAG_DONE);
-                            RefreshGList(pg, pw, NULL, 1);
-                        }
-                        if (remaining > 0) {
-                            pipeBuf[safeLen] = savedByte;
-                            memmove(pipeBuf, pipeBuf + safeLen, (size_t)remaining);
-                        }
-                        pipeBufUsed = remaining;
-                    }
+                    if (needsFree) FreeVec((char *)chunk);
                 }
             }
 

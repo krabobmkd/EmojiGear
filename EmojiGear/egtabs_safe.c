@@ -1,21 +1,29 @@
 /*
- * egtabs.c – tab bar management for EmojiGear.
+ * egtabs_safe.c – functional tab API for OS3.9 (no clicktab.gadget).
  *
- * Manages multiple editor contexts via the ClickTab gadget.
- * Synthetic untitled context keys start with ':' (impossible in AmigaOS paths).
- * Real file paths are used verbatim as context keys.
+ * Mirrors egtabs.c in logic but drives the FakeTab BOOPSI class instead of
+ * the real clicktab.gadget.  No AllocClickTabNode / FreeClickTabNode calls;
+ * tab list nodes are plain AllocVec'd struct Node items with ln_Name pointing
+ * to the corresponding tabLabels[] buffer.
+ *
+ * The FakeTab class handles CLICKTAB_Labels (rebuilds button children) and
+ * CLICKTAB_Current (stores the active index) in its own OM_SET dispatcher,
+ * so this file only needs to maintain the app metadata arrays and call
+ * SetGadgetAttrs / SetAttrs with those two attributes.
  */
 
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 
+#include <exec/memory.h>
+#include <exec/lists.h>
 #include <proto/exec.h>
 #include <proto/intuition.h>
 #include <proto/dos.h>
 #include <proto/alib.h>
-#include <proto/clicktab.h>
-#include <gadgets/clicktab.h>
+#include <gadgets/clicktab.h>   /* CLICKTAB_Current, CLICKTAB_Labels – tag numbers only */
+#include <classes/window.h>     /* WM_RETHINK */
 
 #include "emojigear.h"
 #include "eglocale.h"
@@ -24,21 +32,19 @@
 
 #include <gadgets/unitexteditor.h>
 
-
-extern struct Library *ClickTabBase;
-
-/* Replace underscores with spaces: BOOPSI treats '_x' as a keyboard
- * accelerator that steals vanilla key events from the editor. */
-static void egReplaceUnderscores(char *buf)
+/* -------------------------------------------------------------------------
+ * Underscore → space (same reason as in egtabs.c)
+ * -------------------------------------------------------------------------*/
+static void egSafe_ReplaceUnderscores(char *buf)
 {
     for (; *buf; buf++)
         if (*buf == '_') *buf = ' ';
 }
 
-/* Fill buf with a human-readable tab label for the given context key.
- * Synthetic keys ":n:N": N==1 → "New File"; N>1 → "New File N".
- * Real paths: just the filename part, with underscores replaced by spaces. */
-static void egTabsReal_FillLabel(char *buf, ULONG bufsz, const char *key)
+/* -------------------------------------------------------------------------
+ * Label fill – identical logic to egTabsReal_FillLabel, no clicktab dep.
+ * -------------------------------------------------------------------------*/
+static void egSafe_FillLabel(char *buf, ULONG bufsz, const char *key)
 {
     if (!key || key[0] == '\0') {
         strncpy(buf, LOC(MSG_TAB_NEW_FILE), bufsz - 1);
@@ -54,81 +60,100 @@ static void egTabsReal_FillLabel(char *buf, ULONG bufsz, const char *key)
         const char *fp = (const char *)FilePart((STRPTR)key);
         strncpy(buf, fp ? fp : key, bufsz - 1);
         buf[bufsz - 1] = '\0';
-        egReplaceUnderscores(buf);
+        egSafe_ReplaceUnderscores(buf);
     }
 }
 
-/* Rebuild the clicktab gadget's label list from tabContextNames[]. */
-static void egTabsRebuildGadget(void)
+/* -------------------------------------------------------------------------
+ * Rebuild the FakeTab gadget's button children from the current metadata.
+ * Allocates a fresh plain-node list, passes it via CLICKTAB_Labels, then
+ * replaces app->tabList.  Old list nodes are freed with FreeVec.
+ * -------------------------------------------------------------------------*/
+static void egSafe_RebuildGadget(void)
 {
     struct List *newList;
     int i;
 
-    if (!app || !ClickTabBase) return;
+    if (!app) return;
 
+    /* Always rebuild app->tabList so NewObject() sees the correct labels
+     * even when called before app->tabGadget exists (startup sequence). */
     newList = (struct List *)AllocVec(sizeof(struct List), MEMF_ANY | MEMF_CLEAR);
     if (!newList) return;
     NewList(newList);
 
     for (i = 0; i < app->tabCount; i++) {
-        struct Node *node;
-        egTabsReal_FillLabel(app->tabLabels[i], sizeof(app->tabLabels[i]),
-                       app->tabContextNames[i]);
-        node = AllocClickTabNode(
-          //doesntwork TNA_CloseGadget, TRUE,
-            TNA_Text,   (ULONG)app->tabLabels[i],
-            TNA_Number, i,
-            TNA_CloseGadget,TRUE,
-            TAG_END);
+        struct Node *node = (struct Node *)AllocVec(sizeof(struct Node), MEMF_CLEAR);
         if (node) {
+            egSafe_FillLabel(app->tabLabels[i], sizeof(app->tabLabels[i]),
+                             app->tabContextNames[i]);
+            node->ln_Name = app->tabLabels[i];
+            node->ln_Type = NT_USER;
             AddTail(newList, node);
             app->tabNodes[i] = node;
         }
     }
 
-    if (app->tabGadget && CurrentMainWindow) {
-        SetGadgetAttrs((struct Gadget *)app->tabGadget,
-                       CurrentMainWindow, NULL,
-                       CLICKTAB_Labels,  (ULONG)newList,
-                       CLICKTAB_Current, (ULONG)app->tabCurrentIndex,
-                       TAG_END);
-    } else if (app->tabGadget) {
-        SetAttrs(app->tabGadget,
-                 CLICKTAB_Labels,  (ULONG)newList,
-                 CLICKTAB_Current, (ULONG)app->tabCurrentIndex,
-                 TAG_END);
+    /* Update the gadget only when it already exists */
+    if (app->tabGadget) {
+        if (CurrentMainWindow) {
+            SetGadgetAttrs((struct Gadget *)app->tabGadget, CurrentMainWindow, NULL,
+                           CLICKTAB_Labels,  (ULONG)newList,
+                           CLICKTAB_Current, (ULONG)app->tabCurrentIndex,
+                           TAG_END);
+            DoMethod(app->window_obj, WM_RETHINK);
+        } else {
+            SetAttrs(app->tabGadget,
+                     CLICKTAB_Labels,  (ULONG)newList,
+                     CLICKTAB_Current, (ULONG)app->tabCurrentIndex,
+                     TAG_END);
+        }
     }
 
-    /* Free old list and its nodes */
+    /* Replace old list */
     if (app->tabList) {
         struct Node *n, *next;
         for (n = app->tabList->lh_Head; (next = n->ln_Succ) != NULL; n = next)
-            FreeClickTabNode(n);
+            FreeVec(n);
         FreeVec(app->tabList);
     }
     app->tabList = newList;
 }
 
-static void egTabsReal_AddOrSelectTab(const char *contextKey)
+/* -------------------------------------------------------------------------
+ * Forward declaration: CloseCurrentTab calls SwitchTo defined below.
+ * -------------------------------------------------------------------------*/
+static void egTabsSafe_SwitchTo(int newIdx);
+
+/* =========================================================================
+ * API implementations
+ * =========================================================================*/
+
+static void egTabsSafe_FillLabel(char *buf, ULONG bufsz, const char *key)
+{
+    egSafe_FillLabel(buf, bufsz, key);
+}
+
+static void egTabsSafe_AddOrSelectTab(const char *contextKey)
 {
     int i;
     char *keyCopy;
-    struct Node *node;
 
     if (!app || !contextKey) return;
 
-    /* Search for existing tab with this key */
+    /* Already open? Just switch. */
     for (i = 0; i < app->tabCount; i++) {
         if (app->tabContextNames[i] &&
             strcmp(app->tabContextNames[i], contextKey) == 0)
         {
-            /* Already exists — just switch to it */
             app->tabCurrentIndex = i;
             if (app->tabGadget && CurrentMainWindow)
                 SetGadgetAttrs((struct Gadget *)app->tabGadget,
                                CurrentMainWindow, NULL,
                                CLICKTAB_Current, (ULONG)i,
                                TAG_END);
+            else if (app->tabGadget)
+                SetAttrs(app->tabGadget, CLICKTAB_Current, (ULONG)i, TAG_END);
             return;
         }
     }
@@ -139,53 +164,29 @@ static void egTabsReal_AddOrSelectTab(const char *contextKey)
     if (!keyCopy) return;
     strcpy(keyCopy, contextKey);
 
-    egTabsReal_FillLabel(app->tabLabels[app->tabCount], sizeof(app->tabLabels[0]),
-                   contextKey);
-
-    node = AllocClickTabNode(
-      //doesntwork?  TNA_CloseGadget, TRUE,
-        TNA_Text,   (ULONG)app->tabLabels[app->tabCount],
-        TNA_Number, app->tabCount,
-        TNA_CloseGadget,TRUE,
-        TAG_END);
-    if (!node) { FreeVec(keyCopy); return; }
-
     app->tabContextNames[app->tabCount] = keyCopy;
-    app->tabNodes[app->tabCount]        = node;
     app->tabCurrentIndex                = app->tabCount;
     app->tabCount++;
 
-    AddTail(app->tabList, node);
-
-    if (app->tabGadget && CurrentMainWindow) {
-        SetGadgetAttrs((struct Gadget *)app->tabGadget,
-                       CurrentMainWindow, NULL,
-                       CLICKTAB_Labels,  (ULONG)app->tabList,
-                       CLICKTAB_Current, (ULONG)app->tabCurrentIndex,
-                       TAG_END);
-    }
+    egSafe_RebuildGadget();
 }
 
-static void egTabsReal_NewTab(void)
+static void egTabsSafe_NewTab(void)
 {
     char key[64];
     if (!app) return;
     app->tabNewSerial++;
     sprintf(key, ":n:%d", app->tabNewSerial);
-    egTabsReal_AddOrSelectTab(key);
-    /* Switch editor to fresh empty context */
+    egTabsSafe_AddOrSelectTab(key);
     SetGdAttrs(app->textEditorObj,
                UTED_CurrentContext, (ULONG)key,
                UTED_Text,           (ULONG)"",
                TAG_END);
 }
 
-/* forward declaration needed: CloseCurrentTab calls SwitchTo defined below */
-static void egTabsReal_SwitchTo(int newIdx);
-
 /* Close the tab at closingIdx, whether or not it is the active tab, and
  * synchronize tab state.  Shared by CloseCurrentTab and CloseTabByNode. */
-static void egTabsReal_CloseTabByIndex(int closingIdx)
+static void egTabsSafe_CloseTabByIndex(int closingIdx)
 {
     int nextIdx, i;
     char *closingKey;
@@ -193,53 +194,39 @@ static void egTabsReal_CloseTabByIndex(int closingIdx)
     if (!app) return;
     if (closingIdx < 0 || closingIdx >= app->tabCount) return;
 
-    /* Single tab: closing it means quitting */
     if (app->tabCount == 1) {
         exit(0);
         return;
     }
 
-    closingKey = app->tabContextNames[closingIdx]; /* borrow – freed below */
+    closingKey = app->tabContextNames[closingIdx];
 
     if (closingIdx == app->tabCurrentIndex) {
-        /* Choose a replacement tab: next if available, otherwise previous */
         nextIdx = (closingIdx + 1 < app->tabCount) ? closingIdx + 1 : closingIdx - 1;
-
-        /* Switch to the replacement tab.  This triggers UTED_CurrentContext
-         * on the editor, which stashes the closing context under closingKey. */
-        egTabsReal_SwitchTo(nextIdx);
+        egTabsSafe_SwitchTo(nextIdx);
     }
 
-    /* Now the closing context is safely stashed – delete it from UniTextEditor */
     if (closingKey && closingKey[0])
         SetGdAttrs(app->textEditorObj,
                    UTED_DeleteContext, (ULONG)closingKey,
                    TAG_END);
-
-    /* Free the closing tab's context-name string */
     if (closingKey)
         FreeVec(closingKey);
 
-    /* Compact the three parallel arrays (contextNames, nodes, labels) */
     for (i = closingIdx; i < app->tabCount - 1; i++) {
         app->tabContextNames[i] = app->tabContextNames[i + 1];
         app->tabNodes[i]        = app->tabNodes[i + 1];
-        memcpy(app->tabLabels[i], app->tabLabels[i + 1],
-               sizeof(app->tabLabels[0]));
+        memcpy(app->tabLabels[i], app->tabLabels[i + 1], sizeof(app->tabLabels[0]));
     }
     app->tabContextNames[app->tabCount - 1] = NULL;
     app->tabNodes[app->tabCount - 1]        = NULL;
     app->tabCount--;
 
-    /* After removing closingIdx the surviving tabs shift left by one when
-     * their original index was > closingIdx. */
     if (app->tabCurrentIndex > closingIdx)
         app->tabCurrentIndex--;
 
-    /* Rebuild the clicktab gadget with the updated list */
-    egTabsRebuildGadget();
+    egSafe_RebuildGadget();
 
-    /* Refresh UI for the now-current tab */
     SyncVScroller();
     SyncHScroller();
     UpdateStatusBar();
@@ -248,28 +235,28 @@ static void egTabsReal_CloseTabByIndex(int closingIdx)
                              app->tabLabels[app->tabCurrentIndex]);
 }
 
-static void egTabsReal_CloseCurrentTab(void)
+static void egTabsSafe_CloseCurrentTab(void)
 {
     if (!app) return;
     if (app->tabCurrentIndex < 0 || app->tabCurrentIndex >= app->tabCount) return;
-    egTabsReal_CloseTabByIndex(app->tabCurrentIndex);
+    egTabsSafe_CloseTabByIndex(app->tabCurrentIndex);
 }
 
-/* Close the tab whose ClickTab node is 'node' (e.g. from CLICKTAB_NodeClosed),
- * regardless of whether it is the currently active tab. */
-static void egTabsReal_CloseTabByNode(struct Node *node)
+/* Close the tab whose tab node is 'node', regardless of whether it is the
+ * currently active tab. */
+static void egTabsSafe_CloseTabByNode(struct Node *node)
 {
     int i;
     if (!app || !node) return;
     for (i = 0; i < app->tabCount; i++) {
         if (app->tabNodes[i] == node) {
-            egTabsReal_CloseTabByIndex(i);
+            egTabsSafe_CloseTabByIndex(i);
             return;
         }
     }
 }
 
-static void egTabsReal_RenameCurrentTab(const char *newContextKey)
+static void egTabsSafe_RenameCurrentTab(const char *newContextKey)
 {
     char *keyCopy;
     if (!app || !newContextKey) return;
@@ -282,19 +269,14 @@ static void egTabsReal_RenameCurrentTab(const char *newContextKey)
     FreeVec(app->tabContextNames[app->tabCurrentIndex]);
     app->tabContextNames[app->tabCurrentIndex] = keyCopy;
 
-    egTabsReal_FillLabel(app->tabLabels[app->tabCurrentIndex],
-                   sizeof(app->tabLabels[0]), newContextKey);
-
-    /* Rename the UniTextEditor context so stash lookups use the new key */
     SetGdAttrs(app->textEditorObj,
                UTED_RenameContext, (ULONG)newContextKey,
                TAG_END);
 
-    egTabsRebuildGadget();
+    egSafe_RebuildGadget();
 }
 
-/* Switch to tab by absolute index. No-op if already current or out of range. */
-static void egTabsReal_SwitchTo(int newIdx)
+static void egTabsSafe_SwitchTo(int newIdx)
 {
     const char *ctxKey;
     if (!app || newIdx < 0 || newIdx >= app->tabCount) return;
@@ -304,10 +286,10 @@ static void egTabsReal_SwitchTo(int newIdx)
     ctxKey = app->tabContextNames[newIdx] ? app->tabContextNames[newIdx] : "";
 
     if (app->tabGadget && CurrentMainWindow)
-        SetGadgetAttrs((struct Gadget *)app->tabGadget,
-                       CurrentMainWindow, NULL,
-                       CLICKTAB_Current, (ULONG)newIdx,
-                       TAG_END);
+        SetGadgetAttrs((struct Gadget *)app->tabGadget, CurrentMainWindow, NULL,
+                       CLICKTAB_Current, (ULONG)newIdx, TAG_END);
+    else if (app->tabGadget)
+        SetAttrs(app->tabGadget, CLICKTAB_Current, (ULONG)newIdx, TAG_END);
 
     SetGdAttrs(app->textEditorObj,
                UTED_CurrentContext, (ULONG)ctxKey,
@@ -322,14 +304,15 @@ static void egTabsReal_SwitchTo(int newIdx)
                              app->tabLabels[newIdx]);
 }
 
-const EgTabsAPI EgTabsRealAPI = {
-    egTabsReal_FillLabel,
-    egTabsReal_AddOrSelectTab,
-    egTabsReal_NewTab,
-    egTabsReal_RenameCurrentTab,
-    egTabsReal_CloseCurrentTab,
-    egTabsReal_CloseTabByNode,
-    egTabsReal_SwitchTo,
+/* -------------------------------------------------------------------------
+ * Exported vtable
+ * -------------------------------------------------------------------------*/
+const EgTabsAPI EgTabsSafeAPI = {
+    egTabsSafe_FillLabel,
+    egTabsSafe_AddOrSelectTab,
+    egTabsSafe_NewTab,
+    egTabsSafe_RenameCurrentTab,
+    egTabsSafe_CloseCurrentTab,
+    egTabsSafe_CloseTabByNode,
+    egTabsSafe_SwitchTo,
 };
-
-const EgTabsAPI *EgTabsOps = &EgTabsRealAPI;

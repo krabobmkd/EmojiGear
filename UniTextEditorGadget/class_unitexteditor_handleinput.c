@@ -647,10 +647,8 @@ int uted_manageFullRawKey(Class *cl, Object *o,
  */
 static BOOL uted_hit_vscroll(UniTextEditorData *inst, WORD x, WORD y)
 {
-    ULONG totalRows;
     if (!inst->displayInternalVScroll) return FALSE;
-    totalRows = inst->wordWrap ? inst->wrapRowCount : inst->lineCount;
-    if (totalRows <= (ULONG)inst->visibleLines) return FALSE;
+    if (uted_scroll_max_top(inst) == 0) return FALSE;
     if (x < inst->gadWidth - 8) return FALSE;
     if (y < (WORD)inst->topMargin || y >= inst->gadHeight - (WORD)inst->bottomMargin)
         return FALSE;

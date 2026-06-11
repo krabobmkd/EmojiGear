@@ -419,13 +419,13 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
      * text click/drag replay so a scroll triggered by the bar does not also
      * reposition the text cursor. */
     if (inst->pendingVScrollClick || inst->pendingVScrollDrag) {
-        ULONG totalRows = inst->wordWrap ? inst->wrapRowCount : inst->lineCount;
-        if (totalRows > (ULONG)inst->visibleLines && textHeight > 0) {
+        ULONG maxTop = uted_scroll_max_top(inst);
+        if (maxTop > 0 && textHeight > 0) {
+            ULONG totalRows = maxTop + (ULONG)inst->visibleLines;
             LONG relY = (LONG)inst->pendingVScrollY - (LONG)inst->topMargin;
             if (relY < 0) relY = 0;
             if (relY >= (LONG)textHeight) relY = (LONG)textHeight - 1;
             ULONG newTop = (ULONG)((LONG)relY * (LONG)totalRows / (LONG)textHeight);
-            ULONG maxTop = totalRows - (ULONG)inst->visibleLines;
             if (newTop > maxTop) newTop = maxTop;
             inst->scrollTopLine = newTop;
             uted_notify(cl, o, msg->gpr_GInfo, UTEDN_ScrollChanged, inst->scrollTopLine);
@@ -1138,8 +1138,9 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
      * Thumb height and Y position are proportional to the visible fraction
      * and scroll position within the total rendered line count.           */
     if (inst->displayInternalVScroll && textHeight > 0) {
-        ULONG totalRows = inst->wordWrap ? inst->wrapRowCount : inst->lineCount;
-        if (totalRows > (ULONG)inst->visibleLines) {
+        ULONG maxTop = uted_scroll_max_top(inst);
+        if (maxTop > 0) {
+            ULONG totalRows = maxTop + (ULONG)inst->visibleLines;
             WORD thumbH = (WORD)((LONG)textHeight * (LONG)inst->visibleLines
                                  / (LONG)totalRows);
             WORD thumbY = (WORD)((LONG)textHeight * (LONG)inst->scrollTopLine

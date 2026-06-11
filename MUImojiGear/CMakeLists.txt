@@ -22,6 +22,7 @@ set(MUIMOJIGEARSOURCES
     mmgfontsview.c      mmgfontsview.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../EmojiGear/eglocale.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../EmojiGear/tooltypepref.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../EmojiGear/egpipeinput.c
 )
 
 add_executable(MUImojiGear ${MUIMOJIGEARSOURCES})
