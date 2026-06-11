@@ -302,14 +302,17 @@ void GenericOpenWindow(BoopsiMainWindow *mw,Object *window_obj,struct AppSetting
     if(!mw->closeImage)
     {
         mw->closeImage = (struct Image *)NewObject(NULL, SYSICLASS,
-                    SYSIA_Which,    CHECKIMAGE,
+                    SYSIA_Which,    CLOSEIMAGE,
+                    IA_FrameType, FRAME_RIDGE,
+                 //   IA_FrameType, FRAME_CONTEXT,
                     SYSIA_DrawInfo,(ULONG) mw->drawInfo,
                     TAG_END);
         printf("create closeImage\n");
     }
     if(app->tabGadget && mw->closeImage)
         SetGadgetAttrs(app->tabGadget,CurrentMainWindow,NULL,
-                    CLICKTAB_CloseImage,(ULONG)mw->closeImage);
+                    CLICKTAB_CloseImage,(ULONG)mw->closeImage,
+                    TAG_END);
 
 
     /* test for OS3.9 layout problems */
