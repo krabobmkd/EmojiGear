@@ -50,6 +50,27 @@ INLINE void pool_return(UTEDBitMapPool *pool, struct BitMap *bm)
     pool->freeStack[pool->freeCount++] = bm;
 }
 
+
+BOOL uted_pool_create_layer(UTEDBitMapPool *pool,int w,int h , struct BitMap *bitmap)
+{
+    if(pool->layerInfo) return TRUE;
+
+    pool->layerInfo = NewLayerInfo();
+
+    if(!pool->layerInfo) return FALSE;
+
+    pool->layer = CreateUpfrontLayer(pool->layerInfo, pool->bitmaps[0],
+                         0, 0,
+                         w - 1, h - 1,
+                         LAYERSIMPLE, NULL);
+    if (!pool->layer) {uted_pool_free_layer(pool);  uted_pool_free_bitmapcache(pool);  return FALSE; }
+
+    pool->rp = pool->layer->rp;
+
+
+    return TRUE;
+}
+
 /* =========================================================================
  * uted_pool_alloc
  *
@@ -127,19 +148,11 @@ BOOL uted_pool_alloc(UTEDBitMapPool *pool, ULONG size,
 
     if(pool->layerInfo == NULL)
     {
-        pool->layerInfo = NewLayerInfo();
-        if(pool->layerInfo)
+        if( !uted_pool_create_layer( pool,LINE_CHUNK_WIDTH,lineHeight, pool->bitmaps[0] ) )
         {
-           //test
-           LockLayerInfo(pool->layerInfo);
-            pool->layer = CreateUpfrontLayer(pool->layerInfo, pool->bitmaps[0],
-                                 0, 0,
-                                 LINE_CHUNK_WIDTH - 1, (LONG)lineHeight - 1,
-                                 LAYERSIMPLE, NULL);
-            if (!pool->layer) {uted_pool_free_layer(pool);  uted_pool_free_bitmapcache(pool);  return FALSE; }
-
-            pool->rp = pool->layer->rp;
+            uted_pool_free_bitmapcache(pool);  return FALSE;
         }
+
 
     } else
     {
@@ -278,8 +291,6 @@ void uted_pool_free_layer(UTEDBitMapPool *pool)
 {
     if (pool->layer)     { DeleteLayer(0, pool->layer);       pool->layer     = NULL; }
     if (pool->layerInfo) {
-      //was test
-      UnlockLayerInfo(pool->layerInfo);
         DisposeLayerInfo(pool->layerInfo); pool->layerInfo = NULL;
      }
     pool->rp = NULL;

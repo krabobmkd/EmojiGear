@@ -633,7 +633,7 @@ fail:
         line = next;
     }
 
-    /* the part that has poblems on OS3.9 - must be done before uted_pool_free_bitmapcache() */
+    /* must be done before uted_pool_free_bitmapcache() */
     uted_pool_free_layer(&inst->bmPool);
 
     /* All bitmaps returned; now release the pool itself */
