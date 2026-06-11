@@ -565,7 +565,7 @@ BOOL  uted_pool_growalloc      (UTEDBitMapPool *pool, ULONG newSize,
                                  struct Screen *screen);
 void  uted_pool_free_bitmapcache           (UTEDBitMapPool *pool);
 void  uted_pool_free_layer           (UTEDBitMapPool *pool);
-
+BOOL uted_pool_create_layer(UTEDBitMapPool *pool,int w,int h , struct BitMap *bitmap);
 
 int uted_manage_vanilla_keycode(Class *cl, Object *o,ULONG codedata, struct GadgetInfo *gi);
 int uted_manage_rawkey_keycode(Class *cl, Object *o,ULONG codedata, struct GadgetInfo *gi);

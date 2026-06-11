@@ -59,14 +59,14 @@ BOOL uted_pool_create_layer(UTEDBitMapPool *pool,int w,int h , struct BitMap *bi
 
     if(!pool->layerInfo) return FALSE;
 
-    pool->layer = CreateUpfrontLayer(pool->layerInfo, pool->bitmaps[0],
-                         0, 0,
-                         w - 1, h - 1,
-                         LAYERSIMPLE, NULL);
+    InstallLayerInfoHook(pool->layerInfo,LAYERS_NOBACKFILL);
+
+    pool->layer = CreateUpfrontHookLayer(pool->layerInfo,bitmap,0,0,
+                w - 1, h - 1, LAYERSIMPLE,LAYERS_NOBACKFILL,NULL);
+
     if (!pool->layer) {uted_pool_free_layer(pool);  uted_pool_free_bitmapcache(pool);  return FALSE; }
 
     pool->rp = pool->layer->rp;
-
 
     return TRUE;
 }
@@ -152,7 +152,6 @@ BOOL uted_pool_alloc(UTEDBitMapPool *pool, ULONG size,
         {
             uted_pool_free_bitmapcache(pool);  return FALSE;
         }
-
 
     } else
     {

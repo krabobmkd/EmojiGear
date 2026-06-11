@@ -129,6 +129,9 @@ static void uted_do_layout( Class *cl, Object *o,
                         uted_pool_alloc(&inst->bmPool, neededSize,
                                     (UWORD)inst->lineHeightBase, useScreen);
 
+                    /* clipping layer must be re-ecreated so it points new bitmaps with new size */
+                    uted_pool_create_layer(&inst->bmPool,LINE_CHUNK_WIDTH,inst->lineHeightBase,
+                                    inst->bmPool.bitmaps[0]);
 
                 } else {
                     /* Same line height, window grew: reuse existing bitmaps,
