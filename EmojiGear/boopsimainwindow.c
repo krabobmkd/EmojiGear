@@ -33,6 +33,7 @@
 #include "borderscrollers.h"
 #include "egsearchbox.h"
 #include "egfontsview.h"
+#include "closebutton.h"
 #include <gadgets/unitexteditor.h>
 #include <proto/requester.h>
 #include <classes/requester.h>
@@ -208,7 +209,6 @@ void BMainWindow_Close(struct BoopsiMainWindow *mw,Object *window_obj, int iconi
     }
     if(mw->closeImage)
     {
-            printf("DisposeObject closeImage\n");
         DisposeObject(mw->closeImage);
         mw->closeImage = NULL;
         SetAttrs(app->tabGadget,CLICKTAB_CloseImage,NULL,TAG_END);
@@ -301,13 +301,8 @@ void GenericOpenWindow(BoopsiMainWindow *mw,Object *window_obj,struct AppSetting
     /* needed for tab tabs*/
     if(!mw->closeImage)
     {
-        mw->closeImage = (struct Image *)NewObject(NULL, SYSICLASS,
-                    SYSIA_Which,    CLOSEIMAGE,
-                    IA_FrameType, FRAME_RIDGE,
-                 //   IA_FrameType, FRAME_CONTEXT,
-                    SYSIA_DrawInfo,(ULONG) mw->drawInfo,
-                    TAG_END);
-        printf("create closeImage\n");
+        mw->closeImage = CloseButton_CreateImage(CurrentMainScreen);
+
     }
     if(app->tabGadget && mw->closeImage)
         SetGadgetAttrs(app->tabGadget,CurrentMainWindow,NULL,

@@ -22,7 +22,7 @@ int BorderScroll_Init(sGtBorderScroll *borderScroll,  struct DrawInfo  *drawInfo
 {
     LONG arrowW = 0, arrowH = 0;
     LONG barh;
- printf("BorderScroll_Init\n");
+// printf("BorderScroll_Init\n");
 
     /* ---- Size-corner image ---- */
     borderScroll->sizeImg = (struct Image *)NewObject(NULL, SYSICLASS,
@@ -212,7 +212,7 @@ fail:
 }
 void BorderScroll_Exit(sGtBorderScroll *borderScroll)
 {
- printf("BorderScroll_Exit\n");
+// printf("BorderScroll_Exit\n");
     /* Border gadgets: dispose after CloseWindow */
     if (borderScroll->xprop)     { DisposeObject(borderScroll->xprop);     borderScroll->xprop     = NULL; }
     if (borderScroll->lArrowBtn) { DisposeObject(borderScroll->lArrowBtn); borderScroll->lArrowBtn = NULL; }

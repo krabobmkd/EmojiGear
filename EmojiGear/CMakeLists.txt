@@ -19,6 +19,7 @@ set(EMOJIGEAR_SOURCES
     boopsimessage.c
     emojigear.c
     boopsimainwindow.c
+    closebutton.c
     emojigearsettings.c
     borderscrollers.c
     egmenu.c

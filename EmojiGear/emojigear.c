@@ -123,6 +123,7 @@ struct Library *PaletteBase  = NULL;
 struct Library *IntegerBase  = NULL;
 struct Library *ClickTabBase = NULL;
 struct Library *ChooserBase  = NULL;
+struct Library *PenMapBase   = NULL;
 /* Our beloved gadgets bases */
 struct Library *UniTextEditorBase = NULL;
 struct Library *UniButtonBase  = NULL;
@@ -170,9 +171,10 @@ static LibraryEntry libraryTable[] = {
     {"requester.class", 42, &RequesterBase},
     {"gadgets/palette.gadget",  44, &PaletteBase},
     {"gadgets/integer.gadget", 44, &IntegerBase},
-/* now optional and need v47    */
+
     {"gadgets/clicktab.gadget",47, &ClickTabBase},
     {"gadgets/chooser.gadget", 44, &ChooserBase},
+    {"images/penmap.image",    47, &PenMapBase},
     /* ... and the one that are starred in this app */
     {"gadgets/unitexteditor.gadget",3, &UniTextEditorBase},
     {"gadgets/unibutton.gadget", 3, &UniButtonBase},
