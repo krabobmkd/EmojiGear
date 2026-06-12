@@ -23,6 +23,7 @@ set(MUIMOJIGEARSOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../EmojiGear/eglocale.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../EmojiGear/tooltypepref.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../EmojiGear/egpipeinput.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../EmojiGear/unicodeset.c
 )
 
 add_executable(MUImojiGear ${MUIMOJIGEARSOURCES})

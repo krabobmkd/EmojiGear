@@ -64,7 +64,7 @@ static const ULONG delayedAttribs[] = {
     UTEDN_RedoAvailable,
     UTED_Modified,
     UTED_CursorLine,
-    UTED_CursorChar,
+    UTED_CursorColumn,
     UTED_ScrollLeft,      /* horizontal scroll position changed */
     UTED_SetPrivateActivation,
     UTED_InternalRawKey_Code,

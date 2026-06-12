@@ -82,14 +82,14 @@ int uted_manage_rawkey_keycode(Class *cl, Object *o,ULONG codedata, struct Gadge
                             UniTextEditorPos savedAnchor = inst->selAnchor;
                             BOOL             savedHasSel = inst->hasSelection;
                             if (uted_line_insert_bytes(curLine, 0, insertStr, insertBytes)) {
-                                if (inst->cursor.line    == L) inst->cursor.ch    += insertChars;
-                                if (inst->selAnchor.line == L) inst->selAnchor.ch += insertChars;
-                                if (inst->selFloat.line  == L) inst->selFloat.ch  += insertChars;
+                                if (inst->cursor.line    == L) inst->cursor.col    += insertChars;
+                                if (inst->selAnchor.line == L) inst->selAnchor.col += insertChars;
+                                if (inst->selFloat.line  == L) inst->selFloat.col  += insertChars;
                                 if (!inst->undoInProgress && inst->undoMax > 0) {
                                     UTEDUndoEntry ue;
                                     UniTextEditorPos ps, pe;
-                                    ps.line = L; ps.ch = 0;
-                                    pe.line = L; pe.ch = insertChars;
+                                    ps.line = L; ps.col = 0;
+                                    pe.line = L; pe.col = insertChars;
                                     ue.opType       = UTED_UNDO_INSERT;
                                     ue.delDir       = 0;
                                     ue.atomic       = TRUE;
@@ -145,19 +145,19 @@ int uted_manage_rawkey_keycode(Class *cl, Object *o,ULONG codedata, struct Gadge
                                 capBuf[removeBytes] = '\0';
                                 if (uted_line_delete_bytes(curLine, 0, removeBytes)) {
                                     if (inst->cursor.line == L)
-                                        inst->cursor.ch = inst->cursor.ch > removeChars
-                                                        ? inst->cursor.ch - removeChars : 0;
+                                        inst->cursor.col = inst->cursor.col > removeChars
+                                                        ? inst->cursor.col - removeChars : 0;
                                     if (inst->selAnchor.line == L)
-                                        inst->selAnchor.ch = inst->selAnchor.ch > removeChars
-                                                           ? inst->selAnchor.ch - removeChars : 0;
+                                        inst->selAnchor.col = inst->selAnchor.col > removeChars
+                                                           ? inst->selAnchor.col - removeChars : 0;
                                     if (inst->selFloat.line == L)
-                                        inst->selFloat.ch = inst->selFloat.ch > removeChars
-                                                          ? inst->selFloat.ch - removeChars : 0;
+                                        inst->selFloat.col = inst->selFloat.col > removeChars
+                                                          ? inst->selFloat.col - removeChars : 0;
                                     if (!inst->undoInProgress && inst->undoMax > 0) {
                                         UTEDUndoEntry ue;
                                         UniTextEditorPos ps, pe;
-                                        ps.line = L; ps.ch = 0;
-                                        pe.line = L; pe.ch = removeChars;
+                                        ps.line = L; ps.col = 0;
+                                        pe.line = L; pe.col = removeChars;
                                         ue.opType       = UTED_UNDO_DELETE;
                                         ue.delDir       = 0;
                                         ue.atomic       = TRUE;
@@ -192,7 +192,7 @@ int uted_manage_rawkey_keycode(Class *cl, Object *o,ULONG codedata, struct Gadge
             if (!didBlock) {
                 if (shift) {
                     /* Backtab: delete N spaces or one \t before cursor */
-                    if (inst->cursor.ch > 0) {
+                    if (inst->cursor.col > 0) {
                         UniTextEditorLine *curLine = uted_get_line(inst, inst->cursor.line);
                         if (curLine && curLine->utf8) {
                             const char *s = curLine->utf8;
@@ -202,9 +202,9 @@ int uted_manage_rawkey_keycode(Class *cl, Object *o,ULONG codedata, struct Gadge
                                 BOOL allSpaces;
                                 if (nbsp < 1) nbsp = 1;
                                 if (nbsp > 12) nbsp = 12;
-                                if ((int)inst->cursor.ch >= nbsp) {
+                                if ((int)inst->cursor.col >= nbsp) {
                                     ULONG byteOff = uted_char_to_byte(s, curLine->byteUsed,
-                                                        inst->cursor.ch - (ULONG)nbsp);
+                                                        inst->cursor.col - (ULONG)nbsp);
                                     allSpaces = TRUE;
                                     for (j = 0; j < nbsp; j++) {
                                         if (s[byteOff + j] != ' ') { allSpaces = FALSE; break; }
@@ -216,7 +216,7 @@ int uted_manage_rawkey_keycode(Class *cl, Object *o,ULONG codedata, struct Gadge
                                 }
                             } else {
                                 ULONG byteOff = uted_char_to_byte(s, curLine->byteUsed,
-                                                    inst->cursor.ch - 1);
+                                                    inst->cursor.col - 1);
                                 if (s[byteOff] == '\t')
                                     UniTextEditor_DoDeleteChar(cl, o, -1);
                             }
@@ -254,10 +254,47 @@ int uted_manage_rawkey_keycode(Class *cl, Object *o,ULONG codedata, struct Gadge
         }
         break;  /* non-shift: fall through to MapRawKey path */
     case RAWKEY_LEFT:
-        UniTextEditor_DoMoveCursor(cl, o, -1,  0, shift);
+        if (qualifier & IEQUALIFIER_RALT) {
+            if (inst->cursor.col == 0 && inst->cursor.line > 0) {
+                /* At start of line: jump to the end of the previous line. */
+                UniTextEditorLine *prevLine = uted_get_line(inst, inst->cursor.line - 1);
+                ULONG prevCount = prevLine ? prevLine->charCount : 0;
+                UniTextEditor_DoSetCursorPos(cl, o, inst->cursor.line - 1, prevCount, shift);
+            } else {
+                UniTextEditorLine *line = uted_get_line(inst, inst->cursor.line);
+                ULONG ch = inst->cursor.col;
+                /* Skip whitespace, then the word, landing on the word's first letter. */
+                while (ch > 0 && !uted_is_word_char_at(line, ch - 1)) ch--;
+                while (ch > 0 &&  uted_is_word_char_at(line, ch - 1)) ch--;
+                UniTextEditor_DoMoveCursor(cl, o, (LONG)ch - (LONG)inst->cursor.col, 0, shift);
+            }
+        } else {
+            UniTextEditor_DoMoveCursor(cl, o, -1,  0, shift);
+        }
         navHandled = TRUE; break;
     case RAWKEY_RIGHT:
-        UniTextEditor_DoMoveCursor(cl, o,  1,  0, shift);
+        if (qualifier & IEQUALIFIER_RALT) {
+            UniTextEditorLine *line = uted_get_line(inst, inst->cursor.line);
+            ULONG charCount = line ? line->charCount : 0;
+            if (inst->cursor.col >= charCount && inst->cursor.line + 1 < inst->lineCount) {
+                /* At end of line: jump to the first word of the next line,
+                 * or to the end of the next line if it has no word. */
+                UniTextEditorLine *nextLine = uted_get_line(inst, inst->cursor.line + 1);
+                ULONG nextCount = nextLine ? nextLine->charCount : 0;
+                ULONG target = 0;
+                while (target < nextCount && !uted_is_word_char_at(nextLine, target)) target++;
+                UniTextEditor_DoSetCursorPos(cl, o, inst->cursor.line + 1, target, shift);
+            } else {
+                ULONG ch = inst->cursor.col;
+                /* Skip the rest of the current word, then whitespace, landing on
+                 * the next word's first letter. */
+                while (ch < charCount &&  uted_is_word_char_at(line, ch)) ch++;
+                while (ch < charCount && !uted_is_word_char_at(line, ch)) ch++;
+                UniTextEditor_DoMoveCursor(cl, o, (LONG)ch - (LONG)inst->cursor.col, 0, shift);
+            }
+        } else {
+            UniTextEditor_DoMoveCursor(cl, o,  1,  0, shift);
+        }
         navHandled = TRUE; break;
     case RAWKEY_UP:
         if (ctrl) {
@@ -410,14 +447,14 @@ int uted_manage_vanilla_keycode(Class *cl, Object *o,ULONG codedata, struct Gadg
                             UniTextEditorPos savedAnchor = inst->selAnchor;
                             BOOL             savedHasSel = inst->hasSelection;
                             if (uted_line_insert_bytes(curLine, 0, insertStr, insertBytes)) {
-                                if (inst->cursor.line    == L) inst->cursor.ch    += insertChars;
-                                if (inst->selAnchor.line == L) inst->selAnchor.ch += insertChars;
-                                if (inst->selFloat.line  == L) inst->selFloat.ch  += insertChars;
+                                if (inst->cursor.line    == L) inst->cursor.col    += insertChars;
+                                if (inst->selAnchor.line == L) inst->selAnchor.col += insertChars;
+                                if (inst->selFloat.line  == L) inst->selFloat.col  += insertChars;
                                 if (!inst->undoInProgress && inst->undoMax > 0) {
                                     UTEDUndoEntry ue;
                                     UniTextEditorPos ps, pe;
-                                    ps.line = L; ps.ch = 0;
-                                    pe.line = L; pe.ch = insertChars;
+                                    ps.line = L; ps.col = 0;
+                                    pe.line = L; pe.col = insertChars;
                                     ue.opType       = UTED_UNDO_INSERT;
                                     ue.delDir       = 0;
                                     ue.atomic       = TRUE;
@@ -468,19 +505,19 @@ int uted_manage_vanilla_keycode(Class *cl, Object *o,ULONG codedata, struct Gadg
                                 capBuf[removeBytes] = '\0';
                                 if (uted_line_delete_bytes(curLine, 0, removeBytes)) {
                                     if (inst->cursor.line == L)
-                                        inst->cursor.ch = inst->cursor.ch > removeChars
-                                                        ? inst->cursor.ch - removeChars : 0;
+                                        inst->cursor.col = inst->cursor.col > removeChars
+                                                        ? inst->cursor.col - removeChars : 0;
                                     if (inst->selAnchor.line == L)
-                                        inst->selAnchor.ch = inst->selAnchor.ch > removeChars
-                                                           ? inst->selAnchor.ch - removeChars : 0;
+                                        inst->selAnchor.col = inst->selAnchor.col > removeChars
+                                                           ? inst->selAnchor.col - removeChars : 0;
                                     if (inst->selFloat.line == L)
-                                        inst->selFloat.ch = inst->selFloat.ch > removeChars
-                                                          ? inst->selFloat.ch - removeChars : 0;
+                                        inst->selFloat.col = inst->selFloat.col > removeChars
+                                                          ? inst->selFloat.col - removeChars : 0;
                                     if (!inst->undoInProgress && inst->undoMax > 0) {
                                         UTEDUndoEntry ue;
                                         UniTextEditorPos ps, pe;
-                                        ps.line = L; ps.ch = 0;
-                                        pe.line = L; pe.ch = removeChars;
+                                        ps.line = L; ps.col = 0;
+                                        pe.line = L; pe.col = removeChars;
                                         ue.opType       = UTED_UNDO_DELETE;
                                         ue.delDir       = 0;
                                         ue.atomic       = TRUE;
@@ -527,7 +564,7 @@ int uted_manage_vanilla_keycode(Class *cl, Object *o,ULONG codedata, struct Gadg
                     }
                 } else {
                     /* Shift+Tab via vanilla key: backtab */
-                    if (inst->cursor.ch > 0) {
+                    if (inst->cursor.col > 0) {
                         UniTextEditorLine *curLine = uted_get_line(inst, inst->cursor.line);
                         if (curLine && curLine->utf8) {
                             const char *s = curLine->utf8;
@@ -535,9 +572,9 @@ int uted_manage_vanilla_keycode(Class *cl, Object *o,ULONG codedata, struct Gadg
                                 int nbsp = (int)inst->tabSpaces;
                                 int j; BOOL allSpaces;
                                 if (nbsp < 1) nbsp = 1; if (nbsp > 12) nbsp = 12;
-                                if ((int)inst->cursor.ch >= nbsp) {
+                                if ((int)inst->cursor.col >= nbsp) {
                                     ULONG byteOff = uted_char_to_byte(s, curLine->byteUsed,
-                                                        inst->cursor.ch - (ULONG)nbsp);
+                                                        inst->cursor.col - (ULONG)nbsp);
                                     allSpaces = TRUE;
                                     for (j = 0; j < nbsp; j++) {
                                         if (s[byteOff + j] != ' ') { allSpaces = FALSE; break; }
@@ -548,7 +585,7 @@ int uted_manage_vanilla_keycode(Class *cl, Object *o,ULONG codedata, struct Gadg
                                 }
                             } else {
                                 ULONG byteOff = uted_char_to_byte(s, curLine->byteUsed,
-                                                    inst->cursor.ch - 1);
+                                                    inst->cursor.col - 1);
                                 if (s[byteOff] == '\t')
                                     UniTextEditor_DoDeleteChar(cl, o, -1);
                             }

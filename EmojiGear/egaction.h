@@ -66,6 +66,7 @@ enum {
     ACTION_SETTINGS_WORDWRAP,
     ACTION_SETTINGS_FORCEMONOSPACE,
     ACTION_SETTINGS_APPLYANSI,
+    ACTION_SETTINGS_DISPLAYUNICODEINFO,
     ACTION_SETTINGS_FONTSIZEP,
     ACTION_SETTINGS_FONTSIZEM,
 
@@ -147,6 +148,7 @@ BOOL Action_FontsWindow(struct App *ctx);
 BOOL Action_SettingWordWrap(struct App *ctx);
 BOOL Action_SettingForceMonospace(struct App *ctx);
 BOOL Action_SettingApplyAnsi(struct App *ctx);
+BOOL Action_SettingDisplayUnicodeInfo(struct App *ctx);
 BOOL Action_SettingAnsiUnixColors(struct App *ctx);
 
 BOOL Action_SettingsFontSizePlus(struct App *ctx);

@@ -38,6 +38,7 @@ typedef struct AppSettings {
     int   tabSpaces;           /* spaces per tab, 2..12; default 4       */
     int   visualizeTabs;       /* draw tab markers; default FALSE        */
     int   tabsAreSpaces;       /* Tab key → spaces; default FALSE        */
+    int   displayUnicodeInfo;  /* show U+codepoint and Unicode set in status bar; default FALSE */
 
     int   currentFontSizeIndex; /* index into mmgFontSizeTable            */
 

@@ -47,7 +47,7 @@ extern struct Library *GetFileBase;
 extern void UpdateEditorFontsFromSettings();
 
 /* ------------------------------------------------------------------ */
-/* Extension filter hook: accept .ttf and .odt, always accept dirs    */
+/* Extension filter hook: accept .ttf and .otf, always accept dirs    */
 /* ------------------------------------------------------------------ */
 /*
 static ULONG fontFilterFunc(
@@ -67,7 +67,7 @@ static ULONG fontFilterFunc(
     len  = (ULONG)strlen(name);
 
     if (len > 4 && strcasecmp(name + len - 4, ".ttf") == 0) return TRUE;
-    if (len > 4 && strcasecmp(name + len - 4, ".odt") == 0) return TRUE;
+    if (len > 4 && strcasecmp(name + len - 4, ".otf") == 0) return TRUE;
 
     return FALSE;
 }
@@ -103,7 +103,7 @@ static Object *makeGetFileGadget(ULONG gadId, const char *initialPath)
         GETFILE_RejectIcons, TRUE,
         GETFILE_DoPatterns,TRUE,
         GETFILE_Drawer,(ULONG)"Fonts:",
-        GETFILE_Pattern,(ULONG)"#?(ttf|odt)",
+        GETFILE_Pattern,(ULONG)"#?(ttf|otf)",
         GETFILE_FilterDrawers, TRUE,
         GETFILE_ReadOnly,   FALSE,
         GETFILE_FullFileExpand, FALSE,

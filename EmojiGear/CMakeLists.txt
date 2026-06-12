@@ -29,6 +29,7 @@ set(EMOJIGEAR_SOURCES
     egsettingsview.c
     egfontsview.c
     tooltypepref.c
+    unicodeset.c
     emojibox.c
     egsearchbox.c
     egtabs.c

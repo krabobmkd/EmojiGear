@@ -133,7 +133,7 @@ void uted_undo_push(UniTextEditorData *inst, UTEDUndoEntry *entry)
             BOOL merged = FALSE;
 
             if (entry->opType == UTED_UNDO_INSERT
-                && entry->posStart.ch == top->posEnd.ch
+                && entry->posStart.col == top->posEnd.col
                 && entry->posStart.line == top->posEnd.line)
             {
                 /* Consecutive insert: append new text to top */
@@ -151,7 +151,7 @@ void uted_undo_push(UniTextEditorData *inst, UTEDUndoEntry *entry)
                 }
             }
             else if (entry->opType == UTED_UNDO_DELETE && entry->delDir == -1
-                     && entry->posEnd.ch   == top->posStart.ch
+                     && entry->posEnd.col   == top->posStart.col
                      && entry->posEnd.line == top->posStart.line)
             {
                 /* Consecutive backspace: prepend new text to top */
@@ -169,7 +169,7 @@ void uted_undo_push(UniTextEditorData *inst, UTEDUndoEntry *entry)
                 }
             }
             else if (entry->opType == UTED_UNDO_DELETE && entry->delDir == 1
-                     && entry->posStart.ch   == top->posStart.ch
+                     && entry->posStart.col   == top->posStart.col
                      && entry->posStart.line == top->posStart.line)
             {
                 /* Consecutive fwd-delete: append new text to top */

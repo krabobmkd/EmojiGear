@@ -91,8 +91,8 @@
 /* [ISG] (ULONG) 0-based line index of the insertion cursor. */
 #define UTED_CursorLine         (UTED_Dummy + 14)
 
-/* [ISG] (ULONG) 0-based codepoint (character) index of the cursor within its line. */
-#define UTED_CursorChar         (UTED_Dummy + 15)
+/* [ISG] (ULONG) 0-based column index of the cursor within its line. */
+#define UTED_CursorColumn       (UTED_Dummy + 15)
 
 /* [ISG] (ULONG) Horizontal scroll offset in pixels.  Default: 0. */
 #define UTED_ScrollLeft         (UTED_Dummy + 16)
@@ -336,7 +336,7 @@ typedef struct UTEDTextPosition {
  *              NUL-terminated UTF-8 pattern.  If found, the match is selected
  *              and the cursor moves to the END of the match.  If not found,
  *              cursor and selection are unchanged.
- *              Detect success by comparing UTED_CursorLine / UTED_CursorChar
+ *              Detect success by comparing UTED_CursorLine / UTED_CursorColumn
  *              before and after this tag is set. */
 #define UTED_SearchNext          (UTED_Dummy + 51)
 
@@ -504,6 +504,10 @@ typedef struct UTEDTextPosition {
  *              handler after receiving a UTEDN_* or UTED_InternalRawKey_Code
  *              notification. */
 #define UTED_InternalRawKey_Code     (UTED_Dummy + 69)
+
+/* [G]  (ULONG) Unicode codepoint of the character under the cursor, or 0 if
+ *              the cursor is at/past the end of its line. */
+#define UTED_CursorChar              (UTED_Dummy + 70)
 
 
 /* =========================================================================

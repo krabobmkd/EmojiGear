@@ -61,6 +61,7 @@ static char *StrDup(const char *s)
 #define TT_TABSPACES      "TABSPACES"
 #define TT_VISUALIZETABS  "VISUALIZETABS"
 #define TT_TABSARESPACES  "TABSARESPACES"
+#define TT_DISPLAYUNICODEINFO "DISPLAYUNICODEINFO"
 #define TT_WORDWRAP       "WORDWRAP"
 #define TT_MONOSPACE      "FORCEMONOSPACE"
 #define TT_APPLYANSI      "APPLYANSI"
@@ -139,6 +140,10 @@ void AppSettings_Load(AppSettings *as)
     as->tabsAreSpaces = FALSE;
     val = ToolTypePrefs_Get(TT_TABSARESPACES);
     if (val && val[0] == '1') as->tabsAreSpaces = TRUE;
+
+    as->displayUnicodeInfo = FALSE;
+    val = ToolTypePrefs_Get(TT_DISPLAYUNICODEINFO);
+    if (val && val[0] == '1') as->displayUnicodeInfo = TRUE;
 
     /* ---- Font size index ---- */
     {
@@ -258,6 +263,7 @@ void AppSettings_Save(AppSettings *as)
     }
     ToolTypePrefs_Set(TT_VISUALIZETABS, as->visualizeTabs ? "1" : "0");
     ToolTypePrefs_Set(TT_TABSARESPACES, as->tabsAreSpaces ? "1" : "0");
+    ToolTypePrefs_Set(TT_DISPLAYUNICODEINFO, as->displayUnicodeInfo ? "1" : "0");
 
     /* ---- Font rendering flags ---- */
     ToolTypePrefs_Set(TT_WORDWRAP,     as->wordWrap     ? "1" : "0");

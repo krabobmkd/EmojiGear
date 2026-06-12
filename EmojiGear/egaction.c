@@ -73,6 +73,7 @@ static EgAction s_actions[ACTION_COUNT] = {
     /* ACTION_SETTINGS_WORDWRAP      */ { Action_SettingWordWrap,        MSG_SETTINGS_WORDWRAP,      NULL },
     /* ACTION_SETTINGS_FORCEMONOSPACE*/ { Action_SettingForceMonospace,  MSG_SETTINGS_FORCEMONOSPACE,NULL },
     /* ACTION_SETTINGS_APPLYANSI     */ { Action_SettingApplyAnsi,       MSG_SETTINGS_APPLYANSI,          NULL },
+    /* ACTION_SETTINGS_DISPLAYUNICODEINFO */ { Action_SettingDisplayUnicodeInfo, MSG_SETTINGS_DISPLAYUNICODEINFO, NULL },
     /* ACTION_SETTINGS_FONTSIZEP     */ { Action_SettingsFontSizePlus,   MSG_SETTING_FONTSIZEP,      NULL },
     /* ACTION_SETTINGS_FONTSIZEM     */ { Action_SettingsFontSizeMinus,  MSG_SETTING_FONTSIZEM,      NULL },
 
@@ -1398,7 +1399,7 @@ BOOL Action_NavFindNext(struct App *ctx)
     const char *searchString;
     char *searchStringCopy;
     ULONG searchIsCaseSensitive;
-    ULONG lineBefore, charBefore, lineAfter, charAfter;
+    ULONG lineBefore, colBefore, lineAfter, colAfter;
 
     if (!ctx || !ctx->textEditorObj) return FALSE;
     searchString = EgSearchBox_GetUTF8SearchString(&app->searchBox);
@@ -1413,25 +1414,25 @@ BOOL Action_NavFindNext(struct App *ctx)
         UTED_SearchCaseSensitive, searchIsCaseSensitive, TAG_END);
 
     GetAttr(UTED_CursorLine, ctx->textEditorObj, &lineBefore);
-    GetAttr(UTED_CursorChar, ctx->textEditorObj, &charBefore);
+    GetAttr(UTED_CursorColumn, ctx->textEditorObj, &colBefore);
 
     SetGdAttrs(ctx->textEditorObj, UTED_SearchNext, (ULONG)searchString, TAG_END);
 
     GetAttr(UTED_CursorLine, ctx->textEditorObj, &lineAfter);
-    GetAttr(UTED_CursorChar, ctx->textEditorObj, &charAfter);
+    GetAttr(UTED_CursorColumn, ctx->textEditorObj, &colAfter);
 
-    if (lineAfter == lineBefore && charAfter == charBefore) {
+    if (lineAfter == lineBefore && colAfter == colBefore) {
         /* Not found forward — wrap to start of document and try again */
         SetGdAttrs(ctx->textEditorObj,
             UTED_CursorLine, 0UL,
-            UTED_CursorChar, 0UL,
+            UTED_CursorColumn, 0UL,
             TAG_END);
         GetAttr(UTED_CursorLine, ctx->textEditorObj, &lineBefore);
-        GetAttr(UTED_CursorChar, ctx->textEditorObj, &charBefore);
+        GetAttr(UTED_CursorColumn, ctx->textEditorObj, &colBefore);
         SetGdAttrs(ctx->textEditorObj, UTED_SearchNext, (ULONG)searchString, TAG_END);
         GetAttr(UTED_CursorLine, ctx->textEditorObj, &lineAfter);
-        GetAttr(UTED_CursorChar, ctx->textEditorObj, &charAfter);
-        if (lineAfter == lineBefore && charAfter == charBefore) {
+        GetAttr(UTED_CursorColumn, ctx->textEditorObj, &colAfter);
+        if (lineAfter == lineBefore && colAfter == colBefore) {
             //DisplayBeep(CurrentMainScreen); /* not found anywhere */
             UpdateStatusBar();
             FreeVec(searchStringCopy);
@@ -1454,7 +1455,7 @@ BOOL Action_NavFindPrev(struct App *ctx)
     const char *searchString;
     char *searchStringCopy;
     ULONG searchIsCaseSensitive;
-    ULONG lineBefore, charBefore, lineAfter, charAfter;
+    ULONG lineBefore, colBefore, lineAfter, colAfter;
     ULONG lineCount;
 
     if (!ctx || !ctx->textEditorObj) return FALSE;
@@ -1470,28 +1471,28 @@ BOOL Action_NavFindPrev(struct App *ctx)
         UTED_SearchCaseSensitive, searchIsCaseSensitive, TAG_END);
 
     GetAttr(UTED_CursorLine, ctx->textEditorObj, &lineBefore);
-    GetAttr(UTED_CursorChar, ctx->textEditorObj, &charBefore);
+    GetAttr(UTED_CursorColumn, ctx->textEditorObj, &colBefore);
 
     SetGdAttrs(ctx->textEditorObj, UTED_SearchPrevious, (ULONG)searchString, TAG_END);
 
     GetAttr(UTED_CursorLine, ctx->textEditorObj, &lineAfter);
-    GetAttr(UTED_CursorChar, ctx->textEditorObj, &charAfter);
+    GetAttr(UTED_CursorColumn, ctx->textEditorObj, &colAfter);
 
-    if (lineAfter == lineBefore && charAfter == charBefore) {
+    if (lineAfter == lineBefore && colAfter == colBefore) {
         /* Not found backward — wrap to end of document and try again */
         lineCount = 0;
         GetAttr(UTED_LineCount, ctx->textEditorObj, &lineCount);
         if (lineCount > 0) lineCount--;
         SetGdAttrs(ctx->textEditorObj,
             UTED_CursorLine, lineCount,
-            UTED_CursorChar, 999999UL,
+            UTED_CursorColumn, 999999UL,
             TAG_END);
         GetAttr(UTED_CursorLine, ctx->textEditorObj, &lineBefore);
-        GetAttr(UTED_CursorChar, ctx->textEditorObj, &charBefore);
+        GetAttr(UTED_CursorColumn, ctx->textEditorObj, &colBefore);
         SetGdAttrs(ctx->textEditorObj, UTED_SearchPrevious, (ULONG)searchString, TAG_END);
         GetAttr(UTED_CursorLine, ctx->textEditorObj, &lineAfter);
-        GetAttr(UTED_CursorChar, ctx->textEditorObj, &charAfter);
-        if (lineAfter == lineBefore && charAfter == charBefore) {
+        GetAttr(UTED_CursorColumn, ctx->textEditorObj, &colAfter);
+        if (lineAfter == lineBefore && colAfter == colBefore) {
             //DisplayBeep(CurrentMainScreen); /* not found anywhere */
             UpdateStatusBar();
             FreeVec(searchStringCopy);
@@ -1514,7 +1515,7 @@ BOOL Action_NavReplace(struct App *ctx)
     const char *searchString, *replaceString;
     char *searchStringCopy, *replaceStringCopy;
     ULONG searchIsCaseSensitive;
-    ULONG lineBefore, charBefore, lineAfter, charAfter;
+    ULONG lineBefore, colBefore, lineAfter, colAfter;
 
     if (!ctx || !ctx->textEditorObj) return FALSE;
     searchString = EgSearchBox_GetUTF8SearchString(&app->searchBox);
@@ -1541,14 +1542,14 @@ BOOL Action_NavReplace(struct App *ctx)
 
     /* Find the next occurrence */
     GetAttr(UTED_CursorLine, ctx->textEditorObj, &lineBefore);
-    GetAttr(UTED_CursorChar, ctx->textEditorObj, &charBefore);
+    GetAttr(UTED_CursorColumn, ctx->textEditorObj, &colBefore);
 
     SetGdAttrs(ctx->textEditorObj, UTED_SearchNext, (ULONG)searchString, TAG_END);
 
     GetAttr(UTED_CursorLine, ctx->textEditorObj, &lineAfter);
-    GetAttr(UTED_CursorChar, ctx->textEditorObj, &charAfter);
+    GetAttr(UTED_CursorColumn, ctx->textEditorObj, &colAfter);
 
-    if (lineAfter == lineBefore && charAfter == charBefore) {
+    if (lineAfter == lineBefore && colAfter == colBefore) {
         DisplayBeep(CurrentMainScreen);
     } else {
         SetGdAttrs(ctx->textEditorObj,
@@ -1570,7 +1571,7 @@ BOOL Action_NavReplaceAll(struct App *ctx)
     char *searchStringCopy, *replaceStringCopy;
     ULONG replaceCount = 0;
     ULONG searchIsCaseSensitive;
-    ULONG lineBefore, charBefore, lineAfter, charAfter;
+    ULONG lineBefore, colBefore, lineAfter, colAfter;
 
     if (!ctx || !ctx->textEditorObj) return FALSE;
     searchString = EgSearchBox_GetUTF8SearchString(&app->searchBox);
@@ -1595,19 +1596,19 @@ BOOL Action_NavReplaceAll(struct App *ctx)
     /* Start from the beginning of the document */
     SetGdAttrs(ctx->textEditorObj,
         UTED_CursorLine, 0UL,
-        UTED_CursorChar, 0UL,
+        UTED_CursorColumn, 0UL,
         TAG_END);
 
     while (replaceCount < 100000UL) {
         GetAttr(UTED_CursorLine, ctx->textEditorObj, &lineBefore);
-        GetAttr(UTED_CursorChar, ctx->textEditorObj, &charBefore);
+        GetAttr(UTED_CursorColumn, ctx->textEditorObj, &colBefore);
 
         SetGdAttrs(ctx->textEditorObj, UTED_SearchNext, (ULONG)searchString, TAG_END);
 
         GetAttr(UTED_CursorLine, ctx->textEditorObj, &lineAfter);
-        GetAttr(UTED_CursorChar, ctx->textEditorObj, &charAfter);
+        GetAttr(UTED_CursorColumn, ctx->textEditorObj, &colAfter);
 
-        if (lineAfter == lineBefore && charAfter == charBefore)
+        if (lineAfter == lineBefore && colAfter == colBefore)
             break; /* no more occurrences */
 
         SetGdAttrs(ctx->textEditorObj, UTED_ReplaceString, (ULONG)replaceString, TAG_END);
@@ -1685,7 +1686,7 @@ BOOL Action_NavGotoLine(struct App *ctx)
         line0 = (LONG)number - 1; /* 0-based */
         SetGdAttrs(ctx->textEditorObj,
             UTED_CursorLine, (ULONG)line0,
-            UTED_CursorChar, 0UL,
+            UTED_CursorColumn, 0UL,
             UTED_ScrollTo,   (ULONG)line0,
             TAG_DONE);
     }
@@ -1783,6 +1784,18 @@ BOOL Action_SettingApplyAnsi(struct App *ctx)
         RefreshGList(ctx->textEditorObj, CurrentMainWindow, NULL, 1);
     SyncVScroller();
     SyncHScroller();
+    return TRUE;
+}
+BOOL Action_SettingDisplayUnicodeInfo(struct App *ctx)
+{
+    struct MenuItem *item;
+    if (!ctx) return FALSE;
+
+    /* MENUTOGGLE has already flipped the CHECKED bit; read the new state. */
+    item = EgMenu_FindItemByActionID(&ctx->mainwindow.menu, ACTION_SETTINGS_DISPLAYUNICODEINFO);
+    ctx->appSettings.displayUnicodeInfo = (item && (item->Flags & CHECKED)) ? 1 : 0;
+
+    UpdateStatusBar();
     return TRUE;
 }
 /*old, kept for archive

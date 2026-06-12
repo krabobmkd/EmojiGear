@@ -51,6 +51,54 @@ ULONG uted_char_to_byte(const char *utf8, ULONG byteUsed, ULONG charIndex)
     return byteOff;
 }
 
+/* TRUE if char 'ch' of 'ln' is part of a word, i.e. not a space or tab.
+ * FALSE for out-of-range indices (including ch == charCount). */
+BOOL uted_is_word_char_at(UniTextEditorLine *ln, ULONG ch)
+{
+    ULONG byteOff;
+    unsigned char b;
+    if (!ln || ch >= ln->charCount) return FALSE;
+    byteOff = uted_char_to_byte(ln->utf8, ln->byteUsed, ch);
+    b = (unsigned char)ln->utf8[byteOff];
+    return (BOOL)(b != ' ' && b != '\t');
+}
+
+/* Decode the UTF-8 sequence starting at byte offset 'byteOff'. Returns 0
+ * if byteOff is at or past byteUsed (no character there). */
+static ULONG utf8_decode(const char *utf8, ULONG byteUsed, ULONG byteOff)
+{
+    unsigned char b0;
+    ULONG seqLen, cp, i;
+
+    if (byteOff >= byteUsed) return 0;
+
+    b0     = (unsigned char)utf8[byteOff];
+    seqLen = utf8_seqlen(b0);
+    if (byteOff + seqLen > byteUsed) seqLen = 1; /* truncated: raw byte */
+
+    switch (seqLen) {
+    case 2:  cp = b0 & 0x1F; break;
+    case 3:  cp = b0 & 0x0F; break;
+    case 4:  cp = b0 & 0x07; break;
+    default: return (ULONG)b0;
+    }
+    for (i = 1; i < seqLen; i++)
+        cp = (cp << 6) | ((unsigned char)utf8[byteOff + i] & 0x3F);
+    return cp;
+}
+
+/* Return the Unicode codepoint of the character at (line,col), or 0 if
+ * col is at/past the end of the line. */
+ULONG uted_codepoint_at(UniTextEditorData *inst, ULONG line, ULONG col)
+{
+    UniTextEditorLine *ln = uted_get_line(inst, line);
+    ULONG byteOff;
+
+    if (!ln || col >= ln->charCount) return 0;
+    byteOff = uted_char_to_byte(ln->utf8, ln->byteUsed, col);
+    return utf8_decode(ln->utf8, ln->byteUsed, byteOff);
+}
+
 /* =========================================================================
  * MinList helpers
  * =========================================================================
@@ -325,9 +373,9 @@ void uted_ensure_cursor_h_visible(UniTextEditorData *inst)
     if (!line->charXOffsets && inst->dc)
         uted_line_build_metrics(line, inst);
     if (!line->charXOffsets) return;
-    if (inst->cursor.ch > line->charCount) return;
+    if (inst->cursor.col > line->charCount) return;
 
-    cursorPx    = (LONG)line->charXOffsets[inst->cursor.ch];
+    cursorPx    = (LONG)line->charXOffsets[inst->cursor.col];
     gadW        = (LONG)inst->gadWidth - (LONG)inst->leftMargin - (LONG)inst->rightMargin;
     if (gadW < 0) gadW = 0;
     cursorInGad = cursorPx - (LONG)inst->scrollLeftPx;
@@ -344,7 +392,7 @@ void uted_ensure_cursor_h_visible(UniTextEditorData *inst)
      * scroll left so cursor lands 96px from left — outside the 64px band,
      * preventing immediate left-retrigger.  ch==0 snaps to column 0. */
     else if (cursorInGad < 64 && inst->scrollLeftPx > 0) {
-        if (inst->cursor.ch == 0) {
+        if (inst->cursor.col == 0) {
             inst->scrollLeftPx = 0;
         } else {
             LONG newLeft = cursorPx - 96;
@@ -453,7 +501,7 @@ ULONG UniTextEditor_DoInsertText(Class *cl, Object *o, const char *text, LONG le
     curLine = uted_get_line(inst, inst->cursor.line);
     if (!curLine) return 0;
 
-    byteOff = uted_char_to_byte(curLine->utf8, curLine->byteUsed, inst->cursor.ch);
+    byteOff = uted_char_to_byte(curLine->utf8, curLine->byteUsed, inst->cursor.col);
 
     p   = text;
     end = text + len;
@@ -467,7 +515,7 @@ ULONG UniTextEditor_DoInsertText(Class *cl, Object *o, const char *text, LONG le
             if (!uted_line_insert_bytes(curLine, byteOff, p, segLen))
                 break;
             byteOff         += segLen;
-            inst->cursor.ch += uted_count_chars(p, segLen);
+            inst->cursor.col += uted_count_chars(p, segLen);
         }
 
         if (nl < end) {
@@ -476,17 +524,17 @@ ULONG UniTextEditor_DoInsertText(Class *cl, Object *o, const char *text, LONG le
                 if (!uted_line_insert_bytes(curLine, byteOff, nl, 1))
                     break;
                 byteOff++;
-                inst->cursor.ch++;
+                inst->cursor.col++;
                 p = nl + 1;
             } else {
                 /* Normal mode: split line on \n */
                 nbNewLines++;
-                UniTextEditorLine *tail = uted_line_split(curLine, inst->cursor.ch);
+                UniTextEditorLine *tail = uted_line_split(curLine, inst->cursor.col);
                 if (tail) {
                     uted_list_insert_after(curLine, tail);
                     inst->lineCount++;
                     inst->cursor.line++;
-                    inst->cursor.ch = 0;
+                    inst->cursor.col = 0;
                     curLine = tail;
                     byteOff = 0;
                 }
@@ -562,9 +610,9 @@ ULONG UniTextEditor_DoDeleteChar(Class *cl, Object *o, LONG delta)
     if (inst->applyAnsiEscapes && !inst->hasSelection) {
         UniTextEditorLine *line = uted_get_line(inst, inst->cursor.line);
         if (line) {
-            ULONG checkCh = (delta == -1 && inst->cursor.ch > 0)
-                            ? inst->cursor.ch - 1
-                            : inst->cursor.ch;
+            ULONG checkCh = (delta == -1 && inst->cursor.col > 0)
+                            ? inst->cursor.col - 1
+                            : inst->cursor.col;
             ULONG seqStart = 0, seqEnd = 0;
             uted_line_ensure_ansi_runs(line, inst);
             if (uted_ansi_find_seq(line, checkCh, &seqStart, &seqEnd)) {
@@ -575,9 +623,9 @@ ULONG UniTextEditor_DoDeleteChar(Class *cl, Object *o, LONG delta)
                 e.delDir        = (BYTE)delta;
                 e.atomic        = TRUE;
                 e.posStart.line = inst->cursor.line;
-                e.posStart.ch   = seqStart;
+                e.posStart.col   = seqStart;
                 e.posEnd.line   = inst->cursor.line;
-                e.posEnd.ch     = seqEnd;
+                e.posEnd.col     = seqEnd;
                 e.textBytes     = bLen;
                 e.text          = (char *)AllocVec(bLen + 1, MEMF_ANY);
                 if (e.text) {
@@ -586,7 +634,7 @@ ULONG UniTextEditor_DoDeleteChar(Class *cl, Object *o, LONG delta)
                 }
                 doRecord = TRUE;
                 uted_line_delete_bytes(line, bStart, bLen);
-                inst->cursor.ch = seqStart;
+                inst->cursor.col = seqStart;
                 inst->refreshStartLine = inst->refreshEndLine = inst->cursor.line;
                 inst->modified = TRUE;
                 if (inst->wordWrap) inst->wrapMapDirty = TRUE;
@@ -597,11 +645,11 @@ ULONG UniTextEditor_DoDeleteChar(Class *cl, Object *o, LONG delta)
 
     if (delta == -1) {
         /* Backspace */
-        if (inst->cursor.ch > 0) {
+        if (inst->cursor.col > 0) {
             UniTextEditorLine *line = uted_get_line(inst, inst->cursor.line);
             if (line) {
-                ULONG bEnd   = uted_char_to_byte(line->utf8, line->byteUsed, inst->cursor.ch);
-                ULONG bStart = uted_char_to_byte(line->utf8, line->byteUsed, inst->cursor.ch - 1);
+                ULONG bEnd   = uted_char_to_byte(line->utf8, line->byteUsed, inst->cursor.col);
+                ULONG bStart = uted_char_to_byte(line->utf8, line->byteUsed, inst->cursor.col - 1);
                 ULONG bLen   = bEnd - bStart;
                 /* Capture char before deleting */
                 CopyMem(line->utf8 + bStart, capBuf, bLen);
@@ -609,14 +657,14 @@ ULONG UniTextEditor_DoDeleteChar(Class *cl, Object *o, LONG delta)
                 e.delDir        = -1;
                 e.atomic        = FALSE;
                 e.posStart.line = inst->cursor.line;
-                e.posStart.ch   = inst->cursor.ch - 1;
+                e.posStart.col   = inst->cursor.col - 1;
                 e.posEnd        = inst->cursor;
                 e.textBytes     = bLen;
                 e.text          = (char *)AllocVec(bLen + 1, MEMF_ANY);
                 if (e.text) { CopyMem(capBuf, e.text, bLen); e.text[bLen] = '\0'; }
                 doRecord = TRUE;
                 uted_line_delete_bytes(line, bStart, bLen);
-                inst->cursor.ch--;
+                inst->cursor.col--;
 
 
                 inst->refreshStartLine = inst->refreshEndLine = inst->cursor.line;
@@ -631,16 +679,16 @@ ULONG UniTextEditor_DoDeleteChar(Class *cl, Object *o, LONG delta)
                 e.delDir        = -1;
                 e.atomic        = TRUE;
                 e.posStart.line = inst->cursor.line - 1;
-                e.posStart.ch   = prevChars;
+                e.posStart.col   = prevChars;
                 e.posEnd.line   = inst->cursor.line;
-                e.posEnd.ch     = 0;
+                e.posEnd.col     = 0;
                 e.textBytes     = 1;
                 e.text          = (char *)AllocVec(2, MEMF_ANY);
                 if (e.text) { e.text[0] = '\n'; e.text[1] = '\0'; }
                 doRecord = TRUE;
                 uted_line_join(inst, prev, curr);
                 inst->cursor.line--;
-                inst->cursor.ch = prevChars;
+                inst->cursor.col = prevChars;
 
 
                 inst->refreshStartLine = inst->cursor.line;
@@ -650,9 +698,9 @@ ULONG UniTextEditor_DoDeleteChar(Class *cl, Object *o, LONG delta)
     } else {
         /* Forward delete */
         UniTextEditorLine *line = uted_get_line(inst, inst->cursor.line);
-        if (line && inst->cursor.ch < line->charCount) {
-            ULONG bStart = uted_char_to_byte(line->utf8, line->byteUsed, inst->cursor.ch);
-            ULONG bEnd   = uted_char_to_byte(line->utf8, line->byteUsed, inst->cursor.ch + 1);
+        if (line && inst->cursor.col < line->charCount) {
+            ULONG bStart = uted_char_to_byte(line->utf8, line->byteUsed, inst->cursor.col);
+            ULONG bEnd   = uted_char_to_byte(line->utf8, line->byteUsed, inst->cursor.col + 1);
             ULONG bLen   = bEnd - bStart;
             CopyMem(line->utf8 + bStart, capBuf, bLen);
             e.opType        = UTED_UNDO_DELETE;
@@ -660,7 +708,7 @@ ULONG UniTextEditor_DoDeleteChar(Class *cl, Object *o, LONG delta)
             e.atomic        = FALSE;
             e.posStart      = inst->cursor;
             e.posEnd.line   = inst->cursor.line;
-            e.posEnd.ch     = inst->cursor.ch + 1;
+            e.posEnd.col     = inst->cursor.col + 1;
             e.textBytes     = bLen;
             e.text          = (char *)AllocVec(bLen + 1, MEMF_ANY);
             if (e.text) { CopyMem(capBuf, e.text, bLen); e.text[bLen] = '\0'; }
@@ -670,7 +718,7 @@ ULONG UniTextEditor_DoDeleteChar(Class *cl, Object *o, LONG delta)
             inst->refreshStartLine = inst->cursor.line;
             inst->refreshEndLine = inst->cursor.line;
 
-        } else if (line && inst->cursor.ch == line->charCount &&
+        } else if (line && inst->cursor.col == line->charCount &&
                    inst->cursor.line + 1 < inst->lineCount)
         {
             /* Line join (fwd) – atomic */
@@ -681,7 +729,7 @@ ULONG UniTextEditor_DoDeleteChar(Class *cl, Object *o, LONG delta)
                 e.atomic        = TRUE;
                 e.posStart      = inst->cursor;
                 e.posEnd.line   = inst->cursor.line + 1;
-                e.posEnd.ch     = 0;
+                e.posEnd.col     = 0;
                 e.textBytes     = 1;
                 e.text          = (char *)AllocVec(2, MEMF_ANY);
                 if (e.text) { e.text[0] = '\n'; e.text[1] = '\0'; }
@@ -734,9 +782,9 @@ ULONG UniTextEditor_DoDeleteToLineStart(Class *cl, Object *o)
     inst->selFloat     = inst->cursor;
 
     line = uted_get_line(inst, inst->cursor.line);
-    if (!line || inst->cursor.ch == 0) return 0;
+    if (!line || inst->cursor.col == 0) return 0;
 
-    bEnd = uted_char_to_byte(line->utf8, line->byteUsed, inst->cursor.ch);
+    bEnd = uted_char_to_byte(line->utf8, line->byteUsed, inst->cursor.col);
     if (bEnd == 0) return 0;
 
     memset(&e, 0, sizeof(e));
@@ -744,7 +792,7 @@ ULONG UniTextEditor_DoDeleteToLineStart(Class *cl, Object *o)
     e.delDir        = -1;
     e.atomic        = TRUE;
     e.posStart.line = inst->cursor.line;
-    e.posStart.ch   = 0;
+    e.posStart.col   = 0;
     e.posEnd        = inst->cursor;
     e.textBytes     = bEnd;
     e.text          = (char *)AllocVec(bEnd + 1, MEMF_ANY);
@@ -754,7 +802,7 @@ ULONG UniTextEditor_DoDeleteToLineStart(Class *cl, Object *o)
     e.hasSelBefore  = FALSE;
 
     uted_line_delete_bytes(line, 0, bEnd);
-    inst->cursor.ch    = 0;
+    inst->cursor.col    = 0;
     inst->selAnchor    = inst->cursor;
     inst->selFloat     = inst->cursor;
     inst->modified     = TRUE;
@@ -793,9 +841,9 @@ ULONG UniTextEditor_DoDeleteToLineEnd(Class *cl, Object *o)
     inst->selFloat     = inst->cursor;
 
     line = uted_get_line(inst, inst->cursor.line);
-    if (!line || inst->cursor.ch >= line->charCount) return 0;
+    if (!line || inst->cursor.col >= line->charCount) return 0;
 
-    bStart = uted_char_to_byte(line->utf8, line->byteUsed, inst->cursor.ch);
+    bStart = uted_char_to_byte(line->utf8, line->byteUsed, inst->cursor.col);
     bLen   = line->byteUsed - bStart;
     if (bLen == 0) return 0;
 
@@ -805,7 +853,7 @@ ULONG UniTextEditor_DoDeleteToLineEnd(Class *cl, Object *o)
     e.atomic        = TRUE;
     e.posStart      = inst->cursor;
     e.posEnd.line   = inst->cursor.line;
-    e.posEnd.ch     = line->charCount;
+    e.posEnd.col     = line->charCount;
     e.textBytes     = bLen;
     e.text          = (char *)AllocVec(bLen + 1, MEMF_ANY);
     if (e.text) { CopyMem(line->utf8 + bStart, e.text, bLen); e.text[bLen] = '\0'; }
@@ -814,7 +862,7 @@ ULONG UniTextEditor_DoDeleteToLineEnd(Class *cl, Object *o)
     e.hasSelBefore  = FALSE;
 
     uted_line_delete_bytes(line, bStart, bLen);
-    /* cursor.ch is already correct: content after it was deleted */
+    /* cursor.col is already correct: content after it was deleted */
     inst->selAnchor    = inst->cursor;
     inst->selFloat     = inst->cursor;
     inst->modified     = TRUE;
@@ -850,15 +898,15 @@ ULONG UniTextEditor_DoMoveCursor(Class *cl, Object *o, LONG deltaChar, LONG delt
         if (deltaChar > 0) {
             ULONG step = (ULONG)deltaChar;
             while (step-- && line) {
-                if (inst->cursor.ch < line->charCount) {
-                    inst->cursor.ch++;
+                if (inst->cursor.col < line->charCount) {
+                    inst->cursor.col++;
 
     
                     inst->refreshStartLine = inst->refreshEndLine = inst->cursor.line;
 
                 } else if (inst->cursor.line + 1 < inst->lineCount) {
                     inst->cursor.line++;
-                    inst->cursor.ch = 0;
+                    inst->cursor.col = 0;
                     line = uted_get_line(inst, inst->cursor.line);
 
     
@@ -869,8 +917,8 @@ ULONG UniTextEditor_DoMoveCursor(Class *cl, Object *o, LONG deltaChar, LONG delt
         } else {
             ULONG step = (ULONG)(-deltaChar);
             while (step-- && line) {
-                if (inst->cursor.ch > 0) {
-                    inst->cursor.ch--;
+                if (inst->cursor.col > 0) {
+                    inst->cursor.col--;
 
     
                     inst->refreshStartLine = inst->refreshEndLine = inst->cursor.line;
@@ -878,7 +926,7 @@ ULONG UniTextEditor_DoMoveCursor(Class *cl, Object *o, LONG deltaChar, LONG delt
                 } else if (inst->cursor.line > 0) {
                     inst->cursor.line--;
                     line = uted_get_line(inst, inst->cursor.line);
-                    if (line) inst->cursor.ch = line->charCount;
+                    if (line) inst->cursor.col = line->charCount;
 
     
                     inst->refreshStartLine = inst->cursor.line;
@@ -899,8 +947,8 @@ ULONG UniTextEditor_DoMoveCursor(Class *cl, Object *o, LONG deltaChar, LONG delt
 
             {
                 UniTextEditorLine *cl2 = uted_get_line(inst, curWR->logicalLine);
-                if (cl2 && cl2->charXOffsets && inst->cursor.ch <= cl2->charCount)
-                    curAbsPx = (ULONG)cl2->charXOffsets[inst->cursor.ch];
+                if (cl2 && cl2->charXOffsets && inst->cursor.col <= cl2->charCount)
+                    curAbsPx = (ULONG)cl2->charXOffsets[inst->cursor.col];
             }
 
             if (deltaLine > 0) {
@@ -933,7 +981,7 @@ ULONG UniTextEditor_DoMoveCursor(Class *cl, Object *o, LONG deltaChar, LONG delt
                 inst->refreshEndLine   = (twr->logicalLine > inst->cursor.line)
                                          ? twr->logicalLine : inst->cursor.line;
                 inst->cursor.line = twr->logicalLine;
-                inst->cursor.ch   = newCh;
+                inst->cursor.col   = newCh;
             }
         } else {
             /* Normal (non-wrap) vertical movement by logical lines */
@@ -957,8 +1005,8 @@ ULONG UniTextEditor_DoMoveCursor(Class *cl, Object *o, LONG deltaChar, LONG delt
             /* Clamp char to new line length */
             {
                 UniTextEditorLine *line = uted_get_line(inst, inst->cursor.line);
-                if (line && inst->cursor.ch > line->charCount)
-                    inst->cursor.ch = line->charCount;
+                if (line && inst->cursor.col > line->charCount)
+                    inst->cursor.col = line->charCount;
             }
         }
     }
@@ -980,7 +1028,7 @@ ULONG UniTextEditor_DoMoveCursor(Class *cl, Object *o, LONG deltaChar, LONG delt
 /* -------------------------------------------------------------------------
  * DoSetCursorPos
  * ------------------------------------------------------------------------- */
-ULONG UniTextEditor_DoSetCursorPos(Class *cl, Object *o, ULONG line, ULONG ch, BOOL extend)
+ULONG UniTextEditor_DoSetCursorPos(Class *cl, Object *o, ULONG line, ULONG col, BOOL extend)
 {
     UniTextEditorData *inst    = UTED_DATA(cl, o);
     UniTextEditorLine *ln;
@@ -994,7 +1042,7 @@ ULONG UniTextEditor_DoSetCursorPos(Class *cl, Object *o, ULONG line, ULONG ch, B
     newPos.line = line < inst->lineCount ? line : inst->lineCount - 1;
     ln = uted_get_line(inst, newPos.line);
     if (!ln) return 0;
-    newPos.ch = ch <= ln->charCount ? ch : ln->charCount;
+    newPos.col = col <= ln->charCount ? col : ln->charCount;
 
     inst->cursor = newPos;
 
@@ -1043,11 +1091,11 @@ void UniTextEditor_DoSelectAll(Class *cl, Object *o)
     (void)cl;
 
     inst->selAnchor.line = 0;
-    inst->selAnchor.ch   = 0;
+    inst->selAnchor.col   = 0;
 
     lastLine = uted_get_line(inst, inst->lineCount > 0 ? inst->lineCount - 1 : 0);
     inst->selFloat.line  = inst->lineCount > 0 ? inst->lineCount - 1 : 0;
-    inst->selFloat.ch    = lastLine ? lastLine->charCount : 0;
+    inst->selFloat.col    = lastLine ? lastLine->charCount : 0;
 
     inst->cursor       = inst->selFloat;
     inst->hasSelection = (uted_pos_cmp(&inst->selAnchor, &inst->selFloat) != 0);
@@ -1099,17 +1147,17 @@ ULONG UniTextEditor_DoDeleteSelection(Class *cl, Object *o)
 
     if (startPos->line == endPos->line) {
         /* Single line selection */
-        startByte = uted_char_to_byte(startLine->utf8, startLine->byteUsed, startPos->ch);
-        endByte   = uted_char_to_byte(startLine->utf8, startLine->byteUsed, endPos->ch);
+        startByte = uted_char_to_byte(startLine->utf8, startLine->byteUsed, startPos->col);
+        endByte   = uted_char_to_byte(startLine->utf8, startLine->byteUsed, endPos->col);
         uted_line_delete_bytes(startLine, startByte, endByte - startByte);
     } else {
         /* Multi-line selection:
-         * 1. Delete tail of startLine from startPos->ch onward
+         * 1. Delete tail of startLine from startPos->col onward
          * 2. Delete whole intermediate lines
-         * 3. Delete head of endLine up to endPos->ch
+         * 3. Delete head of endLine up to endPos->col
          * 4. Join startLine and endLine */
 
-        startByte = uted_char_to_byte(startLine->utf8, startLine->byteUsed, startPos->ch);
+        startByte = uted_char_to_byte(startLine->utf8, startLine->byteUsed, startPos->col);
         uted_line_delete_bytes(startLine, startByte,
                                startLine->byteUsed - startByte);
 
@@ -1121,7 +1169,7 @@ ULONG UniTextEditor_DoDeleteSelection(Class *cl, Object *o)
                 if (!victim) break;
                 if (lineIdx == endPos->line) {
                     /* Trim head of last line, then join */
-                    endByte = uted_char_to_byte(victim->utf8, victim->byteUsed, endPos->ch);
+                    endByte = uted_char_to_byte(victim->utf8, victim->byteUsed, endPos->col);
                     uted_line_delete_bytes(victim, 0, endByte);
                     if (!uted_line_join(inst, startLine, victim)) {
                         /* Join failed (alloc error): remove victim manually
@@ -1213,8 +1261,8 @@ ULONG UniTextEditor_DoGetSelectedText(Class *cl, Object *o, STRPTR *result)
     for (lineIdx = startPos->line; lineIdx <= endPos->line; lineIdx++) {
         line = uted_get_line(inst, lineIdx);
         if (!line) break;
-        ULONG from = (lineIdx == startPos->line) ? startPos->ch : 0;
-        ULONG to   = (lineIdx == endPos->line)   ? endPos->ch   : line->charCount;
+        ULONG from = (lineIdx == startPos->line) ? startPos->col : 0;
+        ULONG to   = (lineIdx == endPos->line)   ? endPos->col   : line->charCount;
         ULONG b1   = uted_char_to_byte(line->utf8, line->byteUsed, from);
         ULONG b2   = uted_char_to_byte(line->utf8, line->byteUsed, to);
         totalBytes += b2 - b1;
@@ -1228,8 +1276,8 @@ ULONG UniTextEditor_DoGetSelectedText(Class *cl, Object *o, STRPTR *result)
     for (lineIdx = startPos->line; lineIdx <= endPos->line; lineIdx++) {
         line = uted_get_line(inst, lineIdx);
         if (!line) break;
-        ULONG from = (lineIdx == startPos->line) ? startPos->ch : 0;
-        ULONG to   = (lineIdx == endPos->line)   ? endPos->ch   : line->charCount;
+        ULONG from = (lineIdx == startPos->line) ? startPos->col : 0;
+        ULONG to   = (lineIdx == endPos->line)   ? endPos->col   : line->charCount;
         ULONG b1   = uted_char_to_byte(line->utf8, line->byteUsed, from);
         ULONG b2   = uted_char_to_byte(line->utf8, line->byteUsed, to);
         CopyMem(line->utf8 + b1, ptr, b2 - b1);

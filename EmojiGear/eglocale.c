@@ -116,6 +116,7 @@ static const char *defaultStrings[MSG_COUNT] = {
     "Force Monospace",
     "ANSI Escape Rendering",
     "Use ANSI Unix Colors",
+    "Display Unicode Info",
     "Font Size +",
     "Font Size -",
 

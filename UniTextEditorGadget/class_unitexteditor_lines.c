@@ -1168,7 +1168,7 @@ ULONG uted_cursor_visual_row(UniTextEditorData *inst)
     for (i = 0; i < inst->wrapRowCount; i++) {
         if (inst->wrapMap[i].logicalLine == inst->cursor.line) {
             best = i;
-            if (inst->cursor.ch < inst->wrapMap[i].endChar ||
+            if (inst->cursor.col < inst->wrapMap[i].endChar ||
                 inst->wrapMap[i].endChar == inst->wrapMap[i].startChar)
                 return i;
         } else if (inst->wrapMap[i].logicalLine > inst->cursor.line) {

@@ -40,15 +40,6 @@
 #include "unitexteditor_private.h"
 #include "bdbprintf.h"
 
-static BOOL uted_is_word_char_at(UniTextEditorLine *ln, ULONG ch)
-{
-    ULONG byteOff;
-    unsigned char b;
-    if (!ln || ch >= ln->charCount) return FALSE;
-    byteOff = uted_char_to_byte(ln->utf8, ln->byteUsed, ch);
-    b = (unsigned char)ln->utf8[byteOff];
-    return (BOOL)(b != ' ' && b != '\t');
-}
 #include <proto/alib.h>
 #include <proto/utility.h>
 
@@ -536,7 +527,7 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
                 if (rightward) {
                     /* Anchor at left edge of clicked char → char is included */
                     inst->selAnchor.line = inst->clickAnchorLine;
-                    inst->selAnchor.ch   = inst->clickAnchorChFloor;
+                    inst->selAnchor.col   = inst->clickAnchorChFloor;
                 } else {
                     /* Anchor at right edge of clicked char → char is included */
                     UniTextEditorLine *ancLn =
@@ -545,7 +536,7 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
                     if (ancLn && ancChRight > ancLn->charCount)
                         ancChRight = ancLn->charCount;
                     inst->selAnchor.line = inst->clickAnchorLine;
-                    inst->selAnchor.ch   = ancChRight;
+                    inst->selAnchor.col   = ancChRight;
                 }
             }
 
@@ -758,9 +749,9 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
                     ULONG logL = wr->logicalLine;
                     if (logL >= selStart->line && logL <= selEnd->line) {
                         ULONG vss = (logL == selStart->line)
-                                    ? selStart->ch : wr->startChar;
+                                    ? selStart->col : wr->startChar;
                         ULONG vse = (logL == selEnd->line)
-                                    ? selEnd->ch   : wr->endChar;
+                                    ? selEnd->col   : wr->endChar;
                         /* clamp to this visual row's char range */
                         if (vss < wr->startChar) vss = wr->startChar;
                         if (vse > wr->endChar)   vse = wr->endChar;
@@ -842,9 +833,9 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
                                     * inst->lineHeight);
                     WORD cx = textLeft;
                     if (!cl2->charXOffsets) uted_line_build_metrics(cl2, inst);
-                    if (cl2->charXOffsets && inst->cursor.ch <= cl2->charCount)
+                    if (cl2->charXOffsets && inst->cursor.col <= cl2->charCount)
                         cx = (WORD)(textLeft
-                            + (LONG)cl2->charXOffsets[inst->cursor.ch]
+                            + (LONG)cl2->charXOffsets[inst->cursor.col]
                             - (LONG)wr->startPixel);
                     if (cx >= textLeft && cx < textLeft + textWidth - 1) {
                         if (!inst->isCLUT) {
@@ -946,8 +937,8 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
                 hasSelEnd   = (lineIdx <= selEnd->line);
 
                 if (hasSelStart && hasSelEnd) {
-                    lineSelStart = (lineIdx == selStart->line) ? selStart->ch : 0;
-                    lineSelEnd   = (lineIdx == selEnd->line)   ? selEnd->ch
+                    lineSelStart = (lineIdx == selStart->line) ? selStart->col : 0;
+                    lineSelEnd   = (lineIdx == selEnd->line)   ? selEnd->col
                                                                : line->charCount;
 
                     if (lineSelStart < lineSelEnd) {
@@ -1051,9 +1042,9 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
             if (!cline->charXOffsets)
                 uted_line_build_metrics(cline, inst);
 
-            if (cline->charXOffsets && inst->cursor.ch <= cline->charCount)
+            if (cline->charXOffsets && inst->cursor.col <= cline->charCount)
                 cx = (WORD)(textLeft
-                            + (LONG)cline->charXOffsets[inst->cursor.ch]
+                            + (LONG)cline->charXOffsets[inst->cursor.col]
                             - (LONG)inst->scrollLeftPx);
 
             /* 2px wide when activated (focused), 1px when not */

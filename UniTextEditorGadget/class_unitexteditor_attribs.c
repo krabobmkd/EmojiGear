@@ -135,12 +135,12 @@ static void uted_apply_search_match(UniTextEditorData *inst,
 
     if (cursorAtStart) {
         /* backward search: cursor at start, anchor at end */
-        inst->selAnchor.ch = endChar;
-        inst->selFloat.ch  = foundChar;
+        inst->selAnchor.col = endChar;
+        inst->selFloat.col  = foundChar;
     } else {
         /* forward search: cursor at end, anchor at start */
-        inst->selAnchor.ch = foundChar;
-        inst->selFloat.ch  = endChar;
+        inst->selAnchor.col = foundChar;
+        inst->selFloat.col  = endChar;
     }
 
     inst->cursor       = inst->selFloat;
@@ -892,7 +892,7 @@ ULONG UniTextEditor_OnSet(Class *cl, Object *o, struct opSet *msg)
             }
 
             inst->cursor.line  = 0;
-            inst->cursor.ch    = 0;
+            inst->cursor.col    = 0;
             inst->selAnchor    = inst->cursor;
             inst->selFloat     = inst->cursor;
             inst->hasSelection = FALSE;
@@ -944,12 +944,12 @@ ULONG UniTextEditor_OnSet(Class *cl, Object *o, struct opSet *msg)
         }
 
         case UTED_CursorLine:
-            UniTextEditor_DoSetCursorPos(cl, o, (ULONG)tag->ti_Data, inst->cursor.ch, FALSE);
+            UniTextEditor_DoSetCursorPos(cl, o, (ULONG)tag->ti_Data, inst->cursor.col, FALSE);
             redraw = TRUE;
             result = 1;
             break;
 
-        case UTED_CursorChar:
+        case UTED_CursorColumn:
             UniTextEditor_DoSetCursorPos(cl, o, inst->cursor.line, (ULONG)tag->ti_Data, FALSE);
             redraw = TRUE;
             result = 1;
@@ -1238,7 +1238,7 @@ ULONG UniTextEditor_OnSet(Class *cl, Object *o, struct opSet *msg)
                 scanLine = uted_get_line(inst, inst->cursor.line);
                 if (scanLine) {
                     ULONG startByte = uted_char_to_byte(scanLine->utf8,
-                                          scanLine->byteUsed, inst->cursor.ch);
+                                          scanLine->byteUsed, inst->cursor.col);
                     const char *hit = uted_strfind(scanLine->utf8 + startByte,
                                           pattern, inst->searchCaseSensitive);
                     if (hit) {
@@ -1287,9 +1287,9 @@ ULONG UniTextEditor_OnSet(Class *cl, Object *o, struct opSet *msg)
 
                 /* Search backward on current line: last match starting < cursor */
                 scanLine = uted_get_line(inst, inst->cursor.line);
-                if (scanLine && inst->cursor.ch > 0) {
+                if (scanLine && inst->cursor.col > 0) {
                     ULONG limitByte = uted_char_to_byte(scanLine->utf8,
-                                          scanLine->byteUsed, inst->cursor.ch);
+                                          scanLine->byteUsed, inst->cursor.col);
                     const char *hit = uted_rfind_before_cs(scanLine->utf8,
                                           limitByte, pattern,
                                           inst->searchCaseSensitive);
@@ -1335,9 +1335,9 @@ ULONG UniTextEditor_OnSet(Class *cl, Object *o, struct opSet *msg)
                 inst->lastSearchValid = FALSE;
                 /* Restore selection to the saved match, then insert replaces it */
                 inst->selAnchor.line = inst->lastSearchLine;
-                inst->selAnchor.ch   = inst->lastSearchChar;
+                inst->selAnchor.col   = inst->lastSearchChar;
                 inst->selFloat.line  = inst->lastSearchLine;
-                inst->selFloat.ch    = inst->lastSearchEndChar;
+                inst->selFloat.col    = inst->lastSearchEndChar;
                 inst->cursor         = inst->selFloat;
                 inst->hasSelection   = (inst->lastSearchChar != inst->lastSearchEndChar);
                 UniTextEditor_DoInsertText(cl, o, replaceStr, -1);
@@ -1575,8 +1575,12 @@ ULONG UniTextEditor_OnGet(Class *cl, Object *o, struct opGet *msg)
         *msg->opg_Storage = inst->cursor.line;
         return TRUE;
 
+    case UTED_CursorColumn:
+        *msg->opg_Storage = inst->cursor.col;
+        return TRUE;
+
     case UTED_CursorChar:
-        *msg->opg_Storage = inst->cursor.ch;
+        *msg->opg_Storage = uted_codepoint_at(inst, inst->cursor.line, inst->cursor.col);
         return TRUE;
 
     case GA_Text:  /* alias: same behaviour as UTED_Text */

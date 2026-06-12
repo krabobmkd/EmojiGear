@@ -69,7 +69,7 @@ static ULONG delayedAttribs[] = {
     UTED_AddFont,
     UTED_Modified,
     UTED_CursorLine,
-    UTED_CursorChar,
+    UTED_CursorColumn,
     UTED_ScrollLeft,
     UTED_ScrollTop,
 

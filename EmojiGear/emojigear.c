@@ -66,6 +66,7 @@
 #include "emojigearsettings.h"
 
 #include "tooltypepref.h"
+#include "unicodeset.h"
 #include "emojibox.h"
 #include "egsearchbox.h"
 #include "egfontsview.h"
@@ -1332,16 +1333,22 @@ void SyncHScroller(void)
 void UpdateStatusBar()
 {
     char buf[128];
-    ULONG curLine = 0, curChar = 0, lineCount = 0;
+    ULONG curLine = 0, curCol = 0, curChar = 0, lineCount = 0;
 
     if (!app->textEditorObj || !app->statusBarLabel) return;
 
-    GetAttr(UTED_CursorLine, app->textEditorObj, &curLine);
-    GetAttr(UTED_CursorChar, app->textEditorObj, &curChar);
-    GetAttr(UTED_LineCount,  app->textEditorObj, &lineCount);
+    GetAttr(UTED_CursorLine,   app->textEditorObj, &curLine);
+    GetAttr(UTED_CursorColumn, app->textEditorObj, &curCol);
+    GetAttr(UTED_LineCount,    app->textEditorObj, &lineCount);
 
-    snprintf(buf, sizeof(buf)-1, " Line %lu, Col %lu  |  %lu lines",
-             curLine + 1, curChar + 1, lineCount);
+    if (app->appSettings.displayUnicodeInfo) {
+        GetAttr(UTED_CursorChar, app->textEditorObj, &curChar);
+        snprintf(buf, sizeof(buf)-1, " Line %lu, Col %lu  |  %lu lines  |  U+%06lX (%s)",
+                 curLine + 1, curCol + 1, lineCount, curChar, find_unicode_set(curChar));
+    } else {
+        snprintf(buf, sizeof(buf)-1, " Line %lu, Col %lu  |  %lu lines",
+                 curLine + 1, curCol + 1, lineCount);
+    }
 
 
     SetGdAttrs(app->statusBarLabel, GA_Text, &buf[0],TAG_END);

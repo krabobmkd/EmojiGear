@@ -55,6 +55,7 @@
 #include "../EmojiGear/eglocale.h"
 #include "../EmojiGear/tooltypepref.h"
 #include "../EmojiGear/egpipeinput.h"
+#include "../EmojiGear/unicodeset.h"
 #include "mmgboopsimessage.h"
 #include "mmgemojibox.h"
 #include "mmgfontsview.h"
@@ -133,6 +134,7 @@ MUI_NewObjectB(const char *cl, Tag tags, ...)
 #define RID_TOGGLE_VIZTABS     36
 #define RID_TOGGLE_TABSSPACES  37
 #define RID_TOGGLE_MONOSPACE   81
+#define RID_TOGGLE_DISPLAYUNICODEINFO 82
 #define RID_COLOR_BASE         38   /* 38..43: one per color preset (0=System colors) */
 #define MMG_NUM_COLOR_PRESETS   6
 #define RID_RECENT_BASE        44   /* 44..51: one per recent slot  */
@@ -148,17 +150,24 @@ void App_UpdateStatus(void)
 {
     static char buf[128];
     struct Gadget *g = NULL; struct Window *w = NULL;
-    ULONG modified = 0, curLine = 0, curChar = 0, lineCount = 0;
+    ULONG modified = 0, curLine = 0, curCol = 0, curChar = 0, lineCount = 0;
     App_GetRawEditorWin(&g, &w);
     if (g) {
-        GetAttr(UTED_Modified,   (Object *)g, &modified);
-        GetAttr(UTED_CursorLine, (Object *)g, &curLine);
-        GetAttr(UTED_CursorChar, (Object *)g, &curChar);
-        GetAttr(UTED_LineCount,  (Object *)g, &lineCount);
+        GetAttr(UTED_Modified,    (Object *)g, &modified);
+        GetAttr(UTED_CursorLine,  (Object *)g, &curLine);
+        GetAttr(UTED_CursorColumn,(Object *)g, &curCol);
+        GetAttr(UTED_LineCount,   (Object *)g, &lineCount);
+        if (app && app->settings.displayUnicodeInfo)
+            GetAttr(UTED_CursorChar, (Object *)g, &curChar);
     }
-    snprintf(buf, sizeof(buf) - 1, " Line %lu, Col %lu  |  %lu lines",
-        /*no need     modified ? LOC(MSG_STATUS_MODIFIED) : LOC(MSG_STATUS_READY),*/
-             curLine + 1, curChar + 1, lineCount);
+    if (app && app->settings.displayUnicodeInfo) {
+        snprintf(buf, sizeof(buf) - 1, " Line %lu, Col %lu  |  %lu lines  |  U+%06lX (%s)",
+            /*no need     modified ? LOC(MSG_STATUS_MODIFIED) : LOC(MSG_STATUS_READY),*/
+                 curLine + 1, curCol + 1, lineCount, curChar, find_unicode_set(curChar));
+    } else {
+        snprintf(buf, sizeof(buf) - 1, " Line %lu, Col %lu  |  %lu lines",
+                 curLine + 1, curCol + 1, lineCount);
+    }
     buf[sizeof(buf) - 1] = '\0';
     if (app && app->statusObj)
         SetAttrs(app->statusObj, MUIA_Text_Contents, (ULONG)buf, TAG_DONE);
@@ -489,6 +498,12 @@ int main(int argc, char *argv[])
         MUIA_Menuitem_Toggle,  TRUE,
         MUIA_Menuitem_Checked, (ULONG)(app->settings.tabsAreSpaces ? TRUE : FALSE),
         TAG_DONE);
+    app->miToggleDisplayUnicodeInfo = MUI_NewObjectB(MUIC_Menuitem,
+        MUIA_Menuitem_Title,   (ULONG)LOC(MSG_SETTINGS_DISPLAYUNICODEINFO),
+        MUIA_Menuitem_Checkit, TRUE,
+        MUIA_Menuitem_Toggle,  TRUE,
+        MUIA_Menuitem_Checked, (ULONG)(app->settings.displayUnicodeInfo ? TRUE : FALSE),
+        TAG_DONE);
 
     menuSettings = MUI_NewObjectB(MUIC_Menu,
         MUIA_Menu_Title,   (ULONG)LOC(MSG_SETTINGS),
@@ -501,6 +516,7 @@ int main(int argc, char *argv[])
         MUIA_Family_Child, (ULONG)app->miToggleApplyAnsi,
         MUIA_Family_Child, (ULONG)app->miToggleVisualizeTabs,
         MUIA_Family_Child, (ULONG)app->miToggleTabsAreSpaces,
+        MUIA_Family_Child, (ULONG)app->miToggleDisplayUnicodeInfo,
         MUIA_Family_Child, (ULONG)MUI_NewObjectB(MUIC_Menuitem, MUIA_Menuitem_Title, (ULONG)NM_BARLABEL, TAG_DONE),
         MUIA_Family_Child, (ULONG)app->miFontSettings,
         TAG_DONE);
@@ -699,6 +715,7 @@ int main(int argc, char *argv[])
     NOTIFY(miToggleApplyAnsi,     RID_TOGGLE_APPLYANSI);
     NOTIFY(miToggleVisualizeTabs, RID_TOGGLE_VIZTABS);
     NOTIFY(miToggleTabsAreSpaces, RID_TOGGLE_TABSSPACES);
+    NOTIFY(miToggleDisplayUnicodeInfo, RID_TOGGLE_DISPLAYUNICODEINFO);
 
     {
         int i;
@@ -828,6 +845,7 @@ int main(int argc, char *argv[])
             case RID_TOGGLE_APPLYANSI:  MmgAction_ToggleApplyAnsi();   reactivateEditor = TRUE;    break;
             case RID_TOGGLE_VIZTABS:    MmgAction_ToggleVisualizeTabs();  reactivateEditor = TRUE;  break;
             case RID_TOGGLE_TABSSPACES: MmgAction_ToggleTabsAreSpaces(); reactivateEditor = TRUE;  break;
+            case RID_TOGGLE_DISPLAYUNICODEINFO: MmgAction_ToggleDisplayUnicodeInfo(); break;
 
             case RID_FONTS_WIN: {
                 ULONG isOpen = 0;

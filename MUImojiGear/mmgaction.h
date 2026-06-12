@@ -48,6 +48,7 @@ BOOL MmgAction_ToggleWordWrap(void);
 BOOL MmgAction_ToggleApplyAnsi(void);
 BOOL MmgAction_ToggleVisualizeTabs(void);
 BOOL MmgAction_ToggleTabsAreSpaces(void);
+BOOL MmgAction_ToggleDisplayUnicodeInfo(void);
 
 BOOL MmgAction_CopyLatin1(void);
 BOOL MmgAction_CopyLatin2(void);

@@ -1069,6 +1069,16 @@ BOOL MmgAction_ToggleTabsAreSpaces(void)
     return TRUE;
 }
 
+BOOL MmgAction_ToggleDisplayUnicodeInfo(void)
+{
+    ULONG checked = 0;
+    if (!app || !app->miToggleDisplayUnicodeInfo) return FALSE;
+    GetAttr(MUIA_Menuitem_Checked, app->miToggleDisplayUnicodeInfo, &checked);
+    app->settings.displayUnicodeInfo = checked ? 1 : 0;
+    App_UpdateStatus();
+    return TRUE;
+}
+
 /* =========================================================================
  * Recent files menu
  * =========================================================================
