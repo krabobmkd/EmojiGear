@@ -100,7 +100,7 @@ MUI_NewObjectB(const char *cl, Tag tags, ...)
  */
 #define MMG_APPBASE       "MUIMOJIGEAR"
 #define PIPE_INPUT_BUF    1024
-#define MMG_VERSION  "$VER: MUImojiGear 3.1 (2026)"
+#define MMG_VERSION  "$VER: MUImojiGear 4.1 (2026)"
 #define GID_EDITOR        1
 #define GID_EMOJI_BUTTON  2
 #define GID_EMOJI_GRID    3
@@ -303,11 +303,11 @@ int main(int argc, char *argv[])
     MUIMasterBase = OpenLibrary("muimaster.library", 19L);
     if (!MUIMasterBase) { puts("ERROR: muimaster.library v19+ (MUI 3.8+)"); exitCode=1; goto cleanup; }
 
-    UniTextEditorBase = OpenLibrary("gadgets/unitexteditor.gadget", 3L);
-    if (!UniTextEditorBase) { puts("ERROR: unitexteditor.gadget v3+"); exitCode=1; goto cleanup; }
+    UniTextEditorBase = OpenLibrary("gadgets/unitexteditor.gadget", 4L);
+    if (!UniTextEditorBase) { puts("ERROR: unitexteditor.gadget v4+"); exitCode=1; goto cleanup; }
 
-    UniButtonBase = OpenLibrary("gadgets/unibutton.gadget", 3L);
-    if (!UniButtonBase) { puts("ERROR: unibutton.gadget v3+"); exitCode=1; goto cleanup; }
+    UniButtonBase = OpenLibrary("gadgets/unibutton.gadget", 4L);
+    if (!UniButtonBase) { puts("ERROR: unibutton.gadget v4+"); exitCode=1; goto cleanup; }
 
     AslBase = OpenLibrary("asl.library", 39UL);
     if (!AslBase) { puts("ERROR: asl.library v39"); exitCode=1; goto cleanup; }

@@ -51,7 +51,7 @@ struct Library *URPBase=NULL;
         struct Library        *__UtilityBase=NULL; // amiga gcc2.95 with noixemul and 68000, and our gadget startup needs that.
     #endif
 
-const char VersionString[] = "unitexteditor.gadget 3.1 (" __DATE__ ")";
+const char VersionString[] = "unitexteditor.gadget 4.1 (" __DATE__ ")";
 const char Lib_ID[]= "unitexteditor.gadget";
 
 #endif
@@ -89,7 +89,7 @@ int UniTextEditor_Init(void)
         KeymapBase = OpenLibrary("keymap.library", 36);
         if(!KeymapBase) goto failinit;
 
-        URPBase = OpenLibrary("utf8rastport.library",3);
+        URPBase = OpenLibrary("utf8rastport.library",4);
         if(!URPBase) goto failinit;
         /* accept failure over this one */
         BevelBase = OpenLibrary("images/bevel.image",32);

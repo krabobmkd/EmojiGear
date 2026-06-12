@@ -15,7 +15,7 @@
 ;
 
 (set #app-name    "EmojiGear")
-(set #app-version "v3.1")
+(set #app-version "v4.1")
 (set #app-default "Work:")
 
 ; Library/gadget versions we are shipping
