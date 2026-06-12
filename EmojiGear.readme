@@ -32,6 +32,14 @@ Replaces:     text/edit/EmojiGear3.1.lha
        in your font configuration. Funny when used with examples texts
        test_utf8_3_multilingual.txt and test_utf8_2_symbols.txt.
 
+  - MUImojiGear (the one that works on OS3.9 and maybe lower os versions )
+     - Ctrl key behaviour repaired when editor focused. 
+       You can "page up" and "page down" with ctrl+arrows.
+     - Double click select whole word, triple click select whole line,
+       so now keyboard management of MUI version is closer to EmojiGear.
+       This also correct behaviour for any future MUI app using
+       unitexteditor.gadget
+       
   - Font NotoColorEmoji32.ttf which contains 32x32 pixels colored emojis, 
       is made up from official 128x128 pixels NotoColorEmoji.ttf.
       It had wrong metrics that made them appear slightly shifted before. 

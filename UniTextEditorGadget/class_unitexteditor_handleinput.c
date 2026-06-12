@@ -693,6 +693,38 @@ static BOOL uted_hit_vscroll(UniTextEditorData *inst, WORD x, WORD y)
 }
 
 /* =========================================================================
+ * Multi-click detection: proximity + within system double-click timeout.
+ * Updates inst->pendingClickCount (1 = single, 2 = double, 3+ = triple+).
+ *
+ * Called from GM_GOACTIVE (first click, gadget not yet active) and from
+ * GM_HANDLEINPUT's LBUTTON-down case (subsequent clicks while the gadget
+ * stays Boopsi-active, e.g. internal-rawkey/MUI mode where button-up
+ * returns GMR_MEACTIVE instead of deactivating).
+ * =========================================================================
+ */
+static void uted_update_click_count(UniTextEditorData *inst, struct InputEvent *ie,
+                                     WORD mouseX, WORD mouseY)
+{
+    WORD dx = (WORD)(mouseX - inst->lastClickX);
+    WORD dy = (WORD)(mouseY - inst->lastClickY);
+    if (dx < 0) dx = (WORD)-dx;
+    if (dy < 0) dy = (WORD)-dy;
+    if (dx <= 4 && dy <= 4 &&
+        DoubleClick(inst->lastClickSec, inst->lastClickMicro,
+                    (ULONG)ie->ie_TimeStamp.tv_secs,
+                    (ULONG)ie->ie_TimeStamp.tv_micro))
+    {
+        if (inst->pendingClickCount < 3) inst->pendingClickCount++;
+    } else {
+        inst->pendingClickCount = 1;
+    }
+    inst->lastClickSec   = (ULONG)ie->ie_TimeStamp.tv_secs;
+    inst->lastClickMicro = (ULONG)ie->ie_TimeStamp.tv_micro;
+    inst->lastClickX     = mouseX;
+    inst->lastClickY     = mouseY;
+}
+
+/* =========================================================================
  * GM_GOACTIVE  (left button down) – input.device context, no API calls
  * =========================================================================
  */
@@ -720,26 +752,7 @@ ULONG UniTextEditor_OnGoActive(Class *cl, Object *o, struct gpInput *msg)
     if (ie->ie_Class != IECLASS_RAWMOUSE) return GMR_NOREUSE;
     if (ie->ie_Code != IECODE_LBUTTON)    return GMR_NOREUSE;
 
-    /* Multi-click detection: proximity + within system double-click timeout */
-    {
-        WORD dx = (WORD)(msg->gpi_Mouse.X - inst->lastClickX);
-        WORD dy = (WORD)(msg->gpi_Mouse.Y - inst->lastClickY);
-        if (dx < 0) dx = (WORD)-dx;
-        if (dy < 0) dy = (WORD)-dy;
-        if (dx <= 4 && dy <= 4 &&
-            DoubleClick(inst->lastClickSec, inst->lastClickMicro,
-                        (ULONG)ie->ie_TimeStamp.tv_secs,
-                        (ULONG)ie->ie_TimeStamp.tv_micro))
-        {
-            if (inst->pendingClickCount < 3) inst->pendingClickCount++;
-        } else {
-            inst->pendingClickCount = 1;
-        }
-        inst->lastClickSec   = (ULONG)ie->ie_TimeStamp.tv_secs;
-        inst->lastClickMicro = (ULONG)ie->ie_TimeStamp.tv_micro;
-        inst->lastClickX     = (WORD)msg->gpi_Mouse.X;
-        inst->lastClickY     = (WORD)msg->gpi_Mouse.Y;
-    }
+    uted_update_click_count(inst, ie, (WORD)msg->gpi_Mouse.X, (WORD)msg->gpi_Mouse.Y);
 
     /* Scrollbar gets priority over text interaction */
     if (uted_hit_vscroll(inst, msg->gpi_Mouse.X, msg->gpi_Mouse.Y)) {
@@ -802,9 +815,11 @@ ULONG UniTextEditor_OnHandleInput(Class *cl, Object *o, struct gpInput *msg)
             uted_notify(cl, o, msg->gpi_GInfo, UTED_InternalRawKey_Code, inst->rawKeyLastCode);
         }
 
-        /* Amiga+key = menu shortcut: let Intuition handle it, app re-activates after MENUPICK */
-        /* also ctrl */
-        if (ie->ie_Qualifier & (IEQUALIFIER_LCOMMAND | IEQUALIFIER_RCOMMAND | IEQUALIFIER_CONTROL))
+        /* Amiga+key = menu shortcut: let Intuition handle it, app re-activates after MENUPICK.
+         * Ctrl is NOT a MUI menu-shortcut modifier and must stay with the editor
+         * (e.g. Ctrl+Up/Down page jump below) -- otherwise GMR_REUSE here drops
+         * Boopsi activation on every Ctrl press, which MUI reads as losing focus. */
+        if (ie->ie_Qualifier & (IEQUALIFIER_LCOMMAND | IEQUALIFIER_RCOMMAND))
             return GMR_REUSE;
 
 
@@ -838,6 +853,11 @@ ULONG UniTextEditor_OnHandleInput(Class *cl, Object *o, struct gpInput *msg)
                 //uted_notify(cl, o, msg->gpi_GInfo, UTED_SetPrivateActivation, FALSE);
                 return GMR_REUSE;
             }
+            /* Gadget stays Boopsi-active across clicks in internal-rawkey (MUI)
+             * mode, so this LBUTTON-down (not GM_GOACTIVE) is where repeated
+             * clicks for double/triple-click word/line selection land. */
+            uted_update_click_count(inst, ie, (WORD)msg->gpi_Mouse.X, (WORD)msg->gpi_Mouse.Y);
+
             /* Scrollbar gets priority over text interaction */
             if (uted_hit_vscroll(inst, msg->gpi_Mouse.X, msg->gpi_Mouse.Y)) {
                 inst->vScrollDragging     = TRUE;

@@ -1,11 +1,11 @@
 @DATABASE EmojiGear.guide
-@$VER: EmojiGear.guide 3.1 (04.06.2026)
+@$VER: EmojiGear.guide 4.1 (12.06.2026)
 @AUTHOR krabobmkd
 @(C) 2026 krabobmkd
 @MASTER PROGDIR:EmojiGear.guide
 @NODE MAIN "EmojiGear - Unicode Text Editor"
 
-@{b}EmojiGear v3.1@{ub}
+@{b}EmojiGear v4.1@{ub}
 Unicode Text Editor for AmigaOS 3.2.x (68k)
 
 @{i}A UTF-8 text editor with full Emoji and Unicode support,@{ui}
