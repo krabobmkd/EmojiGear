@@ -34,8 +34,7 @@
         "  EmojiGear     -- requires AmigaOS 3.2 or later\n"
         "  MUImojiGear   -- compatible with AmigaOS 3.0 to 3.9\n"
         "                   (requires MUI 3.8 or later)\n\n"
-        "The shared components below will always be installed:\n"
-        "\n\n"
+        "The shared components will always be installed.\n\n"
         "Click Proceed to choose what to install."
     )
     (all)
