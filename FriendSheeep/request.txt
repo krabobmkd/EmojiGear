@@ -1,0 +1,13 @@
+We're going to start a big Amiga app, called FriendSheeep , with 3e, in FriendSheeep dir. It will be a Mastodon client for Amiga. First we will investigate feasability and define the architecture. I propose these points:
+ - We will base our data schemes and requests on  the minimal web interface "brutaldon" sources, 
+    which are at ~/Code/Amiga/brutaldon .
+ - The Amiga network apis bsdsocket and amissl, that we tested in testsocket, will be used for network requests. We have to make sure : 1: we can request anything . 2: we can do the login part with an existing account to a mastodon server.
+ 
+ - the whole network connexions and requests part will run under its own parallel process that we will create with dos.library CreateNewProc(), and the main GUI process will ask data, which result will be signaled later through an Amiga struct MsgPort* . The network part will be a standalone static lib that will do no include to the GUI. It will also manage a cache of posts icons and image on a temp directory. All that will makes us more close to a web architecture.
+  
+ - the GUI itself will use a boopsi window like EmojiGear. We'll do a private boopsi gadget to render posts using utf8rastport.library, and we will be able to write UTF8 posts using our shared gadget unitexteditor.gadget, but all the GUI part will come later.
+ 
+ Analyse that, do a .md document in FriendSheeep with the steps we will need to develop, then a CMakeLists.txt with the main GUI project and the friendsheep.c that will contains the main(),  a then subdirectory with another CMakeLists.txt that will be the network process static library.
+ 
+ You may ask me more documentation if you need.
+ 
