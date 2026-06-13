@@ -217,10 +217,10 @@ int main(int argc, char *argv[])
     IntuitionBase = (struct IntuitionBase *)OpenLibrary("intuition.library", 39L);
     if (!IntuitionBase) { puts("ERROR: intuition.library v39+"); exitCode = 1; goto cleanup; }
 
-    UniTextEditorBase = OpenLibrary("gadgets/unitexteditor.gadget", 2L);
+    UniTextEditorBase = OpenLibrary("gadgets/unitexteditor.gadget", 4L);
     if (!UniTextEditorBase) { puts("ERROR: gadgets/unitexteditor.gadget"); exitCode = 1; goto cleanup; }
 
-    UniButtonBase = OpenLibrary("gadgets/unibutton.gadget", 1L);
+    UniButtonBase = OpenLibrary("gadgets/unibutton.gadget", 4L);
     if (!UniButtonBase) { puts("ERROR: gadgets/unibutton.gadget"); exitCode = 1; goto cleanup; }
 
     MUIMasterBase = OpenLibrary("muimaster.library", 19L);

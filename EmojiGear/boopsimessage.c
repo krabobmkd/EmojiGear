@@ -24,7 +24,7 @@
 #include <gadgets/button.h>
 
 #include <gadgets/unitexteditor.h>
-
+#include <gadgets/clicktab.h>
 
 /* Maximum tag entries in the queue */
 #define BOOPSIDELAY_QUEUE_SIZE 256
@@ -51,11 +51,15 @@ extern struct Task *myTask;
 static ULONG delayedAttribs[] = {
     GA_Selected,
 
-    /* for border scrollers */
+    /* from border scrollers */
     PGA_Top,
     PGA_Total,
     PGA_Visible,
 
+    /* from clicktab to send which was closed */
+    CLICKTAB_NodeClosed,
+
+    /* from UniTextEditor gadget */
     UTEDN_CursorMoved,
     UTEDN_TextChanged,
     UTEDN_ScrollChanged,
@@ -65,7 +69,7 @@ static ULONG delayedAttribs[] = {
     UTED_AddFont,
     UTED_Modified,
     UTED_CursorLine,
-    UTED_CursorChar,
+    UTED_CursorColumn,
     UTED_ScrollLeft,
     UTED_ScrollTop,
 
@@ -128,6 +132,17 @@ static ULONG ASM SAVEDS TargetModelDispatch(
             if (ptag) sender_ID = ptag->ti_Data;
 
             if (sender_ID != 0) {
+   /* usefull routine to trace incoming messages */
+#ifdef TRACE_ICOMING_MESSAGES
+    bdbprintf("mess\n");
+  struct TagItem *ptagb=M->opUpdate.opu_AttrList;
+  while(ptagb->ti_Tag != NULL)
+  {
+    bdbprintf("t:%08x d:%08x\n",(int)ptagb->ti_Tag,ptagb->ti_Data);
+    ptagb++;
+  }
+#endif
+
                 BoopsiDelay_BeginMessage(DelayQueue, sender_ID);
 
                 for (i = 0; i < NB_DELAYED_ATTRIBS; i++) {

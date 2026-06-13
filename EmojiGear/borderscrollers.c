@@ -18,21 +18,17 @@
 extern struct Window *CurrentMainWindow;
 extern Object       *TargetInstance;
 
-int BorderScroll_Init(sGtBorderScroll *borderScroll, struct Screen *screen)
+int BorderScroll_Init(sGtBorderScroll *borderScroll,  struct DrawInfo  *drawInfo, struct Screen	*screen)
 {
     LONG arrowW = 0, arrowH = 0;
     LONG barh;
-
-    borderScroll->drawInfo = GetScreenDrawInfo(screen);
-    if (!borderScroll->drawInfo) goto fail;
-
-    borderScroll->drawInfoScreen = screen ; /*somehow needed */
+// printf("BorderScroll_Init\n");
 
     /* ---- Size-corner image ---- */
     borderScroll->sizeImg = (struct Image *)NewObject(NULL, SYSICLASS,
         SYSIA_Which,    SIZEIMAGE,
         SYSIA_Size,     SYSISIZE_MEDRES,
-        SYSIA_DrawInfo, borderScroll->drawInfo,
+        SYSIA_DrawInfo, drawInfo,
         TAG_END);
     if (borderScroll->sizeImg) {
         GetAttr(IA_Width,  borderScroll->sizeImg, (ULONG *)&borderScroll->sizeW);
@@ -45,7 +41,7 @@ int BorderScroll_Init(sGtBorderScroll *borderScroll, struct Screen *screen)
     borderScroll->dArrowImg = (struct Image *)NewObject(NULL, SYSICLASS,
         SYSIA_Which,    DOWNIMAGE,
         SYSIA_Size,     SYSISIZE_MEDRES,
-        SYSIA_DrawInfo, borderScroll->drawInfo,
+        SYSIA_DrawInfo, drawInfo,
         TAG_END);
     if (borderScroll->dArrowImg) {
         GetAttr(IA_Width,  borderScroll->dArrowImg, (ULONG *)&arrowW);
@@ -58,7 +54,7 @@ int BorderScroll_Init(sGtBorderScroll *borderScroll, struct Screen *screen)
         GA_RelBottom,   -(LONG)borderScroll->sizeH - arrowH + 1,
         GA_Width,       arrowW,
         GA_Height,      arrowH,
-        GA_DrawInfo,    borderScroll->drawInfo,
+        GA_DrawInfo,    drawInfo,
      //   GA_GZZGadget,   TRUE,
         GA_RightBorder, TRUE,
         GA_Image,       borderScroll->dArrowImg,
@@ -73,7 +69,7 @@ int BorderScroll_Init(sGtBorderScroll *borderScroll, struct Screen *screen)
     borderScroll->uArrowImg = (struct Image *)NewObject(NULL, SYSICLASS,
         SYSIA_Which,    UPIMAGE,
         SYSIA_Size,     SYSISIZE_MEDRES,
-        SYSIA_DrawInfo, borderScroll->drawInfo,
+        SYSIA_DrawInfo, drawInfo,
         TAG_END);
     /* reuse arrowW/arrowH – up and down arrows share the same size */
 
@@ -84,7 +80,7 @@ int BorderScroll_Init(sGtBorderScroll *borderScroll, struct Screen *screen)
         GA_RelBottom,   -(LONG)borderScroll->sizeH - arrowH - arrowH + 1,
         GA_Width,       arrowW,
         GA_Height,      arrowH,
-        GA_DrawInfo,    borderScroll->drawInfo,
+        GA_DrawInfo,    drawInfo,
         //GA_GZZGadget,   TRUE,
         GA_RightBorder, TRUE,
         GA_Image,       borderScroll->uArrowImg,
@@ -102,7 +98,7 @@ int BorderScroll_Init(sGtBorderScroll *borderScroll, struct Screen *screen)
         GA_Top,         barh,
         GA_Width,       (LONG)borderScroll->sizeW - 6,
         GA_RelHeight,   -(LONG)borderScroll->sizeH - arrowH - arrowH - barh - 1,
-        GA_DrawInfo,    borderScroll->drawInfo,
+        GA_DrawInfo,    drawInfo,
        // GA_GZZGadget,   TRUE,
         GA_RightBorder, TRUE,
         PGA_Freedom,    FREEVERT,
@@ -119,7 +115,7 @@ int BorderScroll_Init(sGtBorderScroll *borderScroll, struct Screen *screen)
     borderScroll->rArrowImg = (struct Image *)NewObject(NULL, SYSICLASS,
         SYSIA_Which,    RIGHTIMAGE,
         SYSIA_Size,     SYSISIZE_MEDRES,
-        SYSIA_DrawInfo, borderScroll->drawInfo,
+        SYSIA_DrawInfo, drawInfo,
         TAG_END);
     {
         LONG rw = arrowW, rh = arrowH;
@@ -135,7 +131,7 @@ int BorderScroll_Init(sGtBorderScroll *borderScroll, struct Screen *screen)
             GA_RelBottom,     -rh + 1,
             GA_Width,         rw,
             GA_Height,        rh,
-            GA_DrawInfo,      borderScroll->drawInfo,
+            GA_DrawInfo,      drawInfo,
         //    GA_GZZGadget,     TRUE,
             GA_BottomBorder,  TRUE,
             GA_Image,         borderScroll->rArrowImg,
@@ -148,7 +144,7 @@ int BorderScroll_Init(sGtBorderScroll *borderScroll, struct Screen *screen)
     borderScroll->lArrowImg = (struct Image *)NewObject(NULL, SYSICLASS,
         SYSIA_Which,    LEFTIMAGE,
         SYSIA_Size,     SYSISIZE_MEDRES,
-        SYSIA_DrawInfo, borderScroll->drawInfo,
+        SYSIA_DrawInfo, drawInfo,
         TAG_END);
     {
         LONG lw = arrowW, lh = arrowH;
@@ -167,7 +163,7 @@ int BorderScroll_Init(sGtBorderScroll *borderScroll, struct Screen *screen)
             GA_RelBottom,     -lh + 1,
             GA_Width,         lw,
             GA_Height,        lh,
-            GA_DrawInfo,      borderScroll->drawInfo,
+            GA_DrawInfo,      drawInfo,
          //   GA_GZZGadget,     TRUE,
             GA_BottomBorder,  TRUE,
             GA_Image,         borderScroll->lArrowImg,
@@ -193,7 +189,7 @@ int BorderScroll_Init(sGtBorderScroll *borderScroll, struct Screen *screen)
                 GA_RelWidth,      -(LONG)borderScroll->sizeW - rw - lw
                                   - (LONG)screen->WBorLeft - 1,
                 GA_Height,        (LONG)borderScroll->sizeH - 4,
-                GA_DrawInfo,      borderScroll->drawInfo,
+                GA_DrawInfo,      drawInfo,
              //   GA_GZZGadget,     TRUE,
                 GA_BottomBorder,  TRUE,
                 PGA_Freedom,      FREEHORIZ,
@@ -208,6 +204,7 @@ int BorderScroll_Init(sGtBorderScroll *borderScroll, struct Screen *screen)
     }
     if (!borderScroll->xprop) goto fail;
 
+
     return 1;
 fail:
     return 0;
@@ -215,7 +212,7 @@ fail:
 }
 void BorderScroll_Exit(sGtBorderScroll *borderScroll)
 {
-
+// printf("BorderScroll_Exit\n");
     /* Border gadgets: dispose after CloseWindow */
     if (borderScroll->xprop)     { DisposeObject(borderScroll->xprop);     borderScroll->xprop     = NULL; }
     if (borderScroll->lArrowBtn) { DisposeObject(borderScroll->lArrowBtn); borderScroll->lArrowBtn = NULL; }
@@ -228,10 +225,5 @@ void BorderScroll_Exit(sGtBorderScroll *borderScroll)
     if (borderScroll->dArrowBtn) { DisposeObject(borderScroll->dArrowBtn); borderScroll->dArrowBtn = NULL; }
     if (borderScroll->dArrowImg) { DisposeObject(borderScroll->dArrowImg); borderScroll->dArrowImg = NULL; }
     if (borderScroll->sizeImg)   { DisposeObject(borderScroll->sizeImg);   borderScroll->sizeImg   = NULL; }
-    if (borderScroll->drawInfo)  {
-            FreeScreenDrawInfo(borderScroll->drawInfoScreen, borderScroll->drawInfo);
-            borderScroll->drawInfo = NULL;
-            borderScroll->drawInfoScreen = NULL;
-            }
 
 }

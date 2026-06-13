@@ -16,6 +16,8 @@
 #include <datatypes/datatypes.h>
 #include <datatypes/pictureclass.h>
 
+#include <proto/clicktab.h>
+#include <gadgets/clicktab.h>
 
 #include <proto/layout.h>
 #include <gadgets/layout.h>
@@ -31,6 +33,7 @@
 #include "borderscrollers.h"
 #include "egsearchbox.h"
 #include "egfontsview.h"
+#include "closebutton.h"
 #include <gadgets/unitexteditor.h>
 #include <proto/requester.h>
 #include <classes/requester.h>
@@ -94,17 +97,19 @@ void CloseSettingsWindow()
 }
 
 
-void BMainWindow_Init(struct BoopsiMainWindow *mw)
-{
-    mw->title[0] = 0;
-//    if(!mw) return;
-//    mw->lockedScreen = LockPubScreen(NULL);
-//    if(mw->lockedScreen)
-//    {
-//        mw->drawInfo = GetScreenDrawInfo(app->lockedScreen);
-//    }
+// void BMainWindow_Init(struct BoopsiMainWindow *mw)
+// {
+//     mw->title[0] = 0;
+//     mw->closeImage = NULL;
+//     mw->drawInfo = NULL;
+// //    if(!mw) return;
+// //    mw->lockedScreen = LockPubScreen(NULL);
+// //    if(mw->lockedScreen)
+// //    {
+// //        mw->drawInfo = GetScreenDrawInfo(app->lockedScreen);
+// //    }
 
-}
+// }
 
 
 /* would either set the window title or Screen title according to mode
@@ -193,7 +198,20 @@ void BMainWindow_Close(struct BoopsiMainWindow *mw,Object *window_obj, int iconi
         {
             DoMethod(window_obj, WM_CLOSE );
         }
+        /* the intuition level "struct window *" is no more,
+          we can delete the gadtools-attached gadgets */
+        BorderScroll_Exit(&app->borderScroll);
+
+
+
+
         CurrentMainWindow = NULL;
+    }
+    if(mw->closeImage)
+    {
+        DisposeObject(mw->closeImage);
+        mw->closeImage = NULL;
+        SetAttrs(app->tabGadget,CLICKTAB_CloseImage,NULL,TAG_END);
     }
 
     /* if was in fullscreen mode */
@@ -207,6 +225,12 @@ void BMainWindow_Close(struct BoopsiMainWindow *mw,Object *window_obj, int iconi
         UnlockPubScreen(0, mw->lockedScreen);
         mw->lockedScreen = NULL;
     }
+    if(mw->drawInfo && CurrentMainScreen)
+    {
+        FreeScreenDrawInfo( CurrentMainScreen , mw->drawInfo );
+        mw->drawInfo = NULL;
+    }
+
     CurrentMainScreen = NULL;
 }
 
@@ -240,16 +264,29 @@ void GenericOpenWindow(BoopsiMainWindow *mw,Object *window_obj,struct AppSetting
     // if (AppSettings_GetRecentCount(appSettings) > 0) {
     //     EgMenu_Rebuild(&mw->menu, CurrentMainScreen, CurrentMainWindow, appSettings );
     // }
+    if(!mw->drawInfo)
+    {
+        mw->drawInfo = GetScreenDrawInfo(CurrentMainScreen);
+    }
 
     if(addScrollers && app->borderScroll.dArrowBtn == NULL)
     {
-        BorderScroll_Init(&app->borderScroll,CurrentMainScreen);
+        BorderScroll_Init(&app->borderScroll,mw->drawInfo,CurrentMainScreen);
+
     }
 
     if(addScrollers && app->borderScroll.dArrowBtn )
     {
         /* with boopsi on, it must be added after 1... maybe 0 is the whole boopsi layout */
-        AddGList( CurrentMainWindow, app->borderScroll.dArrowBtn, 1, /*Numgad*/6, NULL );
+        /* fnid out how many gadget there are, to insert scrollers after */
+        int nbgadget = 0;
+        Forbid();
+        {
+            struct Gadget *g = CurrentMainWindow->FirstGadget;
+            while(g) { nbgadget++; g = g->NextGadget; }
+        }
+        Permit();
+        AddGList( CurrentMainWindow, app->borderScroll.dArrowBtn, nbgadget, 6, NULL );
         RefreshGList((struct Gadget *)app->borderScroll.dArrowBtn, CurrentMainWindow, NULL, 6);
     }
 
@@ -268,6 +305,18 @@ void GenericOpenWindow(BoopsiMainWindow *mw,Object *window_obj,struct AppSetting
 
         //ActivateGadget(app->textEditorObj,CurrentMainWindow,NULL);
     }
+
+    /* needed for tab tabs*/
+    if(!mw->closeImage)
+    {
+        mw->closeImage = CloseButton_CreateImage(CurrentMainScreen);
+
+    }
+    if(app->tabGadget && mw->closeImage)
+        SetGadgetAttrs(app->tabGadget,CurrentMainWindow,NULL,
+                    CLICKTAB_CloseImage,(ULONG)mw->closeImage,
+                    TAG_END);
+
 
     /* test for OS3.9 layout problems */
     // {
@@ -453,6 +502,9 @@ void BMainWindow_SwitchToWB(struct BoopsiMainWindow *mw,Object *window_obj,struc
         }
 
         DoMethod(window_obj, WM_CLOSE );
+        /* CLICKTAB_CloseImage is deleted by BorderScroll_Exit() and must be redone for all new screen. */
+        SetAttrs(app->tabGadget,CLICKTAB_CloseImage,NULL,TAG_END);
+
         BorderScroll_Exit(&app->borderScroll);
         CurrentMainWindow = NULL;
     }

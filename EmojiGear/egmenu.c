@@ -122,6 +122,7 @@ static void buildMenuTemplate(const AppSettings *as)
     ADD(NM_ITEM,  NULL, 0, CHECKIT|MENUTOGGLE|CHECKED, 0, ACTION_UD(ACTION_SETTINGS_WORDWRAP));
     ADD(NM_ITEM,  NULL, 0, CHECKIT|MENUTOGGLE, 0, ACTION_UD(ACTION_SETTINGS_FORCEMONOSPACE));
     ADD(NM_ITEM,  NULL, 0, CHECKIT|MENUTOGGLE, 0, ACTION_UD(ACTION_SETTINGS_APPLYANSI));
+    ADD(NM_ITEM,  NULL, 0, CHECKIT|MENUTOGGLE, 0, ACTION_UD(ACTION_SETTINGS_DISPLAYUNICODEINFO));
 /*old, removed    ADD(NM_ITEM,  NULL, 0, CHECKIT|MENUTOGGLE, 0, ACTION_UD(ACTION_SETTINGS_ANSI_UNIX_COLORS));*/
     ADD(NM_ITEM,  NULL, "Ctrl-", NM_COMMANDSTRING, 0, ACTION_UD(ACTION_SETTINGS_FONTSIZEM));
     ADD(NM_ITEM,  NULL, "Ctrl+", NM_COMMANDSTRING, 0, ACTION_UD(ACTION_SETTINGS_FONTSIZEP));
@@ -207,6 +208,21 @@ BOOL EgMenu_Create(EgMenu *bm, struct Screen *screen, struct Window *window, App
             ULONG udata = (ULONG)s_menuTemplate[i].nm_UserData;
             if (udata > 0xFFFF && ((udata - (1 << 16)) >> 16) == ACTION_SETTINGS_APPLYANSI) {
                 if (ansiOn)
+                    s_menuTemplate[i].nm_Flags |=  CHECKED;
+                else
+                    s_menuTemplate[i].nm_Flags &= ~CHECKED;
+                break;
+            }
+        }
+    }
+
+    /* Sync the Display Unicode Info checkmark from appSettings */
+    {
+        int unicodeInfoOn = (app && app->appSettings.displayUnicodeInfo) ? 1 : 0;
+        for (i = 0; s_menuTemplate[i].nm_Type != NM_END; i++) {
+            ULONG udata = (ULONG)s_menuTemplate[i].nm_UserData;
+            if (udata > 0xFFFF && ((udata - (1 << 16)) >> 16) == ACTION_SETTINGS_DISPLAYUNICODEINFO) {
+                if (unicodeInfoOn)
                     s_menuTemplate[i].nm_Flags |=  CHECKED;
                 else
                     s_menuTemplate[i].nm_Flags &= ~CHECKED;

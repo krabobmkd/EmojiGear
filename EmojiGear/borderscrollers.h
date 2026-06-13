@@ -35,19 +35,13 @@ typedef struct sGtBorderScroll{
 
     int     scrollersAttached;
 
-    /* Screen draw-info (GetScreenDrawInfo / FreeScreenDrawInfo) */
-    struct DrawInfo  *drawInfo;
-    /* screen used to generate drawInfo */
-    struct Screen *drawInfoScreen;
-
-
 } sGtBorderScroll;
 
 /* this allocates a linked list of border gadget instances, but does not attach them.
  * This must be AddGadgets() attached to a window at init or after (to be verified)
  * with like of: WA_Gadgets,(ULONG)p->dArrowBtn
 */
-int BorderScroll_Init(sGtBorderScroll *borderScroll, struct Screen *screen);
+int BorderScroll_Init(sGtBorderScroll *borderScroll,  struct DrawInfo  *drawInfo, struct Screen	*screen);
 
 /* Does unallocated, as it's gadtools attached, dispose is to be done after CloseWindow */
 void BorderScroll_Exit(sGtBorderScroll *borderScroll);

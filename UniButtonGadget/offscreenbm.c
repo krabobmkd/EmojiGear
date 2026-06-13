@@ -57,7 +57,15 @@ void OffscreenBitMap_Close(OffscreenBitMap *ofsbm)
     // if(ofsbm->_layerinfo) DisposeLayerInfo(ofsbm->_layerinfo);
     // ofsbm->_layerinfo = NULL;
     // ofsbm->_rp = NULL;
-    if(ofsbm->_bm) FreeBitMap(ofsbm->_bm);
+
+
+
+    if(ofsbm->_bm)
+    {
+        /* wait pending draw to end - must be done before any FreeBitMap(); */
+        WaitBlit();
+        FreeBitMap(ofsbm->_bm);
+    }
     ofsbm->_bm = NULL;	
     ofsbm->_w = ofsbm->_h = 0;
 }

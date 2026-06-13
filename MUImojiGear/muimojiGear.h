@@ -49,6 +49,7 @@ struct App {
     Object    *miSettFontSizePlus,  *miSettFontSizeMinus;
     Object    *miToggleAntialias,   *miToggleMonospace, *miToggleWordWrap;
     Object    *miToggleApplyAnsi,   *miToggleVisualizeTabs, *miToggleTabsAreSpaces;
+    Object    *miToggleDisplayUnicodeInfo;
     Object    *miCut, *miCopy, *miCopyLat1, *miCopyLat2;
     Object    *miPaste, *miPasteLat1, *miPasteLat2;
     Object    *miUndo, *miRedo;

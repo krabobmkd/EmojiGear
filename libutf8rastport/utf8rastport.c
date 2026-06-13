@@ -170,6 +170,7 @@ static void urp_cache_free_all(struct URPGlyphCache *cache)
     int i; // nbcltbmfreed=0,nbmskfreed=0;
     struct URPGlyphEntry *e, *next;
 
+
     /* in case there is some rendering on bitmap */
     WaitBlit();
 
@@ -205,6 +206,9 @@ static void urp_flush_clut_bitmaps(struct URPGlyphCache *cache)
 {
     int i;
     struct URPGlyphEntry *e;
+
+    /* wait pending draw to end - must be done before any FreeBitMap(); */
+    WaitBlit();
 
     for (i = 0; i < URP_GLYPH_HASH; i++) {
         for (e = cache->buckets[i]; e; e = e->next) {
@@ -943,6 +947,12 @@ static int urp_build_clut_bitmaps_gray(struct URPDrawContext *dc,
     if (!dc->lastFriendBitmap || !dc->clutValid) return 0;
     if (ge->width <= 0 || ge->rows <= 0 || !ge->pixels) return 0;
 
+    /* wait pending draw to end - must be done before any FreeBitMap(); */
+    if(ge->clutBitmap || ge->maskBitmap)
+    {
+        WaitBlit();
+    }
+
     if (ge->clutBitmap) { FreeBitMap(ge->clutBitmap); ge->clutBitmap = NULL; }
     if (ge->maskBitmap) { FreeBitMap(ge->maskBitmap); ge->maskBitmap = NULL; }
 
@@ -989,6 +999,12 @@ static int urp_build_clut_bitmaps_rgba(struct URPDrawContext *dc,
     UBYTE bgpen;
     if (!dc->lastFriendBitmap || !dc->clutValid) return 0;
     if (ge->width <= 0 || ge->rows <= 0 || !ge->pixels) return 0;
+
+    /* wait pending draw to end - must be done before any FreeBitMap(); */
+    if(ge->clutBitmap || ge->maskBitmap)
+    {
+        WaitBlit();
+    }
 
     if (ge->clutBitmap) { FreeBitMap(ge->clutBitmap); ge->clutBitmap = NULL; }
     if (ge->maskBitmap) { FreeBitMap(ge->maskBitmap); ge->maskBitmap = NULL; }

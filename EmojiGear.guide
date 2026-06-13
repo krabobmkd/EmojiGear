@@ -1,11 +1,11 @@
 @DATABASE EmojiGear.guide
-@$VER: EmojiGear.guide 3.1 (04.06.2026)
+@$VER: EmojiGear.guide 4.2 (13.06.2026)
 @AUTHOR krabobmkd
 @(C) 2026 krabobmkd
 @MASTER PROGDIR:EmojiGear.guide
 @NODE MAIN "EmojiGear - Unicode Text Editor"
 
-@{b}EmojiGear v3.1@{ub}
+@{b}EmojiGear v4.2@{ub}
 Unicode Text Editor for AmigaOS 3.2.x (68k)
 
 @{i}A UTF-8 text editor with full Emoji and Unicode support,@{ui}
@@ -522,6 +522,16 @@ Use the Font Settings window to choose which font files to use.
 
 Font settings are saved in the icon tooltypes and restored on launch.
 
+Note you can install yourself any ttf or otf font, and that each font
+manages more or less characters: some arial.ttf have many alphabets.
+There is a katakana alphabet in the Emoji Box sets, but these glyphs
+are not available in any the installed fonts. unavailable characters
+are drawn with a simple rectangle. You may download a font such as 
+NotoSansJP-Regular.otf and add it to the font list, to enable 
+katakana and japanese characters.
+ Be warned that fonts are copyrighted artworks.
+
+
 @{" Back to Contents " LINK MAIN}
 @ENDNODE
 
@@ -576,14 +586,17 @@ EmojiGear works internally in UTF-8 and converts on load and save.
 
 @{b}Piping Command Output into EmojiGear@{ub}
 
-AmigaDOS supports the pipe operator @{b}|@{ub}, which feeds the standard
-output of one program directly into the standard input of another.
+OS3.2 AmigaDOS supports the pipe operator @{b}|@{ub}, which feeds the 
+standard output of one program directly into the standard input of another.
 EmojiGear reads its standard input and inserts whatever it receives
-into the current document as UTF-8 text.
+into the current document.
 
 This means you can use EmojiGear as a rich viewer for the output of
 any shell command -- with full Unicode, Emoji and ANSI colour support
 that the Amiga CLI window cannot display.
+
+Note: since r4 if the character stream is not valid UTF8, it will be 
+ treated as ANSI Latin1, so you may feed with unicode or legacy apps.
 
 ------------------------------------------------------------------------------
 

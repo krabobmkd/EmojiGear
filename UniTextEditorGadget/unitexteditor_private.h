@@ -48,14 +48,14 @@
  * =========================================================================
  */
 typedef struct {
-    ULONG line;     /* line index  [0 .. lineCount-1] */
-    ULONG ch;       /* char index  [0 .. charCount]   (past-end ok) */
+    ULONG line;        /* line index   [0 .. lineCount-1] */
+    ULONG col;         /* column index [0 .. charCount]   (past-end ok) */
 } UniTextEditorPos;
 
 INLINE int uted_pos_cmp(const UniTextEditorPos *a, const UniTextEditorPos *b)
 {
     if (a->line != b->line) return (a->line < b->line) ? -1 : 1;
-    if (a->ch   != b->ch)   return (a->ch   < b->ch)   ? -1 : 1;
+    if (a->col  != b->col)  return (a->col  < b->col)  ? -1 : 1;
     return 0;
 }
 
@@ -374,6 +374,8 @@ typedef struct UniTextEditorData {
     ULONG                 vanillaAnsiCode; /* encoding for UTED_PutVanillaKey 0xA0-0xFF bytes;
                                            * UTED_VANILLAKEY_LATIN1=1 or UTED_VANILLAKEY_LATIN2=2 */
     struct Screen        *screen;         /* for URPDC_UpdateColorMap + AllocBitMap */
+    ULONG               screen_last_mode;
+    ULONG               screen_last_depth;
 
     LONG   refreshStartLine;
     LONG   refreshEndLine;
@@ -499,17 +501,21 @@ UniTextEditorLine *uted_line_split      (UniTextEditorLine *line, ULONG charInde
 BOOL               uted_line_join       (UniTextEditorData *inst,
                                          UniTextEditorLine *head, UniTextEditorLine *tail);
 ULONG              uted_char_to_byte    (const char *utf8, ULONG byteUsed, ULONG charIndex);
+BOOL               uted_is_word_char_at (UniTextEditorLine *ln, ULONG ch);
 ULONG              uted_count_chars     (const char *utf8, ULONG byteLen);
+ULONG              uted_codepoint_at    (UniTextEditorData *inst, ULONG line, ULONG col);
 UniTextEditorLine *uted_get_line        (UniTextEditorData *inst, ULONG index);
 void               uted_ensure_cursor_visible  (UniTextEditorData *inst);
 void               uted_ensure_cursor_h_visible(UniTextEditorData *inst);
 void               uted_invalidate_all_line_caches(UniTextEditorData *inst);
+ULONG              uted_scroll_total_rows(UniTextEditorData *inst);
+ULONG              uted_scroll_max_top   (UniTextEditorData *inst);
 
 /* Action handlers (also in class_texteditor_text.c) */
 ULONG UniTextEditor_DoInsertText     (Class *cl, Object *o, const char *text, LONG length);
 ULONG UniTextEditor_DoDeleteChar     (Class *cl, Object *o, LONG delta);
 ULONG UniTextEditor_DoMoveCursor     (Class *cl, Object *o, LONG deltaChar, LONG deltaLine, BOOL extend);
-ULONG UniTextEditor_DoSetCursorPos   (Class *cl, Object *o, ULONG line, ULONG ch, BOOL extend);
+ULONG UniTextEditor_DoSetCursorPos   (Class *cl, Object *o, ULONG line, ULONG col, BOOL extend);
 void  UniTextEditor_DoClearSelection (Class *cl, Object *o);
 void  UniTextEditor_DoSelectAll      (Class *cl, Object *o);
 ULONG UniTextEditor_DoDeleteSelection(Class *cl, Object *o);
@@ -565,7 +571,7 @@ BOOL  uted_pool_growalloc      (UTEDBitMapPool *pool, ULONG newSize,
                                  struct Screen *screen);
 void  uted_pool_free_bitmapcache           (UTEDBitMapPool *pool);
 void  uted_pool_free_layer           (UTEDBitMapPool *pool);
-
+BOOL uted_pool_create_layer(UTEDBitMapPool *pool,int w,int h , struct BitMap *bitmap);
 
 int uted_manage_vanilla_keycode(Class *cl, Object *o,ULONG codedata, struct GadgetInfo *gi);
 int uted_manage_rawkey_keycode(Class *cl, Object *o,ULONG codedata, struct GadgetInfo *gi);

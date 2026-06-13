@@ -40,15 +40,6 @@
 #include "unitexteditor_private.h"
 #include "bdbprintf.h"
 
-static BOOL uted_is_word_char_at(UniTextEditorLine *ln, ULONG ch)
-{
-    ULONG byteOff;
-    unsigned char b;
-    if (!ln || ch >= ln->charCount) return FALSE;
-    byteOff = uted_char_to_byte(ln->utf8, ln->byteUsed, ch);
-    b = (unsigned char)ln->utf8[byteOff];
-    return (BOOL)(b != ' ' && b != '\t');
-}
 #include <proto/alib.h>
 #include <proto/utility.h>
 
@@ -101,7 +92,13 @@ static void uted_do_layout( Class *cl, Object *o,
                                   inst->bmPool.height != (UWORD)inst->lineHeightBase);
             BOOL tooSmall      = (!noPool && !heightChanged &&
                                   inst->bmPool.size < neededSize);
-            BOOL screenModechange = (screen != inst->screen);
+            BOOL screenModechange;
+            ULONG modeid = GetVPModeID(&screen->ViewPort);
+            ULONG sdepth = GetBitMapAttr(screen->RastPort.BitMap,BMA_DEPTH);
+            screenModechange = (screen != inst->screen ||
+                                modeid != inst->screen_last_mode ||
+                                sdepth !=  inst->screen_last_depth
+                                );
 
             if (noPool || heightChanged || tooSmall || screenModechange) {
                 UniTextEditorLine *line;
@@ -118,12 +115,21 @@ static void uted_do_layout( Class *cl, Object *o,
                      line = (UniTextEditorLine *)line->node.mln_Succ)
                     uted_line_evict_chunks(inst, line);
 
-                if (noPool || heightChanged) {
+                if (noPool || heightChanged || screenModechange) {
                     /* Line height changed (font resize) or first alloc:
                      * existing bitmaps have the wrong dimensions – rebuild. */
-                    uted_pool_free_bitmapcache(&inst->bmPool);
-                    uted_pool_alloc(&inst->bmPool, neededSize,
+
+                    /* must be done before uted_pool_free_bitmapcache() */
+                    uted_pool_free_layer(&inst->bmPool);
+
+                        uted_pool_free_bitmapcache(&inst->bmPool);
+                        uted_pool_alloc(&inst->bmPool, neededSize,
                                     (UWORD)inst->lineHeightBase, useScreen);
+
+                    /* clipping layer must be re-ecreated so it points new bitmaps with new size */
+                    uted_pool_create_layer(&inst->bmPool,LINE_CHUNK_WIDTH,inst->lineHeightBase,
+                                    inst->bmPool.bitmaps[0]);
+
                 } else {
                     /* Same line height, window grew: reuse existing bitmaps,
                      * allocate only the additional slots needed. */
@@ -141,6 +147,8 @@ static void uted_do_layout( Class *cl, Object *o,
                 uted_update_halfway_pen(inst);
 
                 inst->screen = screen;
+                inst->screen_last_depth = sdepth;
+                inst->screen_last_mode = modeid;
             }
         }
     }
@@ -319,8 +327,6 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
         return TRUE;
     }
 
-    ObtainSemaphore(&inst->textSem);
-    ObtainSemaphore(&inst->cacheSem);
 
 // bdbprintf("UniTextEditor_OnRender t:%08x\n",(int)FindTask(NULL));
 
@@ -344,9 +350,17 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
      * gpr_Redraw == GREDRAW_UPDATE  → triggered by SetGadgetAttrs (edit)
      * gpr_Redraw == GREDRAW_REDRAW  → triggered by Intuition (expose, resize)
      * ------------------------------------------------------------------ */
-    needLayout = (width  != inst->layoutedWidth  ||
-                  height != inst->layoutedHeight ||
-                  (scr && scr != inst->screen));
+    {
+        ULONG modeid = GetVPModeID(&scr->ViewPort);
+        ULONG sdepth = GetBitMapAttr(scr->RastPort.BitMap,BMA_DEPTH);
+
+        needLayout = (width  != inst->layoutedWidth  ||
+                      height != inst->layoutedHeight ||
+                      (scr != inst->screen) ||
+                      modeid != inst->screen_last_mode ||
+                      sdepth != inst->screen_last_depth
+                      );
+    }
 
     if (msg->gpr_Redraw != GREDRAW_UPDATE || needLayout) {
         isFullRefresh = TRUE;
@@ -375,8 +389,7 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
          SetAPen(rp, (LONG)inst->bgPen);
          RectFill(rp, (LONG)left, (LONG)top,
                   (LONG)(left + width - 1), (LONG)(top + height - 1));
-    ReleaseSemaphore(&inst->cacheSem);
-    ReleaseSemaphore(&inst->textSem);
+
         return 0;
     }
 
@@ -403,19 +416,23 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
         inst->pendingKeyCount = 0;
     }
 
+    ObtainSemaphore(&inst->textSem);
+    ObtainSemaphore(&inst->cacheSem);
+
+
     /* Replay deferred internal scrollbar interaction.
      * Scrollbar clicks and drags are stored as a gadget-relative Y; here we
      * map that Y proportionally to a new scrollTopLine.  Must run before the
      * text click/drag replay so a scroll triggered by the bar does not also
      * reposition the text cursor. */
     if (inst->pendingVScrollClick || inst->pendingVScrollDrag) {
-        ULONG totalRows = inst->wordWrap ? inst->wrapRowCount : inst->lineCount;
-        if (totalRows > (ULONG)inst->visibleLines && textHeight > 0) {
+        ULONG maxTop = uted_scroll_max_top(inst);
+        if (maxTop > 0 && textHeight > 0) {
+            ULONG totalRows = maxTop + (ULONG)inst->visibleLines;
             LONG relY = (LONG)inst->pendingVScrollY - (LONG)inst->topMargin;
             if (relY < 0) relY = 0;
             if (relY >= (LONG)textHeight) relY = (LONG)textHeight - 1;
             ULONG newTop = (ULONG)((LONG)relY * (LONG)totalRows / (LONG)textHeight);
-            ULONG maxTop = totalRows - (ULONG)inst->visibleLines;
             if (newTop > maxTop) newTop = maxTop;
             inst->scrollTopLine = newTop;
             uted_notify(cl, o, msg->gpr_GInfo, UTEDN_ScrollChanged, inst->scrollTopLine);
@@ -510,7 +527,7 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
                 if (rightward) {
                     /* Anchor at left edge of clicked char → char is included */
                     inst->selAnchor.line = inst->clickAnchorLine;
-                    inst->selAnchor.ch   = inst->clickAnchorChFloor;
+                    inst->selAnchor.col   = inst->clickAnchorChFloor;
                 } else {
                     /* Anchor at right edge of clicked char → char is included */
                     UniTextEditorLine *ancLn =
@@ -519,7 +536,7 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
                     if (ancLn && ancChRight > ancLn->charCount)
                         ancChRight = ancLn->charCount;
                     inst->selAnchor.line = inst->clickAnchorLine;
-                    inst->selAnchor.ch   = ancChRight;
+                    inst->selAnchor.col   = ancChRight;
                 }
             }
 
@@ -527,7 +544,6 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
             inst->pendingDrag = FALSE;
         }
     }
-
 
     /* CLUT (indexed palette) screens need special selection/cursor rendering.
      * COMPLEMENT on a palette index produces arbitrary colors, not inversions. */
@@ -540,7 +556,7 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
     /* allow final blits on the rastport to be really clipped
       to the gadget frame rectangle. oldClipRegion can be NULL
      but must be restored in all case after draw */
-    oldClipRegion = InstallClipRegion( rp->Layer, inst->clipRegion);
+   oldClipRegion = InstallClipRegion( rp->Layer, inst->clipRegion);
 
     /* ------------------------------------------------------------------
      * Eviction sweep: return chunk bitmaps that are no longer needed back
@@ -733,9 +749,9 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
                     ULONG logL = wr->logicalLine;
                     if (logL >= selStart->line && logL <= selEnd->line) {
                         ULONG vss = (logL == selStart->line)
-                                    ? selStart->ch : wr->startChar;
+                                    ? selStart->col : wr->startChar;
                         ULONG vse = (logL == selEnd->line)
-                                    ? selEnd->ch   : wr->endChar;
+                                    ? selEnd->col   : wr->endChar;
                         /* clamp to this visual row's char range */
                         if (vss < wr->startChar) vss = wr->startChar;
                         if (vse > wr->endChar)   vse = wr->endChar;
@@ -817,9 +833,9 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
                                     * inst->lineHeight);
                     WORD cx = textLeft;
                     if (!cl2->charXOffsets) uted_line_build_metrics(cl2, inst);
-                    if (cl2->charXOffsets && inst->cursor.ch <= cl2->charCount)
+                    if (cl2->charXOffsets && inst->cursor.col <= cl2->charCount)
                         cx = (WORD)(textLeft
-                            + (LONG)cl2->charXOffsets[inst->cursor.ch]
+                            + (LONG)cl2->charXOffsets[inst->cursor.col]
                             - (LONG)wr->startPixel);
                     if (cx >= textLeft && cx < textLeft + textWidth - 1) {
                         if (!inst->isCLUT) {
@@ -921,8 +937,8 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
                 hasSelEnd   = (lineIdx <= selEnd->line);
 
                 if (hasSelStart && hasSelEnd) {
-                    lineSelStart = (lineIdx == selStart->line) ? selStart->ch : 0;
-                    lineSelEnd   = (lineIdx == selEnd->line)   ? selEnd->ch
+                    lineSelStart = (lineIdx == selStart->line) ? selStart->col : 0;
+                    lineSelEnd   = (lineIdx == selEnd->line)   ? selEnd->col
                                                                : line->charCount;
 
                     if (lineSelStart < lineSelEnd) {
@@ -1026,9 +1042,9 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
             if (!cline->charXOffsets)
                 uted_line_build_metrics(cline, inst);
 
-            if (cline->charXOffsets && inst->cursor.ch <= cline->charCount)
+            if (cline->charXOffsets && inst->cursor.col <= cline->charCount)
                 cx = (WORD)(textLeft
-                            + (LONG)cline->charXOffsets[inst->cursor.ch]
+                            + (LONG)cline->charXOffsets[inst->cursor.col]
                             - (LONG)inst->scrollLeftPx);
 
             /* 2px wide when activated (focused), 1px when not */
@@ -1057,6 +1073,9 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
     }
 
     } /* end non-wrap else */
+
+    ReleaseSemaphore(&inst->cacheSem);
+    ReleaseSemaphore(&inst->textSem);
 
     /* Fill remaining pixels below last rendered line (within text area) */
     if (isFullRefresh || rEnd == ~0UL) {
@@ -1126,8 +1145,9 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
      * Thumb height and Y position are proportional to the visible fraction
      * and scroll position within the total rendered line count.           */
     if (inst->displayInternalVScroll && textHeight > 0) {
-        ULONG totalRows = inst->wordWrap ? inst->wrapRowCount : inst->lineCount;
-        if (totalRows > (ULONG)inst->visibleLines) {
+        ULONG maxTop = uted_scroll_max_top(inst);
+        if (maxTop > 0) {
+            ULONG totalRows = maxTop + (ULONG)inst->visibleLines;
             WORD thumbH = (WORD)((LONG)textHeight * (LONG)inst->visibleLines
                                  / (LONG)totalRows);
             WORD thumbY = (WORD)((LONG)textHeight * (LONG)inst->scrollTopLine
@@ -1144,7 +1164,6 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
         }
     }
 
-    ReleaseSemaphore(&inst->cacheSem);
-    ReleaseSemaphore(&inst->textSem);
+
     return 0;
 }

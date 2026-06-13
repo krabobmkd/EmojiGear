@@ -11,7 +11,7 @@ option(UNITEXTEDITOR_SHARED "link utf8rastport as amiga shared lib"  ON)
 
 # Assembler output for debug; picked up by gadget sub-projects via scope
 list(APPEND AMIGA_COMPILER_OPTIONS -save-temps -Wall)
-list(APPEND AMIGA_COMPILER_OPTIONS -mcpu=68020 -Os )
+list(APPEND AMIGA_COMPILER_OPTIONS -mcpu=68020 -O2 )
 
 
 set(EMOJIGEAR_SOURCES
@@ -19,14 +19,17 @@ set(EMOJIGEAR_SOURCES
     boopsimessage.c
     emojigear.c
     boopsimainwindow.c
+    closebutton.c
     emojigearsettings.c
     borderscrollers.c
     egmenu.c
     egaction.c
+    egpipeinput.c
     eglocale.c
     egsettingsview.c
     egfontsview.c
     tooltypepref.c
+    unicodeset.c
     emojibox.c
     egsearchbox.c
     egtabs.c

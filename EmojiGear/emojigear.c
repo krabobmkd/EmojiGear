@@ -58,6 +58,7 @@
 #include "eglocale.h"
 #include "egaction.h"
 #include "egmenu.h"
+#include "egpipeinput.h"
 
 #include "boopsimessage.h"
 #include "boopsimainwindow.h"
@@ -65,6 +66,7 @@
 #include "emojigearsettings.h"
 
 #include "tooltypepref.h"
+#include "unicodeset.h"
 #include "emojibox.h"
 #include "egsearchbox.h"
 #include "egfontsview.h"
@@ -122,6 +124,7 @@ struct Library *PaletteBase  = NULL;
 struct Library *IntegerBase  = NULL;
 struct Library *ClickTabBase = NULL;
 struct Library *ChooserBase  = NULL;
+struct Library *PenMapBase   = NULL;
 /* Our beloved gadgets bases */
 struct Library *UniTextEditorBase = NULL;
 struct Library *UniButtonBase  = NULL;
@@ -157,7 +160,7 @@ static LibraryEntry libraryTable[] = {
     {"icon.library",      39, &IconBase},
     {"asl.library",       39, &AslBase},
     {"gadtools.library",  39, &GadToolsBase},
-    {"utf8rastport.library",3, &URPBase},
+    {"utf8rastport.library",4, &URPBase},
 
     /* BOOPSI class libraries - with minimal version of OS3.9 (not related to os!) */
     {"window.class",           42, &WindowBase},
@@ -169,12 +172,13 @@ static LibraryEntry libraryTable[] = {
     {"requester.class", 42, &RequesterBase},
     {"gadgets/palette.gadget",  44, &PaletteBase},
     {"gadgets/integer.gadget", 44, &IntegerBase},
-/* now optional and need v47    */
+
     {"gadgets/clicktab.gadget",47, &ClickTabBase},
     {"gadgets/chooser.gadget", 44, &ChooserBase},
+    {"images/penmap.image",    47, &PenMapBase},
     /* ... and the one that are starred in this app */
-    {"gadgets/unitexteditor.gadget",3, &UniTextEditorBase},
-    {"gadgets/unibutton.gadget", 3, &UniButtonBase},
+    {"gadgets/unitexteditor.gadget",4, &UniTextEditorBase},
+    {"gadgets/unibutton.gadget", 4, &UniButtonBase},
 
     {NULL, 0, NULL} /* Terminator */
 };
@@ -209,41 +213,6 @@ void cleanexit(const char *pmessage)
  *
  * Must be called after LocaleBase has been opened.
  */
-/* Return the number of bytes at the start of buf that form only complete
- * UTF-8 characters.  Any trailing incomplete multi-byte sequence is excluded.
- * Used by the pipe reader to avoid splitting codepoints across InsertText calls.
- *
- * Algorithm: walk back from the end to find the last leading byte, check
- * whether all its continuation bytes are present.  If yes, the whole buffer
- * is safe.  If not, the boundary is just before that leading byte. */
-static LONG utf8_complete_len(const char *buf, LONG len)
-{
-    LONG     i = len;
-    unsigned char c;
-    int      seqLen;
-
-    if (len <= 0) return 0;
-
-    /* Find the last leading byte (not a continuation byte 10xxxxxx) */
-    while (i > 0) {
-        c = (unsigned char)buf[i - 1];
-        if ((c & 0xC0) != 0x80) break;
-        i--;
-    }
-    if (i == 0) return 0; /* buffer is all continuation bytes – broken stream */
-
-    c = (unsigned char)buf[i - 1];
-    if      (c < 0x80)           seqLen = 1;
-    else if ((c & 0xE0) == 0xC0) seqLen = 2;
-    else if ((c & 0xF0) == 0xE0) seqLen = 3;
-    else if ((c & 0xF8) == 0xF0) seqLen = 4;
-    else                          seqLen = 1; /* invalid leading byte */
-
-    /* Is the sequence fully present? */
-    if ((i - 1) + seqLen <= len) return len;   /* yes – whole buffer is safe */
-    else                         return i - 1;  /* no  – exclude the partial sequence */
-}
-
 static ULONG detect_vanilla_ansi_code(void)
 {
     ULONG ansiCode = UTED_VANILLAKEY_LATIN1;
@@ -551,11 +520,15 @@ int main(int argc, char **argv)
 
         // if(ClickTabBase)
         // {
+
             app->tabGadget = NewObject(CLICKTAB_GetClass(), NULL,
                 GA_ID,              GID_TABBAR,
                 GA_RelVerify,       TRUE,
+                ICA_TARGET,         (ULONG)TargetInstance,
                 CLICKTAB_Labels,    (ULONG)app->tabList,
                 CLICKTAB_Current,   0,
+                    // (app->tabGadget_closeImage)?(CLICKTAB_CloseImage):(TAG_IGNORE),
+                    // (ULONG)app->tabGadget_closeImage,
                 TAG_END);
             if (!app->tabGadget) cleanexit("ClickTab gadget creation failed");
         // } else
@@ -633,7 +606,7 @@ int main(int argc, char **argv)
         WINDOW_ParentGroup, (ULONG)app->mainvlayout,
         WINDOW_IconifyGadget, TRUE,
         WINDOW_IconTitle, (ULONG)"EmojiGear",
-        WINDOW_AppPort, (ULONG)app->app_port,
+        WINDOW_AppPort, (ULONG)app->app_port, /* needed for iconizing */
         lasttag,lastValue,
         TAG_END);
 
@@ -666,6 +639,11 @@ int main(int argc, char **argv)
     BMainWindow_SetTitleLocS(&app->mainwindow,MSG_WINDOW_TITLE_WITHFILE, "Unicode Text Editor v" EMOJIGEAR_VERSION);
     /*  Open the window or screen accoring to last prefs. */
     BMainWindow_Show(&app->mainwindow,app->window_obj,&app->appSettings);
+
+    /* try refresh close button of clicktabs */
+    if(app->tabGadget)
+        SetGadgetAttrs(app->tabGadget,CurrentMainWindow,NULL,
+                    CLICKTAB_Labels, (ULONG)app->tabList, TAG_END);
 
     /* Load files passed on CLI: EmojiGear <path> [<path2> ...] [Latin1|Latin2] */
     if (argc > 1) {
@@ -735,61 +713,24 @@ int main(int argc, char **argv)
 
         /* ---- Pipe / stdin input with UTF-8 boundary protection ----------------
          * WaitForChar() does not work reliably on AmigaOS pipes/redirections,
-         * so it is not used.  Instead we rely on IsInteractive():
-         *
-         * Step 1 – read: only when Input() is NOT an interactive console
-         *   (IsInteractive() returns FALSE for PIPE: and file redirections).
-         *   On those handles Read() returns immediately with 0 bytes when no
-         *   data is available, so it does not block.  On a real CON: handle
-         *   Read() would block, hence the IsInteractive guard.
-         *
-         * Step 2 – flush: always runs, even when Step 1 reads nothing.
-         *   This drains bytes accumulated in previous iterations.
-         *   BUG FIX: pipeBuf[safeLen] is saved and restored around the NUL-
-         *   terminate so memmove does not shift a corrupted leading byte.
-         * ---------------------------------------------------------------------- */
-        {
-            BPTR inpt = Input();
-
-            /* Step 1: read from non-interactive handle (pipe / file redirect) */
-            if (inpt && !IsInteractive(inpt)) {
-                LONG canRead = PIPE_INPUT_BUF - pipeBufUsed - 1; /* reserve 1 for NUL */
-                if (canRead > 0) {
-                    LONG nread = Read(inpt, pipeBuf + pipeBufUsed, canRead);
-                    if (nread > 0)
-                        pipeBufUsed += nread;
-                }
-            }
-
-            /* Step 2: flush the largest complete-codepoint prefix of the buffer.
-             * Runs unconditionally so bytes left from a previous iteration are
-             * not stranded.  Always flushes here since we have no reliable way
-             * to know if more data is coming soon. */
-            if (pipeBufUsed > 0) {
-                LONG safeLen = utf8_complete_len(pipeBuf, pipeBufUsed);
-
-                /* Safety valve: broken stream, buffer almost full, no boundary */
-                if (safeLen == 0 && pipeBufUsed >= PIPE_INPUT_BUF - 4)
-                    safeLen = pipeBufUsed;
-
-                if (safeLen > 0) {
-                    LONG remaining = pipeBufUsed - safeLen;
-                    /* Save the byte at the boundary before NUL-terminating;
-                     * without this the memmove below would copy '\0' as the
-                     * first byte of the next (incomplete) sequence, losing
-                     * the leading byte of any pending multi-byte character. */
-                    char savedByte = (remaining > 0) ? pipeBuf[safeLen] : '\0';
-                    pipeBuf[safeLen] = '\0';
-                    SetGdAttrs(app->textEditorObj,
-                               UTED_InsertText, (ULONG)pipeBuf, TAG_END);
-                    if (remaining > 0) {
-                        pipeBuf[safeLen] = savedByte; /* restore before shift */
-                        memmove(pipeBuf, pipeBuf + safeLen, (size_t)remaining);
+         * so it is not used.  EgPipeInput_Poll() relies on IsInteractive()
+         * instead: PIPE: and file redirections return 0 bytes immediately
+         * from Read() when no data is available (a real CON: handle would
+         * block), and it keeps multi-byte UTF-8 sequences from being split
+         * across iterations, converting plain 8-bit Latin-1 input to UTF-8
+         * on the fly. */
+            {
+                BPTR inpt = Input();
+                if (inpt && !IsInteractive(inpt))
+                {
+                    BOOL needsFree;
+                    const char *chunk = EgPipeInput_Poll(pipeBuf, PIPE_INPUT_BUF, &pipeBufUsed, &needsFree);
+                    if (chunk) {
+                        SetGdAttrs(app->textEditorObj, UTED_InsertText, (ULONG)chunk, TAG_END);
+                        if (needsFree) FreeVec((char *)chunk);
                     }
-                    pipeBufUsed = remaining;
                 }
             }
-        }
 
 
             /* exit app at any moment from Ctrl-C signal, atexit() magic does anything needed. */
@@ -905,10 +846,9 @@ int main(int argc, char **argv)
                     break;
 
                     case WMHI_CLOSEWINDOW:
-                        /* now close button would just close the current text context */
-                        EgTabs_CloseCurrentTab();
-                        /* old: direct quitting ok = FALSE; */
-
+                        /* was ok to kill by current atb: EgTabs_CloseCurrentTab(); */
+                        /* direct quit */
+                        ok = FALSE;
                         break;
 
                     case WMHI_GADGETUP:
@@ -916,6 +856,7 @@ int main(int argc, char **argv)
                         /* Queue gadget-up event for dispatch on main task context,
                          * alongside OM_NOTIFY messages from ICA_TARGET gadgets. */
                         ULONG senderId = result & WMHI_GADGETMASK;
+
                         BoopsiDelay_BeginMessage(DelayQueue, senderId);
                         BoopsiDelay_AddTag(DelayQueue, WMHI_GADGETUP, 1);
                         BoopsiDelay_EndMessage(DelayQueue);
@@ -1020,9 +961,20 @@ int main(int argc, char **argv)
 
                         case GID_TABBAR:
                         {
-                            ULONG newIdx = 0;
-                            GetAttr(CLICKTAB_Current, app->tabGadget, &newIdx);
-                            EgTabs_SwitchTo((int)newIdx);
+                            ptag = FindTagItem(CLICKTAB_NodeClosed, msg);
+                            if(ptag)
+                            {
+                                struct Node *tabToClose=(struct Node *)ptag->ti_Data;
+                                if(tabToClose)
+                                {   /* this is the tabs close button action ! */
+                                    EgTabs_CloseTabByNode(tabToClose);
+                                }
+                            } else {
+                                /*other clicktab interaction means: change current tab */
+                                ULONG newIdx = 0;
+                                GetAttr(CLICKTAB_Current, app->tabGadget, &newIdx);
+                                EgTabs_SwitchTo((int)newIdx);
+                            }
                             break;
                         }
 
@@ -1381,16 +1333,22 @@ void SyncHScroller(void)
 void UpdateStatusBar()
 {
     char buf[128];
-    ULONG curLine = 0, curChar = 0, lineCount = 0;
+    ULONG curLine = 0, curCol = 0, curChar = 0, lineCount = 0;
 
     if (!app->textEditorObj || !app->statusBarLabel) return;
 
-    GetAttr(UTED_CursorLine, app->textEditorObj, &curLine);
-    GetAttr(UTED_CursorChar, app->textEditorObj, &curChar);
-    GetAttr(UTED_LineCount,  app->textEditorObj, &lineCount);
+    GetAttr(UTED_CursorLine,   app->textEditorObj, &curLine);
+    GetAttr(UTED_CursorColumn, app->textEditorObj, &curCol);
+    GetAttr(UTED_LineCount,    app->textEditorObj, &lineCount);
 
-    snprintf(buf, sizeof(buf)-1, " Line %lu, Col %lu  |  %lu lines",
-             curLine + 1, curChar + 1, lineCount);
+    if (app->appSettings.displayUnicodeInfo) {
+        GetAttr(UTED_CursorChar, app->textEditorObj, &curChar);
+        snprintf(buf, sizeof(buf)-1, " Line %lu, Col %lu  |  %lu lines  |  U+%06lX (%s)",
+                 curLine + 1, curCol + 1, lineCount, curChar, find_unicode_set(curChar));
+    } else {
+        snprintf(buf, sizeof(buf)-1, " Line %lu, Col %lu  |  %lu lines",
+                 curLine + 1, curCol + 1, lineCount);
+    }
 
 
     SetGdAttrs(app->statusBarLabel, GA_Text, &buf[0],TAG_END);

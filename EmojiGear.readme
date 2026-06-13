@@ -2,9 +2,48 @@ Short:        UTF-8/Unicode text editor+Emoji+gadgets
 Author:       krabobmkd
 Uploader:     victorien.ferry@free.fr
 Type:         text/edit
-Version:      3.1
+Version:      4.2
 Architecture: m68k-amigaos >= 3.0
 Requires:     68020, better with OS 3.2.x, 8 MB Fast RAM
+Replaces:     text/edit/EmojiGear3.1.lha
+
+------------------------- Version 4
+
+ Again mostly a correction release ! 
+ Thanks to the testers, 3 critical bugs were corrected this week.
+  Hopefully, a few new features also:
+  
+  - EmojiGear (OS3.2)
+    - NEW FEATURE: has tabs closing buttons ! 
+    - less problems when iconizing+changing screen mode+uniconizing.
+
+  - unitexteditor.gadget (all OSes)
+    - 4 memory correction issues, mostly on offscreen bitmap management.
+    - "scroll dancing" when editing a bottom cropped line: corrected.
+    - NEW FEATURE: right alt + left and right arrows jump words to word.
+    
+  - EmojiGear & MUImojiGear
+    - no more crash if pipe-fed with ansi like: echo "â" | EmojiGear.
+      (you can input-pipe UTF8 or ANSI texts, it's disanbiguated. )
+    - NEW FEATURE: optionaly displays the unicode "code point" of the 
+       character under cursor, and its "unicode block name":  
+       This helps greatly finding out what character set is missing 
+       in your font configuration. Funny when used with examples texts
+       test_utf8_3_multilingual.txt and test_utf8_2_symbols.txt.
+
+  - MUImojiGear (the one that works on OS3.9 and maybe lower os versions )
+     - Ctrl key behaviour repaired when editor focused. 
+       You can "page up" and "page down" with ctrl+arrows.
+     - Double click select whole word, triple click select whole line,
+       so now keyboard management of MUI version is closer to EmojiGear.
+       This also correct behaviour for any future MUI app using
+       unitexteditor.gadget
+       
+  - Font NotoColorEmoji32.ttf which contains 32x32 pixels colored emojis, 
+      is made up from official 128x128 pixels NotoColorEmoji.ttf.
+      It had wrong metrics that made them appear slightly shifted before. 
+      This is corrected in this version.
+   
 
 ------------------------- Version 3 
 

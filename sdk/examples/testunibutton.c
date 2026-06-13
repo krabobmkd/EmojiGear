@@ -103,7 +103,7 @@ int main(int argc, char *argv[])
     IntuitionBase = (struct IntuitionBase *)OpenLibrary("intuition.library", 39L);
     if (!IntuitionBase) { puts("ERROR: intuition.library v39+"); goto cleanup; }
 
-    UniButtonBase = OpenLibrary("gadgets/unibutton.gadget", 1L);
+    UniButtonBase = OpenLibrary("gadgets/unibutton.gadget", 4L);
     if (!UniButtonBase) { puts("ERROR: gadgets/unibutton.gadget"); goto cleanup; }
 
     WindowBase = OpenLibrary("window.class", 42L);

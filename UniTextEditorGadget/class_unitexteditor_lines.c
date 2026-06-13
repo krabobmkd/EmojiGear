@@ -50,6 +50,27 @@ INLINE void pool_return(UTEDBitMapPool *pool, struct BitMap *bm)
     pool->freeStack[pool->freeCount++] = bm;
 }
 
+
+BOOL uted_pool_create_layer(UTEDBitMapPool *pool,int w,int h , struct BitMap *bitmap)
+{
+    if(pool->layerInfo) return TRUE;
+
+    pool->layerInfo = NewLayerInfo();
+
+    if(!pool->layerInfo) return FALSE;
+
+    InstallLayerInfoHook(pool->layerInfo,LAYERS_NOBACKFILL);
+
+    pool->layer = CreateUpfrontHookLayer(pool->layerInfo,bitmap,0,0,
+                w - 1, h - 1, LAYERSIMPLE,LAYERS_NOBACKFILL,NULL);
+
+    if (!pool->layer) {uted_pool_free_layer(pool);  uted_pool_free_bitmapcache(pool);  return FALSE; }
+
+    pool->rp = pool->layer->rp;
+
+    return TRUE;
+}
+
 /* =========================================================================
  * uted_pool_alloc
  *
@@ -127,18 +148,9 @@ BOOL uted_pool_alloc(UTEDBitMapPool *pool, ULONG size,
 
     if(pool->layerInfo == NULL)
     {
-        pool->layerInfo = NewLayerInfo();
-        if(pool->layerInfo)
+        if( !uted_pool_create_layer( pool,LINE_CHUNK_WIDTH,lineHeight, pool->bitmaps[0] ) )
         {
-           //test
-           LockLayerInfo(pool->layerInfo);
-            pool->layer = CreateUpfrontLayer(pool->layerInfo, pool->bitmaps[0],
-                                 0, 0,
-                                 LINE_CHUNK_WIDTH - 1, (LONG)lineHeight - 1,
-                                 LAYERSIMPLE, NULL);
-            if (!pool->layer) {uted_pool_free_layer(pool);  uted_pool_free_bitmapcache(pool);  return FALSE; }
-
-            pool->rp = pool->layer->rp;
+            uted_pool_free_bitmapcache(pool);  return FALSE;
         }
 
     } else
@@ -261,7 +273,8 @@ void uted_pool_free_bitmapcache(UTEDBitMapPool *pool)
 {
     ULONG i;
     if (pool->bitmaps) {
-        /* in case there is some rendering on bitmap */
+
+        /* wait pending draw to end - must be done before any FreeBitMap(); */
         WaitBlit();
 
         for (i = 0; i < pool->size; i++)
@@ -278,8 +291,6 @@ void uted_pool_free_layer(UTEDBitMapPool *pool)
 {
     if (pool->layer)     { DeleteLayer(0, pool->layer);       pool->layer     = NULL; }
     if (pool->layerInfo) {
-      //was test
-      UnlockLayerInfo(pool->layerInfo);
         DisposeLayerInfo(pool->layerInfo); pool->layerInfo = NULL;
      }
     pool->rp = NULL;
@@ -1158,7 +1169,7 @@ ULONG uted_cursor_visual_row(UniTextEditorData *inst)
     for (i = 0; i < inst->wrapRowCount; i++) {
         if (inst->wrapMap[i].logicalLine == inst->cursor.line) {
             best = i;
-            if (inst->cursor.ch < inst->wrapMap[i].endChar ||
+            if (inst->cursor.col < inst->wrapMap[i].endChar ||
                 inst->wrapMap[i].endChar == inst->wrapMap[i].startChar)
                 return i;
         } else if (inst->wrapMap[i].logicalLine > inst->cursor.line) {

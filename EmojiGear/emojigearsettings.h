@@ -25,6 +25,7 @@ typedef struct AppSettings {
     int   tabSpaces;       /* number of spaces per tab, 2..12 */
     int   visualizeTabs;   /* TRUE = draw tab markers in editor; default FALSE */
     int   tabsAreSpaces;   /* TRUE = Tab key inserts spaces instead of \t; default FALSE */
+    int   displayUnicodeInfo; /* TRUE = show U+codepoint and Unicode set in status bar; default FALSE */
 
     int currentFontSizeIndex; /* index into font size table {8,12,16,20,24,28} */
 

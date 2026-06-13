@@ -21,7 +21,7 @@
 #include <gadgets/unibutton.h>
 #include "emojibox.h"
 
-#define EMOJIGEAR_VERSION "3.1"
+#define EMOJIGEAR_VERSION "4.2"
 
 #define EG_MAX_TABS 20
 
@@ -30,7 +30,7 @@
 /* Application struct */
 struct App {
     Object *window_obj;
-    struct MsgPort *app_port;
+    struct MsgPort *app_port; /* This is actually needed for iconizing, to still receive message */
 
     BoopsiMainWindow mainwindow;
 
@@ -63,6 +63,7 @@ struct App {
 
     /* Tab bar */
     Object      *tabGadget;
+
     struct List *tabList;
     struct Node *tabNodes[EG_MAX_TABS];        /* AllocClickTabNode'd nodes      */
     char        *tabContextNames[EG_MAX_TABS]; /* AllocVec'd context key each    */

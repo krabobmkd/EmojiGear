@@ -66,6 +66,7 @@ enum {
     ACTION_SETTINGS_WORDWRAP,
     ACTION_SETTINGS_FORCEMONOSPACE,
     ACTION_SETTINGS_APPLYANSI,
+    ACTION_SETTINGS_DISPLAYUNICODEINFO,
     ACTION_SETTINGS_FONTSIZEP,
     ACTION_SETTINGS_FONTSIZEM,
 
@@ -86,6 +87,14 @@ enum {
  * (0=UTF-8/UTF-16, 1=Latin-1 fallback); pass NULL if you don't need it. */
 BOOL load_utf8_from_path(struct App *ctx, const char *path, int *actual_encoding);
 BOOL load_encoded_from_path(struct App *ctx, const char *path, int encoding);
+
+/* Returns TRUE if buf[0..len-1] is valid UTF-8 (see egaction.c for details). */
+BOOL is_valid_utf8(const char *buf, LONG len);
+
+/* Convert a single-byte legacy encoding buffer to a UTF-8 AllocVec string.
+ * encoding == 1 -> ISO 8859-1 (Latin-1), encoding == 2 -> ISO 8859-2 (Latin-2).
+ * Caller must FreeVec() the result. Returns NULL on allocation failure. */
+char *convert_to_utf8(const char *src, LONG srcLen, int encoding);
 
 /* Initialize: caches localized action names from MSG_* strings */
 void        EgAction_Init(void);
@@ -139,6 +148,7 @@ BOOL Action_FontsWindow(struct App *ctx);
 BOOL Action_SettingWordWrap(struct App *ctx);
 BOOL Action_SettingForceMonospace(struct App *ctx);
 BOOL Action_SettingApplyAnsi(struct App *ctx);
+BOOL Action_SettingDisplayUnicodeInfo(struct App *ctx);
 BOOL Action_SettingAnsiUnixColors(struct App *ctx);
 
 BOOL Action_SettingsFontSizePlus(struct App *ctx);

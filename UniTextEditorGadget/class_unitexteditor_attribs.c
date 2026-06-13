@@ -135,12 +135,12 @@ static void uted_apply_search_match(UniTextEditorData *inst,
 
     if (cursorAtStart) {
         /* backward search: cursor at start, anchor at end */
-        inst->selAnchor.ch = endChar;
-        inst->selFloat.ch  = foundChar;
+        inst->selAnchor.col = endChar;
+        inst->selFloat.col  = foundChar;
     } else {
         /* forward search: cursor at end, anchor at start */
-        inst->selAnchor.ch = foundChar;
-        inst->selFloat.ch  = endChar;
+        inst->selAnchor.col = foundChar;
+        inst->selFloat.col  = endChar;
     }
 
     inst->cursor       = inst->selFloat;
@@ -554,12 +554,10 @@ ULONG UniTextEditor_OnNew(Class *cl, Object *o, struct opSet *msg)
         }
     }
 
-
-
+    /* need to redefine clipping rect inside window rastport
+     to gadget bounds, using that. reconfigured on layout,
+     installed/uninstalled at render */
     inst->clipRegion = NewRegion();
-
-
-
 
     /* Undo/redo stacks – default 64 entries */
     uted_undo_resize(inst, 64);
@@ -635,10 +633,12 @@ fail:
         line = next;
     }
 
+    /* must be done before uted_pool_free_bitmapcache() */
+    uted_pool_free_layer(&inst->bmPool);
+
     /* All bitmaps returned; now release the pool itself */
     uted_pool_free_bitmapcache(&inst->bmPool);
-    /* the part that has poblems on OS3.9 */
-    uted_pool_free_layer(&inst->bmPool);
+
     ReleaseSemaphore(&inst->cacheSem);
     ReleaseSemaphore(&inst->textSem);
     if (inst->dc) { URPDC_Release(inst->dc); inst->dc = NULL; }
@@ -666,17 +666,14 @@ ULONG UniTextEditor_OnDispose(Class *cl, Object *o, Msg msg)
 void uted_update_halfway_pen(UniTextEditorData *inst)
 {
     ULONG rgb[8];
-    //ULONG ncol;
-    //int depth;
 
-    if (!inst->screen) { inst->halfwayPen = inst->bgPen; return; }
-    GetRGB32(&inst->screen->ViewPort.ColorMap, inst->txtPen, 1, &rgb[0]);
-    GetRGB32(&inst->screen->ViewPort.ColorMap, inst->bgPen,  1, &rgb[3]);
+    if (!inst->screen || !inst->screen->ViewPort.ColorMap
+    ) { inst->halfwayPen = inst->bgPen; return; }
 
-    // depth = GetBitMapAttr( inst->screen->RastPort.BitMap,BMA_DEPTH);
-    // ncol = 1L<<depth;
-    // if(ncol>256) ncol=256;
-    inst->halfwayPen = (ULONG)FindColor(&inst->screen->ViewPort.ColorMap,
+    GetRGB32(inst->screen->ViewPort.ColorMap, inst->txtPen, 1, &rgb[0]);
+    GetRGB32(inst->screen->ViewPort.ColorMap, inst->bgPen,  1, &rgb[3]);
+
+    inst->halfwayPen = (ULONG)FindColor(inst->screen->ViewPort.ColorMap,
         ((rgb[0]>>1) + (rgb[3]>>1)),
         ((rgb[1]>>1) + (rgb[4]>>1)),
         ((rgb[2]>>1) + (rgb[5]>>1)),
@@ -895,7 +892,7 @@ ULONG UniTextEditor_OnSet(Class *cl, Object *o, struct opSet *msg)
             }
 
             inst->cursor.line  = 0;
-            inst->cursor.ch    = 0;
+            inst->cursor.col    = 0;
             inst->selAnchor    = inst->cursor;
             inst->selFloat     = inst->cursor;
             inst->hasSelection = FALSE;
@@ -918,12 +915,8 @@ ULONG UniTextEditor_OnSet(Class *cl, Object *o, struct opSet *msg)
 
         case UTED_ScrollTop:
         {
-            ULONG top = (ULONG)tag->ti_Data;
-            ULONG maxTop;
-            if (inst->wordWrap && inst->wrapMap && inst->wrapRowCount > 0)
-                maxTop = inst->wrapRowCount - 1;
-            else
-                maxTop = inst->lineCount > 0 ? inst->lineCount - 1 : 0;
+            ULONG top    = (ULONG)tag->ti_Data;
+            ULONG maxTop = uted_scroll_max_top(inst);
             if (top > maxTop) top = maxTop;
             if (inst->scrollTopLine != top)
             {
@@ -951,12 +944,12 @@ ULONG UniTextEditor_OnSet(Class *cl, Object *o, struct opSet *msg)
         }
 
         case UTED_CursorLine:
-            UniTextEditor_DoSetCursorPos(cl, o, (ULONG)tag->ti_Data, inst->cursor.ch, FALSE);
+            UniTextEditor_DoSetCursorPos(cl, o, (ULONG)tag->ti_Data, inst->cursor.col, FALSE);
             redraw = TRUE;
             result = 1;
             break;
 
-        case UTED_CursorChar:
+        case UTED_CursorColumn:
             UniTextEditor_DoSetCursorPos(cl, o, inst->cursor.line, (ULONG)tag->ti_Data, FALSE);
             redraw = TRUE;
             result = 1;
@@ -1245,7 +1238,7 @@ ULONG UniTextEditor_OnSet(Class *cl, Object *o, struct opSet *msg)
                 scanLine = uted_get_line(inst, inst->cursor.line);
                 if (scanLine) {
                     ULONG startByte = uted_char_to_byte(scanLine->utf8,
-                                          scanLine->byteUsed, inst->cursor.ch);
+                                          scanLine->byteUsed, inst->cursor.col);
                     const char *hit = uted_strfind(scanLine->utf8 + startByte,
                                           pattern, inst->searchCaseSensitive);
                     if (hit) {
@@ -1294,9 +1287,9 @@ ULONG UniTextEditor_OnSet(Class *cl, Object *o, struct opSet *msg)
 
                 /* Search backward on current line: last match starting < cursor */
                 scanLine = uted_get_line(inst, inst->cursor.line);
-                if (scanLine && inst->cursor.ch > 0) {
+                if (scanLine && inst->cursor.col > 0) {
                     ULONG limitByte = uted_char_to_byte(scanLine->utf8,
-                                          scanLine->byteUsed, inst->cursor.ch);
+                                          scanLine->byteUsed, inst->cursor.col);
                     const char *hit = uted_rfind_before_cs(scanLine->utf8,
                                           limitByte, pattern,
                                           inst->searchCaseSensitive);
@@ -1342,9 +1335,9 @@ ULONG UniTextEditor_OnSet(Class *cl, Object *o, struct opSet *msg)
                 inst->lastSearchValid = FALSE;
                 /* Restore selection to the saved match, then insert replaces it */
                 inst->selAnchor.line = inst->lastSearchLine;
-                inst->selAnchor.ch   = inst->lastSearchChar;
+                inst->selAnchor.col   = inst->lastSearchChar;
                 inst->selFloat.line  = inst->lastSearchLine;
-                inst->selFloat.ch    = inst->lastSearchEndChar;
+                inst->selFloat.col    = inst->lastSearchEndChar;
                 inst->cursor         = inst->selFloat;
                 inst->hasSelection   = (inst->lastSearchChar != inst->lastSearchEndChar);
                 UniTextEditor_DoInsertText(cl, o, replaceStr, -1);
@@ -1582,8 +1575,12 @@ ULONG UniTextEditor_OnGet(Class *cl, Object *o, struct opGet *msg)
         *msg->opg_Storage = inst->cursor.line;
         return TRUE;
 
+    case UTED_CursorColumn:
+        *msg->opg_Storage = inst->cursor.col;
+        return TRUE;
+
     case UTED_CursorChar:
-        *msg->opg_Storage = inst->cursor.ch;
+        *msg->opg_Storage = uted_codepoint_at(inst, inst->cursor.line, inst->cursor.col);
         return TRUE;
 
     case GA_Text:  /* alias: same behaviour as UTED_Text */
@@ -1639,9 +1636,10 @@ ULONG UniTextEditor_OnGet(Class *cl, Object *o, struct opGet *msg)
         return TRUE;
 
     case UTED_RenderedLineCount:
-        *msg->opg_Storage = (inst->wordWrap && inst->wrapMap)
-                            ? inst->wrapRowCount
-                            : inst->lineCount;
+        /* Total - Visible must equal uted_scroll_max_top() so external
+         * scrollbars (PGA_Total/PGA_Visible) allow scrollTopLine to reach
+         * the same range as uted_ensure_cursor_visible. */
+        *msg->opg_Storage = uted_scroll_max_top(inst) + (ULONG)inst->visibleLines;
         return TRUE;
 
     case UTED_MaxDisplayLines:

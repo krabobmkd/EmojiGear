@@ -32,12 +32,13 @@ static char *StrDup(const char *s)
 #define TT_TABSPACES       "TABSPACES"       /* decimal integer 2..12, default 4   */
 #define TT_VISUALIZETABS   "VISUALIZETABS"   /* "1" or "0", default 0              */
 #define TT_TABSARESPACES   "TABSARESPACES"   /* "1" or "0", default 0              */
+#define TT_DISPLAYUNICODEINFO "DISPLAYUNICODEINFO" /* "1" or "0", default 0        */
 #define TT_WORDWRAP        "WORDWRAP"        /* "1" or "0", default 1              */
 #define TT_MONOSPACE       "FORCEMONOSPACE"  /* "1" or "0", default 0              */
 #define TT_APPLYANSI       "APPLYANSI"       /* "1" or "0", default 0              */
 #define TT_ANTIALIAS       "ANTIALIAS"       /* "1" or "0", default 0              */
 #define TT_EMOJIQUALITY    "EMOJIQUALITY"    /* "1" or "0", default 0              */
-#define TT_PRIMARYFONT     "PRIMARYFONT"     /* absolute path to .ttf/.odt file    */
+#define TT_PRIMARYFONT     "PRIMARYFONT"     /* absolute path to .ttf/.otf file    */
 #define TT_FALLBACK1FONT   "FALLBACK1FONT"   /* absolute path to fallback font 1   */
 #define TT_FALLBACK2FONT   "FALLBACK2FONT"   /* absolute path to fallback font 2   */
 #define TT_EMOJIFONT       "EMOJIFONT"       /* absolute path to emoji font        */
@@ -119,6 +120,10 @@ void AppSettings_Load(AppSettings *as)
     as->tabsAreSpaces = FALSE;
     val = ToolTypePrefs_Get(TT_TABSARESPACES);
     if (val && val[0] == '1') as->tabsAreSpaces = TRUE;
+
+    as->displayUnicodeInfo = FALSE;
+    val = ToolTypePrefs_Get(TT_DISPLAYUNICODEINFO);
+    if (val && val[0] == '1') as->displayUnicodeInfo = TRUE;
 
  //   val = ToolTypePrefs_Get(TT_PALETTE);
 
@@ -294,6 +299,7 @@ void AppSettings_Save(AppSettings *as)
 
     ToolTypePrefs_Set(TT_VISUALIZETABS, as->visualizeTabs ? "1" : "0");
     ToolTypePrefs_Set(TT_TABSARESPACES, as->tabsAreSpaces ? "1" : "0");
+    ToolTypePrefs_Set(TT_DISPLAYUNICODEINFO, as->displayUnicodeInfo ? "1" : "0");
 
     /* Save font rendering settings */
     ToolTypePrefs_Set(TT_WORDWRAP,     as->wordWrap     ? "1" : "0");

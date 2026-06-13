@@ -54,6 +54,8 @@
 
 #include "../EmojiGear/eglocale.h"
 #include "../EmojiGear/tooltypepref.h"
+#include "../EmojiGear/egpipeinput.h"
+#include "../EmojiGear/unicodeset.h"
 #include "mmgboopsimessage.h"
 #include "mmgemojibox.h"
 #include "mmgfontsview.h"
@@ -98,7 +100,7 @@ MUI_NewObjectB(const char *cl, Tag tags, ...)
  */
 #define MMG_APPBASE       "MUIMOJIGEAR"
 #define PIPE_INPUT_BUF    1024
-#define MMG_VERSION  "$VER: MUImojiGear 3.1 (2026)"
+#define MMG_VERSION  "$VER: MUImojiGear 4.1 (2026)"
 #define GID_EDITOR        1
 #define GID_EMOJI_BUTTON  2
 #define GID_EMOJI_GRID    3
@@ -132,37 +134,10 @@ MUI_NewObjectB(const char *cl, Tag tags, ...)
 #define RID_TOGGLE_VIZTABS     36
 #define RID_TOGGLE_TABSSPACES  37
 #define RID_TOGGLE_MONOSPACE   81
+#define RID_TOGGLE_DISPLAYUNICODEINFO 82
 #define RID_COLOR_BASE         38   /* 38..43: one per color preset (0=System colors) */
 #define MMG_NUM_COLOR_PRESETS   6
 #define RID_RECENT_BASE        44   /* 44..51: one per recent slot  */
-
-/* =========================================================================
- * Shared utilities  (declared in muimojiGear.h; used by mmgaction.c too)
- * =========================================================================
- */
-
-/* Returns the length of the longest NUL-safe UTF-8 prefix of buf[0..len-1]
- * that ends on a complete codepoint boundary (no split multi-byte sequences). */
-static LONG utf8_complete_len(const char *buf, LONG len)
-{
-    LONG i = len;
-    unsigned char c;
-    int seqLen;
-    if (len <= 0) return 0;
-    while (i > 0) {
-        c = (unsigned char)buf[i - 1];
-        if ((c & 0xC0) != 0x80) break;
-        i--;
-    }
-    if (i == 0) return 0;
-    c = (unsigned char)buf[i - 1];
-    if      (c < 0x80)           seqLen = 1;
-    else if ((c & 0xE0) == 0xC0) seqLen = 2;
-    else if ((c & 0xF0) == 0xE0) seqLen = 3;
-    else if ((c & 0xF8) == 0xF0) seqLen = 4;
-    else                          seqLen = 1;
-    return ((i - 1) + seqLen <= len) ? len : i - 1;
-}
 
 void App_GetRawEditorWin(struct Gadget **gOut, struct Window **wOut)
 {
@@ -175,17 +150,24 @@ void App_UpdateStatus(void)
 {
     static char buf[128];
     struct Gadget *g = NULL; struct Window *w = NULL;
-    ULONG modified = 0, curLine = 0, curChar = 0, lineCount = 0;
+    ULONG modified = 0, curLine = 0, curCol = 0, curChar = 0, lineCount = 0;
     App_GetRawEditorWin(&g, &w);
     if (g) {
-        GetAttr(UTED_Modified,   (Object *)g, &modified);
-        GetAttr(UTED_CursorLine, (Object *)g, &curLine);
-        GetAttr(UTED_CursorChar, (Object *)g, &curChar);
-        GetAttr(UTED_LineCount,  (Object *)g, &lineCount);
+        GetAttr(UTED_Modified,    (Object *)g, &modified);
+        GetAttr(UTED_CursorLine,  (Object *)g, &curLine);
+        GetAttr(UTED_CursorColumn,(Object *)g, &curCol);
+        GetAttr(UTED_LineCount,   (Object *)g, &lineCount);
+        if (app && app->settings.displayUnicodeInfo)
+            GetAttr(UTED_CursorChar, (Object *)g, &curChar);
     }
-    snprintf(buf, sizeof(buf) - 1, " Line %lu, Col %lu  |  %lu lines",
-        /*no need     modified ? LOC(MSG_STATUS_MODIFIED) : LOC(MSG_STATUS_READY),*/
-             curLine + 1, curChar + 1, lineCount);
+    if (app && app->settings.displayUnicodeInfo) {
+        snprintf(buf, sizeof(buf) - 1, " Line %lu, Col %lu  |  %lu lines  |  U+%06lX (%s)",
+            /*no need     modified ? LOC(MSG_STATUS_MODIFIED) : LOC(MSG_STATUS_READY),*/
+                 curLine + 1, curCol + 1, lineCount, curChar, find_unicode_set(curChar));
+    } else {
+        snprintf(buf, sizeof(buf) - 1, " Line %lu, Col %lu  |  %lu lines",
+                 curLine + 1, curCol + 1, lineCount);
+    }
     buf[sizeof(buf) - 1] = '\0';
     if (app && app->statusObj)
         SetAttrs(app->statusObj, MUIA_Text_Contents, (ULONG)buf, TAG_DONE);
@@ -321,11 +303,11 @@ int main(int argc, char *argv[])
     MUIMasterBase = OpenLibrary("muimaster.library", 19L);
     if (!MUIMasterBase) { puts("ERROR: muimaster.library v19+ (MUI 3.8+)"); exitCode=1; goto cleanup; }
 
-    UniTextEditorBase = OpenLibrary("gadgets/unitexteditor.gadget", 3L);
-    if (!UniTextEditorBase) { puts("ERROR: unitexteditor.gadget v3+"); exitCode=1; goto cleanup; }
+    UniTextEditorBase = OpenLibrary("gadgets/unitexteditor.gadget", 4L);
+    if (!UniTextEditorBase) { puts("ERROR: unitexteditor.gadget v4+"); exitCode=1; goto cleanup; }
 
-    UniButtonBase = OpenLibrary("gadgets/unibutton.gadget", 3L);
-    if (!UniButtonBase) { puts("ERROR: unibutton.gadget v3+"); exitCode=1; goto cleanup; }
+    UniButtonBase = OpenLibrary("gadgets/unibutton.gadget", 4L);
+    if (!UniButtonBase) { puts("ERROR: unibutton.gadget v4+"); exitCode=1; goto cleanup; }
 
     AslBase = OpenLibrary("asl.library", 39UL);
     if (!AslBase) { puts("ERROR: asl.library v39"); exitCode=1; goto cleanup; }
@@ -516,6 +498,12 @@ int main(int argc, char *argv[])
         MUIA_Menuitem_Toggle,  TRUE,
         MUIA_Menuitem_Checked, (ULONG)(app->settings.tabsAreSpaces ? TRUE : FALSE),
         TAG_DONE);
+    app->miToggleDisplayUnicodeInfo = MUI_NewObjectB(MUIC_Menuitem,
+        MUIA_Menuitem_Title,   (ULONG)LOC(MSG_SETTINGS_DISPLAYUNICODEINFO),
+        MUIA_Menuitem_Checkit, TRUE,
+        MUIA_Menuitem_Toggle,  TRUE,
+        MUIA_Menuitem_Checked, (ULONG)(app->settings.displayUnicodeInfo ? TRUE : FALSE),
+        TAG_DONE);
 
     menuSettings = MUI_NewObjectB(MUIC_Menu,
         MUIA_Menu_Title,   (ULONG)LOC(MSG_SETTINGS),
@@ -528,6 +516,7 @@ int main(int argc, char *argv[])
         MUIA_Family_Child, (ULONG)app->miToggleApplyAnsi,
         MUIA_Family_Child, (ULONG)app->miToggleVisualizeTabs,
         MUIA_Family_Child, (ULONG)app->miToggleTabsAreSpaces,
+        MUIA_Family_Child, (ULONG)app->miToggleDisplayUnicodeInfo,
         MUIA_Family_Child, (ULONG)MUI_NewObjectB(MUIC_Menuitem, MUIA_Menuitem_Title, (ULONG)NM_BARLABEL, TAG_DONE),
         MUIA_Family_Child, (ULONG)app->miFontSettings,
         TAG_DONE);
@@ -726,6 +715,7 @@ int main(int argc, char *argv[])
     NOTIFY(miToggleApplyAnsi,     RID_TOGGLE_APPLYANSI);
     NOTIFY(miToggleVisualizeTabs, RID_TOGGLE_VIZTABS);
     NOTIFY(miToggleTabsAreSpaces, RID_TOGGLE_TABSSPACES);
+    NOTIFY(miToggleDisplayUnicodeInfo, RID_TOGGLE_DISPLAYUNICODEINFO);
 
     {
         int i;
@@ -855,6 +845,7 @@ int main(int argc, char *argv[])
             case RID_TOGGLE_APPLYANSI:  MmgAction_ToggleApplyAnsi();   reactivateEditor = TRUE;    break;
             case RID_TOGGLE_VIZTABS:    MmgAction_ToggleVisualizeTabs();  reactivateEditor = TRUE;  break;
             case RID_TOGGLE_TABSSPACES: MmgAction_ToggleTabsAreSpaces(); reactivateEditor = TRUE;  break;
+            case RID_TOGGLE_DISPLAYUNICODEINFO: MmgAction_ToggleDisplayUnicodeInfo(); break;
 
             case RID_FONTS_WIN: {
                 ULONG isOpen = 0;
@@ -966,40 +957,22 @@ int main(int argc, char *argv[])
             } // end while muisigs == 0
             if (!running) break;
 
-            /* ---- Pipe / stdin UTF-8 input (non-blocking) ----
-             * Read from non-interactive handles (PIPE:, file redirect).
-             * IsInteractive() guards against blocking on CON: handles.
-             * Incomplete multi-byte sequences at the tail are kept in
-             * pipeBuf for the next iteration via utf8_complete_len(). */
+            /* ---- Pipe / stdin UTF-8/ANSI input (non-blocking) ---- */
             {
                 BPTR inpt = Input();
-                if (inpt && !IsInteractive(inpt)) {
-                    LONG canRead = PIPE_INPUT_BUF - pipeBufUsed - 1;
-                    if (canRead > 0) {
-                        LONG nread = Read(inpt, pipeBuf + pipeBufUsed, canRead);
-                        if (nread > 0) pipeBufUsed += nread;
-                    }
-                }
-                if (pipeBufUsed > 0) {
-                    LONG safeLen = utf8_complete_len(pipeBuf, pipeBufUsed);
-                    if (safeLen == 0 && pipeBufUsed >= PIPE_INPUT_BUF - 4)
-                        safeLen = pipeBufUsed; /* safety valve: broken stream */
-                    if (safeLen > 0) {
-                        LONG remaining = pipeBufUsed - safeLen;
-                        char savedByte  = (remaining > 0) ? pipeBuf[safeLen] : '\0';
+                if (inpt && !IsInteractive(inpt))
+                {
+                    BOOL needsFree;
+                    const char *chunk = EgPipeInput_Poll(pipeBuf, PIPE_INPUT_BUF, &pipeBufUsed, &needsFree);
+                    if (chunk) {
                         struct Gadget *pg = NULL; struct Window *pw = NULL;
-                        pipeBuf[safeLen] = '\0';
                         App_GetRawEditorWin(&pg, &pw);
                         if (pg && pw) {
                             SetGadgetAttrs(pg, pw, NULL,
-                                           UTED_InsertText, (ULONG)pipeBuf, TAG_DONE);
+                                           UTED_InsertText, (ULONG)chunk, TAG_DONE);
                             RefreshGList(pg, pw, NULL, 1);
                         }
-                        if (remaining > 0) {
-                            pipeBuf[safeLen] = savedByte;
-                            memmove(pipeBuf, pipeBuf + safeLen, (size_t)remaining);
-                        }
-                        pipeBufUsed = remaining;
+                        if (needsFree) FreeVec((char *)chunk);
                     }
                 }
             }
