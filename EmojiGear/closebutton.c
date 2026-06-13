@@ -27,12 +27,12 @@
 static const UBYTE closeNormalData[] = {
     0,8, 0,8,
     2,2,2,2,2,2,2,2,
-    2,1,1,1,1,1,1,2,
-    2,1,1,1,1,1,1,2,
-    2,1,1,1,1,1,1,2,
-    2,1,1,1,1,1,1,2,
-    2,1,1,1,1,1,1,2,
-    2,1,1,1,1,1,1,2,
+    2,3,3,3,4,4,4,2,
+    2,3,3,4,4,4,5,2,
+    2,3,4,4,4,4,5,2,
+    2,4,4,4,4,4,5,2,
+    2,4,4,4,4,4,5,2,
+    2,4,5,5,5,5,5,2,
     2,2,2,2,2,2,2,2,
 };
 
@@ -51,11 +51,13 @@ static const UBYTE closeSelectedData[] = {
 /* PENMAP_Palette: pen count followed by that many RGB32 triplets (pen 0 is
  * implicit and replaced by the background pen via PENMAP_Transparent). */
 static const ULONG closePalette[] = {
-    4,
+    6,
     0, 0, 0, /*       */
     0x88888888, 0x88888888, 0xdddddddd, /* 1: bluish face          */
     0, 0, 0, /* 2: frame, normal        */
     0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, /* 3: frame, selected      */
+    0xdddddddd, 0xdddddddd, 0xdddddddd, /* 4 grey 1         */
+    0x99999999, 0x99999999, 0x99999999, /* 5 grey 2         */
 };
 
 struct Image *CloseButton_CreateImage(struct Screen *scr)
