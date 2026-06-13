@@ -278,7 +278,15 @@ void GenericOpenWindow(BoopsiMainWindow *mw,Object *window_obj,struct AppSetting
     if(addScrollers && app->borderScroll.dArrowBtn )
     {
         /* with boopsi on, it must be added after 1... maybe 0 is the whole boopsi layout */
-        AddGList( CurrentMainWindow, app->borderScroll.dArrowBtn, 1, /*Numgad*/6, NULL );
+        /* fnid out how many gadget there are, to insert scrollers after */
+        int nbgadget = 0;
+        Forbid();
+        {
+            struct Gadget *g = CurrentMainWindow->FirstGadget;
+            while(g) { nbgadget++; g = g->NextGadget; }
+        }
+        Permit();
+        AddGList( CurrentMainWindow, app->borderScroll.dArrowBtn, nbgadget, 6, NULL );
         RefreshGList((struct Gadget *)app->borderScroll.dArrowBtn, CurrentMainWindow, NULL, 6);
     }
 
