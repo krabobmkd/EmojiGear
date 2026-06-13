@@ -2,7 +2,7 @@ Short:        UTF-8/Unicode text editor+Emoji+gadgets
 Author:       krabobmkd
 Uploader:     victorien.ferry@free.fr
 Type:         text/edit
-Version:      4.1
+Version:      4.2
 Architecture: m68k-amigaos >= 3.0
 Requires:     68020, better with OS 3.2.x, 8 MB Fast RAM
 Replaces:     text/edit/EmojiGear3.1.lha
@@ -10,7 +10,6 @@ Replaces:     text/edit/EmojiGear3.1.lha
 ------------------------- Version 4
 
  Again mostly a correction release ! 
- Sorry, BOOPSI intuition coding is not the easiest thing in the world. 
  Thanks to the testers, 3 critical bugs were corrected this week.
   Hopefully, a few new features also:
   
