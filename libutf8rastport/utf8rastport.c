@@ -170,7 +170,10 @@ static void urp_cache_free_all(struct URPGlyphCache *cache)
     int i; // nbcltbmfreed=0,nbmskfreed=0;
     struct URPGlyphEntry *e, *next;
 
+
+    /* in case there is some rendering on bitmap */
     WaitBlit();
+
     for (i = 0; i < URP_GLYPH_HASH; i++) {
         e = cache->buckets[i];
         if(e)
@@ -1103,6 +1106,39 @@ void URPDC_Release(REG(a0, struct URPDrawContext *dc))
 }
 
 
+/*
+ * urp_font_magic_ok()
+ *
+ * Read the first 4 bytes of a file and confirm it starts with a recognised
+ * TrueType / OpenType magic.  Returns FALSE for anything else (HTML pages,
+ * corrupt downloads, wrong file) so FT_New_Face is never called on garbage
+ * data — which would cause out-of-bounds memory access and a hard crash on
+ * Amiga (no memory protection).
+ *
+ * Recognised tags:
+ *   \x00\x01\x00\x00  TrueType 1.0 outline
+ *   OTTO              OpenType / CFF
+ *   true              Apple TrueType
+ *   typ1              Obsolete Type 1 wrapper
+ *   ttcf              TrueType Collection
+ *   wOFF              WOFF
+ */
+static BOOL urp_font_magic_ok(const char *path)
+{
+    UBYTE magic[4] = {0, 0, 0, 0};
+    BPTR  fh       = Open((STRPTR)path, MODE_OLDFILE);
+    if (!fh) return FALSE;
+    Read(fh, magic, 4);
+    Close(fh);
+    if (magic[0]==0x00 && magic[1]==0x01 && magic[2]==0x00 && magic[3]==0x00) return TRUE;
+    if (magic[0]=='O' && magic[1]=='T' && magic[2]=='T' && magic[3]=='O')     return TRUE;
+    if (magic[0]=='t' && magic[1]=='r' && magic[2]=='u' && magic[3]=='e')     return TRUE;
+    if (magic[0]=='t' && magic[1]=='y' && magic[2]=='p' && magic[3]=='1')     return TRUE;
+    if (magic[0]=='t' && magic[1]=='t' && magic[2]=='c' && magic[3]=='f')     return TRUE;
+    if (magic[0]=='w' && magic[1]=='O' && magic[2]=='F' && magic[3]=='F')     return TRUE;
+    return FALSE;
+}
+
 int URPDC_AddFont(REG(a0, struct URPDrawContext *dc),
                   REG(a1, const char           *fontPath),
                   REG(d0, int                   pointSize),
@@ -1124,25 +1160,37 @@ int URPDC_AddFont(REG(a0, struct URPDrawContext *dc),
     strcat(tfontpath,"FONTS:");
     strcat(tfontpath,fontPath);
 
-    err = FT_New_Face(dc->library, tfontpath, 0, &fe->face);
+    err = 1;
+    if (urp_font_magic_ok(tfontpath))
+        err = FT_New_Face(dc->library, tfontpath, 0, &fe->face);
     if(err!=0)
     {
         /* then try progdir */
         tfontpath[0]=0;
         strcat(tfontpath,"PROGDIR:fonts/");
         strcat(tfontpath,fontPath);
-        err = FT_New_Face(dc->library, tfontpath, 0, &fe->face);
+        err = 1;
+        if (urp_font_magic_ok(tfontpath))
+            err = FT_New_Face(dc->library, tfontpath, 0, &fe->face);
     }
     if(err!=0)
     {
         /* then only try raw current path */
-        err = FT_New_Face(dc->library, fontPath, 0, &fe->face);
+        err = 1;
+        if (urp_font_magic_ok(fontPath))
+            err = FT_New_Face(dc->library, fontPath, 0, &fe->face);
     }
 
     if (err) {
     ReleaseSemaphore(&dc->sem);
         return 0;
     }
+
+    /* Explicitly request the Unicode charmap.  FreeType usually auto-selects
+     * it, but some CJK fonts carry Shift-JIS / Big5 charmaps alongside
+     * Unicode and the auto-selection can land on the wrong one.  Ignore the
+     * error: if no Unicode cmap exists FreeType keeps its default choice. */
+    FT_Select_Charmap(fe->face, FT_ENCODING_UNICODE);
 
     strncpy(fe->path, fontPath, URP_PATH_MAX - 1);
     fe->path[URP_PATH_MAX - 1] = '\0';

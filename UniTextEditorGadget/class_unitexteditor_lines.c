@@ -276,6 +276,7 @@ void uted_pool_free_bitmapcache(UTEDBitMapPool *pool)
 
         /* wait pending draw to end - must be done before any FreeBitMap(); */
         WaitBlit();
+
         for (i = 0; i < pool->size; i++)
             if (pool->bitmaps[i]) FreeBitMap(pool->bitmaps[i]);
         FreeVec(pool->bitmaps);

@@ -15,13 +15,13 @@
 ;
 
 (set #app-name    "EmojiGear")
-(set #app-version "v4.1")
+(set #app-version "v4.2")
 (set #app-default "Work:")
 
 ; Library/gadget versions we are shipping
-(set #urp-ver   (+ (* 3 65536) 1))   ; utf8rastport.library  v3.1
-(set #uted-ver  (+ (* 3 65536) 1))   ; unitexteditor.gadget  v3.1
-(set #ubtn-ver  (+ (* 3 65536) 1))   ; unibutton.gadget      v3.1
+(set #urp-ver   (+ (* 3 65536) 1))   ; utf8rastport.library  v4.1
+(set #uted-ver  (+ (* 3 65536) 1))   ; unitexteditor.gadget  v4.1
+(set #ubtn-ver  (+ (* 3 65536) 1))   ; unibutton.gadget      v4.1
 
 ; ---------------------------------------------------------------------------
 ; Welcome
@@ -34,10 +34,7 @@
         "  EmojiGear     -- requires AmigaOS 3.2 or later\n"
         "  MUImojiGear   -- compatible with AmigaOS 3.0 to 3.9\n"
         "                   (requires MUI 3.8 or later)\n\n"
-        "The shared components below will always be installed:\n"
-        "  utf8rastport.library  (FreeType 2 rendering for any app)\n"
-        "  unitexteditor.gadget  (reusable Unicode editor BOOPSI gadget)\n"
-        "  unibutton.gadget      (Unicode-label push-button gadget)\n\n"
+        "The shared components will always be installed.\n\n"
         "Click Proceed to choose what to install."
     )
     (all)
@@ -446,8 +443,7 @@
         "  Libs:utf8rastport.library\n"
         "  SYS:Classes/Gadgets/unitexteditor.gadget\n"
         "  SYS:Classes/Gadgets/unibutton.gadget\n\n"
-        "TrueType fonts have been placed in Fonts:.\n\n"
-        "       ( on an Amiga.  Obviously. )"
+        "TrueType fonts have been placed in Fonts:."
     )
     (quiet)
 )
