@@ -343,7 +343,7 @@ int main(int argc, char *argv[])
 
     app_obj = MUI_NewObjectB(MUIC_Application,
         MUIA_Application_Title,       (ULONG)"TestMUIUTED",
-        MUIA_Application_Version,     (ULONG)"$VER: testmuiuted 1.0 (2026)",
+        MUIA_Application_Version,     (ULONG)"$VER: testmuiuted 4.3 (2026)",
         MUIA_Application_Description, (ULONG)"MUI UniTextEditor + UniButton BOOPSI test",
         MUIA_Application_Base,        (ULONG)"TESTMUIUTED",
         MUIA_Application_Window,      (ULONG)win_obj,
