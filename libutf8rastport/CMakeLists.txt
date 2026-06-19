@@ -217,7 +217,8 @@ if(UTF8RASTPORT_SHARED)
 	)
 
 target_link_options(${UTF8RPNAME} PRIVATE
-    -nostdlib -ffreestanding -nostartfiles -Wl,-e,__start)
+    -nostdlib -ffreestanding -nostartfiles -Wl,-e,__start
+    -Wl,-T,${CMAKE_CURRENT_SOURCE_DIR}/amiga_library.ld)
 target_compile_options(${UTF8RPNAME} PRIVATE -fomit-frame-pointer )
 
 # lib_amiga_crt.c provides memset/memcpy/strlen/etc. With -O3, GCC recognises

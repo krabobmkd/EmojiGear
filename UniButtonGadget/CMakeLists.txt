@@ -37,7 +37,8 @@ else()
 		${UNIBUTTON_SOURCES}
 		offscreenbm.c
 		)
-	target_link_options(${LIBNAME} PRIVATE -ffreestanding -nostartfiles -Wl,-e,__start)
+	target_link_options(${LIBNAME} PRIVATE -ffreestanding -nostartfiles -Wl,-e,__start
+		-Wl,-T,${CMAKE_CURRENT_SOURCE_DIR}/amiga_library.ld)
 	target_compile_options(${LIBNAME} PRIVATE -fomit-frame-pointer )
 endif()
 

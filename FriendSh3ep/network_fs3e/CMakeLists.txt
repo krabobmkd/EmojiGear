@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.10)
 
-project(fsnet C)
+project(fs3enet C)
 set(CMAKE_C_STANDARD 11)
 
 # AmiSSL v5 SDK / SDI headers (bsdsocket.library comes from the standard NDK
@@ -17,18 +17,28 @@ set(AMISSL_LIB_DIR "${COMMONLIBSDIR}/extrasdk/AmiSSL/Developer/lib/AmigaOS3"
 set(SDI_INCLUDE_DIR "${COMMONLIBSDIR}/extrasdk/SDI/include"
     CACHE PATH "Path to SDI headers (SDI_compiler.h etc.)")
 
-# fsnet_http.c / fsnet_mastodon.c / fsnet_cache.c and the vendored cJSON
-# sources land here in Phase 1 (see ../ARCHITECTURE.md). For now the library
-# only contains the process/IPC skeleton.
-set(FSNET_SOURCES
-    fsnet.c
+# fs3enet_cache.c (disk cache for avatars/media) lands in Phase 2 (see
+# ../ARCHITECTURE.md).
+set(FS3ENET_SOURCES
+    fs3enet.c
+    fs3enet_http.c
+    fs3enet_mastodon.c
+    cjson/cJSON.c
 )
 
-add_library(fsnet STATIC ${FSNET_SOURCES})
+# Headers are listed too so IDEs (Qt Creator, etc.) show them in the project tree.
+set(FS3ENET_HEADERS
+    fs3enet.h
+    fs3enet_http.h
+    fs3enet_mastodon.h
+    cjson/cJSON.h
+)
 
-# fsnet.h is the public API shared with the GUI; AmiSSL/SDI dirs are exposed
-# now so Phase 1 sources can be dropped in without touching this file.
-target_include_directories(fsnet PUBLIC
+add_library(fs3enet STATIC ${FS3ENET_SOURCES} ${FS3ENET_HEADERS})
+
+# fs3enet.h/fs3enet_http.h/fs3enet_mastodon.h are the public API shared with the
+# GUI; AmiSSL/SDI/cjson dirs are exposed alongside them.
+target_include_directories(fs3enet PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${AMISSL_INCLUDE_DIR}
     ${SDI_INCLUDE_DIR}
@@ -37,13 +47,13 @@ target_include_directories(fsnet PUBLIC
 # Manual AmiSSL init path (see EmojiGear/testsocket/CMakeLists.txt): libnix'
 # `errno` is `(*__errno)`, incompatible with libamisslauto.a's expectations,
 # so we link the stub trampolines instead of using -lamisslauto.
-target_link_libraries(fsnet PUBLIC
+target_link_libraries(fs3enet PUBLIC
     ${AMISSL_LIB_DIR}/libamisslstubs.a
 )
 
 # Inherit CPU/optimization flags chosen by the parent project.
 if(AMIGA_COMPILER_OPTIONS)
-    target_compile_options(fsnet PRIVATE
+    target_compile_options(fs3enet PRIVATE
         ${AMIGA_COMPILER_OPTIONS}
     )
 endif()

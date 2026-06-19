@@ -86,17 +86,19 @@ static const char *popularEmojiTable[40] = {
     /* row 1: Shift */
     "\xF0\x9F\xA4\xA9", /* 🤩 U+1F929 */
     "\xF0\x9F\x98\x85", /* 😅 U+1F605 */
+    "\xF0\x9F\x98\xB1", /* 😱  1F631 */
     "\xE2\x9D\xA4",     /* ❤  U+2764  */
     "\xF0\x9F\x91\x8D", /* 👍 U+1F44D */
     "\xF0\x9F\x99\x8F", /* 🙏 U+1F64F */
     "\xF0\x9F\x91\x80", /* 👀 U+1F440 */
     "\xF0\x9F\x9A\x80", /* 🚀 U+1F680 */
     "\xF0\x9F\x8E\x89", /* 🎉 U+1F389 */
-    "\xF0\x9F\x92\xAA", /* 💪 U+1F4AA */
+    "\xF0\x9F\x92\x83", /* 💃 U+1F483 */
     "\xF0\x9F\x8D\x95", /* 🍕 U+1F355 */
     /* row 2: Ctrl */
     "\xF0\x9F\xA5\x82", /* 🥂 U+1F942 */
-    "\xF0\x9F\x8D\xBE", /* 🍾 U+1F37E */
+
+    /*"\xF0\x9F\x8D\xBE",  🍾 U+1F37E */
     "\xF0\x9F\x92\xAA", /* 💪 U+1F4AA */
     "\xE2\x98\x95",     /* ☕ U+2615  */
     "\xF0\x9F\x93\xB1", /* 📱 U+1F4F1 */

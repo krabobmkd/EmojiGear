@@ -1,6 +1,6 @@
-# FriendSheeep — Architecture & Roadmap
+# FriendSh3ep — Architecture & Roadmap
 
-FriendSheeep is a Mastodon client for AmigaOS 3.x / 68k (m68k-amigaos,
+FriendSh3ep is a Mastodon client for AmigaOS 3.x / 68k (m68k-amigaos,
 68020+), sharing infrastructure with EmojiGear: `utf8rastport.library` for
 UTF-8/emoji rendering, `unitexteditor.gadget` for UTF-8 text input, and the
 BOOPSI main-window helpers from `EmojiGear/boopsimainwindow.c`.
@@ -26,8 +26,8 @@ BOOPSI main-window helpers from `EmojiGear/boopsimainwindow.c`.
 
 ```
  +-------------------------+        MsgPort          +---------------------------+
- |   FriendSheeep (GUI)     | <--------------------> |  fsnet network process     |
- |   friendsheep.c          |   FSNetMessage          |  (own CreateNewProc task)  |
+ |   FriendSh3ep (GUI)     | <--------------------> |  fs3enet network process     |
+ |   friendsh3ep.c          |   FS3ENetMessage          |  (own CreateNewProc task)  |
  |                          |   request / reply       |                            |
  |  - Intuition/BOOPSI loop |                          |  - bsdsocket + AmiSSL v5   |
  |  - boopsimainwindow      |                          |  - cJSON encode/decode     |
@@ -41,8 +41,8 @@ BOOPSI main-window helpers from `EmojiGear/boopsimainwindow.c`.
   library never includes Intuition/BOOPSI/utf8rastport headers — the two
   halves are decoupled like a web frontend talking to a backend over HTTP,
   except the "wire protocol" is Exec messages.
-- `fsnet` is built as a **static library** and linked into the
-  `FriendSheeep` executable, but its code runs in a **separate AmigaDOS
+- `fs3enet` is built as a **static library** and linked into the
+  `FriendSh3ep` executable, but its code runs in a **separate AmigaDOS
   process** created with `CreateNewProc()`. The GUI gets back only a
   `struct MsgPort *` to post requests to.
 - Replies are `PutMsg()`'d to a reply port supplied by the GUI in each
@@ -52,7 +52,7 @@ BOOPSI main-window helpers from `EmojiGear/boopsimainwindow.c`.
 
 ## 3. Mastodon API surface (from brutaldon)
 
-Endpoints brutaldon exercises that FriendSheeep needs, in the order a
+Endpoints brutaldon exercises that FriendSh3ep needs, in the order a
 session uses them:
 
 | Step | Endpoint | brutaldon ref |
@@ -122,8 +122,8 @@ the lower-level API needed for POST:
   `content_type`, and `req` BIO directly — closest drop-in replacement for
   `OSSL_HTTP_get()` but with POST support.
 
-**Phase 1 spike**: write `fsnet_http.c` with `FSHttp_Get()` and
-`FSHttp_Post()` wrappers around `OSSL_HTTP_transfer()`, and validate against
+**Phase 1 spike**: write `fs3enet_http.c` with `FS3EHttp_Get()` and
+`FS3EHttp_Post()` wrappers around `OSSL_HTTP_transfer()`, and validate against
 a real Mastodon instance:
 1. `POST /api/v1/apps` (form-encoded) → parse `client_id`/`client_secret`.
 2. `POST /oauth/token` (form-encoded, with a manually-obtained `code`) →
@@ -140,7 +140,7 @@ mechanism, more manual).
 cJSON is already vendored in sibling Amiga projects
 (`~/Code/Amiga/aukadicty/cjson`, `~/Code/Amiga/amigatests/boopsiwizard/cjson`
 — `cJSON.c`/`cJSON.h`, no dependencies beyond libc). Plan: copy
-`cJSON.c`/`cJSON.h` into `FriendSheeep/network/cjson/` and use it for both
+`cJSON.c`/`cJSON.h` into `FriendSh3ep/network/cjson/` and use it for both
 encoding request bodies and decoding all Mastodon responses.
 
 ### 4.4 Login flow on Amiga (no embedded browser)
@@ -149,46 +149,46 @@ Mastodon's OAuth2 `authorization_code` flow expects the user to authenticate
 in a browser and be redirected back with a `code`. Classic desktop-client
 approach, adapted here:
 
-1. FriendSheeep calls `POST /api/v1/apps` with
+1. FriendSh3ep calls `POST /api/v1/apps` with
    `redirect_uris=urn:ietf:wg:oauth:2.0:oob` (the standard
    "out-of-band" redirect URI Mastodon supports for non-web clients).
-2. FriendSheeep shows the resulting `/oauth/authorize?...` URL to the user
+2. FriendSh3ep shows the resulting `/oauth/authorize?...` URL to the user
    (selectable text, so it can be copied to a clipboard and opened in any
    browser, e.g. on another machine, or OWB if available).
 3. The user logs in/authorizes in that browser; Mastodon then **displays**
    the `code` on screen (rather than redirecting), because the redirect URI
    is the OOB sentinel.
-4. The user types/pastes that `code` back into a FriendSheeep text field
+4. The user types/pastes that `code` back into a FriendSh3ep text field
    (the `unitexteditor` gadget, single line).
-5. FriendSheeep does `POST /oauth/token` with that code →
+5. FriendSh3ep does `POST /oauth/token` with that code →
    `access_token`, then `GET /api/v1/accounts/verify_credentials` to confirm
    and fetch the logged-in account.
 
 This needs **zero** local HTTP listener and **zero** browser embedding —
 only the POST support from §4.2.
 
-## 5. IPC protocol (`FriendSheeep/network/fsnet.h`)
+## 5. IPC protocol (`FriendSh3ep/network/fs3enet.h`)
 
-- `FSNetMessage` — an Exec `struct Message` extended with a request/reply
-  type tag (`fsm_Type`, see `enum FSNetRequestType`), a result code
-  (`fsm_Result`, see `enum FSNetResult`), and an `AllocVec()`'d payload
-  (`fsm_Data`/`fsm_DataLen`) whose ownership transfers to whichever side
+- `FS3ENetMessage` — an Exec `struct Message` extended with a request/reply
+  type tag (`fs3em_Type`, see `enum FS3ENetRequestType`), a result code
+  (`fs3em_Result`, see `enum FS3ENetResult`), and an `AllocVec()`'d payload
+  (`fs3em_Data`/`fs3em_DataLen`) whose ownership transfers to whichever side
   receives the message (receiver `FreeVec()`s it).
-- `FSNet_Start()` creates the network process via `CreateNewProc()` and
+- `FS3ENet_Start()` creates the network process via `CreateNewProc()` and
   returns its request `struct MsgPort *` once a startup handshake (a
   stack-allocated `struct Message` + `WaitPort()`) confirms the process is
-  ready. `FSNet_Stop()` sends `FSNETQ_SHUTDOWN` and waits for the process to
+  ready. `FS3ENet_Stop()` sends `FS3ENETQ_SHUTDOWN` and waits for the process to
   exit and free its own port.
-- Request types beyond `FSNETQ_SHUTDOWN` (`FSNETQ_LOGIN_START`,
-  `FSNETQ_LOGIN_FINISH`, `FSNETQ_TIMELINE`, `FSNETQ_POST_STATUS`,
-  `FSNETQ_FETCH_IMAGE`, ...) are declared in `fsnet.h` now but dispatched as
-  stubs (`FSNETR_OK`, no-op) until Phase 2 — this lets the GUI and protocol
+- Request types beyond `FS3ENETQ_SHUTDOWN` (`FS3ENETQ_LOGIN_START`,
+  `FS3ENETQ_LOGIN_FINISH`, `FS3ENETQ_TIMELINE`, `FS3ENETQ_POST_STATUS`,
+  `FS3ENETQ_FETCH_IMAGE`, ...) are declared in `fs3enet.h` now but dispatched as
+  stubs (`FS3ENETR_OK`, no-op) until Phase 2 — this lets the GUI and protocol
   headers stabilize before the HTTP/JSON plumbing lands.
 
 ## 6. Media/icon cache
 
-The network process owns a disk cache under `T:FriendSheeep/` (one file per
-avatar/media URL, named by a hash of the URL). `FSNETQ_FETCH_IMAGE` either
+The network process owns a disk cache under `T:FriendSh3ep/` (one file per
+avatar/media URL, named by a hash of the URL). `FS3ENETQ_FETCH_IMAGE` either
 returns the existing cache path immediately or downloads first. The GUI asks
 `datatypes.library` (as EmojiGear already does for images) to load the
 cached file once notified — the network library never touches datatypes or
@@ -210,18 +210,31 @@ any GUI library.
 ## 8. Roadmap
 
 - **Phase 0 — Architecture** (this document + CMake scaffolding): done.
-- **Phase 1 — Network feasibility spike**
-  - Vendor cJSON into `network/cjson/`.
-  - `fsnet_http.c`: `FSHttp_Get`/`FSHttp_Post` over `OSSL_HTTP_transfer()`
-    (or `OSSL_HTTP_open`/`exchange` fallback), with custom headers.
-  - `fsnet_mastodon.c`: `create_app` → OOB authorize URL → code exchange →
-    `verify_credentials`, validated against a real instance from a small
-    CLI test tool (like `testsocket`).
+- **Phase 1 — Network feasibility spike**: done (builds cleanly, not yet
+  run against a live instance — see open questions below).
+  - Vendored cJSON into `network/cjson/`.
+  - `fs3enet_http.c`/`.h`: `FS3EHttp_Init`/`FS3EHttp_Cleanup` (AmiSSL setup as in
+    `testsocket/httpget.c`) and `FS3EHttp_Get`/`FS3EHttp_Post` over
+    `OSSL_HTTP_transfer()`, with a `FS3EHttpHeader[]` custom-header list and
+    an `FS3EHttpResponse` AllocVec'd body buffer.
+  - `fs3enet_mastodon.c`/`.h`: `FS3EMastodon_CreateApp` (`POST /api/v1/apps`),
+    `FS3EMastodon_BuildAuthorizeURL` (OOB `/oauth/authorize` URL),
+    `FS3EMastodon_ExchangeCode` (`POST /oauth/token`),
+    `FS3EMastodon_VerifyCredentials`, `FS3EMastodon_GetTimeline` (returns a
+    cJSON array), and `FS3EMastodon_PostStatus`.
+  - `fs3enet.c` now calls `FS3EHttp_Init`/`FS3EHttp_Cleanup` around the process
+    loop and dispatches `FS3ENETQ_LOGIN_START`/`FS3ENETQ_LOGIN_FINISH` to the
+    functions above (request/reply structs in `fs3enet.h`:
+    `FS3ENetLoginStartReq/Reply`, `FS3ENetLoginFinishReq/Reply`).
+  - Still needed to fully close Phase 1: a small CLI test tool (like
+    `testsocket`) exercising `fs3enet_mastodon.c` against a real instance to
+    validate the create_app → authorize → code exchange →
+    verify_credentials flow end-to-end.
 - **Phase 2 — Network process & protocol**
-  - Flesh out `FSNet_ProcEntry()` dispatch for all `FSNetRequestType`s.
+  - Flesh out `FS3ENet_ProcEntry()` dispatch for all `FS3ENetRequestType`s.
   - Timeline fetch, status post, media upload, notifications, action calls
     (fav/boost/delete/follow).
-  - Disk cache for avatars/media under `T:FriendSheeep/`.
+  - Disk cache for avatars/media under `T:FriendSh3ep/`.
 - **Phase 3 — Minimal text GUI**
   - BOOPSI window, login dialog (instance name + OOB code paste), timeline
     as a plain-text list, manual refresh, basic compose (status text only).
