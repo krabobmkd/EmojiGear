@@ -100,7 +100,9 @@ CALL	MACRO
 	XREF	_VersionString
 ;---------------------------------------------------------------------------
 
-	SECTION CODE
+	; Dedicated section so the linker script can place this block
+	; unconditionally first in the output (romtag + entry must be at offset 0).
+	SECTION __libinit,CODE
 
 		; needed by the gcc 6.5 trick as the bin entry point.
 		XDEF	__start

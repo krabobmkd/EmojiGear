@@ -39,7 +39,8 @@ else()
 	add_executable(${UTENAME}
 		libinit.s
 		${UNITEXTEDITOR_SOURCES})
-	target_link_options(${UTENAME} PRIVATE -ffreestanding -nostartfiles -Wl,-e,__start)
+	target_link_options(${UTENAME} PRIVATE -ffreestanding -nostartfiles -Wl,-e,__start
+		-Wl,-T,${CMAKE_CURRENT_SOURCE_DIR}/amiga_library.ld)
 	target_compile_options(${UTENAME} PRIVATE -fomit-frame-pointer )
 endif()
 
