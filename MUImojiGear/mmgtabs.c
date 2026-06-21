@@ -1,10 +1,17 @@
 /*
  * mmgtabs.c – Tab management for MUImojiGear.
  *
- * Owns the tab state and implements all tab operations.
- * Interacts with the MUI/BOOPSI layer through three object pointers
- * (mmgRegisterObj, mmgEditorObj, mmgWinObj) that muimojiGear.c sets
- * after object creation, and a UI-refresh callback (mmgOnUIChanged).
+ * Design: the MUIC_Register object (mmgRegisterObj) owns the editor as a
+ * direct child – i.e., the editor IS one of the Register pages.  All other
+ * pages are lightweight Rectangle placeholders.  On a tab switch, we use
+ * MUIM_Group_MoveMember to move the editorObj to the new active page index
+ * so it is always the visible page, then switch UTED_CurrentContext to load
+ * the right text buffer.
+ *
+ * This avoids the "empty pages take up half the layout" problem that occurs
+ * when the editor lives outside the Register: here every page has the same
+ * maximum size (the editor's size when it is in that slot), so MUI's page
+ * area is always correctly sized.
  */
 
 #include "mmgtabs.h"
@@ -12,7 +19,6 @@
 #include <exec/memory.h>
 #include <proto/exec.h>
 #include <proto/intuition.h>
-#include <proto/muimaster.h>
 #include <proto/alib.h>
 #include <libraries/mui.h>
 #include <gadgets/unitexteditor.h>
@@ -21,6 +27,7 @@
 #include <stdlib.h>
 
 #include "../EmojiGear/eglocale.h"
+#include "muimojiGear.h"   /* MUI_NewObjectB */
 
 /* =========================================================================
  * Tab state
@@ -49,9 +56,6 @@ void (*mmgOnUIChanged)(void) = NULL;
  * =========================================================================
  */
 
-/* Retrieve the raw Intuition gadget and window pointers from MUI objects.
- * Needed for SetGadgetAttrs() / RefreshGList() which require the real
- * Intuition structs, not the MUI wrapper objects. */
 static void getRawEditorWin(struct Gadget **gOut, struct Window **wOut)
 {
     *gOut = NULL; *wOut = NULL;
@@ -110,6 +114,19 @@ void MmgTabs_SwitchTo(int newIdx)
     mmgTabCurrentIndex = newIdx;
     ctxKey = mmgTabContextNames[newIdx] ? mmgTabContextNames[newIdx] : "";
 
+    /* Move editor to position newIdx within the Register so it becomes the
+     * visible page.  pos=0 → first child; pos=N → after Nth child (1-based).
+     * Both map to 0-indexed final position newIdx. */
+    DoMethod(mmgRegisterObj, MUIM_Group_InitChange);
+    DoMethod(mmgRegisterObj, MUIM_Group_MoveMember,
+             (ULONG)mmgEditorObj, (ULONG)newIdx);
+    /* Only update ActivePage if the Register hasn't already changed it
+     * (e.g., we were called from the ActivePage notification). */
+    GetAttr(MUIA_Group_ActivePage, mmgRegisterObj, &activePage);
+    if ((int)activePage != newIdx)
+        SetAttrs(mmgRegisterObj, MUIA_Group_ActivePage, (ULONG)newIdx, TAG_DONE);
+    DoMethod(mmgRegisterObj, MUIM_Group_ExitChange);
+
     getRawEditorWin(&g, &w);
     if (g && w) {
         SetGadgetAttrs(g, w, NULL,
@@ -117,25 +134,18 @@ void MmgTabs_SwitchTo(int newIdx)
         RefreshGList(g, w, NULL, 1);
     }
 
-    /* Sync Register visual selection; guard against notification feedback loop */
-    if (mmgRegisterObj) {
-        GetAttr(MUIA_Group_ActivePage, mmgRegisterObj, &activePage);
-        if ((int)activePage != newIdx)
-            SetAttrs(mmgRegisterObj, MUIA_Group_ActivePage, (ULONG)newIdx, TAG_DONE);
-    }
-
     if (mmgOnUIChanged) mmgOnUIChanged();
 }
 
 void MmgTabs_Add(const char *key)
 {
+    Object *placeholder;
     char   *keyCopy;
-    Object *newPage;
     int     newIdx;
     struct Gadget *g; struct Window *w;
 
     if (!key || mmgTabCount >= MMG_MAX_TABS) return;
-    if (!mmgRegisterObj) return;
+    if (!mmgRegisterObj || !mmgEditorObj) return;
 
     keyCopy = (char *)AllocVec((ULONG)strlen(key) + 1, MEMF_ANY);
     if (!keyCopy) return;
@@ -146,13 +156,10 @@ void MmgTabs_Add(const char *key)
     mmgTabTitles[mmgTabCount]       = mmgTabLabels[mmgTabCount];
     mmgTabTitles[mmgTabCount + 1]   = NULL;
 
-    /* Empty placeholder page: VertWeight 0 so it contributes no height */
-    newPage = MUI_NewObjectA(MUIC_Rectangle,
-        (struct TagItem []) {
-            { MUIA_VertWeight, 0 },
-            { TAG_DONE,        0 }
-        });
-    if (!newPage) {
+    /* Placeholder that occupies the new slot in the Register child list when
+     * the editor is elsewhere.  MUI disposes it when the application exits. */
+    placeholder = MUI_NewObjectB(MUIC_Rectangle, TAG_DONE);
+    if (!placeholder) {
         FreeVec(keyCopy);
         mmgTabContextNames[mmgTabCount] = NULL;
         mmgTabTitles[mmgTabCount]       = NULL;
@@ -161,15 +168,19 @@ void MmgTabs_Add(const char *key)
 
     newIdx = mmgTabCount;
     mmgTabCount++;
+    mmgTabCurrentIndex = newIdx;
 
-    /* Insert the new page and update titles atomically */
+    /* Atomically: append placeholder, refresh titles, move editor to newIdx,
+     * set the active page.  InitChange suppresses redraws during the change. */
     DoMethod(mmgRegisterObj, MUIM_Group_InitChange);
-    DoMethod(mmgRegisterObj, OM_ADDMEMBER, (ULONG)newPage);
-    SetAttrs(mmgRegisterObj, MUIA_Register_Titles, (ULONG)mmgTabTitles, TAG_DONE);
+    DoMethod(mmgRegisterObj, MUIM_Group_AddTail,    (ULONG)placeholder);
+    SetAttrs(mmgRegisterObj, MUIA_Register_Titles,  (ULONG)mmgTabTitles, TAG_DONE);
+    DoMethod(mmgRegisterObj, MUIM_Group_MoveMember,
+             (ULONG)mmgEditorObj, (ULONG)newIdx);
+    SetAttrs(mmgRegisterObj, MUIA_Group_ActivePage, (ULONG)newIdx, TAG_DONE);
     DoMethod(mmgRegisterObj, MUIM_Group_ExitChange);
 
     /* Switch editor to the fresh empty context */
-    mmgTabCurrentIndex = newIdx;
     getRawEditorWin(&g, &w);
     if (g && w) {
         SetGadgetAttrs(g, w, NULL,
@@ -178,7 +189,6 @@ void MmgTabs_Add(const char *key)
                        TAG_DONE);
         RefreshGList(g, w, NULL, 1);
     }
-    SetAttrs(mmgRegisterObj, MUIA_Group_ActivePage, (ULONG)newIdx, TAG_DONE);
 
     if (mmgOnUIChanged) mmgOnUIChanged();
 }

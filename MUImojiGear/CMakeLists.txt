@@ -20,6 +20,7 @@ set(MUIMOJIGEARSOURCES
     mmgaction.c         mmgaction.h
     mmgemojibox.c       mmgemojibox.h
     mmgfontsview.c      mmgfontsview.h
+    mmgtabs.c           mmgtabs.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../EmojiGear/eglocale.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../EmojiGear/tooltypepref.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../EmojiGear/egpipeinput.c

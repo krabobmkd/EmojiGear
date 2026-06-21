@@ -60,6 +60,7 @@
 #include "mmgemojibox.h"
 #include "mmgfontsview.h"
 #include "mmgaction.h"
+#include "mmgtabs.h"
 #include "muimojiGear.h"   /* struct App, app, App_GetRawEditorWin, App_UpdateStatus */
 
 //was a test #define DISABLE_EMOJIBOX 1
@@ -135,6 +136,7 @@ MUI_NewObjectB(const char *cl, Tag tags, ...)
 #define RID_TOGGLE_TABSSPACES  37
 #define RID_TOGGLE_MONOSPACE   81
 #define RID_TOGGLE_DISPLAYUNICODEINFO 82
+#define RID_TAB_SWITCH         83
 #define RID_COLOR_BASE         38   /* 38..43: one per color preset (0=System colors) */
 #define MMG_NUM_COLOR_PRESETS   6
 #define RID_RECENT_BASE        44   /* 44..51: one per recent slot  */
@@ -248,6 +250,8 @@ static void doEditAction(ULONG attr)
 /* #define STACK_WATCH 1 */
 #define MMG_MIN_STACK (28 * 1024)
 
+static void onTabUIChanged(void) { App_UpdateStatus(); }
+
 /* =========================================================================
  * main
  * =========================================================================
@@ -348,6 +352,10 @@ int main(int argc, char *argv[])
     mmgMainTask = FindTask(NULL);
     if (!MmgBoopsi_Init()) {
         puts("ERROR: MmgBoopsi_Init failed");
+        exitCode = 1; goto cleanup;
+    }
+    if (!MmgTabs_Init()) {
+        puts("ERROR: MmgTabs_Init failed");
         exitCode = 1; goto cleanup;
     }
 
@@ -624,10 +632,18 @@ int main(int argc, char *argv[])
             SetAttrs(app->emojiBtnObj, UBT_AddFont, (ULONG)app->settings.primaryFontPath, TAG_DONE);
     }
 
+    /* Register tab bar: editorObj is its first (and initially only) child.
+     * Additional tabs append a Rectangle placeholder and use MoveMember to
+     * keep the editor at the active page position. */
+    app->registerObj = MUI_NewObjectB(MUIC_Register,
+        MUIA_Register_Titles, (ULONG)mmgTabTitles,
+        MUIA_Group_Child,     (ULONG)app->editorObj,
+        TAG_DONE);
+
     editorAndVGroup = MUI_NewObjectB(MUIC_Group,
         MUIA_Group_Horiz,    TRUE,
         MUIA_Group_Spacing,  1,
-        MUIA_Group_Child,    (ULONG)app->editorObj,
+        MUIA_Group_Child,    (ULONG)app->registerObj,
         MUIA_Group_Child,    (ULONG)app->vScrollBar,
         TAG_DONE);
 
@@ -667,16 +683,28 @@ int main(int argc, char *argv[])
         MUIA_Application_Menustrip,   (ULONG)menustrip,
         TAG_DONE);
 
-    if (!app->editorObj || !app->winObj || !app->appObj) {
+    if (!app->editorObj || !app->registerObj || !app->winObj || !app->appObj) {
         puts("ERROR: failed to build MUI object hierarchy");
         exitCode = 1; goto cleanup;
     }
+
+    /* Expose MUI objects to the tab module */
+    mmgRegisterObj  = app->registerObj;
+    mmgEditorObj    = app->editorObj;
+    mmgWinObj       = app->winObj;
+    mmgOnUIChanged  = onTabUIChanged;
 
     /* Wire emoji box MUI notifications now that appObj exists */
 #ifndef DISABLE_EMOJIBOX
     MmgEmojiBox_Init();
 #endif
     MmgFontsView_Init();
+
+    /* Tab switch: fires when the user clicks a tab button */
+    DoMethod(app->registerObj, MUIM_Notify,
+             MUIA_Group_ActivePage, MUIV_EveryTime,
+             app->appObj, 2, MUIM_Application_ReturnID, RID_TAB_SWITCH);
+
     /* ------------------------------------------------------------------ */
     /* Notifications                                                        */
     /* ------------------------------------------------------------------ */
@@ -771,6 +799,16 @@ int main(int argc, char *argv[])
         MUIA_Window_ActiveObject, (ULONG)app->editorObj,
         TAG_DONE);
 
+    /* Establish the initial context for tab 0 now that the window is open
+     * and the underlying Intuition gadget is attached. */
+    {
+        struct Gadget *g; struct Window *w;
+        App_GetRawEditorWin(&g, &w);
+        if (g && w && mmgTabContextNames[0])
+            SetGadgetAttrs(g, w, NULL,
+                UTED_CurrentContext, (ULONG)mmgTabContextNames[0], TAG_DONE);
+    }
+
     /* colors from settiongs need to be applied when window have a screen */
     if(app->settings.colorsWereLoaded)
     {
@@ -817,14 +855,17 @@ int main(int argc, char *argv[])
                 running = FALSE;
                 break;
 
-            case RID_NEW_FILE: {
-                struct Gadget *g; struct Window *w;
-                App_GetRawEditorWin(&g, &w);
-                if (g && w) {
-                    SetGadgetAttrs(g, w, NULL, UTED_Text, (ULONG)"", TAG_DONE);
-                    RefreshGList(g, w, NULL, 1);
-                    App_UpdateStatus();
-                }
+            case RID_NEW_FILE:
+                MmgTabs_NewFile();
+                App_UpdateStatus();
+                reactivateEditor = TRUE;
+                break;
+
+            case RID_TAB_SWITCH: {
+                ULONG newPage = 0;
+                GetAttr(MUIA_Group_ActivePage, app->registerObj, &newPage);
+                MmgTabs_SwitchTo((int)newPage);
+                reactivateEditor = TRUE;
                 break;
             }
 
@@ -1089,6 +1130,7 @@ cleanup:
         MmgEmojiBox_Dispose();  /* free grid class + DC after MUI objects are gone */
         MmgFontsView_Dispose();
 #endif
+        MmgTabs_Close();
         AppSettings_Save(&app->settings);
         AppSettings_Close(&app->settings);
 

@@ -21,6 +21,7 @@ struct App {
     /* Core MUI objects */
     Object    *appObj;
     Object    *winObj;
+    Object    *registerObj;  /* MUIC_Register – tab bar, editorObj is one of its children */
     Object    *editorObj;
     Object    *statusObj;
     Object    *vScrollBar;
