@@ -100,7 +100,7 @@ MUI_NewObjectB(const char *cl, Tag tags, ...)
  */
 #define MMG_APPBASE       "MUIMOJIGEAR"
 #define PIPE_INPUT_BUF    1024
-#define MMG_VERSION  "$VER: MUImojiGear 4.1 (2026)"
+#define MMG_VERSION  "$VER: MUImojiGear 4.3 (2026)"
 #define GID_EDITOR        1
 #define GID_EMOJI_BUTTON  2
 #define GID_EMOJI_GRID    3
