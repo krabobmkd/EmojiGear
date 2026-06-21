@@ -1,0 +1,297 @@
+/*
+ * FriendSh3ep network process - Mastodon REST API calls.
+ *
+ * See fs3enet_mastodon.h for the public API and ../ARCHITECTURE.md section 3
+ * for the brutaldon call sequence this mirrors.
+ */
+
+#include "fs3enet_mastodon.h"
+#include "fs3enet_http.h"
+
+#include <stdio.h>
+#include <string.h>
+
+static const char FS3EMASTODON_HEX[] = "0123456789ABCDEF";
+
+/* application/x-www-form-urlencoded percent-encoding: unreserved chars
+ * pass through, space becomes '+', everything else is %XX. */
+static void FS3EMastodon_UrlEncode(const char *src, char *dst, ULONG dstSize)
+{
+    ULONG di = 0;
+
+    for (; *src && di + 4 < dstSize; src++)
+    {
+        unsigned char c = (unsigned char)*src;
+
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+            (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~')
+        {
+            dst[di++] = (char)c;
+        }
+        else if (c == ' ')
+        {
+            dst[di++] = '+';
+        }
+        else
+        {
+            dst[di++] = '%';
+            dst[di++] = FS3EMASTODON_HEX[c >> 4];
+            dst[di++] = FS3EMASTODON_HEX[c & 0x0F];
+        }
+    }
+
+    dst[di] = '\0';
+}
+
+/* Copies the string value of obj[key] into dst (NUL-terminated, truncated
+ * to dstSize); dst is "" if the key is missing or not a string. */
+static void FS3EMastodon_CopyJsonString(const cJSON *obj, const char *key,
+                                       char *dst, ULONG dstSize)
+{
+    const cJSON *item = cJSON_GetObjectItemCaseSensitive(obj, key);
+
+    dst[0] = '\0';
+
+    if (item && cJSON_IsString(item) && item->valuestring)
+    {
+        strncpy(dst, item->valuestring, dstSize - 1);
+        dst[dstSize - 1] = '\0';
+    }
+}
+
+static void FS3EMastodon_BuildAuthHeader(char *dst, ULONG dstSize, const char *accessToken)
+{
+    snprintf(dst, dstSize, "Bearer %s", accessToken);
+}
+
+BOOL FS3EMastodon_CreateApp(const char *apiBaseUrl, const char *clientName,
+                           char *outClientId, ULONG clientIdSize,
+                           char *outClientSecret, ULONG clientSecretSize)
+{
+    char url[256];
+    char body[512];
+    char encName[128];
+    char encRedirect[128];
+    char encScopes[64];
+    FS3EHttpResponse resp;
+    cJSON *json;
+    BOOL ok = FALSE;
+
+    FS3EMastodon_UrlEncode(clientName, encName, sizeof(encName));
+    FS3EMastodon_UrlEncode(FS3EMASTODON_OOB_REDIRECT_URI, encRedirect, sizeof(encRedirect));
+    FS3EMastodon_UrlEncode(FS3EMASTODON_SCOPES, encScopes, sizeof(encScopes));
+
+    snprintf(body, sizeof(body),
+        "client_name=%s&redirect_uris=%s&scopes=%s&website=",
+        encName, encRedirect, encScopes);
+
+    snprintf(url, sizeof(url), "%s/api/v1/apps", apiBaseUrl);
+
+    if (!FS3EHttp_Post(url, NULL, "application/x-www-form-urlencoded",
+                     body, strlen(body), &resp))
+        return FALSE;
+
+    json = cJSON_Parse((char *)resp.fhr_Body);
+    if (json)
+    {
+        FS3EMastodon_CopyJsonString(json, "client_id", outClientId, clientIdSize);
+        FS3EMastodon_CopyJsonString(json, "client_secret", outClientSecret, clientSecretSize);
+
+        ok = (outClientId[0] != '\0' && outClientSecret[0] != '\0');
+
+        cJSON_Delete(json);
+    }
+
+    FS3EHttp_FreeResponse(&resp);
+
+    return ok;
+}
+
+void FS3EMastodon_BuildAuthorizeURL(const char *apiBaseUrl, const char *clientId,
+                                   char *outUrl, ULONG outUrlSize)
+{
+    char encRedirect[128];
+    char encScopes[64];
+
+    FS3EMastodon_UrlEncode(FS3EMASTODON_OOB_REDIRECT_URI, encRedirect, sizeof(encRedirect));
+    FS3EMastodon_UrlEncode(FS3EMASTODON_SCOPES, encScopes, sizeof(encScopes));
+
+    snprintf(outUrl, outUrlSize,
+        "%s/oauth/authorize?response_type=code&client_id=%s&redirect_uri=%s&scope=%s",
+        apiBaseUrl, clientId, encRedirect, encScopes);
+}
+
+BOOL FS3EMastodon_ExchangeCode(const char *apiBaseUrl, const char *clientId,
+                              const char *clientSecret, const char *code,
+                              char *outAccessToken, ULONG outAccessTokenSize)
+{
+    char url[256];
+    char body[1024];
+    char encRedirect[128];
+    char encScopes[64];
+    char encCode[256];
+    FS3EHttpResponse resp;
+    cJSON *json;
+    BOOL ok = FALSE;
+
+    FS3EMastodon_UrlEncode(FS3EMASTODON_OOB_REDIRECT_URI, encRedirect, sizeof(encRedirect));
+    FS3EMastodon_UrlEncode(FS3EMASTODON_SCOPES, encScopes, sizeof(encScopes));
+    FS3EMastodon_UrlEncode(code, encCode, sizeof(encCode));
+
+    snprintf(body, sizeof(body),
+        "client_id=%s&client_secret=%s&redirect_uri=%s"
+        "&grant_type=authorization_code&code=%s&scope=%s",
+        clientId, clientSecret, encRedirect, encCode, encScopes);
+
+    snprintf(url, sizeof(url), "%s/oauth/token", apiBaseUrl);
+
+    if (!FS3EHttp_Post(url, NULL, "application/x-www-form-urlencoded",
+                     body, strlen(body), &resp))
+        return FALSE;
+
+    json = cJSON_Parse((char *)resp.fhr_Body);
+    if (json)
+    {
+        FS3EMastodon_CopyJsonString(json, "access_token", outAccessToken, outAccessTokenSize);
+
+        ok = (outAccessToken[0] != '\0');
+
+        cJSON_Delete(json);
+    }
+
+    FS3EHttp_FreeResponse(&resp);
+
+    return ok;
+}
+
+BOOL FS3EMastodon_VerifyCredentials(const char *apiBaseUrl, const char *accessToken,
+                                   FS3EMastodonAccount *outAccount)
+{
+    char url[256];
+    char authHeader[300];
+    FS3EHttpHeader headers[2];
+    FS3EHttpResponse resp;
+    cJSON *json;
+    BOOL ok = FALSE;
+
+    snprintf(url, sizeof(url), "%s/api/v1/accounts/verify_credentials", apiBaseUrl);
+    FS3EMastodon_BuildAuthHeader(authHeader, sizeof(authHeader), accessToken);
+
+    headers[0].fhh_Name  = "Authorization";
+    headers[0].fhh_Value = authHeader;
+    headers[1].fhh_Name  = NULL;
+    headers[1].fhh_Value = NULL;
+
+    if (!FS3EHttp_Get(url, headers, &resp))
+        return FALSE;
+
+    json = cJSON_Parse((char *)resp.fhr_Body);
+    if (json)
+    {
+        FS3EMastodon_CopyJsonString(json, "id", outAccount->fma_Id, sizeof(outAccount->fma_Id));
+        FS3EMastodon_CopyJsonString(json, "username", outAccount->fma_Username, sizeof(outAccount->fma_Username));
+        FS3EMastodon_CopyJsonString(json, "acct", outAccount->fma_Acct, sizeof(outAccount->fma_Acct));
+        FS3EMastodon_CopyJsonString(json, "display_name", outAccount->fma_DisplayName, sizeof(outAccount->fma_DisplayName));
+        FS3EMastodon_CopyJsonString(json, "avatar", outAccount->fma_AvatarURL, sizeof(outAccount->fma_AvatarURL));
+
+        ok = (outAccount->fma_Id[0] != '\0');
+
+        cJSON_Delete(json);
+    }
+
+    FS3EHttp_FreeResponse(&resp);
+
+    return ok;
+}
+
+BOOL FS3EMastodon_GetTimeline(const char *apiBaseUrl, const char *accessToken,
+                             const char *timeline, cJSON **outJson)
+{
+    char url[256];
+    char authHeader[300];
+    FS3EHttpHeader headers[2];
+    FS3EHttpResponse resp;
+    cJSON *json;
+
+    *outJson = NULL;
+
+    snprintf(url, sizeof(url), "%s/api/v1/timelines/%s", apiBaseUrl, timeline);
+    FS3EMastodon_BuildAuthHeader(authHeader, sizeof(authHeader), accessToken);
+
+    headers[0].fhh_Name  = "Authorization";
+    headers[0].fhh_Value = authHeader;
+    headers[1].fhh_Name  = NULL;
+    headers[1].fhh_Value = NULL;
+
+    if (!FS3EHttp_Get(url, headers, &resp))
+        return FALSE;
+
+    json = cJSON_Parse((char *)resp.fhr_Body);
+
+    FS3EHttp_FreeResponse(&resp);
+
+    if (!json || !cJSON_IsArray(json))
+    {
+        if (json)
+            cJSON_Delete(json);
+
+        return FALSE;
+    }
+
+    *outJson = json;
+
+    return TRUE;
+}
+
+BOOL FS3EMastodon_PostStatus(const char *apiBaseUrl, const char *accessToken,
+                            const char *statusText, const char *visibility,
+                            char *outStatusId, ULONG outStatusIdSize)
+{
+    char url[256];
+    char authHeader[300];
+    FS3EHttpHeader headers[2];
+    FS3EHttpResponse resp;
+    cJSON *reqJson, *json;
+    char *reqBody;
+    BOOL ok = FALSE;
+
+    reqJson = cJSON_CreateObject();
+    if (!reqJson)
+        return FALSE;
+
+    cJSON_AddStringToObject(reqJson, "status", statusText);
+    cJSON_AddStringToObject(reqJson, "visibility", visibility ? visibility : "public");
+
+    reqBody = cJSON_PrintUnformatted(reqJson);
+    cJSON_Delete(reqJson);
+
+    if (!reqBody)
+        return FALSE;
+
+    snprintf(url, sizeof(url), "%s/api/v1/statuses", apiBaseUrl);
+    FS3EMastodon_BuildAuthHeader(authHeader, sizeof(authHeader), accessToken);
+
+    headers[0].fhh_Name  = "Authorization";
+    headers[0].fhh_Value = authHeader;
+    headers[1].fhh_Name  = NULL;
+    headers[1].fhh_Value = NULL;
+
+    if (FS3EHttp_Post(url, headers, "application/json", reqBody, strlen(reqBody), &resp))
+    {
+        json = cJSON_Parse((char *)resp.fhr_Body);
+        if (json)
+        {
+            FS3EMastodon_CopyJsonString(json, "id", outStatusId, outStatusIdSize);
+
+            ok = (outStatusId[0] != '\0');
+
+            cJSON_Delete(json);
+        }
+
+        FS3EHttp_FreeResponse(&resp);
+    }
+
+    cJSON_free(reqBody);
+
+    return ok;
+}
