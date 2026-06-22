@@ -15,13 +15,13 @@
 ;
 
 (set #app-name    "EmojiGear")
-(set #app-version "v4.2")
+(set #app-version "v4.3")
 (set #app-default "Work:")
 
 ; Library/gadget versions we are shipping
-(set #urp-ver   (+ (* 3 65536) 1))   ; utf8rastport.library  v4.1
-(set #uted-ver  (+ (* 3 65536) 1))   ; unitexteditor.gadget  v4.1
-(set #ubtn-ver  (+ (* 3 65536) 1))   ; unibutton.gadget      v4.1
+(set #urp-ver   (+ (* 4 65536) 3))   ; utf8rastport.library  v4.3
+(set #uted-ver  (+ (* 4 65536) 3))   ; unitexteditor.gadget  v4.3
+(set #ubtn-ver  (+ (* 4 65536) 3))   ; unibutton.gadget      v4.3
 
 ; ---------------------------------------------------------------------------
 ; Welcome
@@ -103,25 +103,34 @@
 ; ---------------------------------------------------------------------------
 (set #urp-installed (getversion "Libs:utf8rastport.library"))
 
-(if (>= #urp-installed #urp-ver)
-    (
-        (message
-            (cat
-                "utf8rastport.library v"
-                (/ #urp-installed 65536)
-                " is already installed and is at least as recent as\n"
-                "the one included here.  Skipping -- your version wins!\n"
-            )
-        )
-    )
-    (
-        (working "Installing utf8rastport.library to Libs: ...")
-        (copyfiles
-            (source "bin/utf8rastport.library")
-            (dest "Libs:")
-        )
-    )
+; -- VERSION GATE (disabled for v4.3: always install) -------------------------
+; To re-enable version checking, remove the unconditional block below and
+; uncomment the if block:
+;(if (>= #urp-installed #urp-ver)
+;    (
+;        (message
+;            (cat
+;                "utf8rastport.library v"
+;                (/ #urp-installed 65536)
+;                " is already installed and is at least as recent as\n"
+;                "the one included here.  Skipping -- your version wins!\n"
+;            )
+;        )
+;    )
+;    (
+;        (working "Installing utf8rastport.library to Libs: ...")
+;        (copyfiles
+;            (source "bin/utf8rastport.library")
+;            (dest "Libs:")
+;        )
+;    )
+;)
+(working "Installing utf8rastport.library to Libs: ...")
+(copyfiles
+    (source "bin/utf8rastport.library")
+    (dest "Libs:")
 )
+; -- end version gate ----------------------------------------------------------
 
 (complete 20)
 
@@ -131,26 +140,36 @@
 (set #uted-dest "SYS:Classes/Gadgets/")
 (set #uted-installed (getversion (tackon #uted-dest "unitexteditor.gadget")))
 
-(if (>= #uted-installed #uted-ver)
-    (
-        (message
-            (cat
-                "unitexteditor.gadget v"
-                (/ #uted-installed 65536)
-                " is already installed and is at least as recent.\n"
-                "Skipping -- steady on!"
-            )
-        )
-    )
-    (
-        (working "Installing unitexteditor.gadget to SYS:Classes/Gadgets/ ...")
-        (makedir #uted-dest)
-        (copyfiles
-            (source "bin/unitexteditor.gadget")
-            (dest #uted-dest)
-        )
-    )
+; -- VERSION GATE (disabled for v4.3: always install) -------------------------
+; To re-enable version checking, remove the unconditional block below and
+; uncomment the if block:
+;(if (>= #uted-installed #uted-ver)
+;    (
+;        (message
+;            (cat
+;                "unitexteditor.gadget v"
+;                (/ #uted-installed 65536)
+;                " is already installed and is at least as recent.\n"
+;                "Skipping -- steady on!"
+;            )
+;        )
+;    )
+;    (
+;        (working "Installing unitexteditor.gadget to SYS:Classes/Gadgets/ ...")
+;        (makedir #uted-dest)
+;        (copyfiles
+;            (source "bin/unitexteditor.gadget")
+;            (dest #uted-dest)
+;        )
+;    )
+;)
+(working "Installing unitexteditor.gadget to SYS:Classes/Gadgets/ ...")
+(makedir #uted-dest)
+(copyfiles
+    (source "bin/unitexteditor.gadget")
+    (dest #uted-dest)
 )
+; -- end version gate ----------------------------------------------------------
 
 (complete 35)
 
@@ -159,25 +178,34 @@
 ; ---------------------------------------------------------------------------
 (set #ubtn-installed (getversion (tackon #uted-dest "unibutton.gadget")))
 
-(if (>= #ubtn-installed #ubtn-ver)
-    (
-        (message
-            (cat
-                "unibutton.gadget v"
-                (/ #ubtn-installed 65536)
-                " is already installed and is at least as recent.\n"
-                "Skipping!"
-            )
-        )
-    )
-    (
-        (working "Installing unibutton.gadget to SYS:Classes/Gadgets/ ...")
-        (copyfiles
-            (source "bin/unibutton.gadget")
-            (dest #uted-dest)
-        )
-    )
+; -- VERSION GATE (disabled for v4.3: always install) -------------------------
+; To re-enable version checking, remove the unconditional block below and
+; uncomment the if block:
+;(if (>= #ubtn-installed #ubtn-ver)
+;    (
+;        (message
+;            (cat
+;                "unibutton.gadget v"
+;                (/ #ubtn-installed 65536)
+;                " is already installed and is at least as recent.\n"
+;                "Skipping!"
+;            )
+;        )
+;    )
+;    (
+;        (working "Installing unibutton.gadget to SYS:Classes/Gadgets/ ...")
+;        (copyfiles
+;            (source "bin/unibutton.gadget")
+;            (dest #uted-dest)
+;        )
+;    )
+;)
+(working "Installing unibutton.gadget to SYS:Classes/Gadgets/ ...")
+(copyfiles
+    (source "bin/unibutton.gadget")
+    (dest #uted-dest)
 )
+; -- end version gate ----------------------------------------------------------
 
 (complete 50)
 
