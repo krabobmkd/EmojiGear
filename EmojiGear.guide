@@ -1,11 +1,11 @@
 @DATABASE EmojiGear.guide
-@$VER: EmojiGear.guide 4.2 (13.06.2026)
+@$VER: EmojiGear.guide 4.3 (22.06.2026)
 @AUTHOR krabobmkd
 @(C) 2026 krabobmkd
 @MASTER PROGDIR:EmojiGear.guide
 @NODE MAIN "EmojiGear - Unicode Text Editor"
 
-@{b}EmojiGear v4.2@{ub}
+@{b}EmojiGear v4.3@{ub}
 Unicode Text Editor for AmigaOS 3.2.x (68k)
 
 @{i}A UTF-8 text editor with full Emoji and Unicode support,@{ui}
@@ -44,6 +44,7 @@ safer as a result.
 
 EmojiGear is a Unicode-aware plain-text editor for AmigaOS 3.2.x (68k).
 It can open, edit, and save text files encoded as UTF-8, ISO Latin-1,
+(That is your legacy Amiga text format of all times.)
 or ISO Latin-2, and renders all characters -- including colour Emoji --
 using a built-in FreeType 2 engine.
 
@@ -143,10 +144,6 @@ A status bar at the bottom of the window shows:
   @{b}*@{ub}  The current line and column number.
   @{b}*@{ub}  The file path of the active document.
 
-@{u}Encoding display@{uu}
-
-When a file was loaded as Latin-1 or Latin-2 the status bar reflects
-this so you know what encoding is active.
 
 @{" Back to Contents " LINK MAIN}
 @ENDNODE
@@ -206,11 +203,14 @@ document occupies a tab in the tab bar near the top of the window.
     Opens a file requester and loads the chosen file as UTF-8.
 
   @{b}Load ISO Latin-1 Text...@{ub}
-    As above, but decodes the file as ISO 8859-1 (Western European).
+    As above, but decodes the file as ISO 8859-1 (Western European),
+    Which is the official text encoding on Amiga OS3.
 
   @{b}Load ISO Latin-2 Text...@{ub}
     As above, but decodes the file as ISO 8859-2 (Central European).
-
+    Which is the official text encoding on Amiga OS3, for these countries,
+    if configured like this.
+     
   @{b}Open Recent@{ub}
     Sub-menu listing the last 8 files opened.  Shows filename and
     encoding.  Only visible when at least one file has been opened.
@@ -227,10 +227,10 @@ document occupies a tab in the tab bar near the top of the window.
 
   @{b}Save As ISO Latin-1 Text...@{ub}
     Saves with ISO 8859-1 encoding.  Characters that cannot be
-    represented are lost.
+    represented are encoded with slach-x syntax.
 
   @{b}Save As ISO Latin-2 Text...@{ub}
-    As above, for ISO 8859-2.
+    As above, for ISO 8859-2, You may need this for east european countries.
 
   @{b}About EmojiGear...@{ub}
     Shows the About page in a dedicated tab.
@@ -247,10 +247,12 @@ document occupies a tab in the tab bar near the top of the window.
     Copies the selection to the clipboard as UTF-8.
 
   @{b}Copy As ISO Latin-1@{ub}
-    Copies, converting to Latin-1.
+    Copies, converting to Latin-1 when characters allow, else slach-x syntax.
+    Latin-1 is the Amiga default text format, so use this if you may paste 
+    in other Amiga text editor.
 
   @{b}Copy As ISO Latin-2@{ub}
-    Copies, converting to Latin-2.
+    Copies, converting to Latin-2 (east europe).
 
   @{b}Paste UTF-8@{ub}                       (Amiga-V)
     Pastes UTF-8 text from the clipboard.
@@ -557,6 +559,8 @@ EmojiGear works internally in UTF-8 and converts on load and save.
   Western European: French, German, Spanish, Italian, English, etc.
   Byte values 0xA0-0xFF map directly to U+00A0-U+00FF.
   Use @{b}Load ISO Latin-1@{ub} or pass @{b}Latin1@{ub} on the Shell command line.
+  This is the Amiga OS3 encoding since the age of times, most OSes in
+  the 90's would also use that.
 
 @{u}ISO Latin-2  (ISO 8859-2)@{uu}
 

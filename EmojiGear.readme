@@ -2,11 +2,24 @@ Short:        UTF-8/Unicode text editor+Emoji+gadgets
 Author:       krabobmkd
 Uploader:     victorien.ferry@free.fr
 Type:         text/edit
-Version:      4.2
+Version:      4.3
 Architecture: m68k-amigaos >= 3.0
 Requires:     68020, better with OS 3.2.x, 8 MB Fast RAM
-Replaces:     text/edit/EmojiGear3.1.lha
+Replaces:     text/edit/EmojiGear4.2.lha
 
+------------------------- Version 4.3
+
+ Just a little update because r4.2  had
+ problems with OS3.9 Installer, and some binaries were
+ not 100% Amiga compliant. Now they are.
+ From now on the installer will no more check previous
+ binaries versions, everything will be updated
+ to the version of the current package.
+ 
+ + fear face + dancer in "Popular Emojis" set.
+ + font selector actually test format before loading font,
+   prevent crash from bad font files. 
+  
 ------------------------- Version 4
 
  Again mostly a correction release ! 
