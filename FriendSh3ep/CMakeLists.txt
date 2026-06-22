@@ -25,6 +25,15 @@ set(FRIENDSH3EP_SOURCES
     fs3eloginview.c
     fs3etootview.c
     fs3elocale.c
+    UniButtonP9/unibuttonp9.c
+    UniButtonP9/unibuttonp9_dispatch.c
+    UniButtonP9/unibuttonp9_attribs.c
+    UniButtonP9/unibuttonp9_render.c
+    UniButtonP9/unibuttonp9_input.c
+    UniButtonP9/offscreenbm.c
+    TitleBarLayout/fs3etitlebar.c
+    NavBarLayout/fs3enavbar.c
+    TootTimeline/fs3etoottimeline.c
 )
 
 # Listed so IDEs (Qt Creator, etc.) show them in the project tree.
@@ -38,6 +47,10 @@ set(FRIENDSH3EP_HEADERS
     fs3egadgetid.h
     compilers.h
     bdbprintf.h
+    UniButtonP9/unibuttonp9.h
+    TitleBarLayout/fs3etitlebar.h
+    NavBarLayout/fs3enavbar.h
+    TootTimeline/fs3etoottimeline.h
 )
 
 add_executable(FriendSh3ep ${FRIENDSH3EP_SOURCES} ${FRIENDSH3EP_HEADERS})

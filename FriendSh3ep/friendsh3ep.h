@@ -9,29 +9,47 @@
 #include <exec/types.h>
 #include <exec/ports.h>
 #include <intuition/classusr.h>
+#include <libraries/utf8rastport.h>
 
 #include "fs3eboopsimainwindow.h"
 #include "fs3eloginview.h"
 #include "fs3etootview.h"
 
-#define FRIENDSH3EP_VERSION "0.1"
+#define FRIENDSH3EP_VERSION "0.2"
 
-/* Application struct: holds every persistent BOOPSI object and IPC handle,
- * in the same spirit as EmojiGear's struct App. */
+/* Application struct: holds every persistent BOOPSI object and IPC handle. */
 struct App {
-    Object *window_obj;       /* window.class object (persistent) */
-    struct MsgPort *app_port; /* needed to keep receiving messages while iconified */
+    Object *window_obj;        /* window.class object (persistent) */
+    struct MsgPort *app_port;  /* needed to keep receiving messages while iconified */
 
     FS3EMainWindow mainwindow;
 
-    /* main layout (layout.gadget) and its children */
+    /* Root vertical layout (Part A + B + C) */
     Object *mainlayout;
-    Object *titleLabel;
-    Object *loginButton;
-    Object *newTootButton;
 
-    /* classic BOOPSI sub-windows, opened/closed independently of the
-     * borderless main window (see fs3eloginview.h / fs3etootview.h) */
+    /* Part A: title bar (TitleBarLayoutClass).
+     * Children owned by titleBarLayout and disposed with it. */
+    Object *titleBarLayout;
+    Object *titlebar_closeBtn;       /* GID_TITLEBAR_CLOSE   */
+    Object *titlebar_iconifyBtn;     /* GID_TITLEBAR_ICONIFY */
+    Object *titlebar_altposBtn;      /* GID_TITLEBAR_ALTPOS  */
+    Object *titlebar_depthBtn;       /* GID_TITLEBAR_DEPTH   */
+    Object *titlebar_userIcon;       /* placeholder for user avatar */
+    Object *titlebar_postsLabel;     /* post count (read-only) */
+    Object *titlebar_newPostsLabel;  /* new-post count (read-only) */
+
+    /* Part B: navigation bar (NavBarLayoutClass).
+     * nav_btns[0..7] correspond to GID_NAV_HOME..GID_NAV_ACCOUNTS. */
+    Object *navBarLayout;
+    Object *nav_btns[8];
+
+    /* Part C: toot timeline (TootTimelineClass) */
+    Object *tootTimeline;
+
+    /* Shared draw context for all UniButtonP9 buttons */
+    struct URPDrawContext *buttonDC;
+
+    /* Classic BOOPSI sub-windows, opened on demand */
     FS3ELoginView loginView;
     FS3ETootView  tootView;
 
