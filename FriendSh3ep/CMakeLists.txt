@@ -19,7 +19,9 @@ add_subdirectory(network_fs3e)
 # later phases.
 
 set(FRIENDSH3EP_SOURCES
+	bdbprintf.c
     friendsh3ep.c
+    fs3estyle.c
     fs3eboopsimainwindow.c
     fs3eboopsimessage.c
     fs3eloginview.c
@@ -34,11 +36,17 @@ set(FRIENDSH3EP_SOURCES
     TitleBarLayout/fs3etitlebar.c
     NavBarLayout/fs3enavbar.c
     TootTimeline/fs3etoottimeline.c
+    TootTimeline/fs3etoottimeline_attribs.c
+    TootTimeline/fs3etoottimeline_posts.c
+    TootTimeline/fs3etoottimeline_tiles.c
+    TootTimeline/fs3etoottimeline_render.c
+    TootTimeline/fs3etoottimeline_input.c
 )
 
 # Listed so IDEs (Qt Creator, etc.) show them in the project tree.
 set(FRIENDSH3EP_HEADERS
     friendsh3ep.h
+    fs3estyle.h
     fs3eboopsimainwindow.h
     fs3eboopsimessage.h
     fs3eloginview.h
@@ -51,6 +59,7 @@ set(FRIENDSH3EP_HEADERS
     TitleBarLayout/fs3etitlebar.h
     NavBarLayout/fs3enavbar.h
     TootTimeline/fs3etoottimeline.h
+    TootTimeline/fs3etoottimeline_private.h
 )
 
 add_executable(FriendSh3ep ${FRIENDSH3EP_SOURCES} ${FRIENDSH3EP_HEADERS})
@@ -62,3 +71,6 @@ target_compile_options(FriendSh3ep PRIVATE
 )
 
 install(TARGETS FriendSh3ep ARCHIVE DESTINATION bin)
+
+
+target_compile_definitions(FriendSh3ep PRIVATE USE_DEBUG_BDBPRINT=1)

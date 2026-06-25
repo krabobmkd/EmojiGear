@@ -22,6 +22,7 @@
 
 #include "compilers.h"
 #include "bdbprintf.h"
+#include "friendsh3ep.h"
 
 #include <string.h>
 
@@ -69,6 +70,8 @@ static void GenericOpenWindow(FS3EMainWindow *mw, Object *window_obj)
 
     if (!mw->drawInfo)
         mw->drawInfo = GetScreenDrawInfo(CurrentMainScreen);
+
+    FS3EStyle_ApplyColors(&app->style, CurrentMainScreen);
 }
 
 void FS3EMain_Show(FS3EMainWindow *mw, Object *window_obj)
@@ -104,7 +107,7 @@ void FS3EMain_Show(FS3EMainWindow *mw, Object *window_obj)
     SetAttrs(window_obj,
         WA_CustomScreen, (ULONG)mw->lockedScreen,
     //    WA_Title,        (ULONG)&mw->title[0],
-    WA_Title, (ULONG)"",
+  //  WA_Title, (ULONG)"",
         WA_Top,          y1,
         WA_Left,         x1,
         WA_Width,        w,
@@ -145,6 +148,9 @@ void FS3EMain_Close(FS3EMainWindow *mw, Object *window_obj, int iconify)
         UnlockPubScreen(NULL, mw->lockedScreen);
         mw->lockedScreen = NULL;
     }
+
+    if (CurrentMainScreen)
+        FS3EStyle_ReleasePens(&app->style);
 
     CurrentMainScreen = NULL;
 }

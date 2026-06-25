@@ -23,6 +23,7 @@
 #include <gadgets/button.h>
 #include <gadgets/unitexteditor.h>
 
+#include "TitleBarLayout/fs3etitlebar.h"
 /* Maximum tag entries in the queue */
 #define BOOPSIDELAY_QUEUE_SIZE 256
 
@@ -61,6 +62,9 @@ static ULONG delayedAttribs[] = {
     UTED_ScrollTop,
 
 //    UTED_SetPrivateActivation,
+    // TBLAYOUT_DragDX,
+    // TBLAYOUT_DragDY,
+
 
 
 };

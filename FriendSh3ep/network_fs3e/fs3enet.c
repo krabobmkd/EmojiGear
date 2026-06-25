@@ -14,11 +14,75 @@
 #include <proto/exec.h>
 #include <proto/dos.h>
 
+#include <string.h>
+
 #define FS3ENET_STACK_SIZE 16384
 #define FS3ENET_PROC_NAME  "FriendSh3ep-net"
 
 /* App name FriendSh3ep registers itself under via FS3EMastodon_CreateApp(). */
 #define FS3ENET_CLIENT_NAME "AmigaOS3 FriendSh3ep Beta"
+
+/* ---- Flat-block helpers --------------------------------------------------
+ * All IPC structs are a single AllocVec block: [struct header][string data].
+ * char * fields in the struct point into the same block, so one FreeVec()
+ * frees everything.
+ */
+
+/* Returns the number of bytes needed to store s (including NUL), or 1 for
+ * NULL (we always write at least a NUL terminator). */
+static ULONG FS3ENet_PackLen(const char *s)
+{
+    return s ? (ULONG)(strlen(s) + 1) : 1;
+}
+
+/* Writes s (or an empty string) starting at *p, sets *dst = *p, advances *p
+ * by the number of bytes written. */
+static void FS3ENet_PackStr(char **dst, char **p, const char *s)
+{
+    ULONG n = s ? (ULONG)(strlen(s) + 1) : 1;
+    *dst = *p;
+    if (s)
+        CopyMem(s, *p, n);
+    else
+        **p = '\0';
+    *p += n;
+}
+
+/* ---- Public _Alloc helpers (called by the GUI before PutMsg) ------------ */
+
+FS3ENetLoginStartReq *FS3ENetLoginStartReq_Alloc(const char *apiBaseUrl)
+{
+    ULONG total = sizeof(FS3ENetLoginStartReq) + FS3ENet_PackLen(apiBaseUrl);
+    FS3ENetLoginStartReq *req =
+        (FS3ENetLoginStartReq *)AllocVec(total, MEMF_ANY);
+    char *p;
+
+    if (!req) return NULL;
+    p = (char *)req + sizeof(*req);
+    FS3ENet_PackStr(&req->fs3enl_ApiBaseUrl, &p, apiBaseUrl);
+    return req;
+}
+
+FS3ENetLoginFinishReq *FS3ENetLoginFinishReq_Alloc(const char *apiBaseUrl,
+    const char *clientId, const char *clientSecret, const char *code)
+{
+    ULONG total = sizeof(FS3ENetLoginFinishReq)
+                + FS3ENet_PackLen(apiBaseUrl)
+                + FS3ENet_PackLen(clientId)
+                + FS3ENet_PackLen(clientSecret)
+                + FS3ENet_PackLen(code);
+    FS3ENetLoginFinishReq *req =
+        (FS3ENetLoginFinishReq *)AllocVec(total, MEMF_ANY);
+    char *p;
+
+    if (!req) return NULL;
+    p = (char *)req + sizeof(*req);
+    FS3ENet_PackStr(&req->fs3enl_ApiBaseUrl,   &p, apiBaseUrl);
+    FS3ENet_PackStr(&req->fs3enl_ClientId,     &p, clientId);
+    FS3ENet_PackStr(&req->fs3enl_ClientSecret, &p, clientSecret);
+    FS3ENet_PackStr(&req->fs3enl_Code,         &p, code);
+    return req;
+}
 
 /* Handshake message used once at startup so FS3ENet_Start() can hand the
  * new process' request port back to the caller. Lives on FS3ENet_Start()'s
@@ -148,6 +212,11 @@ static void FS3ENet_HandleLoginStart(FS3ENetMessage *fs3em)
 {
     FS3ENetLoginStartReq   *req = (FS3ENetLoginStartReq *)fs3em->fs3em_Data;
     FS3ENetLoginStartReply *reply;
+    char clientId[512];
+    char clientSecret[512];
+    char authorizeUrl[768];
+    ULONG total;
+    char *p;
 
     if (!req || fs3em->fs3em_DataLen < sizeof(*req))
     {
@@ -155,28 +224,37 @@ static void FS3ENet_HandleLoginStart(FS3ENetMessage *fs3em)
         return;
     }
 
-    reply = AllocVec(sizeof(*reply), MEMF_ANY | MEMF_CLEAR);
+    if (!FS3EMastodon_CreateApp(req->fs3enl_ApiBaseUrl, FS3ENET_CLIENT_NAME,
+            clientId, sizeof(clientId),
+            clientSecret, sizeof(clientSecret)))
+    {
+        fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
+        return;
+    }
+
+    FS3EMastodon_BuildAuthorizeURL(req->fs3enl_ApiBaseUrl, clientId,
+        authorizeUrl, sizeof(authorizeUrl));
+
+    total = sizeof(FS3ENetLoginStartReply)
+          + FS3ENet_PackLen(clientId)
+          + FS3ENet_PackLen(clientSecret)
+          + FS3ENet_PackLen(authorizeUrl);
+
+    reply = (FS3ENetLoginStartReply *)AllocVec(total, MEMF_ANY);
     if (!reply)
     {
         fs3em->fs3em_Result = FS3ENETR_NETWORK_ERROR;
         return;
     }
 
-    if (!FS3EMastodon_CreateApp(req->fs3enl_ApiBaseUrl, FS3ENET_CLIENT_NAME,
-            reply->fs3enl_ClientId, sizeof(reply->fs3enl_ClientId),
-            reply->fs3enl_ClientSecret, sizeof(reply->fs3enl_ClientSecret)))
-    {
-        FreeVec(reply);
-        fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
-        return;
-    }
-
-    FS3EMastodon_BuildAuthorizeURL(req->fs3enl_ApiBaseUrl, reply->fs3enl_ClientId,
-        reply->fs3enl_AuthorizeUrl, sizeof(reply->fs3enl_AuthorizeUrl));
+    p = (char *)reply + sizeof(*reply);
+    FS3ENet_PackStr(&reply->fs3enl_ClientId,     &p, clientId);
+    FS3ENet_PackStr(&reply->fs3enl_ClientSecret, &p, clientSecret);
+    FS3ENet_PackStr(&reply->fs3enl_AuthorizeUrl, &p, authorizeUrl);
 
     FreeVec(fs3em->fs3em_Data);
     fs3em->fs3em_Data    = reply;
-    fs3em->fs3em_DataLen = sizeof(*reply);
+    fs3em->fs3em_DataLen = total;
     fs3em->fs3em_Result  = FS3ENETR_OK;
 }
 
@@ -186,6 +264,10 @@ static void FS3ENet_HandleLoginFinish(FS3ENetMessage *fs3em)
 {
     FS3ENetLoginFinishReq   *req = (FS3ENetLoginFinishReq *)fs3em->fs3em_Data;
     FS3ENetLoginFinishReply *reply;
+    FS3EMastodonAccount      tmpAcc = {0};
+    char accessToken[512];
+    ULONG total;
+    char *p;
 
     if (!req || fs3em->fs3em_DataLen < sizeof(*req))
     {
@@ -193,33 +275,50 @@ static void FS3ENet_HandleLoginFinish(FS3ENetMessage *fs3em)
         return;
     }
 
-    reply = AllocVec(sizeof(*reply), MEMF_ANY | MEMF_CLEAR);
+    if (!FS3EMastodon_ExchangeCode(req->fs3enl_ApiBaseUrl, req->fs3enl_ClientId,
+            req->fs3enl_ClientSecret, req->fs3enl_Code,
+            accessToken, sizeof(accessToken)))
+    {
+        fs3em->fs3em_Result = FS3ENETR_AUTH_ERROR;
+        return;
+    }
+
+    if (!FS3EMastodon_VerifyCredentials(req->fs3enl_ApiBaseUrl, accessToken, &tmpAcc))
+    {
+        FS3EMastodonAccount_Free(&tmpAcc);
+        fs3em->fs3em_Result = FS3ENETR_AUTH_ERROR;
+        return;
+    }
+
+    total = sizeof(FS3ENetLoginFinishReply)
+          + FS3ENet_PackLen(accessToken)
+          + FS3ENet_PackLen(tmpAcc.fma_Id)
+          + FS3ENet_PackLen(tmpAcc.fma_Username)
+          + FS3ENet_PackLen(tmpAcc.fma_Acct)
+          + FS3ENet_PackLen(tmpAcc.fma_DisplayName)
+          + FS3ENet_PackLen(tmpAcc.fma_AvatarURL);
+
+    reply = (FS3ENetLoginFinishReply *)AllocVec(total, MEMF_ANY);
     if (!reply)
     {
+        FS3EMastodonAccount_Free(&tmpAcc);
         fs3em->fs3em_Result = FS3ENETR_NETWORK_ERROR;
         return;
     }
 
-    if (!FS3EMastodon_ExchangeCode(req->fs3enl_ApiBaseUrl, req->fs3enl_ClientId,
-            req->fs3enl_ClientSecret, req->fs3enl_Code,
-            reply->fs3enl_AccessToken, sizeof(reply->fs3enl_AccessToken)))
-    {
-        FreeVec(reply);
-        fs3em->fs3em_Result = FS3ENETR_AUTH_ERROR;
-        return;
-    }
+    p = (char *)reply + sizeof(*reply);
+    FS3ENet_PackStr(&reply->fs3enl_AccessToken,             &p, accessToken);
+    FS3ENet_PackStr(&reply->fs3enl_Account.fma_Id,          &p, tmpAcc.fma_Id);
+    FS3ENet_PackStr(&reply->fs3enl_Account.fma_Username,    &p, tmpAcc.fma_Username);
+    FS3ENet_PackStr(&reply->fs3enl_Account.fma_Acct,        &p, tmpAcc.fma_Acct);
+    FS3ENet_PackStr(&reply->fs3enl_Account.fma_DisplayName, &p, tmpAcc.fma_DisplayName);
+    FS3ENet_PackStr(&reply->fs3enl_Account.fma_AvatarURL,   &p, tmpAcc.fma_AvatarURL);
 
-    if (!FS3EMastodon_VerifyCredentials(req->fs3enl_ApiBaseUrl, reply->fs3enl_AccessToken,
-            &reply->fs3enl_Account))
-    {
-        FreeVec(reply);
-        fs3em->fs3em_Result = FS3ENETR_AUTH_ERROR;
-        return;
-    }
+    FS3EMastodonAccount_Free(&tmpAcc);
 
     FreeVec(fs3em->fs3em_Data);
     fs3em->fs3em_Data    = reply;
-    fs3em->fs3em_DataLen = sizeof(*reply);
+    fs3em->fs3em_DataLen = total;
     fs3em->fs3em_Result  = FS3ENETR_OK;
 }
 

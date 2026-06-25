@@ -28,15 +28,27 @@
 
 /* Account fields needed after login (see verify_credentials). Avatar URLs
  * point at images the GUI will fetch/cache separately (FS3ENETQ_FETCH_IMAGE,
- * Phase 2). */
+ * Phase 2).
+ *
+ * All char * fields are either:
+ *   a) individually AllocVec'd (temporary use inside FS3EMastodon_VerifyCredentials
+ *      callers) — free with FS3EMastodonAccount_Free(); or
+ *   b) pointing into a surrounding flat IPC block — do NOT call
+ *      FS3EMastodonAccount_Free() on those; FreeVec the enclosing block instead.
+ */
 typedef struct FS3EMastodonAccount
 {
-    char fma_Id[32];
-    char fma_Username[64];
-    char fma_Acct[128];
-    char fma_DisplayName[128];
-    char fma_AvatarURL[256];
+    char *fma_Id;
+    char *fma_Username;
+    char *fma_Acct;
+    char *fma_DisplayName;
+    char *fma_AvatarURL;
 } FS3EMastodonAccount;
+
+/* Frees each individually-AllocVec'd string field. Only call this on an
+ * account whose fields were set by FS3EMastodon_VerifyCredentials() directly
+ * (i.e. not part of a flat IPC block). */
+void FS3EMastodonAccount_Free(FS3EMastodonAccount *acc);
 
 /*
  * POST /api/v1/apps - register FriendSh3ep as an OAuth app on apiBaseUrl.

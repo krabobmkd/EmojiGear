@@ -1,10 +1,10 @@
 #ifndef BDBPRINTF_H
 #define BDBPRINTF_H
 /*
- * Buffered and delayed Debug Printf for printing from BOOPSI methods.
- * HandleInput and Render are often executed from a device or interrupt-like
- * context. Using your process Printf/printf there will crash.
- * bdbprintf() works; call flushbdbprint() from the main loop.
+ * Buffered and delayed Debug Printf forprinting from BOOPSI methods
+ *  HandleInput and Render often are executed from a device or interupt-like context.
+ * using your process Printf/printf will crash in that case.
+ * bdbprintf() will work. need flushbdbprint() in some main loop in the safe process main().
  */
 #include "compilers.h"
 

@@ -60,51 +60,73 @@ typedef struct FS3ENetMessage
 } FS3ENetMessage;
 
 /*
- * FS3ENETQ_LOGIN_START - fs3em_Data points at an FS3ENetLoginStartReq
- * (fs3em_DataLen = sizeof(FS3ENetLoginStartReq)). Registers FriendSh3ep as an
- * OAuth app on fs3enl_ApiBaseUrl (see brutaldon's Mastodon.create_app and
- * ARCHITECTURE.md section 4.4).
+ * All request and reply structs below use char * string fields instead of
+ * fixed-size arrays.  Each struct is allocated as a single flat block:
  *
- * On FS3ENETR_OK, fs3em_Data is replaced with an FS3ENetLoginStartReply; the GUI
- * must show fs3enl_AuthorizeUrl to the user (e.g. via unitexteditor, so it
- * can be copied to a browser) and keep fs3enl_ClientId/fs3enl_ClientSecret to
- * pass back in FS3ENETQ_LOGIN_FINISH.
+ *   [struct header] + [string data packed contiguously]
+ *
+ * The char * fields point into the same block, so one FreeVec() on the
+ * fs3em_Data pointer frees the struct and all its strings.  fs3em_DataLen
+ * is set to the total block size (not sizeof(struct)).
+ *
+ * Use the _Alloc() helpers below to build request blocks; the network
+ * process builds reply blocks internally.
+ */
+
+/*
+ * FS3ENETQ_LOGIN_START — registers FriendSh3ep as an OAuth app on
+ * fs3enl_ApiBaseUrl (see ARCHITECTURE.md section 4.4).
+ *
+ * On FS3ENETR_OK, fs3em_Data is replaced with an FS3ENetLoginStartReply; the
+ * GUI must show fs3enl_AuthorizeUrl to the user and keep
+ * fs3enl_ClientId/fs3enl_ClientSecret for FS3ENETQ_LOGIN_FINISH.
+ * On error, fs3em_Data still points at the original request block — the GUI
+ * must FreeVec it.
  */
 typedef struct FS3ENetLoginStartReq
 {
-    char fs3enl_ApiBaseUrl[256];
+    char *fs3enl_ApiBaseUrl;
 } FS3ENetLoginStartReq;
+
+/* Allocates a flat request block for LOGIN_START. FreeVec() when done. */
+FS3ENetLoginStartReq *FS3ENetLoginStartReq_Alloc(const char *apiBaseUrl);
 
 typedef struct FS3ENetLoginStartReply
 {
-    char fs3enl_ClientId[64];
-    char fs3enl_ClientSecret[64];
-    char fs3enl_AuthorizeUrl[512];
+    char *fs3enl_ClientId;
+    char *fs3enl_ClientSecret;
+    char *fs3enl_AuthorizeUrl;
 } FS3ENetLoginStartReply;
 
 /*
- * FS3ENETQ_LOGIN_FINISH - fs3em_Data points at an FS3ENetLoginFinishReq
- * (fs3em_DataLen = sizeof(FS3ENetLoginFinishReq)), carrying the code the user
- * pasted back from the authorize URL plus the client_id/secret returned by
- * FS3ENETQ_LOGIN_START. Exchanges the code for an access token and verifies
- * it (brutaldon's mastodon.log_in + verify_credentials).
+ * FS3ENETQ_LOGIN_FINISH — exchanges the OOB code for an access token and
+ * verifies it (brutaldon's mastodon.log_in + verify_credentials).
  *
- * On FS3ENETR_OK, fs3em_Data is replaced with an FS3ENetLoginFinishReply; the GUI
- * must persist fs3enl_AccessToken (and fs3enl_ApiBaseUrl) to use with later
+ * On FS3ENETR_OK, fs3em_Data is replaced with an FS3ENetLoginFinishReply; the
+ * GUI must persist fs3enl_AccessToken (and the api base URL) for later
  * FS3ENETQ_TIMELINE/FS3ENETQ_POST_STATUS requests.
+ * On error, fs3em_Data still points at the original request block.
+ *
+ * Note: fs3enl_Account strings point into the same flat reply block.
+ * Do NOT call FS3EMastodonAccount_Free() on fs3enl_Account; FreeVec the
+ * whole block instead.
  */
 typedef struct FS3ENetLoginFinishReq
 {
-    char fs3enl_ApiBaseUrl[256];
-    char fs3enl_ClientId[64];
-    char fs3enl_ClientSecret[64];
-    char fs3enl_Code[256];
+    char *fs3enl_ApiBaseUrl;
+    char *fs3enl_ClientId;
+    char *fs3enl_ClientSecret;
+    char *fs3enl_Code;
 } FS3ENetLoginFinishReq;
+
+/* Allocates a flat request block for LOGIN_FINISH. FreeVec() when done. */
+FS3ENetLoginFinishReq *FS3ENetLoginFinishReq_Alloc(const char *apiBaseUrl,
+    const char *clientId, const char *clientSecret, const char *code);
 
 typedef struct FS3ENetLoginFinishReply
 {
-    char              fs3enl_AccessToken[128];
-    FS3EMastodonAccount fs3enl_Account;
+    char               *fs3enl_AccessToken;
+    FS3EMastodonAccount  fs3enl_Account;
 } FS3ENetLoginFinishReply;
 
 /*

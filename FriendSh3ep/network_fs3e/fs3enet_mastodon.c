@@ -11,6 +11,9 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <exec/memory.h>
+#include <proto/exec.h>
+
 static const char FS3EMASTODON_HEX[] = "0123456789ABCDEF";
 
 /* application/x-www-form-urlencoded percent-encoding: unreserved chars
@@ -57,6 +60,33 @@ static void FS3EMastodon_CopyJsonString(const cJSON *obj, const char *key,
         strncpy(dst, item->valuestring, dstSize - 1);
         dst[dstSize - 1] = '\0';
     }
+}
+
+/* AllocVec duplicate of obj[key]; caller must FreeVec() result.
+ * Returns NULL if the key is absent or not a string. */
+static char *FS3EMastodon_DupJsonString(const cJSON *obj, const char *key)
+{
+    const cJSON *item = cJSON_GetObjectItemCaseSensitive(obj, key);
+    ULONG len;
+    char *dup;
+
+    if (!item || !cJSON_IsString(item) || !item->valuestring)
+        return NULL;
+
+    len = (ULONG)(strlen(item->valuestring) + 1);
+    dup = (char *)AllocVec(len, MEMF_ANY);
+    if (dup) CopyMem(item->valuestring, dup, len);
+    return dup;
+}
+
+void FS3EMastodonAccount_Free(FS3EMastodonAccount *acc)
+{
+    if (!acc) return;
+    if (acc->fma_Id)          { FreeVec(acc->fma_Id);          acc->fma_Id          = NULL; }
+    if (acc->fma_Username)    { FreeVec(acc->fma_Username);    acc->fma_Username    = NULL; }
+    if (acc->fma_Acct)        { FreeVec(acc->fma_Acct);        acc->fma_Acct        = NULL; }
+    if (acc->fma_DisplayName) { FreeVec(acc->fma_DisplayName); acc->fma_DisplayName = NULL; }
+    if (acc->fma_AvatarURL)   { FreeVec(acc->fma_AvatarURL);   acc->fma_AvatarURL   = NULL; }
 }
 
 static void FS3EMastodon_BuildAuthHeader(char *dst, ULONG dstSize, const char *accessToken)
@@ -188,13 +218,13 @@ BOOL FS3EMastodon_VerifyCredentials(const char *apiBaseUrl, const char *accessTo
     json = cJSON_Parse((char *)resp.fhr_Body);
     if (json)
     {
-        FS3EMastodon_CopyJsonString(json, "id", outAccount->fma_Id, sizeof(outAccount->fma_Id));
-        FS3EMastodon_CopyJsonString(json, "username", outAccount->fma_Username, sizeof(outAccount->fma_Username));
-        FS3EMastodon_CopyJsonString(json, "acct", outAccount->fma_Acct, sizeof(outAccount->fma_Acct));
-        FS3EMastodon_CopyJsonString(json, "display_name", outAccount->fma_DisplayName, sizeof(outAccount->fma_DisplayName));
-        FS3EMastodon_CopyJsonString(json, "avatar", outAccount->fma_AvatarURL, sizeof(outAccount->fma_AvatarURL));
+        outAccount->fma_Id          = FS3EMastodon_DupJsonString(json, "id");
+        outAccount->fma_Username    = FS3EMastodon_DupJsonString(json, "username");
+        outAccount->fma_Acct        = FS3EMastodon_DupJsonString(json, "acct");
+        outAccount->fma_DisplayName = FS3EMastodon_DupJsonString(json, "display_name");
+        outAccount->fma_AvatarURL   = FS3EMastodon_DupJsonString(json, "avatar");
 
-        ok = (outAccount->fma_Id[0] != '\0');
+        ok = (outAccount->fma_Id != NULL);
 
         cJSON_Delete(json);
     }

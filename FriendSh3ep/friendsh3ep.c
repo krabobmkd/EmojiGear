@@ -35,6 +35,7 @@
 #include <proto/intuition.h>
 #include <proto/utility.h>
 #include <proto/dos.h>
+#include <devices/inputevent.h>
 
 #include <proto/window.h>
 #include <classes/window.h>
@@ -83,6 +84,27 @@
 const char *pVersion = "$VER: FriendSh3ep " FRIENDSH3EP_VERSION;
 
 struct Task *myTask = NULL;
+
+/* Window drag state — written by TitleBarLayout GM_HITTEST (inside
+ * WM_HANDLEINPUT), read by WMHI_MOUSEMOVE in the same drain loop. */
+BOOL windowDragActive      = FALSE;
+WORD windowDragLastScreenX = 0;
+WORD windowDragLastScreenY = 0;
+
+/* Window resize state — written by TootTimeline GM_HITTEST,
+ * read by WMHI_MOUSEMOVE.  Width is snapped to multiples of 16.
+ *
+ * lastTargetW/H track the size we most recently *requested* via SizeWindow.
+ * SizeWindow is asynchronous (posts to Intuition), so CurrentMainWindow->Width
+ * lags behind; using our own last-requested value avoids the oscillation that
+ * would otherwise occur at every 16-pixel snap boundary. */
+BOOL windowResizeActive    = FALSE;
+WORD windowResizeStartSX   = 0;   /* screen X at drag start */
+WORD windowResizeStartSY   = 0;   /* screen Y at drag start */
+WORD windowResizeStartW    = 0;   /* window width  at drag start */
+WORD windowResizeStartH    = 0;   /* window height at drag start */
+WORD windowResizeLastTargetW = 0; /* last width  we sent to SizeWindow */
+WORD windowResizeLastTargetH = 0; /* last height we sent to SizeWindow */
 
 /* Library bases */
 struct GfxBase       *GfxBase       = NULL;
@@ -142,7 +164,31 @@ void cleanexit(const char *pmessage)
 }
 
 /* - - - - - - - - - - - - - - - - - - - HELPERS - - - - - - - - - - - - - */
+/* note: this is reached when messages are not used by boopsi gadgets */
+static ULONG IDCMPDispatch(
+        REG(a0,struct Hook *hook),
+        REG(a2,APTR object),
+        REG(a1, struct IntuiMessage *IMsg))
+{
 
+    if(IMsg->Class == IDCMP_MOUSEBUTTONS)
+    {
+        if(IMsg->Code == (IECODE_LBUTTON | IECODE_UP_PREFIX))
+        {
+            windowDragActive   = FALSE;
+            windowResizeActive = FALSE;
+        }
+    }
+
+
+
+    return 0;
+}
+static struct Hook idcmpHook ={
+    {NULL,NULL},
+    (HOOKFUNC)&IDCMPDispatch,
+    NULL,0
+};
 /*
  * FS3EApp_SetButtonFontSize – reload app->buttonDC fonts at a new point size,
  * then invalidate all UniButtonP9 button caches so they rebuild on next render.
@@ -310,15 +356,16 @@ int main(int argc, char **argv)
     /* ================================================================== */
     /* Part B: navigation bar children (8 buttons)                         */
     /* ================================================================== */
-
-    app->nav_btns[0] = makeBtn(GID_NAV_HOME,          "Home",      dpiH);
-    app->nav_btns[1] = makeBtn(GID_NAV_NOTIFICATIONS, "Notif.",    dpiH);
-    app->nav_btns[2] = makeBtn(GID_NAV_LOCAL,         "Local",     dpiH);
-    app->nav_btns[3] = makeBtn(GID_NAV_FEDERATED,     "Fed.",      dpiH);
-    app->nav_btns[4] = makeBtn(GID_NAV_NEWTOOT,       "Toot+",     dpiH);
-    app->nav_btns[5] = makeBtn(GID_NAV_SEARCH,        "Search",    dpiH);
-    app->nav_btns[6] = makeBtn(GID_NAV_SETTINGS,      "Settings",  dpiH);
-    app->nav_btns[7] = makeBtn(GID_NAV_ACCOUNTS,      "Accounts",  dpiH);
+// \xf0\x9f\x8f\xa0
+// single silhouette 	%F0%9F%91%A4
+    app->nav_btns[0] = makeBtn(GID_NAV_HOME,          "\xE2\x8C\x82 Home",      dpiH);
+    app->nav_btns[1] = makeBtn(GID_NAV_NOTIFICATIONS, "\xF0\x9F\x9A\x80 Notif.",    dpiH);
+    app->nav_btns[2] = makeBtn(GID_NAV_LOCAL,         "\xF0\x9F\x91\xA5 Local",     dpiH);
+    app->nav_btns[3] = makeBtn(GID_NAV_FEDERATED,     "\xF0\x9F\x8C\x8E Fed.",      dpiH);
+    app->nav_btns[4] = makeBtn(GID_NAV_NEWTOOT,       "\xF0\x9F\x97\xA3 Toot+",     dpiH);
+    app->nav_btns[5] = makeBtn(GID_NAV_SEARCH,        "\xF0\x9F\x94\x8D Search",    dpiH);
+    app->nav_btns[6] = makeBtn(GID_NAV_SETTINGS,      "\xE2\x9A\x99 Settings",  dpiH);
+    app->nav_btns[7] = makeBtn(GID_NAV_ACCOUNTS,      "\xF0\x9F\x91\xA4 Accounts",  dpiH);
 
     {
         int i;
@@ -351,6 +398,65 @@ int main(int argc, char **argv)
         TTIMELINE_DpiHeight, (ULONG)dpiH,
         TAG_END);
     if (!app->tootTimeline) cleanexit("Can't create toot timeline");
+
+    /* ---- Fake posts for layout testing (oldest first = prepended bottom-up) ---- */
+    {
+        static const TTLPostSetup fakePosts[] = {
+            {
+                "Krabob",
+                "@krabob@amiga.social",
+                "Just released EmojiGear 4.3 for AmigaOS \xf0\x9f\x8e\x89 "
+                "Emoji now render on AGA screens using the new CLUT palette "
+                "blending path. Grab it from Aminet!",
+                "2h"
+            },
+            {
+                "Boing Ball",
+                "@boing@commodore.social",
+                "Reminder: the original Amiga demo still runs faster than "
+                "most modern web pages \xf0\x9f\x8f\x80\xf0\x9f\x94\xb4\xf0\x9f\x94\xb5",
+                "5h"
+            },
+            {
+                "Paula Chip",
+                "@paula@demoscene.social",
+                "Four-channel 8-bit audio, hardware sprites, blitter DMA "
+                "and a cooperative multitasker - the Amiga was decades ahead. "
+                "No wonder we never let go.",
+                "9h"
+            },
+            {
+                "Workbench Fan",
+                "@wbfan@amiga.social",
+                "Pro tip: you can drag the Workbench screen down to reveal "
+                "a CLI behind it. Most people never discover this \xf0\x9f\x92\xbb",
+                "1d"
+            },
+            {
+                "Guru Meditation",
+                "@guru@amiga.social",
+                "Software failure. Press left mouse button to continue.\n"
+                "Guru Meditation #00000003.00C0FFEE\n"
+                "(just kidding, everything is fine)",
+                "1d"
+            },
+            {
+                "AmiNet Bot",
+                "@aminetbot@fosstodon.org",
+                "New upload: utf8rastport.library 1.2 - Unicode text rendering "
+                "for AmigaOS RastPorts via FreeType2. Supports TrueType, "
+                "OpenType and color emoji. Tested on OS3.1/3.2/3.9 AGA and RTG.",
+                "2d"
+            },
+        };
+        int i;
+        /* Prepend oldest first so newest ends up at top */
+        for (i = (int)(sizeof(fakePosts)/sizeof(fakePosts[0])) - 1; i >= 0; i--) {
+            SetAttrs(app->tootTimeline,
+                TTIMELINE_AddPost, (ULONG)&fakePosts[i],
+                TAG_DONE);
+        }
+    }
 
     /* ================================================================== */
     /* Root layout (A + B + C, vertical, borderless, no gaps)             */
@@ -386,16 +492,22 @@ int main(int argc, char **argv)
         WA_Top,     40,
         WA_Width,   400,
         WA_Height,  300,
-        WA_IDCMP,   IDCMP_GADGETUP | IDCMP_NEWSIZE | IDCMP_RAWKEY,
+
+        WA_IDCMP,   IDCMP_GADGETUP | IDCMP_NEWSIZE | IDCMP_RAWKEY | IDCMP_MOUSEMOVE | IDCMP_MOUSEBUTTONS,
         WA_Flags,
             WFLG_BORDERLESS |
-            WFLG_DRAGBAR    |
             WFLG_ACTIVATE   |
             WFLG_SMART_REFRESH,
+        WA_ReportMouse,TRUE, //test
         WA_Title,            NULL,
         WINDOW_ParentGroup,  (ULONG)app->mainlayout,
         WINDOW_IconTitle,    (ULONG)"FriendSh3ep",
         WINDOW_AppPort,      (ULONG)app->app_port,
+
+        WINDOW_IDCMPHook,(ULONG)&idcmpHook,
+        WINDOW_IDCMPHookBits, IDCMP_MOUSEBUTTONS /*| IDCMP_VANILLAKEY*/,
+
+
         TAG_END);
     if (!app->window_obj) cleanexit("Can't create window");
 
@@ -447,6 +559,7 @@ int main(int argc, char **argv)
                         /* UniButton gadgets use GMR_VERIFY + GACT_RELVERIFY so
                          * clicks arrive here with the gadget's GA_ID. */
                         ULONG senderId = result & WMHI_GADGETMASK;
+                        printf("WMHI_GADGETUP senderId:%d\n",senderId);
                         BoopsiDelay_BeginMessage(DelayQueue, senderId);
                         BoopsiDelay_AddTag(DelayQueue, WMHI_GADGETUP, 1);
                         BoopsiDelay_EndMessage(DelayQueue);
@@ -468,6 +581,57 @@ int main(int argc, char **argv)
                         if (key == 0x45) ok = FALSE; /* Escape */
                         break;
                     }
+                    case WMHI_MOUSEMOVE:
+                    {
+                        if (windowDragActive && CurrentMainWindow) {
+                            struct Screen *scr = CurrentMainWindow->WScreen;
+                            WORD sx = scr->MouseX;
+                            WORD sy = scr->MouseY;
+                            LONG dx = (LONG)sx - (LONG)windowDragLastScreenX;
+                            LONG dy = (LONG)sy - (LONG)windowDragLastScreenY;
+                            windowDragLastScreenX = sx;
+                            windowDragLastScreenY = sy;
+                            if (dx || dy)
+                               MoveWindow(CurrentMainWindow, dx, dy);
+                        }
+                        else if (windowResizeActive && CurrentMainWindow) {
+                            struct Screen *scr = CurrentMainWindow->WScreen;
+                            LONG targetW, targetH, dx, dy;
+
+                            targetW = (LONG)windowResizeStartW
+                                      + (LONG)scr->MouseX - (LONG)windowResizeStartSX;
+                            targetH = (LONG)windowResizeStartH
+                                      + (LONG)scr->MouseY - (LONG)windowResizeStartSY;
+
+                            /* Clamp to minimum window size */
+                            if (targetW < 320) targetW = 320;
+                            if (targetH < 240) targetH = 240;
+                            /* Snap width to multiple of 16 (floor) */
+                            targetW = (targetW / 16) * 16;
+
+                            /* Compute delta against our last *requested* size, not
+                             * CurrentMainWindow->Width/Height.  SizeWindow() is
+                             * async — the struct lags, causing oscillation at snap
+                             * boundaries. */
+                            dx = targetW - (LONG)windowResizeLastTargetW;
+                            dy = targetH - (LONG)windowResizeLastTargetH;
+                            if (dx || dy) {
+                                windowResizeLastTargetW = (WORD)targetW;
+                                windowResizeLastTargetH = (WORD)targetH;
+                                SizeWindow(CurrentMainWindow, dx, dy);
+                            }
+                        }
+                    } break;
+                    // case WMHI_MOUSEBUTTONS:
+                    // {
+
+                    //     printf("WMHI_MOUSEBUTTONS %08x\n",result);
+                    //     if(result & 0x00100000) /* tested to happen when left mouse up only, I don't know what bit it is*/
+                    //     {
+                    //       windowDragActive = FALSE;
+                    //     }
+
+                    // } break;
 
                     default:
                         break;
@@ -497,14 +661,17 @@ int main(int argc, char **argv)
                             break;
 
                         case GID_TITLEBAR_ICONIFY:
+                        printf("GID_TITLEBAR_ICONIFY\n");
                             FS3EMain_Close(&app->mainwindow, app->window_obj, TRUE);
                             break;
 
                         case GID_TITLEBAR_ALTPOS:
+                        printf("GID_TITLEBAR_ALTPOS\n");
                             /* TODO: alternative window position / sizing */
                             break;
 
                         case GID_TITLEBAR_DEPTH:
+                         printf("GID_TITLEBAR_DEPTH\n");
                             /* TODO: bring window to front / back */
                             break;
 

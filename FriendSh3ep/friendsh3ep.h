@@ -14,6 +14,7 @@
 #include "fs3eboopsimainwindow.h"
 #include "fs3eloginview.h"
 #include "fs3etootview.h"
+#include "fs3estyle.h"
 
 #define FRIENDSH3EP_VERSION "0.2"
 
@@ -55,6 +56,9 @@ struct App {
 
     /* fs3enet request port, see network_fs3e/fs3enet.h */
     struct MsgPort *netRequestPort;
+
+    /* Color theme — pens obtained from the current screen's ColorMap */
+    FS3EStyle style;
 };
 
 extern struct App *app;
