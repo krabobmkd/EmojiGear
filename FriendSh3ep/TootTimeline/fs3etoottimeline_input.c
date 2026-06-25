@@ -169,7 +169,7 @@ ULONG TTL_OnHandleInput(Class *cl, Object *o, struct gpInput *msg)
             return GMR_NOREUSE;
         }
 
-        if (inst->dragActive && code == IECODE_NOBUTTON) {
+        if (inst->dragActive && ie->ie_Code == IECODE_NOBUTTON) {
             /* Mouse move while dragging: scroll */
             WORD dy = (WORD)(msg->gpi_Mouse.Y - inst->dragStartGadY);
             ttl_set_scroll(inst, inst->dragStartScrollY - dy);
