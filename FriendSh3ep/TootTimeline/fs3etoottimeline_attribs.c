@@ -11,44 +11,81 @@
 #include <intuition/icclass.h>
 
 #include "fs3etoottimeline_private.h"
-
+#include "../bdbprintf.h"
 /* ------------------------------------------------------------------ */
 /* Apply a tag list to the instance data                                */
 /* ------------------------------------------------------------------ */
 
-static void ttl_apply_tags(TTLData *inst, struct TagItem *tags)
+ULONG ttl_apply_tags(Class *cl, Object *o, struct opSet *msg, int couldRefreshDraw)
 {
+
+    TTLData *inst = TTL_DATA(cl, o);
+    struct TagItem *tags = msg->ops_AttrList;
     struct TagItem *tstate = tags;
     struct TagItem *tag;
+    int redraw = FALSE;
+    int used = 0;
 
     while ((tag = NextTagItem(&tstate))) {
         switch (tag->ti_Tag) {
             case TTIMELINE_DpiHeight:
-                inst->dpiHeight = (UWORD)tag->ti_Data;
+                if(inst->dpiHeight != (UWORD)tag->ti_Data)
+                {
+                    inst->dpiHeight = (UWORD)tag->ti_Data;
+                    inst->layoutToDo = TRUE;
+                    redraw = TRUE;
+                    used = 1;
+                }
                 break;
             case TTIMELINE_ScrollY:
-                inst->pendingScroll  = TRUE;
-                inst->pendingScrollY = (LONG)tag->ti_Data;
+                if(inst->pendingScrollY != (LONG)tag->ti_Data)
+                {
+                    inst->pendingScroll  = TRUE;
+                    inst->pendingScrollY = (LONG)tag->ti_Data;
+                    redraw = TRUE;
+                    used = 1;
+                }
                 break;
-            case TTIMELINE_DrawContext:
-                inst->dc = (struct URPDrawContext *)tag->ti_Data;
-                if (inst->dc) {
-                    struct URPTextMetric m;
-                    URPDC_GetFontLineMetrics(inst->dc, &m);
+            // case TTIMELINE_Screen:
+            // bdbprintf(" ***** set screen:%08x\n",(int)tag->ti_Data);
+            //     inst->screen = (struct Screen *)tag->ti_Data;
+            //     used = 1;
+            //     break;
+            case TTIMELINE_Style: {
+                struct URPTextMetric m;
+                inst->style = (FS3EStyle *)tag->ti_Data;
+
+
+                // /* Cache font metrics from each draw context */
+                if (inst->style && inst->style->dcNormal) {
+                    URPDC_GetFontLineMetrics(inst->style->dcNormal, &m);
                     inst->lineHeight = (WORD)(m.height > 0 ? m.height : 14);
                     inst->lineAscent = (WORD)(m.baseY  > 0 ? m.baseY  : 11);
+                } else {
+                    inst->lineHeight = 14; inst->lineAscent = 11;
                 }
-                ttl_tiles_invalidate_all(inst);
-                /* all posts need re-layout with new font metrics */
-                ttl_layout_all_posts(inst);
+                if (inst->style && inst->style->dcUsername) {
+                    URPDC_GetFontLineMetrics(inst->style->dcUsername, &m);
+                    inst->nameLineHeight = (WORD)(m.height > 0 ? m.height : 16);
+                    inst->nameLineAscent = (WORD)(m.baseY  > 0 ? m.baseY  : 13);
+                } else {
+                    inst->nameLineHeight = inst->lineHeight;
+                    inst->nameLineAscent = inst->lineAscent;
+                }
+                if (inst->style && inst->style->dcMini) {
+                    URPDC_GetFontLineMetrics(inst->style->dcMini, &m);
+                    inst->miniLineHeight = (WORD)(m.height > 0 ? m.height : 10);
+                    inst->miniLineAscent = (WORD)(m.baseY  > 0 ? m.baseY  :  8);
+                } else {
+                    inst->miniLineHeight = inst->lineHeight;
+                    inst->miniLineAscent = inst->lineAscent;
+                }
+                inst->layoutToDo = TRUE;
+                redraw = TRUE;
+                used = 1;
+
                 break;
-            case TTIMELINE_Screen:
-                inst->screen = (struct Screen *)tag->ti_Data;
-                break;
-            case TTIMELINE_Style:
-                inst->style = (FS3EStyle *)tag->ti_Data;
-                ttl_tiles_invalidate_all(inst);
-                break;
+            }
 
             case TTIMELINE_AddPost: {
                 const TTLPostSetup *setup = (const TTLPostSetup *)tag->ti_Data;
@@ -75,6 +112,8 @@ static void ttl_apply_tags(TTLData *inst, struct TagItem *tags)
                         ttl_tiles_invalidate_range(inst,
                             post->timelineY,
                             post->timelineY + post->height);
+                        redraw = TRUE;
+                        used = 1;
                     }
                 }
                 break;
@@ -82,19 +121,40 @@ static void ttl_apply_tags(TTLData *inst, struct TagItem *tags)
 
             case TTIMELINE_ClearPosts:
                 ttl_clear_posts(inst);
+                redraw = TRUE;
+                used = 1;
                 break;
 
             case ICA_TARGET:
                 inst->target = (Object *)tag->ti_Data;
+                used = 1;
                 break;
             case GA_ID:
                 inst->ga_id = (ULONG)tag->ti_Data;
+                used = 1;
                 break;
 
             default:
                 break;
         }
     }
+
+    if(couldRefreshDraw && msg->ops_GInfo && redraw)
+    {
+        struct RastPort *rp = ObtainGIRPort(msg->ops_GInfo);
+        if (rp) {
+            struct gpRender gpr;
+            gpr.MethodID   = GM_RENDER;
+            gpr.gpr_GInfo  = msg->ops_GInfo;
+            gpr.gpr_RPort  = rp;
+            gpr.gpr_Redraw = GREDRAW_REDRAW;
+            DoMethodA(o, (Msg)&gpr);
+            ReleaseGIRPort(rp);
+        }
+
+    }
+
+    return used;
 }
 
 /* ------------------------------------------------------------------ */
@@ -119,10 +179,13 @@ ULONG TTL_OnNew(Class *cl, Object *o, struct opSet *msg)
     inst->contentBottomY  = 0;
     inst->scrollY         = 0;
     inst->lastTileWidth   = -1;  /* force pool alloc on first layout */
+    inst->layoutToDo = TRUE;
+
+    inst->callerTask = FindTask(NULL);
 
     NewList((struct List *)&inst->posts);
 
-    ttl_apply_tags(inst, msg->ops_AttrList);
+    ttl_apply_tags(cl,newObj, msg,FALSE);
 
     return (ULONG)newObj;
 }
@@ -151,7 +214,7 @@ ULONG TTL_OnSet(Class *cl, Object *o, struct opSet *msg)
     ULONG    rc;
 
     rc = DoSuperMethodA(cl, o, (APTR)msg);
-    ttl_apply_tags(inst, msg->ops_AttrList);
+    if( ttl_apply_tags(cl,o, msg,TRUE) ) rc = 1;
     return rc;
 }
 

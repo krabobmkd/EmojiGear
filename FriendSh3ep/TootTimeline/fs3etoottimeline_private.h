@@ -116,6 +116,12 @@ struct TTLHotSpot {
 #define TTL_SPAN_BODY      2
 #define TTL_SPAN_TIMESTAMP 3
 
+/* Hot-spot types */
+#define TTL_HOT_AVATAR     0
+#define TTL_HOT_REPLY      1
+#define TTL_HOT_BOOST      2
+#define TTL_HOT_FAVORITE   3
+
 typedef struct {
     struct MinNode  node;
     LONG   postRelY;      /* Y of span top, relative to post->timelineY */
@@ -157,17 +163,19 @@ typedef struct TTLPost {
 /* ------------------------------------------------------------------ */
 
 typedef struct {
-    /* Draw context (shared with parent; NOT owned by this gadget) */
-    struct URPDrawContext *dc;
-    ULONG   pointSize;
-    ULONG   fontFlags;
-
     /* Screen for AllocBitMap and colour mapping */
     struct Screen *screen;
+    /* layout and draw are only allowed on the process that own the gadget */
+    struct Task         *callerTask;
 
-    /* Font metrics (updated when dc or screen changes) */
-    WORD    lineHeight;   /* ascender + descender */
-    WORD    lineAscent;   /* distance from line top to baseline */
+    /* Font metrics derived from style->dc* (updated when TTIMELINE_Style is set).
+     * Cached here so post-layout code doesn't call GetFontLineMetrics every time. */
+    WORD    lineHeight;      /* dcNormal: ascender + descender */
+    WORD    lineAscent;      /* dcNormal: distance from line top to baseline */
+    WORD    nameLineHeight;  /* dcUsername line height */
+    WORD    nameLineAscent;  /* dcUsername ascent */
+    WORD    miniLineHeight;  /* dcMini line height */
+    WORD    miniLineAscent;  /* dcMini ascent */
 
     /* Gadget dimensions from last layout */
     WORD    gadWidth;
@@ -219,6 +227,10 @@ typedef struct {
     Object *target;
     ULONG   ga_id;
 
+    /* Do layout from right process and render function */
+    ULONG layoutToDo;
+    WORD  LastLayoutedWidth,LastLayoutedHeight;
+
 } TTLData;
 
 #define TTL_DATA(cl, o)  ((TTLData *)INST_DATA((cl), (o)))
@@ -227,6 +239,23 @@ typedef struct {
 /* ------------------------------------------------------------------ */
 /* Inline tile-index helpers                                            */
 /* ------------------------------------------------------------------ */
+
+/* Count UTF-8 codepoints in [start, end). */
+INLINE LONG utf8_codepoints_range(const char *start, const char *end)
+{
+    LONG n = 0;
+    const unsigned char *p = (const unsigned char *)start;
+    const unsigned char *e = (const unsigned char *)end;
+    while (p < e) {
+        unsigned char c = *p;
+        if      (c < 0x80) p += 1;
+        else if (c < 0xE0) p += 2;
+        else if (c < 0xF0) p += 3;
+        else               p += 4;
+        n++;
+    }
+    return n;
+}
 
 /* Floor division of y by TTL_TILE_HEIGHT (works for negative y too) */
 INLINE LONG ttl_tile_index(LONG y)
@@ -277,7 +306,7 @@ void     ttl_clear_posts       (TTLData *inst);
 void     ttl_rebuild_ypositions(TTLData *inst);
 
 /* fs3etoottimeline_tiles.c */
-BOOL     ttl_tiles_alloc  (TTLData *inst);
+BOOL     ttl_tiles_alloc  (TTLData *inst, struct RastPort *rp);
 void     ttl_tiles_free   (TTLData *inst);
 void     ttl_tiles_invalidate_all(TTLData *inst);
 void     ttl_tiles_invalidate_range(TTLData *inst, LONG fromY, LONG toY);
@@ -288,6 +317,7 @@ void     ttl_tile_evict_out_of_range(TTLData *inst, LONG keepTopY, LONG keepBotY
 void     ttl_render_tile  (TTLData *inst, TTLTile *tile);
 void     ttl_notify       (Class *cl, Object *o, struct GadgetInfo *gi,
                            ULONG tag, ULONG value);
-void     ttl_render_self  (Class *cl, Object *o, struct GadgetInfo *gi);
-
+/* only process have right to send render, ask with notify ProcessREfresh
+ * void     ttl_render_self  (Class *cl, Object *o, struct GadgetInfo *gi);
+*/
 #endif /* FS3ETOOTTIMELINE_PRIVATE_H */

@@ -24,7 +24,10 @@
 #include "bdbprintf.h"
 #include "friendsh3ep.h"
 
+#include "TootTimeline/fs3etoottimeline.h"
+
 #include <string.h>
+#include <stdio.h>
 
 /* This is the Intuition-level Window. On OS3 it is recreated every time the
  * window is (re)opened: when iconifying/reopening, the BOOPSI objects are
@@ -71,6 +74,7 @@ static void GenericOpenWindow(FS3EMainWindow *mw, Object *window_obj)
     if (!mw->drawInfo)
         mw->drawInfo = GetScreenDrawInfo(CurrentMainScreen);
 
+ printf("applyColors: CurrentMainScreen:%08x\n",(int)CurrentMainScreen);
     FS3EStyle_ApplyColors(&app->style, CurrentMainScreen);
 }
 
@@ -142,6 +146,8 @@ void FS3EMain_Close(FS3EMainWindow *mw, Object *window_obj, int iconify)
         FreeScreenDrawInfo(CurrentMainScreen, mw->drawInfo);
         mw->drawInfo = NULL;
     }
+    if (CurrentMainScreen)
+        FS3EStyle_ReleasePens(&app->style);
 
     if (mw->lockedScreen)
     {
@@ -149,8 +155,7 @@ void FS3EMain_Close(FS3EMainWindow *mw, Object *window_obj, int iconify)
         mw->lockedScreen = NULL;
     }
 
-    if (CurrentMainScreen)
-        FS3EStyle_ReleasePens(&app->style);
+
 
     CurrentMainScreen = NULL;
 }

@@ -24,6 +24,7 @@
 #include <gadgets/unitexteditor.h>
 
 #include "TitleBarLayout/fs3etitlebar.h"
+#include "TootTimeline/fs3etoottimeline.h"
 /* Maximum tag entries in the queue */
 #define BOOPSIDELAY_QUEUE_SIZE 256
 
@@ -61,10 +62,10 @@ static ULONG delayedAttribs[] = {
     UTED_ScrollLeft,
     UTED_ScrollTop,
 
-//    UTED_SetPrivateActivation,
-    // TBLAYOUT_DragDX,
-    // TBLAYOUT_DragDY,
-
+    TTIMELINE_ScrollDomainChanged,
+    TTIMELINE_PostClicked,
+    TTIMELINE_HotSpotActivated,
+    TTIMELINE_ProcessRefresh,
 
 
 };

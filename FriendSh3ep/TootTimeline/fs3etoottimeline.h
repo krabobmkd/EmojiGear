@@ -19,10 +19,8 @@
 #define TTIMELINE_ContentTopY    (TTIMELINE_Base + 2)
 /* [G]  LONG: timeline Y one pixel past the bottom of the last post */
 #define TTIMELINE_ContentBottomY (TTIMELINE_Base + 3)
-/* [IS] struct URPDrawContext*: draw context for text (not owned) */
-#define TTIMELINE_DrawContext    (TTIMELINE_Base + 4)
 /* [IS] struct Screen*: screen for AllocBitMap and colour map */
-#define TTIMELINE_Screen         (TTIMELINE_Base + 5)
+/* took from drawinfo #define TTIMELINE_Screen         (TTIMELINE_Base + 5)*/
 /* [S]  TTLPostSetup*: prepend a new post at the top of the timeline */
 #define TTIMELINE_AddPost        (TTIMELINE_Base + 6)
 /* [S]  any: remove all posts and free resources */
@@ -40,6 +38,9 @@
 #define TTIMELINE_PostClicked         (TTIMELINE_Base + 21)
 /* User activated a hot-spot; value = (ULONG)TTLHotSpot* */
 #define TTIMELINE_HotSpotActivated    (TTIMELINE_Base + 22)
+/* Ask full redraw from correct process */
+#define TTIMELINE_ProcessRefresh        (TTIMELINE_Base + 23)
+
 
 /* ------------------------------------------------------------------ */
 /* Post content descriptor  (passed via TTIMELINE_AddPost)             */

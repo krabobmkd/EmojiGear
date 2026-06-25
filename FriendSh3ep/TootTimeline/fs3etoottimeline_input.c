@@ -173,7 +173,9 @@ ULONG TTL_OnHandleInput(Class *cl, Object *o, struct gpInput *msg)
             /* Mouse move while dragging: scroll */
             WORD dy = (WORD)(msg->gpi_Mouse.Y - inst->dragStartGadY);
             ttl_set_scroll(inst, inst->dragStartScrollY - dy);
-            ttl_render_self(cl, o, msg->gpi_GInfo);
+
+            ttl_notify(cl,o,msg->gpi_GInfo, TTIMELINE_ProcessRefresh,TRUE);
+            //ttl_render_self(cl, o, msg->gpi_GInfo);
             return GMR_MEACTIVE;
         }
     }

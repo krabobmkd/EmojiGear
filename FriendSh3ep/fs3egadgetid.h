@@ -38,5 +38,7 @@
 #define GID_NAV_SETTINGS         46
 #define GID_NAV_ACCOUNTS         47
 
+/* The whole Toot TimeLine (part C) */
+#define GID_TTIMELINE         100
 
 #endif /* FS3EGADGETID_H */

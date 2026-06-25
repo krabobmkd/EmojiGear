@@ -34,12 +34,13 @@
 
 #include "fs3etoottimeline_private.h"
 
+#include "../bdbprintf.h"
+
 /* ------------------------------------------------------------------ */
 /* Internal layout                                                      */
 /* ------------------------------------------------------------------ */
 
-static void ttl_do_layout(Class *cl, Object *o, WORD newW, WORD newH,
-                           struct Screen *screen)
+static void ttl_do_layout(Class *cl, Object *o, WORD newW, WORD newH, struct RastPort *rp)
 {
     TTLData *inst = TTL_DATA(cl, o);
     BOOL widthChanged = (newW != inst->lastTileWidth);
@@ -47,12 +48,9 @@ static void ttl_do_layout(Class *cl, Object *o, WORD newW, WORD newH,
     inst->gadWidth  = newW;
     inst->gadHeight = newH;
 
-    if (screen && screen != inst->screen)
-        inst->screen = screen;
-
     if (widthChanged || inst->tileCount == 0) {
         ttl_tiles_free(inst);
-        ttl_tiles_alloc(inst);
+        ttl_tiles_alloc(inst,rp);
         if (widthChanged) {
             ttl_layout_all_posts(inst);
             ttl_rebuild_ypositions(inst);
@@ -74,12 +72,14 @@ static void ttl_do_layout(Class *cl, Object *o, WORD newW, WORD newH,
 
 ULONG TTL_OnLayout(Class *cl, Object *o, struct gpLayout *msg)
 {
-    struct Gadget    *g   = G(o);
-    struct GadgetInfo *gi = msg->gpl_GInfo;
-    struct Screen    *sc  = gi && gi->gi_Window ? gi->gi_Window->WScreen : NULL;
+    TTLData      *inst   = TTL_DATA(cl, o);
+    // struct Gadget    *g   = G(o);
+    // struct GadgetInfo *gi = msg->gpl_GInfo;
+    // struct Screen    *sc  = gi && gi->gi_Window ? gi->gi_Window->WScreen : NULL;
 
-    ttl_do_layout(cl, o, g->Width, g->Height, sc);
-    return 0;
+    inst->layoutToDo = TRUE;
+
+    return TRUE;
 }
 
 /* ------------------------------------------------------------------ */
@@ -118,7 +118,6 @@ ULONG TTL_OnRender(Class *cl, Object *o, struct gpRender *msg)
     TTLData         *inst = TTL_DATA(cl, o);
     struct RastPort *rp   = msg->gpr_RPort;
     struct Gadget   *g    = G(o);
-    struct Screen   *sc;
 
     WORD  gadLeft, gadTop, gadW, gadH;
     LONG  warmTop, warmBot;
@@ -129,16 +128,39 @@ ULONG TTL_OnRender(Class *cl, Object *o, struct gpRender *msg)
     gadW    = g->Width;
     gadH    = g->Height;
 
-    if (gadW <= 0 || gadH <= 0) return 0;
+    if (gadW <= 0 || gadH <= 0 || msg->gpr_GInfo == NULL ||
+        msg->gpr_GInfo->gi_Screen == NULL
+        || inst->style == NULL) return TRUE;
 
-    sc = msg->gpr_GInfo && msg->gpr_GInfo->gi_Window
-         ? msg->gpr_GInfo->gi_Window->WScreen : NULL;
-
-    /* Detect size or screen change */
-    if (gadW != inst->gadWidth || gadH != inst->gadHeight ||
-        (sc && sc != inst->screen))
+    /* note should check if color mode and depth changed */
+    inst->screen =  msg->gpr_GInfo->gi_Screen;
     {
-        ttl_do_layout(cl, o, gadW, gadH, sc);
+        struct Task *t=FindTask(NULL);
+//bdbprintf("dr1 inst->callerTask %08x here:%08x\n",(int)inst->callerTask,(int)t);
+        if(t != inst->callerTask ||
+            rp == NULL)
+        {
+            /* sorry, but on the right process will you ? */
+            ttl_notify(cl, o, msg->gpr_GInfo, TTIMELINE_ProcessRefresh, TRUE);
+            return TRUE;
+        }
+    }
+//    bdbprintf("dr2\n");
+    /* do layout from correct proces if not done*/
+    if(inst->LastLayoutedWidth != g->Width ||
+        inst->LastLayoutedHeight != g->Height)
+    {
+        inst->layoutToDo = TRUE;
+    }
+
+    if(inst->layoutToDo)
+    {
+//    bdbprintf("ttl_do_layout\n");
+        ttl_do_layout(cl, o, g->Width, g->Height,rp );
+
+        inst->LastLayoutedWidth = g->Width;
+        inst->LastLayoutedHeight = g->Height;
+        inst->layoutToDo = FALSE;
     }
 
     /* Apply pending scroll */
@@ -152,7 +174,7 @@ ULONG TTL_OnRender(Class *cl, Object *o, struct gpRender *msg)
     }
 
     if (inst->tileCount == 0) {
-        /* Pool not ready – paint solid background */
+        /* Pool not ready – paint solid background */       
         SetAPen(rp, (LONG)FS3E_PEN(inst->style, FS3E_COLOR_TIMELINE_BG));
         RectFill(rp, gadLeft, gadTop, gadLeft+gadW-1, gadTop+gadH-1);
         return 0;

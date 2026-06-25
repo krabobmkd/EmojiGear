@@ -85,6 +85,11 @@ const char *pVersion = "$VER: FriendSh3ep " FRIENDSH3EP_VERSION;
 
 struct Task *myTask = NULL;
 
+void wait2sec() {
+int i;
+    for(i=0;i<25;i++) WaitTOF();
+}
+
 /* Window drag state — written by TitleBarLayout GM_HITTEST (inside
  * WM_HANDLEINPUT), read by WMHI_MOUSEMOVE in the same drain loop. */
 BOOL windowDragActive      = FALSE;
@@ -110,6 +115,10 @@ WORD windowResizeLastTargetH = 0; /* last height we sent to SizeWindow */
 struct GfxBase       *GfxBase       = NULL;
 struct IntuitionBase *IntuitionBase = NULL;
 struct Library       *UtilityBase   = NULL;
+struct Library         *LayersBase    = NULL;
+struct Library         *IconBase      = NULL;
+struct Library         *AslBase       = NULL;
+struct Library         *GadToolsBase  = NULL;
 
 /* BOOPSI class libraries */
 struct Library *WindowBase         = NULL;
@@ -139,6 +148,10 @@ static LibraryEntry libraryTable[] = {
     {"graphics.library",            40, (struct Library **)&GfxBase},
     {"intuition.library",           40, (struct Library **)&IntuitionBase},
     {"utility.library",             40, &UtilityBase},
+    {"layers.library",    39, &LayersBase},
+    {"icon.library",      39, &IconBase},
+    {"asl.library",       39, &AslBase},
+    {"gadtools.library",  39, &GadToolsBase},
     {"window.class",                42, &WindowBase},
     {"gadgets/layout.gadget",       42, &LayoutBase},
     {"gadgets/button.gadget",       42, &ButtonBase},
@@ -234,7 +247,6 @@ static Object *makeBtn(ULONG gadID, const char *label, UWORD dpiH)
         GA_ID,                  gadID,
         GA_Text,                (ULONG)label,
         UBTP9_URPDrawContext,   (ULONG)app->buttonDC,
-        UBTP9_PointSize,        12,
         UBTP9_BevelStyle,       BVS_BUTTON, //BVS_NONE,
         // UBTP9_TopMargin,        0,
         // UBTP9_BottomMargin,     0,
@@ -249,7 +261,6 @@ static Object *makeLabel(const char *text, UWORD dpiH)
         GA_Text,                (ULONG)text,
         GA_ReadOnly,            TRUE,
         UBTP9_URPDrawContext,   (ULONG)app->buttonDC,
-        UBTP9_PointSize,        12,
         UBTP9_BevelStyle,       BVS_NONE,
         UBTP9_Transparent,      TRUE,
         UBTP9_TopMargin,        0,
@@ -267,7 +278,7 @@ int main(int argc, char **argv)
         printf("FriendSh3ep needs OS3.9 (v40) or OS3.2, you may upgrade.\n");
         return 1;
     }
-
+    myTask = FindTask(NULL);
     atexit(&exitclose);
 
     {
@@ -283,8 +294,6 @@ int main(int argc, char **argv)
     }
 
     BevelBase = OpenLibrary("images/bevel.image", 32); /* optional, no check */
-
-    myTask = FindTask(NULL);
 
     LocaleBase = (struct LocaleBase *)OpenLibrary("locale.library", 38);
     FS3ELocale_Init("FriendSh3ep.catalog", 0);
@@ -307,11 +316,17 @@ int main(int argc, char **argv)
         URP_PREF_ANTIALIAS | URP_PREF_CLUTMODE_NOMASK | URP_PREF_HIGHFILTERING);
     FS3EApp_SetButtonFontSize(12); /* load initial fonts at point size 12 */
 
+    /* TODO: style/theme settings color and fonts have to be set with loaded settings
+        (or from an external theme file ?)
+    */
+    FS3EStyle_InitDefaults(&app->style);
+ printf("FS3ENet_Start\n");
     /* --- Network process ------------------------------------------------ */
     app->netRequestPort = FS3ENet_Start();
     if (!app->netRequestPort)
         printf("FriendSh3ep: network process failed - continuing without\n");
-
+ printf("FS3ENet_Start end\n");
+ printf("windows creates\n");
     /* --- Classic BOOPSI sub-windows ------------------------------------- */
     if (!FS3ELoginView_Create(&app->loginView, 14))
         cleanexit("Can't create login view");
@@ -393,11 +408,16 @@ int main(int argc, char **argv)
     /* ================================================================== */
     /* Part C: toot timeline                                               */
     /* ================================================================== */
-
+ printf("create ttl &app->style:%08x\n",(int)&app->style);
     app->tootTimeline = (Object *)NewObject(TootTimelineClass, NULL,
+        TTIMELINE_Style, (ULONG)(&app->style),
         TTIMELINE_DpiHeight, (ULONG)dpiH,
+        ICA_TARGET, (ULONG)TargetInstance,
+        GA_ID,      GID_TTIMELINE,
         TAG_END);
+ printf("end create ttl\n");
     if (!app->tootTimeline) cleanexit("Can't create toot timeline");
+ flushbdbprint();
 
     /* ---- Fake posts for layout testing (oldest first = prepended bottom-up) ---- */
     {
@@ -451,13 +471,15 @@ int main(int argc, char **argv)
         };
         int i;
         /* Prepend oldest first so newest ends up at top */
+
         for (i = (int)(sizeof(fakePosts)/sizeof(fakePosts[0])) - 1; i >= 0; i--) {
             SetAttrs(app->tootTimeline,
                 TTIMELINE_AddPost, (ULONG)&fakePosts[i],
                 TAG_DONE);
         }
-    }
 
+    }
+ flushbdbprint();
     /* ================================================================== */
     /* Root layout (A + B + C, vertical, borderless, no gaps)             */
     /* ================================================================== */
@@ -511,6 +533,9 @@ int main(int argc, char **argv)
         TAG_END);
     if (!app->window_obj) cleanexit("Can't create window");
 
+ flushbdbprint();
+ printf("FS3EMain_Show\n");
+
     FS3EMain_Show(&app->mainwindow, app->window_obj);
     if (!CurrentMainWindow) cleanexit("Can't open window");
 
@@ -522,7 +547,7 @@ int main(int argc, char **argv)
 
 #define reflags_subjectEditor 1
 #define reflags_bodyEditor    2
-
+#define reflags_tootTimeLine    4
         GetAttr(WINDOW_SigMask, app->window_obj, &winsignal);
 
         while (ok)
@@ -733,6 +758,10 @@ int main(int argc, char **argv)
                             refreshFlags |= reflags_subjectEditor;
                             break;
 
+                        case GID_TTIMELINE:
+                            refreshFlags |= reflags_tootTimeLine;
+                            break;
+
                         default:
                             break;
                     }
@@ -745,6 +774,11 @@ int main(int argc, char **argv)
                 if ((refreshFlags & reflags_bodyEditor) && app->tootView.window)
                     RefreshGList((struct Gadget *)app->tootView.bodyEditor,
                                  app->tootView.window, NULL, 1);
+
+                if ((refreshFlags & reflags_tootTimeLine) && CurrentMainWindow && app->tootTimeline )
+                    RefreshGList((struct Gadget *)app->tootTimeline,
+                                 CurrentMainWindow, NULL, 1);
+
             }
         }
     }
@@ -756,11 +790,14 @@ int main(int argc, char **argv)
 
 void exitclose(void)
 {
+ printf("exitclose\n");
     if (app)
     {
+
         FS3ELoginView_Dispose(&app->loginView);
         FS3ETootView_Dispose(&app->tootView);
-
+//  printf("exitclose2\n");
+// wait2sec();
         if (app->window_obj)
         {
             FS3EMain_Close(&app->mainwindow, app->window_obj, 0);
@@ -768,16 +805,23 @@ void exitclose(void)
              * → all UniButtonP9 children. */
             DisposeObject(app->window_obj);
         }
-
+//  printf("exitclose3\n");
+// wait2sec();
         /* Free private classes AFTER all objects using them are disposed. */
         TootTimeline_Exit();
         NavBarLayout_Exit();
         TitleBarLayout_Exit();
         UniButtonP9_Exit();
-
-        /* Release shared DC after all gadgets using it are disposed. */
+//  printf("exitclose4\n");
+// wait2sec();
+        /* Release shared DCs after all gadgets using them are disposed. */
         if (app->buttonDC) { URPDC_Release(app->buttonDC); app->buttonDC = NULL; }
 
+//  printf("exitclose5\n");
+// wait2sec();
+        FS3EStyle_ReleaseDrawContexts(&app->style);
+//  printf("exitclose6\n");
+// wait2sec();
         if (BevelBase) { CloseLibrary(BevelBase); BevelBase = NULL; }
 
         if (app->netRequestPort)
@@ -789,7 +833,8 @@ void exitclose(void)
                 DeleteMsgPort(netReplyPort);
             }
         }
-
+//  printf("exitclose7\n");
+// wait2sec();
         FS3EMsg_Close();
 
         if (app->app_port)

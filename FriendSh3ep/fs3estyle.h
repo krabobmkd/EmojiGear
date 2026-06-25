@@ -23,6 +23,7 @@
 
 #include <exec/types.h>
 #include <intuition/screens.h>
+#include <libraries/utf8rastport.h>
 
 /* ------------------------------------------------------------------ */
 /* FS3EManagedColor — one color role: RGB definition + runtime pen     */
@@ -47,6 +48,7 @@ typedef enum {
     FS3E_COLOR_ACCENT,              /* separators, borders, avatar placeholder, resize grip */
     FS3E_COLOR_TEXT,                /* main body text */
     FS3E_COLOR_TEXT_DIM,            /* secondary text: @acct, timestamps */
+    FS3E_COLOR_ACTION_TEXT,         /* Reply / Boost / Fave button labels */
     FS3E_COLOR_COUNT                /* must be last */
 } FS3EColorRole;
 
@@ -58,6 +60,12 @@ typedef struct {
     FS3EManagedColor colors[FS3E_COLOR_COUNT];
     struct Screen   *screen;  /* screen whose ColorMap currently owns the pens;
                                * NULL means no pens are allocated */
+
+    /* Draw contexts — one per font role.  Created in FS3EStyle_InitDefaults,
+     * released in FS3EStyle_ReleaseDrawContexts.  Not screen-dependent. */
+    struct URPDrawContext *dcNormal;    /* body text   : 12 pt regular */
+    struct URPDrawContext *dcUsername;  /* display names: 13 pt bold   */
+    struct URPDrawContext *dcMini;      /* timestamps, acct: 9 pt      */
 } FS3EStyle;
 
 /* ------------------------------------------------------------------ */
@@ -79,5 +87,9 @@ void FS3EStyle_ReleasePens(FS3EStyle *st);
 
 /* Convenience accessor: pen index for a given role */
 #define FS3E_PEN(st, role)  ((st)->colors[(role)].pen)
+
+/* Release the three URPDrawContexts.  Call before program exit,
+ * after all gadgets that use them have been disposed. */
+void FS3EStyle_ReleaseDrawContexts(FS3EStyle *st);
 
 #endif /* FS3ESTYLE_H */

@@ -41,26 +41,24 @@
 /* Tile pool allocation / deallocation                                  */
 /* ------------------------------------------------------------------ */
 
-BOOL ttl_tiles_alloc(TTLData *inst)
+BOOL ttl_tiles_alloc(TTLData *inst, struct RastPort *rp)
 {
     ULONG  i, depth, needed;
-    struct BitMap *friendBM;
-
+//bdbprintf("ttl_tiles_alloc\n");
     ttl_tiles_free(inst);  /* free old pool first if any */
 
-    if (inst->gadWidth <= 0 || inst->gadHeight <= 0) return FALSE;
+    if (inst->gadWidth <= 0 || inst->gadHeight <= 0 || !rp || !rp->BitMap) return FALSE;
 
     /* Pool size: 2× gadget height + buffer rows, capped at TTL_TILE_POOL_MAX */
     needed = (ULONG)((inst->gadHeight * 2) / TTL_TILE_HEIGHT) + TTL_TILE_BUF * 2 + 2;
     if (needed > TTL_TILE_POOL_MAX) needed = TTL_TILE_POOL_MAX;
 
-    friendBM = inst->screen ? inst->screen->RastPort.BitMap : NULL;
-    depth    = friendBM ? (ULONG)GetBitMapAttr(friendBM, BMA_DEPTH) : 4;
+    depth    = (ULONG)GetBitMapAttr(rp->BitMap, BMA_DEPTH);
 
     /* Allocate tile bitmaps */
     for (i = 0; i < needed; i++) {
         inst->tiles[i].bm = AllocBitMap((ULONG)inst->gadWidth, TTL_TILE_HEIGHT,
-                                         depth, BMF_CLEAR, friendBM);
+                                         depth, BMF_CLEAR, rp->BitMap);
         if (!inst->tiles[i].bm) break;
         inst->tiles[i].tileBaseY = TTL_TILE_UNUSED;
         inst->tiles[i].dirty     = FALSE;
@@ -92,8 +90,9 @@ BOOL ttl_tiles_alloc(TTLData *inst)
 void ttl_tiles_free(TTLData *inst)
 {
     ULONG i;
-
+//bdbprintf("ttl_tiles_free\n");
     if (inst->tileLayer) {
+        if(inst->tileCount>0) inst->tileLayer->rp->BitMap = inst->tiles[0].bm;
         DeleteLayer(0, inst->tileLayer);
         inst->tileLayer = NULL;
     }
@@ -120,6 +119,7 @@ void ttl_tiles_free(TTLData *inst)
 
 void ttl_tiles_invalidate_all(TTLData *inst)
 {
+//bdbprintf("ttl_tiles_invalidate_all\n");
     ULONG i;
     for (i = 0; i < inst->tileCount; i++)
         inst->tiles[i].dirty = TRUE;
@@ -163,7 +163,7 @@ TTLTile *ttl_tile_acquire(TTLData *inst, LONG tileBaseY)
     TTLTile *freeTile = NULL;
     TTLTile *farthest = NULL;
     LONG     farthestDist = -1;
-
+//bdbprintf("ttl_tile_acquire\n");
     if (inst->tileCount == 0) return NULL;
 
     for (i = 0; i < inst->tileCount; i++) {
@@ -199,6 +199,7 @@ TTLTile *ttl_tile_acquire(TTLData *inst, LONG tileBaseY)
 
 void ttl_tile_evict(TTLData *inst, TTLTile *tile)
 {
+//bdbprintf("ttl_tile_evict\n");
     (void)inst;
     if (!tile) return;
     tile->tileBaseY = TTL_TILE_UNUSED;
@@ -224,31 +225,36 @@ void ttl_tile_evict_out_of_range(TTLData *inst, LONG keepTopY, LONG keepBotY)
 /* Post drawing helpers                                                  */
 /* ------------------------------------------------------------------ */
 
+
 /* Draw UTF-8 text at tile-relative (x, baseline_y) using the shared RP.
  * Falls back to nothing if dc is NULL. */
 static void tile_draw_text(TTLData *inst, struct RastPort *rp,
-                           WORD x, WORD y, const char *utf8)
+                           WORD x, WORD y, const char *utf8,
+                           struct URPDrawContext *dc)
 {
+//bdbprintf("tile_draw_text\n");
     struct URPTextPos pos;
-    if (!inst->dc || !utf8 || !utf8[0]) return;
+    if (!dc || !utf8 || !utf8[0]) return;
     /* colour must be set on the draw context via URPDC_SetDrawColorFromPen before calling */
     pos.x = x;
     pos.y = y;
-    URPDrawTextUTF8(rp, inst->dc, &pos, utf8, -1);
+    URPDrawTextUTF8(rp, dc, &pos, utf8, -1);
 }
 
 /* Draw body text with naive word-wrap into (x, startY, maxW) column.
  * Returns the Y after the last line. */
 static WORD tile_draw_body(TTLData *inst, struct RastPort *rp,
-                           const char *body, WORD x, WORD startY, WORD maxW)
+                           const char *body, WORD x, WORD startY, WORD maxW,
+                           struct URPDrawContext *dc)
 {
+//bdbprintf("tile_draw_body\n");
     /* Simple wrap: measure total advance, emit virtual line breaks. */
     const char *p     = body;
     const char *lineStart = body;
     WORD        curY  = startY;
     LONG        lineW = 0;
 
-    if (!inst->dc || !body || !body[0]) return startY;
+    if (!dc || !body || !body[0]) return startY;
 
     /* Walk codepoints; break at spaces when lineW > maxW */
     while (*p) {
@@ -267,10 +273,10 @@ static WORD tile_draw_body(TTLData *inst, struct RastPort *rp,
             (void)adv; /* advance measured below via TextSizeUTF8 */
         }
         {
-            struct URPTextMetric m;
-            LONG wlen = (LONG)(p - wordStart);
-            if (wlen > 0) {
-                URPDC_TextSizeUTF8(inst->dc, wordStart, wlen, &m);
+            LONG wchars = utf8_codepoints_range(wordStart, p);
+            if (wchars > 0) {
+                struct URPTextMetric m;
+                URPDC_TextSizeUTF8(dc, wordStart, wchars, &m);
                 wordW = m.width;
             }
         }
@@ -281,8 +287,8 @@ static WORD tile_draw_body(TTLData *inst, struct RastPort *rp,
                 struct URPTextPos pos;
                 pos.x = x;
                 pos.y = (WORD)(curY + inst->lineAscent);
-                URPDrawTextUTF8(rp, inst->dc, &pos,
-                                lineStart, (LONG)(wordStart - lineStart));
+                URPDrawTextUTF8(rp, dc, &pos,
+                                lineStart, (ULONG)utf8_codepoints_range(lineStart, wordStart));
             }
             curY     += inst->lineHeight;
             lineStart = wordStart;
@@ -294,7 +300,7 @@ static WORD tile_draw_body(TTLData *inst, struct RastPort *rp,
         while (*p == ' ' || *p == '\t') {
             struct URPTextMetric m;
             char sp[2] = { *p, 0 };
-            URPDC_TextSizeUTF8(inst->dc, sp, 1, &m);
+            URPDC_TextSizeUTF8(dc, sp, 1, &m);
             lineW += m.width;
             p++;
         }
@@ -304,8 +310,8 @@ static WORD tile_draw_body(TTLData *inst, struct RastPort *rp,
                 struct URPTextPos pos;
                 pos.x = x;
                 pos.y = (WORD)(curY + inst->lineAscent);
-                URPDrawTextUTF8(rp, inst->dc, &pos,
-                                lineStart, (LONG)(p - lineStart));
+                URPDrawTextUTF8(rp, dc, &pos,
+                                lineStart, (ULONG)utf8_codepoints_range(lineStart, p));
             }
             curY     += inst->lineHeight;
             p++;
@@ -318,8 +324,8 @@ static WORD tile_draw_body(TTLData *inst, struct RastPort *rp,
         struct URPTextPos pos;
         pos.x = x;
         pos.y = (WORD)(curY + inst->lineAscent);
-        URPDrawTextUTF8(rp, inst->dc, &pos,
-                        lineStart, (LONG)(p - lineStart));
+        URPDrawTextUTF8(rp, dc, &pos,
+                        lineStart, (ULONG)utf8_codepoints_range(lineStart, p));
         curY += inst->lineHeight;
     }
     return curY;
@@ -338,15 +344,18 @@ void ttl_render_tile(TTLData *inst, TTLTile *tile)
     WORD             avatarW;
     WORD             textX, textW;
     TTLPost         *post;
-
+    LONG bgpen;
+//bdbprintf("ttl_render_tile\n");
     if (!inst->tileLayer) return;
 
+    bgpen = (LONG)FS3E_PEN(inst->style, FS3E_COLOR_TIMELINE_BG);
+// bdbprintf("ttl bgpen:%d\n",bgpen);
     /* Swap this tile's bitmap into the shared Layer's RastPort */
     inst->tileLayer->rp->BitMap = tile->bm;
     rp = inst->tileLayer->rp;
 
     /* Background fill */
-    SetAPen(rp, (LONG)FS3E_PEN(inst->style, FS3E_COLOR_TIMELINE_BG));
+    SetAPen(rp, bgpen);
     RectFill(rp, 0, 0, inst->gadWidth - 1, TTL_TILE_HEIGHT - 1);
 
     avatarW = (WORD)(inst->dpiHeight * 2);
@@ -374,18 +383,25 @@ void ttl_render_tile(TTLData *inst, TTLTile *tile)
             WORD ay = (WORD)(drawY + TTL_POST_PAD_TOP);
             WORD ax = (WORD)TTL_POST_PAD_LEFT;
             WORD as = avatarW;
+            ;
+
             SetAPen(rp, (LONG)FS3E_PEN(inst->style, FS3E_COLOR_ACCENT));
             RectFill(rp, ax, ay, ax + as - 1, ay + as - 1);
             /* A small cross in timeline bg so the placeholder is obvious */
-            SetAPen(rp, (LONG)FS3E_PEN(inst->style, FS3E_COLOR_TIMELINE_BG));
+            SetAPen(rp, bgpen);
             Move(rp, ax,          ay + as/2);
             Draw(rp, ax + as - 1, ay + as/2);
             Move(rp, ax + as/2,   ay);
             Draw(rp, ax + as/2,   ay + as - 1);
         }
 
-        /* ---- Text rendering (requires dc) ---- */
-        if (inst->dc) {
+        /* ---- Text rendering (requires style DCs) ---- */
+        if (inst->style && inst->style->dcNormal) {
+
+
+            struct URPDrawContext *dcName = inst->style->dcUsername;
+            struct URPDrawContext *dcMini = inst->style->dcMini;
+            struct URPDrawContext *dcBody = inst->style->dcNormal;
             WORD   curY;
             WORD   baselineY;
 
@@ -394,28 +410,27 @@ void ttl_render_tile(TTLData *inst, TTLTile *tile)
             LONG dimPen = (LONG)FS3E_PEN(inst->style, FS3E_COLOR_TEXT_DIM);
             LONG namePen= (LONG)FS3E_PEN(inst->style, FS3E_COLOR_USERNAME);
 
-            URPDC_SetDrawColorFromPen(inst->dc, inst->screen, namePen, bgPen);
-
-            /* Username */
+            /* Username (dcUsername) */
             curY      = (WORD)(drawY + TTL_POST_PAD_TOP);
-            baselineY = (WORD)(curY + inst->lineAscent);
-            tile_draw_text(inst, rp, textX, baselineY, post->username);
-            curY += inst->lineHeight;
+            baselineY = (WORD)(curY + inst->nameLineAscent);
+            URPDC_SetDrawColorFromPen(dcName, inst->screen, namePen, bgPen);
+            tile_draw_text(inst, rp, textX, baselineY, post->username, dcName);
+            curY += inst->nameLineHeight;
 
-            /* Acct (dim pen) */
-            URPDC_SetDrawColorFromPen(inst->dc, inst->screen, dimPen, bgPen);
-            baselineY = (WORD)(curY + inst->lineAscent);
-            tile_draw_text(inst, rp, textX, baselineY, post->acct);
-            curY += inst->lineHeight;
+            /* Acct (dcMini, dim pen) */
+            URPDC_SetDrawColorFromPen(dcMini, inst->screen, dimPen, bgPen);
+            baselineY = (WORD)(curY + inst->miniLineAscent);
+            tile_draw_text(inst, rp, textX, baselineY, post->acct, dcMini);
+            curY += inst->miniLineHeight;
 
-            /* Timestamp – right-aligned on the username row */
+            /* Timestamp – right-aligned on the username row, dcMini */
             if (post->timestamp && post->timestamp[0]) {
                 struct URPTextMetric tsm;
-                URPDC_TextSizeUTF8(inst->dc, post->timestamp, -1, &tsm);
+                URPDC_TextSizeUTF8(dcMini, post->timestamp, -1, &tsm);
                 WORD tsX = (WORD)(inst->gadWidth - TTL_POST_PAD_RIGHT - tsm.width);
-                WORD tsY = (WORD)(drawY + TTL_POST_PAD_TOP + inst->lineAscent);
-                URPDC_SetDrawColorFromPen(inst->dc, inst->screen, dimPen, bgPen);
-                tile_draw_text(inst, rp, tsX, tsY, post->timestamp);
+                WORD tsY = (WORD)(drawY + TTL_POST_PAD_TOP + inst->nameLineAscent);
+                URPDC_SetDrawColorFromPen(dcMini, inst->screen, dimPen, bgPen);
+                tile_draw_text(inst, rp, tsX, tsY, post->timestamp, dcMini);
             }
 
             /* Ensure text Y is below avatar */
@@ -424,10 +439,47 @@ void ttl_render_tile(TTLData *inst, TTLTile *tile)
                 if (curY < minY) curY = minY;
             }
 
-            /* Body text */
-            URPDC_SetDrawColorFromPen(inst->dc, inst->screen, txtPen, bgPen);
-            if (post->body && post->body[0])
-                tile_draw_body(inst, rp, post->body, textX, curY, textW);
+            /* Body text (dcNormal) */
+            URPDC_SetDrawColorFromPen(dcBody, inst->screen, txtPen, bgPen);
+            {
+                WORD bodyEndY = curY;
+                if (post->body && post->body[0])
+                    bodyEndY = tile_draw_body(inst, rp, post->body,
+                                              textX, curY, textW, dcBody);
+
+                /* Action bar: ↩ Reply  ↺ Boost  ★ Fave — right-aligned, normal font */
+                {
+                    static const char * const aLabels[3] = {
+                        "\xe2\x86\xa9 Reply",
+                        //"\xe2\x86\xba Boost",
+                         "\xF0\x9F\x94\x81 Boost",
+                        //"\xe2\x98\x85 Fave",
+                        "💫 Fave"
+                    };
+
+
+
+                    LONG actionPen = (LONG)FS3E_PEN(inst->style, FS3E_COLOR_ACTION_TEXT);
+                    WORD barBaselineY = (WORD)(bodyEndY + 2 + inst->lineAscent);
+                    WORD xRight = (WORD)(inst->gadWidth - TTL_POST_PAD_RIGHT);
+                    WORD gap    = 8;
+                    int  a;
+                    URPDC_SetDrawColorFromPen(dcBody, inst->screen, actionPen, bgPen);
+                    for (a = 2; a >= 0; a--) {
+                        struct URPTextMetric m;
+                        struct URPTextPos pos;
+                        WORD itemX;
+                        LONG nc = utf8_codepoints_range(aLabels[a],
+                                     aLabels[a] + strlen(aLabels[a]));
+                        URPDC_TextSizeUTF8(dcBody, aLabels[a], nc, &m);
+                        itemX = (WORD)(xRight - m.width);
+                        pos.x = itemX;
+                        pos.y = barBaselineY;
+                        URPDrawTextUTF8(rp, dcBody, &pos, aLabels[a], (ULONG)nc);
+                        xRight = (WORD)(itemX - gap);  /* use saved itemX, not pos.x */
+                    }
+                }
+            }
         }
 
         /* ---- Separator line at post bottom ---- */
@@ -449,33 +501,40 @@ void ttl_render_tile(TTLData *inst, TTLTile *tile)
 void ttl_notify(Class *cl, Object *o, struct GadgetInfo *gi,
                 ULONG tag, ULONG value)
 {
-    struct opUpdate opu;
-    struct TagItem  tags[2];
+    TTLData         *inst = TTL_DATA(cl, o);
+    struct TagItem  tags[3];
+    struct opUpdate nmsg;
 
-    tags[0].ti_Tag  = tag;
-    tags[0].ti_Data = value;
-    tags[1].ti_Tag  = TAG_DONE;
+   if (!inst->target) return;
 
-    opu.MethodID     = OM_NOTIFY;
-    opu.opu_AttrList = tags;
-    opu.opu_GInfo    = gi;
-    opu.opu_Flags    = 0;
+    tags[0].ti_Tag  = GA_ID;
+    tags[0].ti_Data = inst->ga_id;
+    tags[1].ti_Tag  = tag;
+    tags[1].ti_Data = value;
+    tags[2].ti_Tag  = TAG_DONE;
 
-    DoSuperMethodA(cl, o, (APTR)&opu);
+    nmsg.MethodID     = OM_UPDATE;
+    nmsg.opu_AttrList = (struct TagItem *)tags;
+    nmsg.opu_GInfo    = gi;
+    nmsg.opu_Flags    = 0;
+    DoMethodA(inst->target,(Msg)&nmsg);
+
 }
 
-void ttl_render_self(Class *cl, Object *o, struct GadgetInfo *gi)
-{
-    struct RastPort *rp;
-    if (!gi) return;
-    rp = ObtainGIRPort(gi);
-    if (rp) {
-        struct gpRender gpr;
-        gpr.MethodID   = GM_RENDER;
-        gpr.gpr_GInfo  = gi;
-        gpr.gpr_RPort  = rp;
-        gpr.gpr_Redraw = GREDRAW_UPDATE;
-        DoMethodA(o, (Msg)&gpr);
-        ReleaseGIRPort(rp);
-    }
-}
+
+
+// void ttl_render_self(Class *cl, Object *o, struct GadgetInfo *gi)
+// {
+//     struct RastPort *rp;
+//     if (!gi) return;
+//     rp = ObtainGIRPort(gi);
+//     if (rp) {
+//         struct gpRender gpr;
+//         gpr.MethodID   = GM_RENDER;
+//         gpr.gpr_GInfo  = gi;
+//         gpr.gpr_RPort  = rp;
+//         gpr.gpr_Redraw = GREDRAW_UPDATE;
+//         DoMethodA(o, (Msg)&gpr);
+//         ReleaseGIRPort(rp);
+//     }
+// }
