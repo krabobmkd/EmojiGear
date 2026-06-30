@@ -66,6 +66,13 @@ typedef struct {
     struct URPDrawContext *dcNormal;    /* body text   : 12 pt regular */
     struct URPDrawContext *dcUsername;  /* display names: 13 pt bold   */
     struct URPDrawContext *dcMini;      /* timestamps, acct: 9 pt      */
+
+    /* Post layout metrics derived from dcNormal line height.
+     * Updated by FS3EStyle_InitDefaults and FS3EStyle_SetFontSize.
+     * TootTimeline reads these instead of using hardcoded constants. */
+    WORD avatarSize;   /* square avatar side in pixels (width = height) */
+    WORD postPadLeft;  /* gap from gadget left edge to avatar left edge  */
+    WORD avatarGap;    /* gap from avatar right edge to text column left  */
 } FS3EStyle;
 
 /* ------------------------------------------------------------------ */
@@ -91,5 +98,21 @@ void FS3EStyle_ReleasePens(FS3EStyle *st);
 /* Release the three URPDrawContexts.  Call before program exit,
  * after all gadgets that use them have been disposed. */
 void FS3EStyle_ReleaseDrawContexts(FS3EStyle *st);
+
+/*
+ * Resize the three draw contexts proportionally from a base point size:
+ *   dcNormal   = baseSize       (body text)
+ *   dcUsername = baseSize + 1   (display names, bold)
+ *   dcMini     = max(baseSize - 2, 7)  (timestamps, acct — always smaller)
+ *
+ * Font paths fall back to the InitDefaults hardcoded names when NULL.
+ * Style bits (BOLD on dcUsername) and pref flags are preserved from init.
+ * Call after changing app->settings.fontPointSize; the caller must then
+ * re-set TTIMELINE_Style on the toot-timeline to refresh cached metrics.
+ */
+void FS3EStyle_SetFontSize(FS3EStyle *st, int baseSize,
+                           const char *primary,
+                           const char *fallback1, const char *fallback2,
+                           const char *emoji);
 
 #endif /* FS3ESTYLE_H */

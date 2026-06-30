@@ -7,6 +7,7 @@
 #include "fs3enet.h"
 #include "fs3enet_http.h"
 #include "fs3enet_mastodon.h"
+#include "fs3enet_cache.h"
 
 #include <dos/dos.h>
 #include <dos/dostags.h>
@@ -84,14 +85,32 @@ FS3ENetLoginFinishReq *FS3ENetLoginFinishReq_Alloc(const char *apiBaseUrl,
     return req;
 }
 
+FS3ENetFetchImageReq *FS3ENetFetchImageReq_Alloc(const char *url)
+{
+    ULONG total = sizeof(FS3ENetFetchImageReq) + FS3ENet_PackLen(url);
+    FS3ENetFetchImageReq *req =
+        (FS3ENetFetchImageReq *)AllocVec(total, MEMF_ANY);
+    char *p;
+
+    if (!req) return NULL;
+    p = (char *)req + sizeof(*req);
+    FS3ENet_PackStr(&req->fs3enf_Url, &p, url);
+    return req;
+}
+
 /* Handshake message used once at startup so FS3ENet_Start() can hand the
  * new process' request port back to the caller. Lives on FS3ENet_Start()'s
  * stack; FS3ENet_Start() stays blocked in WaitPort() until the child has
- * filled it in and replied, so its lifetime is safe. */
+ * filled it in and replied, so its lifetime is safe.
+ *
+ * fs3ess_CacheDir points at the caller's string (app->settings.cachePath).
+ * It is read by the child before it replies, while the parent is still
+ * blocked, so the pointer is always valid. */
 struct FS3ENetStartup
 {
     struct Message  fs3ess_Msg;
     struct MsgPort  *fs3ess_RequestPort;
+    const char      *fs3ess_CacheDir;
 };
 
 /* The OS3 NDK has no NP_UserData tag for CreateNewProc(), so the startup
@@ -103,7 +122,7 @@ static struct FS3ENetStartup *g_FS3ENetStartup;
 static void FS3ENet_ProcEntry(void);
 static void FS3ENet_Dispatch(FS3ENetMessage *fs3em);
 
-struct MsgPort *FS3ENet_Start(void)
+struct MsgPort *FS3ENet_Start(const char *cacheDir)
 {
     struct MsgPort     *replyPort;
     struct FS3ENetStartup startup;
@@ -116,6 +135,7 @@ struct MsgPort *FS3ENet_Start(void)
     startup.fs3ess_Msg.mn_ReplyPort = replyPort;
     startup.fs3ess_Msg.mn_Length    = sizeof(startup);
     startup.fs3ess_RequestPort      = NULL;
+    startup.fs3ess_CacheDir         = cacheDir;  /* may be NULL → default */
 
     g_FS3ENetStartup = &startup;
 
@@ -175,6 +195,11 @@ static void FS3ENet_ProcEntry(void)
         requestPort = NULL;
     }
 
+    /* Disk cache — non-fatal: image fetches will return HTTP_ERROR if the
+     * cache dir cannot be created, but login and timeline fetches still work. */
+    if (requestPort)
+        FS3ECache_Init(startup->fs3ess_CacheDir);
+
     /* Hand the request port (or NULL on failure) back to FS3ENet_Start(). */
     startup->fs3ess_RequestPort = requestPort;
     PutMsg(startup->fs3ess_Msg.mn_ReplyPort, &startup->fs3ess_Msg);
@@ -203,6 +228,7 @@ static void FS3ENet_ProcEntry(void)
         }
     }
 
+    FS3ECache_Cleanup();
     FS3EHttp_Cleanup();
     DeleteMsgPort(requestPort);
 }
@@ -322,9 +348,61 @@ static void FS3ENet_HandleLoginFinish(FS3ENetMessage *fs3em)
     fs3em->fs3em_Result  = FS3ENETR_OK;
 }
 
-/* Handles one request. Phase 2 will fill in FS3ENETQ_TIMELINE,
- * FS3ENETQ_POST_STATUS and FS3ENETQ_FETCH_IMAGE; for now those are a no-op
- * success. */
+/* FS3ENETQ_FETCH_IMAGE — check disk cache, fetch on miss, reply with path. */
+static void FS3ENet_HandleFetchImage(FS3ENetMessage *fs3em)
+{
+    FS3ENetFetchImageReq   *req = (FS3ENetFetchImageReq *)fs3em->fs3em_Data;
+    FS3ENetFetchImageReply *reply;
+    char localPath[FS3ECACHE_PATH_SIZE];
+    ULONG total;
+    char *p;
+
+    if (!req || fs3em->fs3em_DataLen < sizeof(*req))
+    {
+        fs3em->fs3em_Result = FS3ENETR_PARSE_ERROR;
+        return;
+    }
+
+    if (!FS3ECache_Lookup(req->fs3enf_Url, localPath, sizeof(localPath)))
+    {
+        FS3EHttpResponse resp;
+
+        if (!FS3EHttp_Get(req->fs3enf_Url, NULL, &resp))
+        {
+            fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
+            return;
+        }
+
+        if (!FS3ECache_Store(req->fs3enf_Url, resp.fhr_Body, resp.fhr_BodyLen,
+                             localPath, sizeof(localPath)))
+        {
+            FS3EHttp_FreeResponse(&resp);
+            fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
+            return;
+        }
+
+        FS3EHttp_FreeResponse(&resp);
+    }
+
+    total = sizeof(FS3ENetFetchImageReply) + FS3ENet_PackLen(localPath);
+    reply = (FS3ENetFetchImageReply *)AllocVec(total, MEMF_ANY);
+    if (!reply)
+    {
+        fs3em->fs3em_Result = FS3ENETR_NETWORK_ERROR;
+        return;
+    }
+
+    p = (char *)reply + sizeof(*reply);
+    FS3ENet_PackStr(&reply->fs3enf_LocalPath, &p, localPath);
+
+    FreeVec(fs3em->fs3em_Data);
+    fs3em->fs3em_Data    = reply;
+    fs3em->fs3em_DataLen = total;
+    fs3em->fs3em_Result  = FS3ENETR_OK;
+}
+
+/* Handles one request. FS3ENETQ_TIMELINE and FS3ENETQ_POST_STATUS are
+ * stubbed until Phase 2 completes the timeline/post flow. */
 static void FS3ENet_Dispatch(FS3ENetMessage *fs3em)
 {
     switch (fs3em->fs3em_Type)
@@ -337,11 +415,14 @@ static void FS3ENet_Dispatch(FS3ENetMessage *fs3em)
             FS3ENet_HandleLoginFinish(fs3em);
             break;
 
+        case FS3ENETQ_FETCH_IMAGE:
+            FS3ENet_HandleFetchImage(fs3em);
+            break;
+
         case FS3ENETQ_TIMELINE:
         case FS3ENETQ_POST_STATUS:
-        case FS3ENETQ_FETCH_IMAGE:
         default:
-            /* TODO: dispatch to fs3enet_mastodon.c / fs3enet_http.c (Phase 2) */
+            /* TODO: Phase 2 */
             fs3em->fs3em_Result = FS3ENETR_OK;
             break;
     }

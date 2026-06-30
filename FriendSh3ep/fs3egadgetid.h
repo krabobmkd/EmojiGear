@@ -41,4 +41,22 @@
 /* The whole Toot TimeLine (part C) */
 #define GID_TTIMELINE         100
 
+/* Font & Theme settings window (fs3ethemeview.c) */
+#define GID_THEMEV_ANTIALIAS        200
+#define GID_THEMEV_EMOJIQUALITY     201
+#define GID_THEMEV_PRIMARY_FONT     202
+#define GID_THEMEV_FALLBACK1_FONT   203
+#define GID_THEMEV_FALLBACK2_FONT   204
+#define GID_THEMEV_EMOJI_FONT         205
+#define GID_THEMEV_COLOR_EMOJI_FONT   206
+#define GID_THEMEV_PRIMARY_CLEAR      207
+#define GID_THEMEV_FALLBACK1_CLEAR    208
+#define GID_THEMEV_FALLBACK2_CLEAR    209
+#define GID_THEMEV_EMOJI_CLEAR        210
+#define GID_THEMEV_COLOR_EMOJI_CLEAR  211
+#define GID_THEMEV_PRESET_LOW         212
+#define GID_THEMEV_PRESET_HQ          213
+#define GID_THEMEV_PRESET_MONO        214
+#define GID_THEMEV_THEME_CHOOSER      215
+
 #endif /* FS3EGADGETID_H */

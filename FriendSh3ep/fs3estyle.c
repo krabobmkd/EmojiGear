@@ -96,6 +96,70 @@ void FS3EStyle_ReleaseDrawContexts(FS3EStyle *st)
 /* Public API                                                           */
 /* ------------------------------------------------------------------ */
 
+/* Derive post-layout pixel values from dcNormal line metrics.
+ *   avatarSize  = lineH × 2.5  (1.25× the old dpiHeight×2 formula)
+ *   postPadLeft = lineH/3 + 2  (~6px at 12pt, scales with font)
+ *   avatarGap   = lineH/3 + 2  (same rule as postPadLeft)
+ */
+static void compute_layout(FS3EStyle *st)
+{
+    struct URPTextMetric m;
+    WORD lineH = 14;
+
+    if (st->dcNormal) {
+        URPDC_GetFontLineMetrics(st->dcNormal, &m);
+        if (m.height > 0) lineH = (WORD)m.height;
+    }
+
+    st->avatarSize  = (WORD)(lineH * 5 / 2);
+    st->postPadLeft = (WORD)(lineH / 3 + 2);
+    st->avatarGap   = (WORD)(lineH / 3 + 2);
+}
+
+/* Flush fonts in dc and re-add them at the given size.
+ * styleBits is re-applied (non-zero only for dcUsername = URP_STYLE_BOLD). */
+static void resize_dc(struct URPDrawContext *dc, int size,
+                      const char *primary,
+                      const char *fallback1, const char *fallback2,
+                      const char *emoji, ULONG styleBits)
+{
+    if (!dc) return;
+    URPDC_FlushFonts(dc);
+    URPDC_AddFont(dc, primary, size, 0);
+    if (fallback1) URPDC_AddFont(dc, fallback1, size, 0);
+    if (fallback2) URPDC_AddFont(dc, fallback2, size, 0);
+    URPDC_AddFont(dc, emoji, size, 0);
+    if (styleBits) URPDC_SetStyle(dc, styleBits);
+}
+
+void FS3EStyle_SetFontSize(FS3EStyle *st, int baseSize,
+                           const char *primary,
+                           const char *fallback1, const char *fallback2,
+                           const char *emoji)
+{
+    const char *pri = primary ? primary : "LiberationSans-Regular.ttf";
+    const char *emo = emoji   ? emoji   : "NotoColorEmoji32.ttf";
+    int normalSize   = baseSize;
+    int usernameSize = (baseSize * 18)/16;
+    int miniSize     = (baseSize *14)/16;
+
+    if (!st) return;
+
+    resize_dc(st->dcNormal,   normalSize,   pri, fallback1, fallback2, emo, 0);
+    resize_dc(st->dcUsername, usernameSize, pri, fallback1, fallback2, emo, URP_STYLE_BOLD);
+    resize_dc(st->dcMini,     miniSize,     pri, fallback1, fallback2, emo, 0);
+
+    /* Re-bind the screen so the DCs can access the colour map for CLUT mode.
+     * URPDC_FlushFonts may reset internal bitmap state. */
+    if (st->screen) {
+        if (st->dcNormal)   URPDC_SetDrawScreen(st->dcNormal,   st->screen);
+        if (st->dcUsername) URPDC_SetDrawScreen(st->dcUsername, st->screen);
+        if (st->dcMini)     URPDC_SetDrawScreen(st->dcMini,     st->screen);
+    }
+
+    compute_layout(st);
+}
+
 void FS3EStyle_InitDefaults(FS3EStyle *st)
 {
     int i;
@@ -117,6 +181,7 @@ void FS3EStyle_InitDefaults(FS3EStyle *st)
     st->dcMini     = make_dc("fs3e-mini",      10,  10, URP_STYLE_NORMAL);
     printf("FS3EStyle_InitDefaults3\n");
 
+    compute_layout(st);
 }
 
 void FS3EStyle_ApplyColors(FS3EStyle *st, struct Screen *scr)

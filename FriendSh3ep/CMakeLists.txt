@@ -26,7 +26,12 @@ set(FRIENDSH3EP_SOURCES
     fs3eboopsimessage.c
     fs3eloginview.c
     fs3etootview.c
+    fs3ethemeview.c
     fs3elocale.c
+    fs3emenu.c
+    fs3eaction.c
+    fs3esettings.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../EmojiGear/tooltypepref.c
     UniButtonP9/unibuttonp9.c
     UniButtonP9/unibuttonp9_dispatch.c
     UniButtonP9/unibuttonp9_attribs.c
@@ -51,7 +56,11 @@ set(FRIENDSH3EP_HEADERS
     fs3eboopsimessage.h
     fs3eloginview.h
     fs3etootview.h
+    fs3ethemeview.h
     fs3elocale.h
+    fs3emenu.h
+    fs3eaction.h
+    fs3esettings.h
     fs3egadgetid.h
     compilers.h
     bdbprintf.h

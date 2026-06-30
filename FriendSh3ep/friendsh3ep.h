@@ -14,7 +14,10 @@
 #include "fs3eboopsimainwindow.h"
 #include "fs3eloginview.h"
 #include "fs3etootview.h"
+#include "fs3ethemeview.h"
 #include "fs3estyle.h"
+#include "fs3emenu.h"
+#include "fs3esettings.h"
 
 #define FRIENDSH3EP_VERSION "0.2"
 
@@ -24,6 +27,8 @@ struct App {
     struct MsgPort *app_port;  /* needed to keep receiving messages while iconified */
 
     FS3EMainWindow mainwindow;
+    FS3EMenu       menu;
+    FS3ESettings   settings;
 
     /* Root vertical layout (Part A + B + C) */
     Object *mainlayout;
@@ -51,8 +56,9 @@ struct App {
     struct URPDrawContext *buttonDC;
 
     /* Classic BOOPSI sub-windows, opened on demand */
-    FS3ELoginView loginView;
-    FS3ETootView  tootView;
+    FS3ELoginView  loginView;
+    FS3ETootView   tootView;
+    FS3EThemeView  themeView;
 
     /* fs3enet request port, see network_fs3e/fs3enet.h */
     struct MsgPort *netRequestPort;

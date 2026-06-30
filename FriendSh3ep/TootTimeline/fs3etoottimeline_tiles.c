@@ -341,7 +341,7 @@ void ttl_render_tile(TTLData *inst, TTLTile *tile)
 {
     struct RastPort *rp;
     LONG             tileBaseY = tile->tileBaseY;
-    WORD             avatarW;
+    WORD             avatarW, padLeft, avatarGap;
     WORD             textX, textW;
     TTLPost         *post;
     LONG bgpen;
@@ -358,9 +358,17 @@ void ttl_render_tile(TTLData *inst, TTLTile *tile)
     SetAPen(rp, bgpen);
     RectFill(rp, 0, 0, inst->gadWidth - 1, TTL_TILE_HEIGHT - 1);
 
-    avatarW = (WORD)(inst->dpiHeight * 2);
-    textX   = (WORD)(TTL_POST_PAD_LEFT + avatarW + TTL_AVATAR_GAP);
-    textW   = (WORD)(inst->gadWidth - textX - TTL_POST_PAD_RIGHT);
+    if (inst->style && inst->style->avatarSize > 0) {
+        avatarW  = inst->style->avatarSize;
+        padLeft  = inst->style->postPadLeft;
+        avatarGap = inst->style->avatarGap;
+    } else {
+        avatarW  = 35;
+        padLeft  = 6;
+        avatarGap = 6;
+    }
+    textX = (WORD)(padLeft + avatarW + avatarGap);
+    textW = (WORD)(inst->gadWidth - textX - TTL_POST_PAD_RIGHT);
     if (textW < 16) textW = 16;
 
     /* Walk posts; they are sorted newest-first but their Y values are
@@ -381,9 +389,8 @@ void ttl_render_tile(TTLData *inst, TTLTile *tile)
         /* ---- Avatar placeholder rectangle ---- */
         {
             WORD ay = (WORD)(drawY + TTL_POST_PAD_TOP);
-            WORD ax = (WORD)TTL_POST_PAD_LEFT;
+            WORD ax = padLeft;
             WORD as = avatarW;
-            ;
 
             SetAPen(rp, (LONG)FS3E_PEN(inst->style, FS3E_COLOR_ACCENT));
             RectFill(rp, ax, ay, ax + as - 1, ay + as - 1);
@@ -410,6 +417,8 @@ void ttl_render_tile(TTLData *inst, TTLTile *tile)
             LONG dimPen = (LONG)FS3E_PEN(inst->style, FS3E_COLOR_TEXT_DIM);
             LONG namePen= (LONG)FS3E_PEN(inst->style, FS3E_COLOR_USERNAME);
 
+// bdbprintf("ttl_render_tile bgPen:%d\n",bgPen);
+// bdbprintf("ttl_render_tile txtPen:%d\n",txtPen);
             /* Username (dcUsername) */
             curY      = (WORD)(drawY + TTL_POST_PAD_TOP);
             baselineY = (WORD)(curY + inst->nameLineAscent);

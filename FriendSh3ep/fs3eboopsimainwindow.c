@@ -65,8 +65,13 @@ void FS3EMain_GetWindowPos(FS3EMainWindow *mw, Object *window_obj)
 /* WM_OPEN the persistent window object on CurrentMainScreen. */
 static void GenericOpenWindow(FS3EMainWindow *mw, Object *window_obj)
 {
+
     if (CurrentMainWindow) return;  /* already open */
     if (!CurrentMainScreen) return; /* need an active screen */
+
+    /* Synchronize screen palette colors.
+     * must be done before opening window, and when screen is known. */
+    FS3EStyle_ApplyColors(&app->style, CurrentMainScreen);
 
     CurrentMainWindow = (struct Window *)DoMethod(window_obj, WM_OPEN, NULL);
     if (!CurrentMainWindow) return;
@@ -74,8 +79,7 @@ static void GenericOpenWindow(FS3EMainWindow *mw, Object *window_obj)
     if (!mw->drawInfo)
         mw->drawInfo = GetScreenDrawInfo(CurrentMainScreen);
 
- printf("applyColors: CurrentMainScreen:%08x\n",(int)CurrentMainScreen);
-    FS3EStyle_ApplyColors(&app->style, CurrentMainScreen);
+
 }
 
 void FS3EMain_Show(FS3EMainWindow *mw, Object *window_obj)

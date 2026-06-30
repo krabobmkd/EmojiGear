@@ -90,11 +90,13 @@ ULONG TTL_OnDomain(Class *cl, Object *o, struct gpDomain *msg)
 {
     TTLData      *inst   = TTL_DATA(cl, o);
     struct IBox  *domain = &msg->gpd_Domain;
+    WORD asz = (inst->style && inst->style->avatarSize > 0)
+               ? inst->style->avatarSize : 35;
 
     switch (msg->gpd_Which) {
         case GDOMAIN_MINIMUM:
-            domain->Width  = (WORD)(inst->dpiHeight * 4);
-            domain->Height = (WORD)(inst->dpiHeight * 4);
+            domain->Width  = (WORD)(asz * 4);
+            domain->Height = (WORD)(asz * 4);
             break;
         case GDOMAIN_MAXIMUM:
             domain->Width  = 32767;
@@ -103,7 +105,7 @@ ULONG TTL_OnDomain(Class *cl, Object *o, struct gpDomain *msg)
         case GDOMAIN_NOMINAL:
         default:
             domain->Width  = 200;
-            domain->Height = (WORD)(inst->dpiHeight * 20);
+            domain->Height = (WORD)(asz * 20);
             break;
     }
     return 1;

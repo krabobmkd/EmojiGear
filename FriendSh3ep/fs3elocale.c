@@ -46,6 +46,76 @@ static const char *defaultStrings[MSG_COUNT] = {
     "Toot",
     /* MSG_TOOT_CHARS_FORMAT */
     "%lu chars",
+
+    /* MSG_MENU_FRIENDSH3EP */
+    "FriendSh3ep",
+    /* MSG_MENU_ACCOUNTS */
+    "Accounts...",
+    /* MSG_MENU_NEW_TOOT */
+    "New Toot...",
+    /* MSG_MENU_ABOUT */
+    "About...",
+    /* MSG_MENU_QUIT */
+    "Quit",
+
+    /* MSG_MENU_VIEW */
+    "View",
+    /* MSG_VIEW_USER */
+    "User (Your posts)",
+    /* MSG_VIEW_HOME */
+    "Home (Friends & their re-toots)",
+    /* MSG_VIEW_LOCAL */
+    "Local (Your server & re-toots)",
+    /* MSG_VIEW_FEDERATED */
+    "Federated (around the world)",
+    /* MSG_VIEW_SEARCH */
+    "Search",
+
+    /* MSG_MENU_SETTINGS */
+    "Settings",
+    /* MSG_SETTINGS_THEME */
+    "Theme Settings",
+    /* MSG_SETTINGS_GENERAL */
+    "General Settings",
+    /* MSG_SETTINGS_FONTSIZEM */
+    "Font size -",
+    /* MSG_SETTINGS_FONTSIZEP */
+    "Font size +",
+
+    /* MSG_THEMEV_TITLE */
+    "Font & Theme Settings",
+    /* MSG_THEMEV_OPTIONS_GROUP */
+    "Options",
+    /* MSG_THEMEV_ANTIALIAS */
+    "Antialias when possible",
+    /* MSG_THEMEV_EMOJIQUALITY */
+    "Emoji quality scaling",
+    /* MSG_THEMEV_FONTS_GROUP */
+    "Fonts",
+    /* MSG_THEMEV_PRIMARY */
+    "Primary font",
+    /* MSG_THEMEV_FALLBACK1 */
+    "Fallback font 1",
+    /* MSG_THEMEV_FALLBACK2 */
+    "Fallback font 2",
+    /* MSG_THEMEV_EMOJIFONT */
+    "UI emoji font",
+    /* MSG_THEMEV_COLOREMOJIFONT */
+    "Color emoji font",
+    /* MSG_THEMEV_PRESETS_GROUP */
+    "Presets",
+    /* MSG_THEMEV_PRESET_LOW */
+    "Low quality",
+    /* MSG_THEMEV_PRESET_HQ */
+    "High quality",
+    /* MSG_THEMEV_PRESET_MONO */
+    "Monospace",
+    /* MSG_THEMEV_THEME_GROUP */
+    "Theme",
+    /* MSG_THEMEV_THEME_NAME */
+    "Theme",
+    /* MSG_THEMEV_THEME_DEFAULT */
+    "Default",
 };
 
 /* LocaleBase declared in friendsh3ep.c */

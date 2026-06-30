@@ -80,11 +80,14 @@ extern WORD windowResizeLastTargetH;  /* last height sent to SizeWindow */
 /* Post layout constants                                                 */
 /* ------------------------------------------------------------------ */
 
-#define TTL_POST_PAD_TOP   3   /* pixels above content in a post */
-#define TTL_POST_PAD_BOT   4   /* pixels below content (before separator) */
-#define TTL_POST_PAD_LEFT  4
-#define TTL_POST_PAD_RIGHT 4
-#define TTL_AVATAR_GAP     4   /* gap between avatar column and text */
+/* Vertical padding constants (not font-dependent, kept as fixed values) */
+#define TTL_POST_PAD_TOP   4   /* pixels above content in a post */
+#define TTL_POST_PAD_BOT   5   /* pixels below content (before separator) */
+#define TTL_POST_PAD_RIGHT 6
+
+/* TTL_POST_PAD_LEFT and TTL_AVATAR_GAP are no longer constants: they are
+ * stored in FS3EStyle.postPadLeft / FS3EStyle.avatarGap, computed from the
+ * current font size by FS3EStyle_SetFontSize / FS3EStyle_InitDefaults. */
 
 /* ------------------------------------------------------------------ */
 /* TTLTile — one pre-rendered bitmap strip                              */

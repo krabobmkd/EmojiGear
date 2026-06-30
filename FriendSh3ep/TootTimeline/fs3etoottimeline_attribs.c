@@ -80,6 +80,11 @@ ULONG ttl_apply_tags(Class *cl, Object *o, struct opSet *msg, int couldRefreshDr
                     inst->miniLineHeight = inst->lineHeight;
                     inst->miniLineAscent = inst->lineAscent;
                 }
+                /* Force ttl_do_layout to treat this as a width change on next
+                 * render: frees stale tile bitmaps, reallocates fresh ones,
+                 * and re-runs ttl_layout_all_posts + ttl_rebuild_ypositions so
+                 * post heights reflect the new line metrics. */
+                inst->lastTileWidth = -1;
                 inst->layoutToDo = TRUE;
                 redraw = TRUE;
                 used = 1;

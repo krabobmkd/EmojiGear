@@ -130,10 +130,38 @@ typedef struct FS3ENetLoginFinishReply
 } FS3ENetLoginFinishReply;
 
 /*
- * Start the network process. Returns its request MsgPort, or NULL on
- * failure. Safe to call once at GUI startup.
+ * FS3ENETQ_FETCH_IMAGE — fetch a media URL (avatar, attachment thumbnail,
+ * custom emoji) and cache it under T:FS3ECache/.  The network process serves
+ * from disk cache when the file is already present; it only hits the network
+ * on a cache miss.
+ *
+ * On FS3ENETR_OK, fs3em_Data is a flat FS3ENetFetchImageReply block whose
+ * fs3enf_LocalPath is a NUL-terminated AmigaOS path the GUI can open with
+ * NewDTObject() (no file extension; datatype detects JPEG/PNG from magic).
+ * On error, fs3em_Data still points at the original request block.
+ *
+ * The URL need not carry an Authorization header: Mastodon CDN URLs are
+ * pre-signed and publicly accessible regardless of auth state.
  */
-struct MsgPort *FS3ENet_Start(void);
+typedef struct FS3ENetFetchImageReq
+{
+    char *fs3enf_Url;
+} FS3ENetFetchImageReq;
+
+/* Allocates a flat request block for FETCH_IMAGE. FreeVec() when done. */
+FS3ENetFetchImageReq *FS3ENetFetchImageReq_Alloc(const char *url);
+
+typedef struct FS3ENetFetchImageReply
+{
+    char *fs3enf_LocalPath;  /* e.g. "T:FS3ECache/1a2b3c4d" */
+} FS3ENetFetchImageReply;
+
+/*
+ * Start the network process. cacheDir is the path passed to FS3ECache_Init()
+ * inside the new process; pass NULL to use FS3ECACHE_DEFAULT_DIR.
+ * Returns the request MsgPort, or NULL on failure.
+ */
+struct MsgPort *FS3ENet_Start(const char *cacheDir);
 
 /*
  * Ask the network process to shut down and wait for it to exit.

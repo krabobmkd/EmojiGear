@@ -17,12 +17,11 @@ set(AMISSL_LIB_DIR "${COMMONLIBSDIR}/extrasdk/AmiSSL/Developer/lib/AmigaOS3"
 set(SDI_INCLUDE_DIR "${COMMONLIBSDIR}/extrasdk/SDI/include"
     CACHE PATH "Path to SDI headers (SDI_compiler.h etc.)")
 
-# fs3enet_cache.c (disk cache for avatars/media) lands in Phase 2 (see
-# ../ARCHITECTURE.md).
 set(FS3ENET_SOURCES
     fs3enet.c
     fs3enet_http.c
     fs3enet_mastodon.c
+    fs3enet_cache.c
     cjson/cJSON.c
 )
 
@@ -31,6 +30,7 @@ set(FS3ENET_HEADERS
     fs3enet.h
     fs3enet_http.h
     fs3enet_mastodon.h
+    fs3enet_cache.h
     cjson/cJSON.h
 )
 

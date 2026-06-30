@@ -72,7 +72,11 @@
 #include "fs3eboopsimessage.h"
 #include "fs3eloginview.h"
 #include "fs3etootview.h"
+#include "fs3ethemeview.h"
 #include "fs3elocale.h"
+#include "fs3emenu.h"
+#include "fs3eaction.h"
+#include "fs3esettings.h"
 
 #include "UniButtonP9/unibuttonp9.h"
 #include "TitleBarLayout/fs3etitlebar.h"
@@ -125,7 +129,9 @@ struct Library *WindowBase         = NULL;
 struct Library *LayoutBase         = NULL;
 struct Library *ButtonBase         = NULL;
 struct Library *LabelBase          = NULL;
+struct Library *CheckboxBase       = NULL;
 struct Library *ChooserBase        = NULL;
+struct Library *GetFileBase        = NULL;
 struct Library *UniTextEditorBase  = NULL;
 struct Library *UniButtonBase      = NULL;
 
@@ -156,8 +162,10 @@ static LibraryEntry libraryTable[] = {
     {"gadgets/layout.gadget",       42, &LayoutBase},
     {"gadgets/button.gadget",       42, &ButtonBase},
     {"images/label.image",          42, &LabelBase},
-    {"gadgets/chooser.gadget",      44, &ChooserBase},
-    {"gadgets/unitexteditor.gadget", 4, &UniTextEditorBase},
+    {"gadgets/checkbox.gadget",      42, &CheckboxBase},
+    {"gadgets/chooser.gadget",       44, &ChooserBase},
+    {"gadgets/getfile.gadget",       42, &GetFileBase},
+    {"gadgets/unitexteditor.gadget",  4, &UniTextEditorBase},
     {"gadgets/unibutton.gadget",     4, &UniButtonBase},
     {"utf8rastport.library",         4, &URPBase},
     {NULL, 0, NULL}
@@ -191,9 +199,11 @@ static ULONG IDCMPDispatch(
             windowDragActive   = FALSE;
             windowResizeActive = FALSE;
         }
-    }
-
-
+    }/* else
+    if(IMsg->Class == IDCMP_RAWKEY)
+    {
+        printf("rk\n");
+    }*/
 
     return 0;
 }
@@ -218,8 +228,18 @@ static void FS3EApp_SetButtonFontSize(ULONG pointSize)
     if (!app || !app->buttonDC) return;
 
     URPDC_FlushFonts(app->buttonDC);
-    URPDC_AddFont(app->buttonDC, "LiberationSans-Regular.ttf", (int)pointSize, 0);
-    URPDC_AddFont(app->buttonDC, "OpenMoji-black-glyf.ttf",    (int)pointSize, 0);
+    URPDC_AddFont(app->buttonDC,
+        app->settings.primaryFontPath ? app->settings.primaryFontPath
+                                      : "LiberationSans-Regular.ttf",
+        (int)pointSize, 0);
+    if (app->settings.fallback1FontPath)
+        URPDC_AddFont(app->buttonDC, app->settings.fallback1FontPath, (int)pointSize, 0);
+    if (app->settings.fallback2FontPath)
+        URPDC_AddFont(app->buttonDC, app->settings.fallback2FontPath, (int)pointSize, 0);
+    URPDC_AddFont(app->buttonDC,
+        app->settings.emojiFontPath ? app->settings.emojiFontPath
+                                    : "OpenMoji-black-glyf.ttf",
+        (int)pointSize, 0);
 
     /* Notify existing buttons: UBTP9_PointSize triggers cache invalidation.
      * Gadget pointers are NULL before buttons are created, so this is safe. */
@@ -236,6 +256,41 @@ static void FS3EApp_SetButtonFontSize(ULONG pointSize)
         for (i = 0; i < 8; i++) RESIZE_BTN(app->nav_btns[i]);
 #undef RESIZE_BTN
     }
+}
+
+/* Re-apply font settings from app->settings to all draw contexts.
+ * Called by fs3ethemeview.c / fs3eaction.c after font or rendering options change. */
+void FS3EApp_ApplyFontSettings(void)
+{
+    ULONG prefFlags;
+    if (!app || !app->window_obj || !app->buttonDC) return;
+
+    /* --- Button bar DC (nav bar, title bar) --- */
+    prefFlags = URP_PREF_CLUTMODE_NOMASK;
+    if (app->settings.antialias)    prefFlags |= URP_PREF_ANTIALIAS;
+    if (app->settings.emojiQuality) prefFlags |= URP_PREF_HIGHFILTERING;
+    URPDC_SetPreferenceFlags(app->buttonDC, prefFlags);
+    FS3EApp_SetButtonFontSize((ULONG)app->settings.fontPointSize);
+
+    /* --- Timeline style DCs (dcNormal, dcUsername, dcMini) ---
+     * Sized proportionally: normal = base, username = base+1, mini = base-2.
+     * Re-setting TTIMELINE_Style forces the gadget to re-cache line metrics
+     * and do a full relayout + redraw. */
+    FS3EStyle_SetFontSize(&app->style,
+                          app->settings.fontPointSize,
+                          app->settings.primaryFontPath,
+                          app->settings.fallback1FontPath,
+                          app->settings.fallback2FontPath,
+                          app->settings.colorEmojiFontPath);
+
+    if (CurrentMainWindow && app->tootTimeline)
+        SetGadgetAttrs((struct Gadget *)app->tootTimeline,
+                       CurrentMainWindow, NULL,
+                       TTIMELINE_Style, (ULONG)&app->style,
+                       TAG_DONE);
+
+    /* Recompute minimum gadget sizes and relayout the whole window */
+    DoMethod(app->window_obj, WM_RETHINK);
 }
 
 /* Create one UniButtonP9, click arrives via WMHI_GADGETUP.
@@ -297,9 +352,12 @@ int main(int argc, char **argv)
 
     LocaleBase = (struct LocaleBase *)OpenLibrary("locale.library", 38);
     FS3ELocale_Init("FriendSh3ep.catalog", 0);
+    FS3EAction_Init();
 
     app = (struct App *)AllocVec(sizeof(struct App), MEMF_CLEAR);
     if (!app) cleanexit("Can't allocate app");
+
+    FS3ESettings_Load(&app->settings);
 
     if (!FS3EMsg_Init()) cleanexit("Can't create BOOPSI message target");
 
@@ -312,9 +370,13 @@ int main(int argc, char **argv)
     /* --- Shared button draw context (utf8rastport, fonts, emoji) -------- */
     app->buttonDC = URPDC_Create(NULL);
     if (!app->buttonDC) cleanexit("Can't create button draw context");
-    URPDC_SetPreferenceFlags(app->buttonDC,
-        URP_PREF_ANTIALIAS | URP_PREF_CLUTMODE_NOMASK | URP_PREF_HIGHFILTERING);
-    FS3EApp_SetButtonFontSize(12); /* load initial fonts at point size 12 */
+    {
+        ULONG prefFlags = URP_PREF_CLUTMODE_NOMASK;
+        if (app->settings.antialias)    prefFlags |= URP_PREF_ANTIALIAS;
+        if (app->settings.emojiQuality) prefFlags |= URP_PREF_HIGHFILTERING;
+        URPDC_SetPreferenceFlags(app->buttonDC, prefFlags);
+    }
+    FS3EApp_SetButtonFontSize((ULONG)app->settings.fontPointSize);
 
     /* TODO: style/theme settings color and fonts have to be set with loaded settings
         (or from an external theme file ?)
@@ -322,7 +384,7 @@ int main(int argc, char **argv)
     FS3EStyle_InitDefaults(&app->style);
  printf("FS3ENet_Start\n");
     /* --- Network process ------------------------------------------------ */
-    app->netRequestPort = FS3ENet_Start();
+    app->netRequestPort = FS3ENet_Start(app->settings.cachePath);
     if (!app->netRequestPort)
         printf("FriendSh3ep: network process failed - continuing without\n");
  printf("FS3ENet_Start end\n");
@@ -333,6 +395,9 @@ int main(int argc, char **argv)
 
     if (!FS3ETootView_Create(&app->tootView, 14))
         cleanexit("Can't create toot view");
+
+    if (!FS3EThemeView_Create(&app->themeView, LOC(MSG_THEMEV_TITLE)))
+        cleanexit("Can't create theme view");
 
     /* ================================================================== */
     /* Part A: title bar children (7 gadgets)                              */
@@ -515,7 +580,8 @@ int main(int argc, char **argv)
         WA_Width,   400,
         WA_Height,  300,
 
-        WA_IDCMP,   IDCMP_GADGETUP | IDCMP_NEWSIZE | IDCMP_RAWKEY | IDCMP_MOUSEMOVE | IDCMP_MOUSEBUTTONS,
+        WA_IDCMP,   IDCMP_GADGETUP | IDCMP_NEWSIZE | IDCMP_RAWKEY
+                    | IDCMP_MOUSEMOVE | IDCMP_MOUSEBUTTONS | IDCMP_MENUPICK,
         WA_Flags,
             WFLG_BORDERLESS |
             WFLG_ACTIVATE   |
@@ -527,7 +593,7 @@ int main(int argc, char **argv)
         WINDOW_AppPort,      (ULONG)app->app_port,
 
         WINDOW_IDCMPHook,(ULONG)&idcmpHook,
-        WINDOW_IDCMPHookBits, IDCMP_MOUSEBUTTONS /*| IDCMP_VANILLAKEY*/,
+        WINDOW_IDCMPHookBits, IDCMP_MOUSEBUTTONS | IDCMP_RAWKEY /*| IDCMP_VANILLAKEY*/,
 
 
         TAG_END);
@@ -538,6 +604,8 @@ int main(int argc, char **argv)
 
     FS3EMain_Show(&app->mainwindow, app->window_obj);
     if (!CurrentMainWindow) cleanexit("Can't open window");
+
+    FS3EMenu_Create(&app->menu, CurrentMainScreen, CurrentMainWindow);
 
     /* - - - Input Event Loop - - - */
     {
@@ -559,8 +627,9 @@ int main(int argc, char **argv)
 
             loginSig = FS3ELoginView_GetSignalMask(&app->loginView);
             tootSig  = FS3ETootView_GetSignalMask(&app->tootView);
+            ULONG themeSig = FS3EThemeView_GetSignalMask(&app->themeView);
 
-            waitedSignals = winsignal | loginSig | tootSig |
+            waitedSignals = winsignal | loginSig | tootSig | themeSig |
                 (1L << app->app_port->mp_SigBit) |
                 SIGBREAKF_CTRL_C |
                 SIGBREAKF_CTRL_F;
@@ -592,18 +661,43 @@ int main(int argc, char **argv)
                     }
 
                     case WMHI_ICONIFY:
+                        FS3EMenu_Close(&app->menu, CurrentMainWindow);
                         FS3EMain_Close(&app->mainwindow, app->window_obj, TRUE);
                         break;
 
                     case WMHI_UNICONIFY:
                         FS3EMain_Show(&app->mainwindow, app->window_obj);
                         if (!CurrentMainWindow) cleanexit("can't re-open window");
+                        FS3EMenu_Create(&app->menu, CurrentMainScreen, CurrentMainWindow);
                         break;
 
                     case WMHI_RAWKEY:
                     {
                         ULONG key = result & 0x07f;
+                        ULONG isUp = (result & 0x080);
+                        ULONG qualifiers=0;
+                        int keyUsed=0;
                         if (key == 0x45) ok = FALSE; /* Escape */
+
+                        GetAttr(WINDOW_Qualifier,app->window_obj,&qualifiers);
+                        /* ctrl- and ctrl+ change font size */
+                        if((qualifiers & IEQUALIFIER_CONTROL) !=0 &&
+                            !(qualifiers & IEQUALIFIER_REPEAT) && !isUp)
+                        {
+                            if(key == 0x4A) Action_FontSizeMinus(app); // "-"
+                            else if(key == 0x5E) Action_FontSizePlus(app);  // "+"
+
+                        }
+                    }
+                    break;
+                    case WMHI_MENUPICK:
+                    {
+                        UWORD menuCode = (UWORD)(result & WMHI_MENUMASK);
+                        if (menuCode != MENUNULL) {
+                            LONG actionID = FS3EMenu_ToActionID(&app->menu, menuCode);
+                            if (actionID >= 0)
+                                FS3EAction_Execute((ULONG)actionID, app);
+                        }
                         break;
                     }
                     case WMHI_MOUSEMOVE:
@@ -665,6 +759,7 @@ int main(int argc, char **argv)
 
             FS3ELoginView_HandleInput(&app->loginView);
             FS3ETootView_HandleInput(&app->tootView);
+            FS3EThemeView_HandleInput(&app->themeView);
 
             /* Drain the BOOPSI notification queue (OM_NOTIFY via ICA_TARGET). */
             if (DelayQueue && BoopsiDelay_HasMessages(DelayQueue)) {
@@ -796,10 +891,13 @@ void exitclose(void)
 
         FS3ELoginView_Dispose(&app->loginView);
         FS3ETootView_Dispose(&app->tootView);
+        FS3EThemeView_Dispose(&app->themeView);
 //  printf("exitclose2\n");
 // wait2sec();
         if (app->window_obj)
         {
+            FS3EMenu_Close(&app->menu, CurrentMainWindow);
+            FS3ESettings_Save(&app->settings);
             FS3EMain_Close(&app->mainwindow, app->window_obj, 0);
             /* Cascades: mainlayout → titleBarLayout/navBarLayout/placeholder
              * → all UniButtonP9 children. */
@@ -840,6 +938,7 @@ void exitclose(void)
         if (app->app_port)
             DeleteMsgPort(app->app_port);
 
+        FS3ESettings_Close(&app->settings);
         FreeVec(app);
         app = NULL;
     }

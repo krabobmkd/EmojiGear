@@ -245,7 +245,7 @@ void ttl_post_free(TTLPost *post)
 
 void ttl_post_layout(TTLData *inst, TTLPost *post)
 {
-    WORD  avatarW, textX, textW;
+    WORD  avatarW, padLeft, avatarGap, textX, textW;
     LONG  curRelY;
     LONG  bodyLines;
     LONG  avatarH;
@@ -253,9 +253,17 @@ void ttl_post_layout(TTLData *inst, TTLPost *post)
     ttl_clear_textspans(post);
     ttl_clear_hotspots(post);
 
-    avatarW = (WORD)(inst->dpiHeight * 2);  /* avatar column width */
-    textX   = (WORD)(TTL_POST_PAD_LEFT + avatarW + TTL_AVATAR_GAP);
-    textW   = (WORD)(inst->gadWidth - textX - TTL_POST_PAD_RIGHT);
+    if (inst->style && inst->style->avatarSize > 0) {
+        avatarW  = inst->style->avatarSize;
+        padLeft  = inst->style->postPadLeft;
+        avatarGap = inst->style->avatarGap;
+    } else {
+        avatarW  = 35;
+        padLeft  = 6;
+        avatarGap = 6;
+    }
+    textX = (WORD)(padLeft + avatarW + avatarGap);
+    textW = (WORD)(inst->gadWidth - textX - TTL_POST_PAD_RIGHT);
     if (textW < 32) textW = 32;
 
     avatarH = avatarW;  /* square avatar */
@@ -280,7 +288,7 @@ void ttl_post_layout(TTLData *inst, TTLPost *post)
 
     /* Make sure curRelY is at least below the avatar */
     {
-        LONG minY = TTL_POST_PAD_TOP + avatarH;
+        LONG minY = (LONG)TTL_POST_PAD_TOP + avatarH;
         if (curRelY < minY) curRelY = minY;
     }
 
@@ -359,7 +367,7 @@ void ttl_post_layout(TTLData *inst, TTLPost *post)
                                                   MEMF_ANY | MEMF_CLEAR);
         if (hs) {
             hs->type = TTL_HOT_AVATAR;
-            hs->x    = TTL_POST_PAD_LEFT;
+            hs->x    = (WORD)padLeft;
             hs->y    = TTL_POST_PAD_TOP;
             hs->w    = avatarW;
             hs->h    = (WORD)avatarH;
