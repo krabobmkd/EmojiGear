@@ -48,23 +48,24 @@ extern WORD windowDragLastScreenY;
 #define G(o) ((struct Gadget *)(o))
 #endif
 
-/* Height of row 2: at least ICON_SIZE_MIN + two margins, never less than dpiH */
-static WORD tbl_row2_height(UWORD dpiH)
+/* Height of row 2: avatarSize + two margins, never less than dpiH */
+static WORD tbl_row2_height(UWORD dpiH, UWORD avatarSize)
 {
-    WORD iconRow = (WORD)(TBLAYOUT_ICON_SIZE_MIN + 2 * TBLAYOUT_ICON_MARGIN);
+    WORD iconRow = (WORD)(avatarSize + 2 * TBLAYOUT_ICON_MARGIN);
     return (iconRow > (WORD)dpiH) ? iconRow : (WORD)dpiH;
 }
 
 /* Total fixed height of the title bar */
-static WORD tbl_total_height(UWORD dpiH)
+static WORD tbl_total_height(UWORD dpiH, UWORD avatarSize)
 {
-    return (WORD)dpiH + tbl_row2_height(dpiH);
+    return (WORD)dpiH + tbl_row2_height(dpiH, avatarSize);
 }
 
 typedef struct {
-    Object *children[TBLAYOUT_NUMCHILDREN];
-    UWORD   childCount;
-    UWORD   dpiHeight;
+    Object    *children[TBLAYOUT_NUMCHILDREN];
+    UWORD      childCount;
+    UWORD      dpiHeight;
+    FS3EStyle *style;
 } TitleBarLayoutData;
 
 ULONG ASM SAVEDS TitleBarLayout_Dispatch(
@@ -98,9 +99,13 @@ static ULONG TitleBarLayout_OnNew(Class *cl, Object *o, struct opSet *msg)
     inst             = (TitleBarLayoutData *)INST_DATA(cl, newObj);
     inst->childCount = 0;
     inst->dpiHeight  = 14;
+    inst->style      = NULL;
 
     tag = FindTagItem(TBLAYOUT_DpiHeight, msg->ops_AttrList);
     if (tag) inst->dpiHeight = (UWORD)tag->ti_Data;
+
+    tag = FindTagItem(TBLAYOUT_Style, msg->ops_AttrList);
+    if (tag) inst->style = (FS3EStyle *)tag->ti_Data;
 
     state = msg->ops_AttrList;
     while ((tag = NextTagItem(&state)) != NULL) {
@@ -129,9 +134,10 @@ static ULONG TitleBarLayout_OnDispose(Class *cl, Object *o, Msg msg)
 
 static ULONG TitleBarLayout_OnDomain(Class *cl, Object *o, struct gpDomain *msg)
 {
-    TitleBarLayoutData *inst  = (TitleBarLayoutData *)INST_DATA(cl, o);
-    struct IBox        *domain = &msg->gpd_Domain;
-    WORD                fixedH = tbl_total_height(inst->dpiHeight);
+    TitleBarLayoutData *inst     = (TitleBarLayoutData *)INST_DATA(cl, o);
+    struct IBox        *domain   = &msg->gpd_Domain;
+    UWORD               avatarSz = inst->style ? (UWORD)inst->style->avatarSize : TBLAYOUT_ICON_SIZE_MIN;
+    WORD                fixedH   = tbl_total_height(inst->dpiHeight, avatarSz);
 
     switch (msg->gpd_Which) {
         case GDOMAIN_MINIMUM:
@@ -157,14 +163,14 @@ static ULONG TitleBarLayout_OnDomain(Class *cl, Object *o, struct gpDomain *msg)
 
 static ULONG TitleBarLayout_OnLayout(Class *cl, Object *o, struct gpLayout *msg)
 {
-    TitleBarLayoutData *inst  = (TitleBarLayoutData *)INST_DATA(cl, o);
+    TitleBarLayoutData *inst   = (TitleBarLayoutData *)INST_DATA(cl, o);
+    UWORD               avSz   = inst->style ? (UWORD)inst->style->avatarSize : TBLAYOUT_ICON_SIZE_MIN;
     WORD  left  = G(o)->LeftEdge;
     WORD  top   = G(o)->TopEdge;
     WORD  w     = G(o)->Width;
     WORD  dpiH  = (WORD)inst->dpiHeight;
-    WORD  row2H = tbl_row2_height(inst->dpiHeight);
-    /* Icon fits inside row 2 with TBLAYOUT_ICON_MARGIN on every side */
-    WORD  iconSz = row2H - 2 * TBLAYOUT_ICON_MARGIN;
+    WORD  row2H = tbl_row2_height(inst->dpiHeight, avSz);
+    WORD  iconSz = (WORD)avSz;
     WORD  y1    = top;
     WORD  y2    = top + dpiH;
     struct gpLayout childMsg;
@@ -196,7 +202,8 @@ static ULONG TitleBarLayout_OnLayout(Class *cl, Object *o, struct gpLayout *msg)
                   y2   + TBLAYOUT_ICON_MARGIN,
                   iconSz, iconSz);
 
-    /* children[5] and [6]: split remaining width evenly, full row2H height */
+    /* children[5] and [6]: postsLabel / newPostsLabel — disabled */
+    /*
     {
         WORD labLeft  = left + iconSz + 2 * TBLAYOUT_ICON_MARGIN + 2;
         WORD labW     = w - (labLeft - left);
@@ -211,6 +218,7 @@ static ULONG TitleBarLayout_OnLayout(Class *cl, Object *o, struct gpLayout *msg)
             setBounds(inst->children[6], labLeft + halfLabW, y2,
                       labW - halfLabW, row2H);
     }
+    */
 
     /* Recurse into each child so nested layout.gadgets re-layout too */
     childMsg.MethodID    = GM_LAYOUT;

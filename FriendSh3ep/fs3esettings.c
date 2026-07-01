@@ -30,6 +30,7 @@
 #define TT_EMOJIQUALITY   "EMOJIQUALITY"   /* "1" or "0"                         */
 #define TT_THEME          "THEME"          /* theme name string                   */
 #define TT_WINDOW         "WINDOW"         /* "left:top:width:height"             */
+#define TT_WINDOWALT      "WINDOWALT"      /* "left:top:width:height" ZipWindow alternate */
 #define TT_CACHEPATH      "CACHEPATH"      /* media cache directory path          */
 
 /* -------------------------------------------------------------------------- */
@@ -131,6 +132,21 @@ void FS3ESettings_Load(FS3ESettings *s)
             }
         }
     }
+
+    /* Alternate window position for the altpos button */
+    if (app) {
+        val = ToolTypePrefs_Get(TT_WINDOWALT);
+        if (val && val[0] != '\0') {
+            int l = 0, t = 0, w = 0, h = 0;
+            sscanf(val, "%d:%d:%d:%d", &l, &t, &w, &h);
+            if (w > 0 && h > 0) {
+                app->altWinLeft   = (LONG)l;
+                app->altWinTop    = (LONG)t;
+                app->altWinWidth  = (LONG)w;
+                app->altWinHeight = (LONG)h;
+            }
+        }
+    }
 }
 
 void FS3ESettings_Save(FS3ESettings *s)
@@ -193,6 +209,16 @@ void FS3ESettings_Save(FS3ESettings *s)
                      (int)app->mainwindow.width, (int)app->mainwindow.height);
             ToolTypePrefs_Set(TT_WINDOW, buf);
         }
+    }
+
+    /* Alternate window position for the altpos button */
+    if (app && app->altWinWidth > 0 && app->altWinHeight > 0) {
+        snprintf(buf, sizeof(buf), "%d:%d:%d:%d",
+                 (int)app->altWinLeft,  (int)app->altWinTop,
+                 (int)app->altWinWidth, (int)app->altWinHeight);
+        ToolTypePrefs_Set(TT_WINDOWALT, buf);
+    } else {
+        ToolTypePrefs_Remove(TT_WINDOWALT);
     }
 
     ToolTypePrefs_Save();

@@ -33,6 +33,11 @@ struct App {
     /* Root vertical layout (Part A + B + C) */
     Object *mainlayout;
 
+    /* Alternate window position for the altpos button.
+     * Swapped with the current position on each button press via ChangeWindowBox.
+     * altWinWidth == 0 means not yet set (first press only saves, doesn't move). */
+    LONG altWinLeft, altWinTop, altWinWidth, altWinHeight;
+
     /* Part A: title bar (TitleBarLayoutClass).
      * Children owned by titleBarLayout and disposed with it. */
     Object *titleBarLayout;

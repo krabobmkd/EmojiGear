@@ -32,10 +32,12 @@
 
 #include <proto/exec.h>
 #include <proto/graphics.h>
+#include <proto/layers.h>
 #include <proto/intuition.h>
 #include <proto/utility.h>
 #include <proto/dos.h>
 #include <devices/inputevent.h>
+#include <graphics/clip.h>
 
 #include <proto/window.h>
 #include <classes/window.h>
@@ -137,6 +139,8 @@ struct Library *UniButtonBase      = NULL;
 
 /* utf8rastport.library – required by UniButtonP9 (private UniButton class) */
 struct Library *URPBase  = NULL;
+/* datatypes.library v44 – used by bmimage.c for picture.datatype image loading */
+struct Library *DataTypesBase = NULL;
 /* images/bevel.image – optional, used by UniButton bevel frames */
 struct Library *BevelBase = NULL;
 
@@ -168,6 +172,7 @@ static LibraryEntry libraryTable[] = {
     {"gadgets/unitexteditor.gadget",  4, &UniTextEditorBase},
     {"gadgets/unibutton.gadget",     4, &UniButtonBase},
     {"utf8rastport.library",         4, &URPBase},
+    {"datatypes.library",           44, &DataTypesBase},
     {NULL, 0, NULL}
 };
 
@@ -242,17 +247,12 @@ static void FS3EApp_SetButtonFontSize(ULONG pointSize)
         (int)pointSize, 0);
 
     /* Notify existing buttons: UBTP9_PointSize triggers cache invalidation.
-     * Gadget pointers are NULL before buttons are created, so this is safe. */
+     * Gadget pointers are NULL before buttons are created, so this is safe.
+     * titlebar buttons are now regular button.gadget — no UBTP9_PointSize. */
     {
         int i;
 #define RESIZE_BTN(o) if (o) SetAttrs((Object *)(o), UBTP9_PointSize, pointSize, TAG_DONE)
-        RESIZE_BTN(app->titlebar_closeBtn);
-        RESIZE_BTN(app->titlebar_iconifyBtn);
-        RESIZE_BTN(app->titlebar_altposBtn);
-        RESIZE_BTN(app->titlebar_depthBtn);
-        RESIZE_BTN(app->titlebar_userIcon);
-        RESIZE_BTN(app->titlebar_postsLabel);
-        RESIZE_BTN(app->titlebar_newPostsLabel);
+        /* titlebar_postsLabel / newPostsLabel disabled */
         for (i = 0; i < 8; i++) RESIZE_BTN(app->nav_btns[i]);
 #undef RESIZE_BTN
     }
@@ -399,22 +399,45 @@ int main(int argc, char **argv)
     if (!FS3EThemeView_Create(&app->themeView, LOC(MSG_THEMEV_TITLE)))
         cleanexit("Can't create theme view");
 
+
     /* ================================================================== */
     /* Part A: title bar children (7 gadgets)                              */
     /* ================================================================== */
 
-    app->titlebar_closeBtn   = makeBtn(GID_TITLEBAR_CLOSE,   "X",  dpiH);
-    app->titlebar_iconifyBtn = makeBtn(GID_TITLEBAR_ICONIFY, "-",  dpiH);
-    app->titlebar_altposBtn  = makeBtn(GID_TITLEBAR_ALTPOS,  "=",  dpiH);
-    app->titlebar_depthBtn   = makeBtn(GID_TITLEBAR_DEPTH,   "^",  dpiH);
-    app->titlebar_userIcon   = makeLabel("[U]",   dpiH);
-    app->titlebar_postsLabel = makeLabel("Posts:0", dpiH);
-    app->titlebar_newPostsLabel = makeLabel("New:0", dpiH);
+    app->titlebar_closeBtn   = (Object *)NewObject(BUTTON_GetClass(), NULL,
+        GA_ID,   GID_TITLEBAR_CLOSE,
+        //GA_Text, "X",
+        GA_RelVerify, TRUE,
+         TAG_DONE);
+    app->titlebar_iconifyBtn = (Object *)NewObject(BUTTON_GetClass(), NULL,
+        GA_ID,   GID_TITLEBAR_ICONIFY,
+        //GA_Text, "-",
+        GA_RelVerify, TRUE,
+         TAG_DONE);
+    app->titlebar_altposBtn  = (Object *)NewObject(BUTTON_GetClass(), NULL,
+        GA_ID,   GID_TITLEBAR_ALTPOS,
+        //GA_Text, "=",
+        GA_RelVerify, TRUE,
+         TAG_DONE);
+    app->titlebar_depthBtn   = (Object *)NewObject(BUTTON_GetClass(), NULL,
+        GA_ID,   GID_TITLEBAR_DEPTH,
+        //GA_Text, "^",
+        GA_RelVerify, TRUE,
+         TAG_DONE);
+    app->titlebar_userIcon   = (Object *)NewObject(BUTTON_GetClass(), NULL,
+        GA_Width,  app->style.avatarSize,
+        GA_Height, app->style.avatarSize,
+        GA_RelVerify, TRUE,
+        TAG_DONE);
+    /* titlebar_postsLabel and titlebar_newPostsLabel disabled */
+    /*
+    app->titlebar_postsLabel    = makeLabel("Posts:0", dpiH);
+    app->titlebar_newPostsLabel = makeLabel("New:0",   dpiH);
+    */
 
     if (!app->titlebar_closeBtn   || !app->titlebar_iconifyBtn ||
         !app->titlebar_altposBtn  || !app->titlebar_depthBtn   ||
-        !app->titlebar_userIcon   || !app->titlebar_postsLabel ||
-        !app->titlebar_newPostsLabel)
+        !app->titlebar_userIcon)
         cleanexit("Can't create title bar gadgets");
 
     app->titleBarLayout = (Object *)NewObject(TitleBarLayoutClass, NULL,
@@ -422,14 +445,14 @@ int main(int argc, char **argv)
         LAYOUT_SpaceOuter, FALSE,
         LAYOUT_SpaceInner, FALSE,
         TBLAYOUT_DpiHeight, (ULONG)dpiH,
+        TBLAYOUT_Style,     (ULONG)&app->style,
         /* children in required order (see fs3etitlebar.h) */
         LAYOUT_AddChild, (ULONG)app->titlebar_closeBtn,
         LAYOUT_AddChild, (ULONG)app->titlebar_iconifyBtn,
         LAYOUT_AddChild, (ULONG)app->titlebar_altposBtn,
         LAYOUT_AddChild, (ULONG)app->titlebar_depthBtn,
         LAYOUT_AddChild, (ULONG)app->titlebar_userIcon,
-        LAYOUT_AddChild, (ULONG)app->titlebar_postsLabel,
-        LAYOUT_AddChild, (ULONG)app->titlebar_newPostsLabel,
+        /* titlebar_postsLabel and titlebar_newPostsLabel disabled */
         TAG_END);
     if (!app->titleBarLayout) cleanexit("Can't create title bar layout");
 
@@ -545,6 +568,7 @@ int main(int argc, char **argv)
 
     }
  flushbdbprint();
+
     /* ================================================================== */
     /* Root layout (A + B + C, vertical, borderless, no gaps)             */
     /* ================================================================== */
@@ -599,8 +623,7 @@ int main(int argc, char **argv)
         TAG_END);
     if (!app->window_obj) cleanexit("Can't create window");
 
- flushbdbprint();
- printf("FS3EMain_Show\n");
+    flushbdbprint();
 
     FS3EMain_Show(&app->mainwindow, app->window_obj);
     if (!CurrentMainWindow) cleanexit("Can't open window");
@@ -741,16 +764,6 @@ int main(int argc, char **argv)
                             }
                         }
                     } break;
-                    // case WMHI_MOUSEBUTTONS:
-                    // {
-
-                    //     printf("WMHI_MOUSEBUTTONS %08x\n",result);
-                    //     if(result & 0x00100000) /* tested to happen when left mouse up only, I don't know what bit it is*/
-                    //     {
-                    //       windowDragActive = FALSE;
-                    //     }
-
-                    // } break;
 
                     default:
                         break;
@@ -786,13 +799,45 @@ int main(int argc, char **argv)
                             break;
 
                         case GID_TITLEBAR_ALTPOS:
-                        printf("GID_TITLEBAR_ALTPOS\n");
-                            /* TODO: alternative window position / sizing */
+                            if (CurrentMainWindow) {
+                                LONG prevL = app->altWinLeft,  prevT = app->altWinTop;
+                                LONG prevW = app->altWinWidth, prevH = app->altWinHeight;
+                                /* Save current geometry as the new alternate */
+                                app->altWinLeft   = CurrentMainWindow->LeftEdge;
+                                app->altWinTop    = CurrentMainWindow->TopEdge;
+                                app->altWinWidth  = CurrentMainWindow->Width;
+                                app->altWinHeight = CurrentMainWindow->Height;
+                                /* Move to previous alternate if valid */
+                                if (prevW > 0 && prevH > 0)
+                                    ChangeWindowBox(CurrentMainWindow,
+                                                    prevL, prevT, prevW, prevH);
+                            }
                             break;
 
                         case GID_TITLEBAR_DEPTH:
-                         printf("GID_TITLEBAR_DEPTH\n");
-                            /* TODO: bring window to front / back */
+                            if (CurrentMainWindow && CurrentMainScreen) {
+                                /* Walk layers front→back; first layer whose
+                                 * Window is non-NULL and not a backdrop is the
+                                 * true frontmost user window. */
+                                BOOL isFront = FALSE;
+                                struct Layer_Info *li = &CurrentMainScreen->LayerInfo;
+                                struct Layer *lay;
+                                LockLayerInfo(li);
+                                lay = li->top_layer;
+                                while (lay) {
+                                    struct Window *w = (struct Window *)lay->Window;
+                                    if (w && !(w->Flags & WFLG_BACKDROP)) {
+                                        isFront = (w == CurrentMainWindow);
+                                        break;
+                                    }
+                                    lay = lay->back;
+                                }
+                                UnlockLayerInfo(li);
+                                if (isFront)
+                                    WindowToBack(CurrentMainWindow);
+                                else
+                                    WindowToFront(CurrentMainWindow);
+                            }
                             break;
 
                         /* ---- Navigation bar ---- */

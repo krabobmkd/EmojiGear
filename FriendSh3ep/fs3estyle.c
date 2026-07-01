@@ -38,16 +38,16 @@ static void obtain_pen(struct ColorMap *cm, FS3EManagedColor *c)
     ULONG g = expand8((c->rgbcolor >>  8) & 0xFF);
     ULONG b = expand8( c->rgbcolor        & 0xFF);
     LONG  pen;
- printf("obtain pen for %08x\n",c->rgbcolor);
+// printf("obtain pen for %08x\n",c->rgbcolor);
     pen = ObtainBestPenA(cm, r, g, b, NULL);
     if (pen != -1) {
-     printf("allocated:%d\n",pen);
+//     printf("allocated:%d\n",pen);
         c->pen       = (WORD)pen;
         c->allocated = 1;
     } else {
         c->pen       = (WORD)FindColor(cm, r, g, b, -1);        
         c->allocated = 0;
-     printf("found:%d\n",(int)c->pen);
+//     printf("found:%d\n",(int)c->pen);
     }
 }
 
@@ -175,11 +175,10 @@ void FS3EStyle_InitDefaults(FS3EStyle *st)
     /* Release any previous contexts before (re)creating them */
 
     FS3EStyle_ReleaseDrawContexts(st);
-    printf("FS3EStyle_InitDefaults2\n");
+
     st->dcNormal   = make_dc("fs3e-normal",   12, 12, URP_STYLE_NORMAL);
     st->dcUsername = make_dc("fs3e-username", 13, 13, URP_STYLE_BOLD);
     st->dcMini     = make_dc("fs3e-mini",      10,  10, URP_STYLE_NORMAL);
-    printf("FS3EStyle_InitDefaults3\n");
 
     compute_layout(st);
 }

@@ -378,7 +378,12 @@ void FS3ETootView_UpdateCharCount(FS3ETootView *tv)
     }
 
     sprintf(tv->charCountText, LOC(MSG_TOOT_CHARS_FORMAT), (unsigned long)total);
-    SetGdAttrs(tv->charCountLabel, GA_Text, (ULONG)tv->charCountText, TAG_END);
+    if (tv->window)
+        SetGadgetAttrs((struct Gadget *)tv->charCountLabel, tv->window, NULL,
+                       GA_Text, (ULONG)tv->charCountText, TAG_END);
+    else
+        SetAttrs((Object *)tv->charCountLabel,
+                 GA_Text, (ULONG)tv->charCountText, TAG_END);
 }
 
 const char *FS3ETootView_GetUTF8Subject(FS3ETootView *tv)

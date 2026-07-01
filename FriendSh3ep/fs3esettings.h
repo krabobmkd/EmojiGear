@@ -41,6 +41,7 @@ typedef struct FS3ESettings {
     /* Media cache directory passed to the network process at startup.
      * NULL or "" → network process uses FS3ECACHE_DEFAULT_DIR. */
     char *cachePath;
+
 } FS3ESettings;
 
 /*

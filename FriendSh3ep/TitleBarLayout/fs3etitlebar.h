@@ -13,18 +13,20 @@
  *   1  iconify button
  *   2  altpos button
  *   3  depth button
- *   4  user icon gadget  (placeholder)
- *   5  post-count label
- *   6  new-post-count label
+ *   4  user icon gadget
+ *   (5  post-count label    — disabled)
+ *   (6  new-post-count label — disabled)
  */
 
 #include <exec/types.h>
 #include <intuition/classusr.h>
+#include "../fs3estyle.h"
 
-#define TBLAYOUT_NUMCHILDREN  7
+#define TBLAYOUT_NUMCHILDREN  5
 
 #define TBLAYOUT_Base         (TAG_USER | 0x53510UL)
 #define TBLAYOUT_DpiHeight    (TBLAYOUT_Base + 0)  /* UWORD: row height in pixels */
+#define TBLAYOUT_Style        (TBLAYOUT_Base + 1)  /* FS3EStyle *: layout metrics + colors */
 
 extern Class *TitleBarLayoutClass;
 

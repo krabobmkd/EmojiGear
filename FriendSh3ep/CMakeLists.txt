@@ -20,6 +20,7 @@ add_subdirectory(network_fs3e)
 
 set(FRIENDSH3EP_SOURCES
 	bdbprintf.c
+    bmimage.c
     friendsh3ep.c
     fs3estyle.c
     fs3eboopsimainwindow.c
@@ -50,6 +51,7 @@ set(FRIENDSH3EP_SOURCES
 
 # Listed so IDEs (Qt Creator, etc.) show them in the project tree.
 set(FRIENDSH3EP_HEADERS
+    bmimage.h
     friendsh3ep.h
     fs3estyle.h
     fs3eboopsimainwindow.h
