@@ -1,0 +1,43 @@
+; style file for FriendSh3ep theme
+; file format supported are those of the datatypes.
+
+; bg of whole titlebar, can be truecolor or not.
+titlebar.bg = tbbg.png
+
+; will consider color 0 transparent:
+titlebar.buttons = tbbuttons.iff
+
+; ------ Patch9 style using bt1Patch9, used by buttons Settnigs and account 
+
+; contains 4 images of same square size agregated horizontally,
+; for states normal, selected, hover, disabled.
+; each one being a square "patch9", color 0 transparent.
+bt1Patch9.image = bt1patch9.iff
+; this is a size of a corner in image bt1Patch9.image
+bt1Patch9.cornersize = 8
+
+; these colors reflects the central color in bt1Patch9.image
+; this is needed to blend font in 8Bit mode
+bt1Patch9.bgcolor.enabled = #445566
+bt1Patch9.bgcolor.selected = #445566
+bt1Patch9.bgcolor.hover = #445566
+bt1Patch9.bgcolor.disabled = #445566
+
+; text color for bt1Patch9
+bt1Patch9.textcolor.enabled = #cccccc
+bt1Patch9.textcolor.selected = #ffffff
+bt1Patch9.textcolor.hover = #eeee44
+bt1Patch9.textcolor.disabled = #999999
+
+; ---- NavBar Buttons that can uses images as background
+
+btbgbm.bitmap.enabled = tbbgenabled.jpg
+btbgbm.bitmap.selected = tbbgselected.jpg
+btbgbm.bitmap.disabled = tbbgdisabled.jpg
+
+; text color for btbgbm NavBar Buttons
+btbgbm.textcolor.enabled = #000000
+btbgbm.textcolor.selected = #ffffff
+btbgbm.textcolor.hover = #eebb33
+btbgbm.textcolor.disabled = #999999
+
