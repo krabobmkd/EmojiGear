@@ -1,7 +1,13 @@
 /*
  * unibuttonp9.h – public API for the UniButtonP9 private BOOPSI gadget.
  *
- * Fork of UniButtonGadget with prefix UBTP9_ instead of UBT_.
+ * Always uses a Patch9 9-slice skin (UBTP9_Patch9 is required -- pass one
+ * before the gadget is ever rendered): background and text are both drawn
+ * live, directly on the real destination, every blit -- no bitmap cache.
+ * See UniButtonBGBM (unibuttonbgbm.h) for the sibling class that never
+ * uses a Patch9 and instead caches each state (normal/selected/disabled)
+ * as a small offscreen bitmap blended against a flat UBGBM_BgPen fill.
+ *
  * Statically linked, private class (no AddClass/RemoveClass).
  * Requires URPBase (utf8rastport.library v4) opened by the caller.
  * BevelBase (images/bevel.image v32) is optional.
@@ -50,9 +56,6 @@
 /* [IG] (ULONG) BVS_* bevel style. Default: BVS_BUTTON. Set at OM_NEW only. */
 #define UBTP9_BevelStyle      (UBTP9_Dummy + 9)
 
-/* [IS] (BOOL) Skip background fill (transparent button). Default: FALSE. */
-#define UBTP9_Transparent     (UBTP9_Dummy + 10)
-
 /* [ISG] (struct URPDrawContext *) Shared draw context (retained via URPDC_Retain). */
 #define UBTP9_URPDrawContext  (UBTP9_Dummy + 11)
 
@@ -73,6 +76,18 @@
 
 /* [ISG] (BOOL) Push/latch toggle mode. GA_Selected reflects latched state. */
 #define UBTP9_PushButton       (UBTP9_Dummy + 17)
+
+/* [IS] (struct Patch9 *) Required 9-slice background skin (see patch9.h) --
+ * UniButtonP9 always draws its background and text live against this skin
+ * (see unibuttonp9_render.c); a gadget with no Patch9 set draws nothing.
+ * Borrowed pointer: caller owns/loads/frees it and must keep it alive at
+ * least as long as the gadget; not copied. Only the
+ * PATCH9_NORMAL/SELECTED/DISABLED sub-images are currently used -- there is
+ * no hover-tracking input handling yet, so PATCH9_HOVER is stored but unused. */
+#define UBTP9_Patch9           (UBTP9_Dummy + 18)
+
+/* UBTP9_Dummy + 19 reserved for UBTP9_Background (flat-image background,
+ * not yet implemented). */
 
 /* =========================================================================
  * Class management

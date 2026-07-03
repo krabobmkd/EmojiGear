@@ -1,13 +1,21 @@
 /*
  * UniButtonP9 – GM_LAYOUT, GM_RENDER, GM_DOMAIN.
  *
- * Three OffscreenBitMaps cache the normal, selected, and disabled states,
- * each the full button surface (background + border-free skin + text).
- * Rebuilt in GM_LAYOUT and GM_RENDER (application-task context – FreeType
- * calls safe). g->Width/Height only ever change in GM_LAYOUT, so a resize
- * is caught and rebuilt there, proactively, ahead of any later blit.
- * GM_GOACTIVE / GM_HANDLEINPUT / GM_GOINACTIVE only blit the cached bitmap
- * (safe in input device context; they must never trigger a rebuild).
+ * No bitmap cache: background (a Patch9 skin) and text are both drawn
+ * live, directly onto the real destination RastPort, on every single blit
+ * -- see ubtp9_blit_state in unibuttonp9_attribs.c. A Patch9 skin's
+ * background can be anything (including transparent, masked corners
+ * revealing whatever is really behind the button), so there's nothing
+ * flat/known to pre-bake text against; URPDrawTextUTF8 itself handles
+ * blending against the real destination pixels correctly, which a
+ * cached-bitmap-then-blit approach cannot. (This does mean text glyph
+ * rasterisation, i.e. FreeType, can run from GM_GOACTIVE/GM_HANDLEINPUT/
+ * GM_GOINACTIVE's input.device context -- acceptable here since
+ * utf8rastport's own glyph cache means that's only a real FreeType call
+ * on a genuine cache miss.)
+ *
+ * See UniButtonBGBM for the sibling class that never uses a Patch9 and
+ * instead caches each state as a small offscreen bitmap.
  */
 #include <proto/exec.h>
 #include <proto/graphics.h>
@@ -17,7 +25,6 @@
 #include <images/bevel.h>
 #include <intuition/gadgetclass.h>
 #include <graphics/gfx.h>
-
 #include "unibuttonp9_private.h"
 #include "../bdbprintf.h"
 
@@ -39,102 +46,45 @@ void ubtp9_update_font_metrics(UniButtonP9Data *inst)
 }
 
 /* =========================================================================
- * ubtp9_build_one_state
+ * ubtp9_state_pens
  * =========================================================================
+ * Shared with ubtp9_blit_state (unibuttonp9_attribs.c), which needs the
+ * same disabled-state dimming for its live text draw, and GM_RENDER below,
+ * which needs outImageState for the bevel. Pure pen/RGB math -- no
+ * FreeType, safe from any context.
  */
-static void ubtp9_build_one_state(UniButtonP9Data *inst, WORD gadW, WORD gadH,
-                                  int state, struct DrawInfo *dri,
-                                  struct Screen *scr)
+void ubtp9_state_pens(UniButtonP9Data *inst, int state, struct Screen *scr,
+                      ULONG *outBgPen, ULONG *outTxtPen, UWORD *outImageState)
 {
-    OffscreenBitMap *obm = &inst->cacheBm[state];
-    struct RastPort *rp;
-    ULONG            bgPen;
-    ULONG            txtPen;
-    UWORD            imageState;
-    int w, h;
-
     if (state == UBTP9_STATE_DISABLED && scr && scr->ViewPort.ColorMap) {
         struct ColorMap *cm = scr->ViewPort.ColorMap;
         ULONG txtRGB[3];
         ULONG dimR, dimG, dimB;
 
-        bgPen = (ULONG)FindColor(cm,
+        *outBgPen = (ULONG)FindColor(cm,
                     0x88888888UL, 0x88888888UL, 0x88888888UL, (ULONG)-1);
 
         GetRGB32(cm, inst->txtPen, 1UL, txtRGB);
         dimR = (txtRGB[0] >> 1) + 0x44444444UL;
         dimG = (txtRGB[1] >> 1) + 0x44444444UL;
         dimB = (txtRGB[2] >> 1) + 0x44444444UL;
-        txtPen = (ULONG)FindColor(cm, dimR, dimG, dimB, (ULONG)-1);
+        *outTxtPen = (ULONG)FindColor(cm, dimR, dimG, dimB, (ULONG)-1);
 
-        imageState = IDS_NORMAL;
+        *outImageState = IDS_NORMAL;
     } else {
         switch (state) {
         case UBTP9_STATE_SELECTED:
-            bgPen      = inst->selBgPen;
-            txtPen     = inst->txtPen;
-            imageState = IDS_SELECTED;
+            *outBgPen      = inst->selBgPen;
+            *outTxtPen     = inst->txtPen;
+            *outImageState = IDS_SELECTED;
             break;
         default:
-            bgPen      = inst->bgPen;
-            txtPen     = inst->txtPen;
-            imageState = IDS_NORMAL;
+            *outBgPen      = inst->bgPen;
+            *outTxtPen     = inst->txtPen;
+            *outImageState = IDS_NORMAL;
             break;
         }
     }
-
-    w = gadW;
-    h = gadH;
-    if (w < 1) w = 1;
-    if (h < 1) h = 1;
-
-    if (!obm->_bm || obm->_w != w || obm->_h != h) {
-        OffscreenBitMap_Close(obm);
-        OffscreenBitMap_Init(obm, w, h, 0, BMF_CLEAR,
-                             scr ? scr->RastPort.BitMap : NULL);
-    }
-    if (!obm->_bm) return;
-    rp = &obm->_srp;
-
-    if (!inst->transparent || state != UBTP9_STATE_NORMAL) {
-        SetAPen(rp, (LONG)bgPen);
-        SetDrMd(rp, JAM1);
-        RectFill(rp, 0L, 0L, (LONG)(w - 1), (LONG)(h - 1));
-    }
-    obm->_imageState = imageState;
-    obm->_bgpen      = bgPen;
-
-    if (inst->text && inst->text[0] && inst->dc && scr) {
-        struct URPTextPos pos;
-        pos.x = (w - inst->textWidth)  / 2;
-        pos.y = (h - inst->textHeight) / 2 + inst->fontAscent;
-
-        URPDC_SetDrawColorFromPen(inst->dc, scr, (LONG)txtPen, (LONG)bgPen);
-        SetAPen(rp, (LONG)txtPen);
-        SetBPen(rp, (LONG)bgPen);
-        SetDrMd(rp, JAM2);
-        URPDrawTextUTF8(rp, inst->dc, &pos, inst->text, (ULONG)(-1));
-    }
-}
-
-/* =========================================================================
- * ubtp9_rebuild_cache
- * =========================================================================
- */
-void ubtp9_rebuild_cache(Class *cl, Object *o,
-                         WORD gadW, WORD gadH,
-                         struct DrawInfo *dri,
-                         struct Screen   *scr)
-{
-    UniButtonP9Data *inst = UBTP9_DATA(cl, o);
-    int i;
-
-    ubtp9_update_font_metrics(inst);
-
-    for (i = 0; i < UBTP9_NUM_STATES; i++)
-        ubtp9_build_one_state(inst, gadW, gadH, i, dri, scr);
-
-    inst->cacheValid = TRUE;
 }
 
 /* =========================================================================
@@ -143,31 +93,8 @@ void ubtp9_rebuild_cache(Class *cl, Object *o,
  */
 ULONG UniButtonP9_OnLayout(Class *cl, Object *o, struct gpLayout *msg)
 {
-    UniButtonP9Data *inst = UBTP9_DATA(cl, o);
-    ULONG            ret  = DoSuperMethodA(cl, o, (APTR)msg);
-    struct Gadget   *g    = G(o);
-    WORD             gadW = g->Width;
-    WORD             gadH = g->Height;
-    struct Screen   *scr  = msg->gpl_GInfo ? msg->gpl_GInfo->gi_Screen : inst->screen;
-    struct DrawInfo *dri  = msg->gpl_GInfo ? msg->gpl_GInfo->gi_DrInfo : inst->drawInfo;
-
-    if (scr) inst->screen   = scr;
-    if (dri) inst->drawInfo = dri;
-
-    /* g->Width/Height only ever change here, in GM_LAYOUT (always
-     * application-task context) — never from GM_GOACTIVE/GM_HANDLEINPUT
-     * (input.device context, where FreeType calls are unsafe). Since the
-     * cache is now the full button surface, its size (and the text
-     * centering baked into it) depends on the gadget size, so a resize
-     * must rebuild it here, proactively, rather than leaving GM_RENDER's
-     * lazy rebuild to possibly fire from an input.device-context blit. */
-    if (gadW > 0 && gadH > 0 && scr &&
-        (!inst->cacheValid ||
-         inst->cacheBm[UBTP9_STATE_NORMAL]._w != gadW ||
-         inst->cacheBm[UBTP9_STATE_NORMAL]._h != gadH))
-        ubtp9_rebuild_cache(cl, o, gadW, gadH, dri, scr);
-
-    return ret;
+    (void)cl; (void)o;
+    return DoSuperMethodA(cl, o, (APTR)msg);
 }
 
 /* =========================================================================
@@ -183,7 +110,7 @@ ULONG UniButtonP9_OnRender(Class *cl, Object *o, struct gpRender *msg)
     WORD             gadH  = g->Height;
     struct Screen   *scr   = msg->gpr_GInfo ? msg->gpr_GInfo->gi_Screen : NULL;
     struct DrawInfo *dri   = msg->gpr_GInfo ? msg->gpr_GInfo->gi_DrInfo : NULL;
-    BOOL             needRebuild;
+    UWORD            imageState;
     int              state;
 
     if (gadW <= 0 || gadH <= 0) return 0;
@@ -197,13 +124,6 @@ ULONG UniButtonP9_OnRender(Class *cl, Object *o, struct gpRender *msg)
     if (inst->selBgPen == 3 && dri)
         inst->selBgPen = (ULONG)dri->dri_Pens[FILLPEN];
 
-    needRebuild = (!inst->cacheValid) ||
-                  (inst->cacheBm[UBTP9_STATE_NORMAL]._w != gadW) ||
-                  (inst->cacheBm[UBTP9_STATE_NORMAL]._h != gadH);
-
-    if (needRebuild && scr)
-        ubtp9_rebuild_cache(cl, o, gadW, gadH, dri, scr);
-
     if (g->Flags & GFLG_DISABLED)
         state = UBTP9_STATE_DISABLED;
     else if (g->Flags & GFLG_SELECTED)
@@ -211,15 +131,7 @@ ULONG UniButtonP9_OnRender(Class *cl, Object *o, struct gpRender *msg)
     else
         state = UBTP9_STATE_NORMAL;
 
-    if (inst->cacheValid && inst->cacheBm[state]._bm) {
-        ubtp9_blit_state(inst, g, rp, state);
-    } else {
-        SetAPen(rp, (LONG)inst->cacheBm[state]._bgpen);
-        SetDrMd(rp, JAM1);
-        RectFill(rp, (LONG)g->LeftEdge, (LONG)g->TopEdge,
-                     (LONG)(g->LeftEdge + gadW - 1),
-                     (LONG)(g->TopEdge  + gadH - 1));
-    }
+    ubtp9_blit_state(inst, g, rp, state, &imageState);
 
     if (inst->bevel && dri) {
         SetAttrs((Object *)inst->bevel,
@@ -229,7 +141,7 @@ ULONG UniButtonP9_OnRender(Class *cl, Object *o, struct gpRender *msg)
             IA_Height, (ULONG)gadH,
             TAG_DONE);
         DrawImageState(rp, (struct Image *)inst->bevel, 0L, 0L,
-                       (ULONG)inst->cacheBm[state]._imageState, dri);
+                       (ULONG)imageState, dri);
     }
 
     return 0;

@@ -1,4 +1,4 @@
-/* UniButtonP9 – attribute handlers: OM_NEW, OM_DISPOSE, OM_SET, OM_GET. */
+/* UniButtonBGBM – attribute handlers: OM_NEW, OM_DISPOSE, OM_SET, OM_GET. */
 #include <exec/memory.h>
 #include <proto/exec.h>
 #include <proto/intuition.h>
@@ -8,7 +8,7 @@
 #include <proto/bevel.h>
 #include <images/bevel.h>
 
-#include "unibuttonp9_private.h"
+#include "unibuttonbgbm_private.h"
 #include "../bdbprintf.h"
 
 #ifndef GA_Text
@@ -20,49 +20,46 @@
  * =========================================================================
  */
 
-void ubtp9_blit_state(UniButtonP9Data *inst, struct Gadget *g,
-                      struct RastPort *rp, int state, UWORD *outImageState)
+void ubgbm_free_cache(UniButtonBGBMData *inst)
 {
-    ULONG bgPen, txtPen;
-    int   patch9State;
-
-    ubtp9_state_pens(inst, state, inst->screen, &bgPen, &txtPen, outImageState);
-
-    if (!Patch9_IsLoaded(inst->patch9)) return;
-
-    switch (state) {
-    case UBTP9_STATE_SELECTED: patch9State = PATCH9_SELECTED; break;
-    case UBTP9_STATE_DISABLED: patch9State = PATCH9_DISABLED; break;
-    default:                   patch9State = PATCH9_NORMAL;   break;
-    }
-
-    /* Skin: blitter-only, safe from any context (including
-     * GM_GOACTIVE/GM_HANDLEINPUT/GM_GOINACTIVE's input.device context).
-     * Drawing it live -- never caching it -- is what lets its transparent
-     * (masked) corners show whatever is really behind the button (a
-     * BackFill pattern, a parent's own skin, ...). */
-    Patch9_Draw(inst->patch9, patch9State, rp,
-               g->LeftEdge, g->TopEdge, g->Width, g->Height);
-
-    /* Text: also drawn live, directly on top of the skin just drawn, via
-     * URPDrawTextUTF8 -- there's no flat, known colour to pre-bake a
-     * cached bitmap against (the skin can be anything, including
-     * transparent), so only drawing straight onto the real destination
-     * lets the glyph blending come out right. */
-    if (inst->text && inst->text[0] && inst->dc && inst->screen) {
-        struct URPTextPos pos;
-        pos.x = g->LeftEdge + (g->Width  - inst->textWidth)  / 2;
-        pos.y = g->TopEdge  + (g->Height - inst->textHeight) / 2 + inst->fontAscent;
-
-        URPDC_SetDrawColorFromPen(inst->dc, inst->screen, (LONG)txtPen, (LONG)bgPen);
-        SetAPen(rp, (LONG)txtPen);
-        SetBPen(rp, (LONG)bgPen);
-        SetDrMd(rp, JAM2);
-        URPDrawTextUTF8(rp, inst->dc, &pos, inst->text, (ULONG)(-1));
-    }
+    int i;
+    for (i = 0; i < UBGBM_NUM_STATES; i++)
+        OffscreenBitMap_Close(&inst->cacheBm[i]);
+    inst->cacheValid = FALSE;
 }
 
-void ubtp9_render_self(Class *cl, Object *o, struct GadgetInfo *gi)
+void ubgbm_blit_state(UniButtonBGBMData *inst, struct Gadget *g,
+                      struct RastPort *rp, int state)
+{
+    OffscreenBitMap *obm = &inst->cacheBm[state];
+    WORD textX, textY;
+
+    if (!inst->cacheValid) return;
+
+    /* Background: drawn live as a plain flat RectFill, then the cached
+     * text bitmap (built in ubgbm_build_one_state, application-task
+     * context, FreeType-safe) blitted on top. Safe from
+     * GM_GOACTIVE/GM_HANDLEINPUT/GM_GOINACTIVE's input.device context too,
+     * since nothing here touches FreeType. */
+    SetAPen(rp, (LONG)obm->_bgpen);
+    SetDrMd(rp, JAM1);
+    RectFill(rp, (LONG)g->LeftEdge, (LONG)g->TopEdge,
+                 (LONG)(g->LeftEdge + g->Width  - 1),
+                 (LONG)(g->TopEdge  + g->Height - 1));
+
+    if (!obm->_bm) return;
+
+    textX = (g->Width  - obm->_w) / 2;
+    textY = (g->Height - obm->_h) / 2;
+
+    BltBitMapRastPort(obm->_bm, 0, 0,
+                      rp,
+                      (LONG)g->LeftEdge + textX, (LONG)g->TopEdge + textY,
+                      (LONG)obm->_w, (LONG)obm->_h,
+                      0xC0);
+}
+
+void ubgbm_render_self(Class *cl, Object *o, struct GadgetInfo *gi)
 {
     struct RastPort *rp;
     if (!gi) return;
@@ -73,9 +70,9 @@ void ubtp9_render_self(Class *cl, Object *o, struct GadgetInfo *gi)
     }
 }
 
-void ubtp9_notify_pressed(Class *cl, Object *o, struct GadgetInfo *gi)
+void ubgbm_notify_pressed(Class *cl, Object *o, struct GadgetInfo *gi)
 {
-    UniButtonP9Data *inst = UBTP9_DATA(cl, o);
+    UniButtonBGBMData *inst = UBGBM_DATA(cl, o);
     struct opUpdate  nmsg;
     ULONG tags[5];
 
@@ -99,9 +96,9 @@ void ubtp9_notify_pressed(Class *cl, Object *o, struct GadgetInfo *gi)
  * OM_NEW
  * =========================================================================
  */
-ULONG UniButtonP9_OnNew(Class *cl, Object *o, struct opSet *msg)
+ULONG UniButtonBGBM_OnNew(Class *cl, Object *o, struct opSet *msg)
 {
-    UniButtonP9Data *inst;
+    UniButtonBGBMData *inst;
     Object          *newObj;
     ULONG            mDispose;
     struct TagItem  *ptag;
@@ -111,14 +108,15 @@ ULONG UniButtonP9_OnNew(Class *cl, Object *o, struct opSet *msg)
     newObj = (Object *)DoSuperMethodA(cl, o, (APTR)msg);
     if (!newObj) return 0;
 
-    inst = UBTP9_DATA(cl, newObj);
-    memset(inst, 0, sizeof(UniButtonP9Data));
+    inst = UBGBM_DATA(cl, newObj);
+    memset(inst, 0, sizeof(UniButtonBGBMData));
 
     inst->pointSize    = 14;
     inst->fontFlags    = 0;
     inst->txtPen       = 1;
     inst->bgPen        = 0;
     inst->selBgPen     = 3;  /* FILLPEN */
+    inst->transparent  = FALSE;
     inst->readOnly     = FALSE;
     inst->pushButton   = FALSE;
     inst->leftMargin   = 4;
@@ -129,7 +127,7 @@ ULONG UniButtonP9_OnNew(Class *cl, Object *o, struct opSet *msg)
     /* URPDrawContext: shared or private */
     {
         struct URPDrawContext *externalDc = NULL;
-        ptag = FindTagItem(UBTP9_URPDrawContext, msg->ops_AttrList);
+        ptag = FindTagItem(UBGBM_URPDrawContext, msg->ops_AttrList);
         if (ptag) externalDc = (struct URPDrawContext *)ptag->ti_Data;
 
         if (externalDc) {
@@ -138,9 +136,9 @@ ULONG UniButtonP9_OnNew(Class *cl, Object *o, struct opSet *msg)
         } else {
             inst->dc = URPDC_Create(NULL);
             urpflags = URP_PREF_ANTIALIAS |
-                   //    URP_PREF_CLUTMODE_NOMASK |
+                       URP_PREF_CLUTMODE_NOMASK |
                        URP_PREF_HIGHFILTERING;
-            ptag = FindTagItem(UBTP9_URPPrefs, msg->ops_AttrList);
+            ptag = FindTagItem(UBGBM_URPPrefs, msg->ops_AttrList);
             if (ptag) urpflags = ptag->ti_Data;
             if (inst->dc)
                 URPDC_SetPreferenceFlags(inst->dc, urpflags);
@@ -150,7 +148,7 @@ ULONG UniButtonP9_OnNew(Class *cl, Object *o, struct opSet *msg)
 
     /* Bevel */
     bevelStyleVal = BVS_BUTTON;
-    ptag = FindTagItem(UBTP9_BevelStyle, msg->ops_AttrList);
+    ptag = FindTagItem(UBGBM_BevelStyle, msg->ops_AttrList);
     if (ptag) bevelStyleVal = ptag->ti_Data;
     inst->bevelStyle = bevelStyleVal;
 
@@ -172,7 +170,7 @@ ULONG UniButtonP9_OnNew(Class *cl, Object *o, struct opSet *msg)
     }
 
     /* Apply remaining tags */
-    UniButtonP9_OnSet(cl, newObj, msg);
+    UniButtonBGBM_OnSet(cl, newObj, msg);
 
     /* Enable WMHI_GADGETUP via GACT_RELVERIFY */
     {
@@ -197,10 +195,11 @@ fail:
  * OM_DISPOSE
  * =========================================================================
  */
-ULONG UniButtonP9_OnDispose(Class *cl, Object *o, Msg msg)
+ULONG UniButtonBGBM_OnDispose(Class *cl, Object *o, Msg msg)
 {
-    UniButtonP9Data *inst = UBTP9_DATA(cl, o);
-    bdbprintf("UniButtonP9_OnDispose\n");
+    UniButtonBGBMData *inst = UBGBM_DATA(cl, o);
+    bdbprintf("UniButtonBGBM_OnDispose\n");
+    ubgbm_free_cache(inst);
     if (inst->text)  { FreeVec(inst->text);        inst->text  = NULL; }
     if (inst->bevel) { DisposeObject(inst->bevel);  inst->bevel = NULL; }
     if (inst->dc)    { URPDC_Release(inst->dc);     inst->dc    = NULL; }
@@ -211,9 +210,9 @@ ULONG UniButtonP9_OnDispose(Class *cl, Object *o, Msg msg)
  * OM_SET / OM_UPDATE
  * =========================================================================
  */
-ULONG UniButtonP9_OnSet(Class *cl, Object *o, struct opSet *msg)
+ULONG UniButtonBGBM_OnSet(Class *cl, Object *o, struct opSet *msg)
 {
-    UniButtonP9Data *inst     = UBTP9_DATA(cl, o);
+    UniButtonBGBMData *inst     = UBGBM_DATA(cl, o);
     struct TagItem  *state    = msg->ops_AttrList;
     struct TagItem  *tag;
     ULONG            result   = 0;
@@ -223,96 +222,105 @@ ULONG UniButtonP9_OnSet(Class *cl, Object *o, struct opSet *msg)
     while ((tag = NextTagItem(&state)) != NULL) {
         switch (tag->ti_Tag)
         {
-        case UBTP9_URPDrawContext:
+        case UBGBM_URPDrawContext:
         {
             struct URPDrawContext *newDc = (struct URPDrawContext *)tag->ti_Data;
             if (newDc != inst->dc) {
                 if (inst->dc) URPDC_Release(inst->dc);
                 if (newDc)    URPDC_Retain(newDc);
                 inst->dc = newDc;
+                ubgbm_free_cache(inst);
                 redraw = TRUE;
             }
             result = 1;
             break;
         }
 
-        case UBTP9_PointSize:
+        case UBGBM_PointSize:
             if (inst->pointSize != (ULONG)tag->ti_Data) {
                 inst->pointSize = (ULONG)tag->ti_Data;
                 if (inst->dc)
                     URPDC_ChangeFontsSize(inst->dc, inst->pointSize, ~0UL);
+                ubgbm_free_cache(inst);
                 redraw = TRUE;
             }
             result = 1;
             break;
 
-        case UBTP9_FontFlags:
+        case UBGBM_FontFlags:
             inst->fontFlags = (ULONG)tag->ti_Data;
             result = 1;
             break;
 
-        case UBTP9_AddFont:
+        case UBGBM_AddFont:
         {
             const char *p = (const char *)tag->ti_Data;
             if (p && p[0] && inst->dc) {
                 URPDC_AddFont(inst->dc, p, (int)inst->pointSize, inst->fontFlags);
+                ubgbm_free_cache(inst);
                 redraw = TRUE;
             }
             result = 1;
             break;
         }
 
-        case UBTP9_FlushFonts:
+        case UBGBM_FlushFonts:
             if (inst->dc) {
                 URPDC_FlushFonts(inst->dc);
+                ubgbm_free_cache(inst);
                 redraw = TRUE;
             }
             result = 1;
             break;
 
-        case UBTP9_URPPrefs:
+        case UBGBM_URPPrefs:
             if (inst->dc) {
                 ULONG cur = URPDC_GetPreferenceFlags(inst->dc);
                 if (cur != (ULONG)tag->ti_Data) {
                     URPDC_SetPreferenceFlags(inst->dc, tag->ti_Data);
+                    ubgbm_free_cache(inst);
                     redraw = TRUE;
                 }
             }
             result = 1;
             break;
 
-        case UBTP9_TextPen:
+        case UBGBM_TextPen:
             if (inst->txtPen != (ULONG)tag->ti_Data) {
                 inst->txtPen = (ULONG)tag->ti_Data;
+                ubgbm_free_cache(inst);
                 redraw = TRUE;
             }
             result = 1;
             break;
 
-        case UBTP9_BgPen:
+        case UBGBM_BgPen:
             if (inst->bgPen != (ULONG)tag->ti_Data) {
                 inst->bgPen = (ULONG)tag->ti_Data;
+                ubgbm_free_cache(inst);
                 redraw = TRUE;
             }
             result = 1;
             break;
 
-        case UBTP9_SelBgPen:
+        case UBGBM_SelBgPen:
             if (inst->selBgPen != (ULONG)tag->ti_Data) {
                 inst->selBgPen = (ULONG)tag->ti_Data;
+                ubgbm_free_cache(inst);
                 redraw = TRUE;
             }
             result = 1;
             break;
 
-        case UBTP9_PushButton:
-            inst->pushButton = tag->ti_Data ? TRUE : FALSE;
+        case UBGBM_Transparent:
+            inst->transparent = tag->ti_Data ? TRUE : FALSE;
+            ubgbm_free_cache(inst);
+            redraw = TRUE;
             result = 1;
             break;
 
-        case UBTP9_Patch9:
-            inst->patch9 = (Patch9 *)tag->ti_Data;
-            redraw = TRUE;
+        case UBGBM_PushButton:
+            inst->pushButton = tag->ti_Data ? TRUE : FALSE;
             result = 1;
             break;
 
@@ -330,57 +338,62 @@ ULONG UniButtonP9_OnSet(Class *cl, Object *o, struct opSet *msg)
                 inst->text = (char *)AllocVec(len + 1, MEMF_ANY);
                 if (inst->text) CopyMem((APTR)newText, inst->text, len + 1);
             }
+            ubgbm_free_cache(inst);
             redraw = TRUE;
             result = 1;
             break;
         }
 
-        case UBTP9_LeftMargin:
+        case UBGBM_LeftMargin:
         {
             WORD v = (WORD)(ULONG)tag->ti_Data;
             if (v < 0) v = 0;
             v += inst->bevelV;
             if (v != inst->leftMargin) {
                 inst->leftMargin = v;
+                ubgbm_free_cache(inst);
                 redraw = TRUE;
             }
             result = 1;
             break;
         }
 
-        case UBTP9_RightMargin:
+        case UBGBM_RightMargin:
         {
             WORD v = (WORD)(ULONG)tag->ti_Data;
             if (v < 0) v = 0;
             v += inst->bevelV;
             if (v != inst->rightMargin) {
                 inst->rightMargin = v;
+                ubgbm_free_cache(inst);
                 redraw = TRUE;
             }
             result = 1;
             break;
         }
 
-        case UBTP9_TopMargin:
+        case UBGBM_TopMargin:
         {
             WORD v = (WORD)(ULONG)tag->ti_Data;
             if (v < 0) v = 0;
             v += inst->bevelH;
             if (v != inst->topMargin) {
                 inst->topMargin = v;
+                ubgbm_free_cache(inst);
                 redraw = TRUE;
             }
             result = 1;
             break;
         }
 
-        case UBTP9_BottomMargin:
+        case UBGBM_BottomMargin:
         {
             WORD v = (WORD)(ULONG)tag->ti_Data;
             if (v < 0) v = 0;
             v += inst->bevelH;
             if (v != inst->bottomMargin) {
                 inst->bottomMargin = v;
+                ubgbm_free_cache(inst);
                 redraw = TRUE;
             }
             result = 1;
@@ -397,7 +410,7 @@ ULONG UniButtonP9_OnSet(Class *cl, Object *o, struct opSet *msg)
             result = 1;
             break;
 
-        case UBTP9_FlushDebugOutput:
+        case UBGBM_FlushDebugOutput:
             flushbdbprint();
             break;
 
@@ -418,6 +431,8 @@ ULONG UniButtonP9_OnSet(Class *cl, Object *o, struct opSet *msg)
 
     if (redraw && inst->dc) {
         struct URPTextMetric m;
+        WORD gadW = G(o)->Width;
+        WORD gadH = G(o)->Height;
 
         if (inst->text && inst->text[0]) {
             URPDC_TextSizeUTF8(inst->dc, inst->text, -1, &m);
@@ -428,11 +443,17 @@ ULONG UniButtonP9_OnSet(Class *cl, Object *o, struct opSet *msg)
             inst->textHeight = 8;
         }
 
-        ubtp9_update_font_metrics(inst);
+        /* The cache is sized from textWidth/textHeight, not the gadget
+         * size -- gadW/gadH are only used here as an "is this gadget laid
+         * out yet" readiness check, same as GM_RENDER's. */
+        if (gadW > 0 && gadH > 0 && inst->screen)
+            ubgbm_rebuild_cache(cl, o, gadW, gadH, inst->drawInfo, inst->screen);
+        else
+            ubgbm_update_font_metrics(inst);
     }
 
     if ((redraw || justBlit) && msg->ops_GInfo)
-        ubtp9_render_self(cl, o, msg->ops_GInfo);
+        ubgbm_render_self(cl, o, msg->ops_GInfo);
 
     return result;
 }
@@ -441,23 +462,23 @@ ULONG UniButtonP9_OnSet(Class *cl, Object *o, struct opSet *msg)
  * OM_GET
  * =========================================================================
  */
-ULONG UniButtonP9_OnGet(Class *cl, Object *o, struct opGet *msg)
+ULONG UniButtonBGBM_OnGet(Class *cl, Object *o, struct opGet *msg)
 {
-    UniButtonP9Data *inst = UBTP9_DATA(cl, o);
+    UniButtonBGBMData *inst = UBGBM_DATA(cl, o);
 
     switch (msg->opg_AttrID)
     {
-    case UBTP9_URPDrawContext:
+    case UBGBM_URPDrawContext:
         *msg->opg_Storage = (ULONG)inst->dc;
         return TRUE;
-    case UBTP9_BevelStyle:
+    case UBGBM_BevelStyle:
         *msg->opg_Storage = inst->bevelStyle;
         return TRUE;
-    case UBTP9_PushButton:
-        *msg->opg_Storage = (ULONG)inst->pushButton;
+    case UBGBM_Transparent:
+        *msg->opg_Storage = (ULONG)inst->transparent;
         return TRUE;
-    case UBTP9_Patch9:
-        *msg->opg_Storage = (ULONG)inst->patch9;
+    case UBGBM_PushButton:
+        *msg->opg_Storage = (ULONG)inst->pushButton;
         return TRUE;
     case GA_ReadOnly:
         *msg->opg_Storage = (ULONG)inst->readOnly;
@@ -465,28 +486,28 @@ ULONG UniButtonP9_OnGet(Class *cl, Object *o, struct opGet *msg)
     case GA_Text:
         *msg->opg_Storage = (ULONG)inst->text;
         return TRUE;
-    case UBTP9_TextPen:
+    case UBGBM_TextPen:
         *msg->opg_Storage = inst->txtPen;
         return TRUE;
-    case UBTP9_BgPen:
+    case UBGBM_BgPen:
         *msg->opg_Storage = inst->bgPen;
         return TRUE;
-    case UBTP9_SelBgPen:
+    case UBGBM_SelBgPen:
         *msg->opg_Storage = inst->selBgPen;
         return TRUE;
-    case UBTP9_PointSize:
+    case UBGBM_PointSize:
         *msg->opg_Storage = inst->pointSize;
         return TRUE;
-    case UBTP9_LeftMargin:
+    case UBGBM_LeftMargin:
         *msg->opg_Storage = (ULONG)(WORD)(inst->leftMargin  - inst->bevelV);
         return TRUE;
-    case UBTP9_RightMargin:
+    case UBGBM_RightMargin:
         *msg->opg_Storage = (ULONG)(WORD)(inst->rightMargin - inst->bevelV);
         return TRUE;
-    case UBTP9_TopMargin:
+    case UBGBM_TopMargin:
         *msg->opg_Storage = (ULONG)(WORD)(inst->topMargin   - inst->bevelH);
         return TRUE;
-    case UBTP9_BottomMargin:
+    case UBGBM_BottomMargin:
         *msg->opg_Storage = (ULONG)(WORD)(inst->bottomMargin - inst->bevelH);
         return TRUE;
     /* OS3.9 DoSuperMethodA workaround */

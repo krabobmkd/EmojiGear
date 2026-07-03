@@ -239,6 +239,8 @@ void FS3EStyle_InitDefaults(FS3EStyle *st)
     st->tbBgHook.h_Entry    = (HOOKFUNC)FS3EStyle_TitleBarBackFillFunc;
     st->tbBgHook.h_SubEntry = NULL;
     st->tbBgHook.h_Data     = NULL;  /* unused -- see FS3EStyle_TitleBarBackFillFunc */
+
+    memset(&st->bt1Patch9, 0, sizeof(st->bt1Patch9));
 }
 
 void FS3EStyle_ApplyColors(FS3EStyle *st, struct Screen *scr)
@@ -451,6 +453,15 @@ BOOL FS3EStyle_LoadThemeImages(FS3EStyle *st, struct Screen *scr)
         printf("FS3EStyle_LoadThemeImages: tbbg.png not loaded (%s)\n", path);
     }
 
+    /* UniButtonP9 patch9 background skin: 96x24, 4 sub-images of 24x24
+     * (PATCH9_NORMAL/SELECTED/DISABLED/HOVER), corner size 8. Optional --
+     * a missing file just means buttons keep their flat colour fill. */
+    snprintf(path, sizeof(path), "%s/bt1patch9.iff", st->themePath);
+    if (!Patch9_Init(&st->bt1Patch9, path, 8) ||
+        !Patch9_Load(&st->bt1Patch9, scr)) {
+        printf("FS3EStyle_LoadThemeImages: bt1patch9.iff not loaded (%s)\n", path);
+    }
+
     return TRUE;
 }
 
@@ -483,6 +494,8 @@ void FS3EStyle_SyncTitleBarButtons(FS3EStyle *st,
             GA_Image, (ULONG)st->tbImages[3],
             BUTTON_BevelStyle, BVS_NONE,
             BUTTON_Transparent, TRUE, TAG_DONE);
+
+
 }
 
 void FS3EStyle_UnloadThemeImages(FS3EStyle *st)
@@ -491,6 +504,7 @@ void FS3EStyle_UnloadThemeImages(FS3EStyle *st)
     free_tb_images(st);
     BmImage_Unload(&st->tbButtons);
     BmImage_Unload(&st->tbBg);
+    Patch9_Unload(&st->bt1Patch9);
     tbBgBitmap = NULL;
     tbBgWidth  = 0;
     tbBgHeight = 0;
@@ -505,5 +519,6 @@ void FS3EStyle_FreeThemeImages(FS3EStyle *st)
     FS3EStyle_UnloadThemeImages(st);
     BmImage_Free(&st->tbButtons);
     BmImage_Free(&st->tbBg);
+    Patch9_Free(&st->bt1Patch9);
     if (st->themePath) { FreeVec(st->themePath); st->themePath = NULL; }
 }

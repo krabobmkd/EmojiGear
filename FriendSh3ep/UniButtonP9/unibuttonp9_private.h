@@ -16,14 +16,14 @@
 #include <string.h>
 
 #include "unibuttonp9.h"
-#include "offscreenbm.h"
+#include "../patch9.h"
 
 #include <libraries/utf8rastport.h>
 #include <proto/utf8rastport.h>
 
 #include "../compilers.h"
 
-/* Cached bitmap states */
+/* Render states (bevel IDS_* selection, disabled-state dimming) */
 #define UBTP9_STATE_NORMAL    0
 #define UBTP9_STATE_SELECTED  1
 #define UBTP9_STATE_DISABLED  2
@@ -40,7 +40,6 @@ typedef struct UniButtonP9Data {
     WORD    bevelV;
     WORD    bevelH;
 
-    BOOL    transparent;
     BOOL    readOnly;
 
     ULONG   txtPen;
@@ -54,8 +53,10 @@ typedef struct UniButtonP9Data {
 
     char   *text;
 
-    OffscreenBitMap cacheBm[UBTP9_NUM_STATES];
-    BOOL            cacheValid;
+    /* Required (see UBTP9_Patch9); borrowed, not owned. Background and
+     * text are always drawn live against it -- there is no bitmap cache
+     * (see UniButtonBGBM for the class that has one). */
+    Patch9 *patch9;
 
     WORD    fontHeight;
     WORD    fontAscent;
@@ -82,13 +83,10 @@ typedef struct UniButtonP9Data {
  * =========================================================================
  */
 void ubtp9_update_font_metrics(UniButtonP9Data *inst);
-void ubtp9_free_cache(UniButtonP9Data *inst);
-void ubtp9_rebuild_cache(Class *cl, Object *o,
-                         WORD gadW, WORD gadH,
-                         struct DrawInfo *dri,
-                         struct Screen   *scr);
+void ubtp9_state_pens(UniButtonP9Data *inst, int state, struct Screen *scr,
+                      ULONG *outBgPen, ULONG *outTxtPen, UWORD *outImageState);
 void ubtp9_blit_state(UniButtonP9Data *inst, struct Gadget *g,
-                      struct RastPort *rp, int state);
+                      struct RastPort *rp, int state, UWORD *outImageState);
 void ubtp9_notify_pressed(Class *cl, Object *o, struct GadgetInfo *gi);
 void ubtp9_render_self(Class *cl, Object *o, struct GadgetInfo *gi);
 

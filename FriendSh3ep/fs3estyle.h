@@ -28,6 +28,7 @@
 #include <utility/hooks.h>
 
 #include "bmimage.h"
+#include "patch9.h"
 
 /* ------------------------------------------------------------------ */
 /* FS3EManagedColor — one color role: RGB definition + runtime pen     */
@@ -119,6 +120,14 @@ typedef struct {
      * FS3EStyle_TitleBarBackFillFunc in fs3estyle.c for why). */
     BmImage     tbBg;
     struct Hook tbBgHook;
+
+    /* UniButtonP9 patch9 background skin: bt1patch9.iff, 96x24 pixels --
+     * 4 sub-images of 24x24 (PATCH9_NORMAL/SELECTED/DISABLED/HOVER, left to
+     * right), corner size 8. Loaded from st->themePath like the other theme
+     * images. Optional -- if the file is missing, buttons that reference
+     * &st->bt1Patch9 via UBTP9_Patch9 just fall back to their flat colour
+     * fill (see Patch9_IsLoaded in patch9.h). */
+    Patch9 bt1Patch9;
 } FS3EStyle;
 
 /* ------------------------------------------------------------------ */
@@ -171,11 +180,11 @@ void FS3EStyle_SetFontSize(FS3EStyle *st, int baseSize,
  * afterwards. */
 void FS3EStyle_SetThemePath(FS3EStyle *st, const char *path);
 
-/* Load title bar button images (tbbuttons.png) from st->themePath, remapped
- * to scr (see bmimage.c). Call once per screen open, alongside
- * FS3EStyle_ApplyColors. Safe to call again on theme or screen change --
- * disposes previously loaded images first. If st->themePath is unset,
- * defaults it first.
+/* Load title bar button images (tbbuttons.png), tbbg.png, and bt1patch9.iff
+ * from st->themePath, remapped to scr (see bmimage.c / patch9.c). Call once
+ * per screen open, alongside FS3EStyle_ApplyColors. Safe to call again on
+ * theme or screen change -- disposes previously loaded images first. If
+ * st->themePath is unset, defaults it first.
  * Returns FALSE if images/bitmap.image isn't open, or tbbuttons.png could
  * not be loaded -- st->tbImages[] stay NULL and
  * FS3EStyle_SyncTitleBarButtons() becomes a no-op, leaving gadgets with

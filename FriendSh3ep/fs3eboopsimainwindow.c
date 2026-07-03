@@ -29,6 +29,7 @@
 #include <string.h>
 #include <stdio.h>
 
+#include "UniButtonP9/unibuttonp9.h"
 /* This is the Intuition-level Window. On OS3 it is recreated every time the
  * window is (re)opened: when iconifying/reopening, the BOOPSI objects are
  * kept but the Intuition-level Window/Screen instances are torn down. */
@@ -83,6 +84,22 @@ static void GenericOpenWindow(FS3EMainWindow *mw, Object *window_obj)
     FS3EStyle_SyncTitleBarButtons(&app->style,
         app->titlebar_closeBtn, app->titlebar_iconifyBtn,
         app->titlebar_altposBtn, app->titlebar_depthBtn);
+
+    if(app->titlebar_settingsBtn)
+    {
+        SetGdAttrs(app->titlebar_settingsBtn,
+            UBTP9_Patch9,
+             (app->style.bt1Patch9.img.bitmap)?
+            (ULONG)&app->style.bt1Patch9:NULL,TAG_END);
+    }
+    if(app->titlebar_accountBtn)
+    {
+        SetGdAttrs(app->titlebar_accountBtn,
+            UBTP9_Patch9,
+             (app->style.bt1Patch9.img.bitmap)?
+            (ULONG)&app->style.bt1Patch9:NULL,TAG_END);
+    }
+
     DoMethod(window_obj, WM_RETHINK);
 
     CurrentMainWindow = (struct Window *)DoMethod(window_obj, WM_OPEN, NULL);

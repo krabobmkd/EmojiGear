@@ -81,6 +81,7 @@
 #include "fs3esettings.h"
 
 #include "UniButtonP9/unibuttonp9.h"
+#include "UniButtonBGBM/unibuttonbgbm.h"
 #include "TitleBarLayout/fs3etitlebar.h"
 #include "NavBarLayout/fs3enavbar.h"
 #include "TootTimeline/fs3etoottimeline.h"
@@ -251,13 +252,16 @@ static void FS3EApp_SetButtonFontSize(ULONG pointSize)
                                     : "OpenMoji-black-glyf.ttf",
         (int)pointSize, 0);
 
-    /* Notify existing buttons: UBTP9_PointSize triggers cache invalidation.
-     * Gadget pointers are NULL before buttons are created, so this is safe.
-     * titlebar buttons are now regular button.gadget — no UBTP9_PointSize. */
+    /* Notify existing buttons: nav_btns[] are UniButtonBGBM (UBGBM_PointSize
+     * triggers its cache invalidation); titlebar_settingsBtn/accountBtn are
+     * UniButtonP9 (UBTP9_PointSize just retriggers live metrics -- no
+     * cache there). Passing both tags to every button is harmless: each
+     * class's OM_SET ignores the tag it doesn't recognise.
+     * Gadget pointers are NULL before buttons are created, so this is safe. */
     {
         int i;
-#define RESIZE_BTN(o) if (o) SetAttrs((Object *)(o), UBTP9_PointSize, pointSize, TAG_DONE)
-        /* titlebar_postsLabel / newPostsLabel disabled */
+#define RESIZE_BTN(o) if (o) SetAttrs((Object *)(o), \
+            UBGBM_PointSize, pointSize, UBTP9_PointSize, pointSize, TAG_DONE)
         for (i = 0; i < 8; i++) RESIZE_BTN(app->nav_btns[i]);
         RESIZE_BTN(app->titlebar_settingsBtn);
         RESIZE_BTN(app->titlebar_accountBtn);
@@ -301,33 +305,34 @@ void FS3EApp_ApplyFontSettings(void)
     DoMethod(app->window_obj, WM_RETHINK);
 }
 
-/* Create one UniButtonP9, click arrives via WMHI_GADGETUP.
- * dpiH is reserved for future use; font size is controlled by app->buttonDC. */
+/* Create one UniButtonBGBM (flat-colour, cached-by-state), click arrives
+ * via WMHI_GADGETUP. dpiH is reserved for future use; font size is
+ * controlled by app->buttonDC. */
 static Object *makeBtn(ULONG gadID, const char *label, UWORD dpiH)
 {
     (void)dpiH;
-    return (Object *)NewObject(UniButtonP9Class, NULL,
+    return (Object *)NewObject(UniButtonBGBMClass, NULL,
         GA_ID,                  gadID,
         GA_Text,                (ULONG)label,
-        UBTP9_URPDrawContext,   (ULONG)app->buttonDC,
-        UBTP9_BevelStyle,       BVS_BUTTON, //BVS_NONE,
-        // UBTP9_TopMargin,        0,
-        // UBTP9_BottomMargin,     0,
+        UBGBM_URPDrawContext,   (ULONG)app->buttonDC,
+        UBGBM_BevelStyle,       BVS_BUTTON, //BVS_NONE,
+        // UBGBM_TopMargin,        0,
+        // UBGBM_BottomMargin,     0,
         TAG_END);
 }
 
-/* Create a read-only label using UniButtonP9. */
+/* Create a read-only label using UniButtonBGBM. */
 static Object *makeLabel(const char *text, UWORD dpiH)
 {
     (void)dpiH;
-    return (Object *)NewObject(UniButtonP9Class, NULL,
+    return (Object *)NewObject(UniButtonBGBMClass, NULL,
         GA_Text,                (ULONG)text,
         GA_ReadOnly,            TRUE,
-        UBTP9_URPDrawContext,   (ULONG)app->buttonDC,
-        UBTP9_BevelStyle,       BVS_NONE,
-        UBTP9_Transparent,      TRUE,
-        UBTP9_TopMargin,        0,
-        UBTP9_BottomMargin,     0,
+        UBGBM_URPDrawContext,   (ULONG)app->buttonDC,
+        UBGBM_BevelStyle,       BVS_NONE,
+        UBGBM_Transparent,      TRUE,
+        UBGBM_TopMargin,        0,
+        UBGBM_BottomMargin,     0,
         TAG_END);
 }
 
@@ -372,6 +377,7 @@ int main(int argc, char **argv)
 
     /* --- Private BOOPSI classes ---------------------------------------- */
     if (!UniButtonP9_Init())    cleanexit("Can't init UniButtonP9 class");
+    if (!UniButtonBGBM_Init())  cleanexit("Can't init UniButtonBGBM class");
     if (!TitleBarLayout_Init()) cleanexit("Can't init TitleBarLayout class");
     if (!NavBarLayout_Init())   cleanexit("Can't init NavBarLayout class");
     if (!TootTimeline_Init())   cleanexit("Can't init TootTimeline class");
@@ -438,7 +444,7 @@ int main(int argc, char **argv)
         GA_Height, app->style.avatarSize,
         GA_RelVerify, TRUE,
         TAG_DONE);
-
+ //printf("p9bm:%08x\n",(int)app->style.bt1Patch9.img.bitmap);
     app->titlebar_settingsBtn = (Object *)NewObject(UniButtonP9Class, NULL,
         GA_ID,                  GID_TITLEBAR_SETTINGS,
         GA_Text,                (ULONG)"\xE2\x9A\x99 Settings",
@@ -447,7 +453,7 @@ int main(int argc, char **argv)
         TAG_END);
 
     app->titlebar_accountBtn = (Object *)NewObject(UniButtonP9Class, NULL,
-        GA_ID,                  GID_TITLEBAR_SETTINGS,
+        GA_ID,                  GID_TITLEBAR_ACCOUNTS,
         GA_Text,                (ULONG)"\xF0\x9F\x91\xA4 Accounts",
         UBTP9_URPDrawContext,   (ULONG)app->buttonDC,
         UBTP9_BevelStyle,       BVS_NONE, //BVS_NONE,
@@ -1002,6 +1008,7 @@ void exitclose(void)
         NavBarLayout_Exit();
         TitleBarLayout_Exit();
         UniButtonP9_Exit();
+        UniButtonBGBM_Exit();
 //  printf("exitclose4\n");
 // wait2sec();
         /* Release shared DCs after all gadgets using them are disposed. */

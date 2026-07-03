@@ -21,6 +21,7 @@ add_subdirectory(network_fs3e)
 set(FRIENDSH3EP_SOURCES
 	bdbprintf.c
     bmimage.c
+    patch9.c
     friendsh3ep.c
     fs3estyle.c
     fs3eboopsimainwindow.c
@@ -38,7 +39,12 @@ set(FRIENDSH3EP_SOURCES
     UniButtonP9/unibuttonp9_attribs.c
     UniButtonP9/unibuttonp9_render.c
     UniButtonP9/unibuttonp9_input.c
-    UniButtonP9/offscreenbm.c
+    UniButtonBGBM/unibuttonbgbm.c
+    UniButtonBGBM/unibuttonbgbm_dispatch.c
+    UniButtonBGBM/unibuttonbgbm_attribs.c
+    UniButtonBGBM/unibuttonbgbm_render.c
+    UniButtonBGBM/unibuttonbgbm_input.c
+    UniButtonBGBM/offscreenbm.c
     TitleBarLayout/fs3etitlebar.c
     NavBarLayout/fs3enavbar.c
     TootTimeline/fs3etoottimeline.c
@@ -52,6 +58,7 @@ set(FRIENDSH3EP_SOURCES
 # Listed so IDEs (Qt Creator, etc.) show them in the project tree.
 set(FRIENDSH3EP_HEADERS
     bmimage.h
+    patch9.h
     friendsh3ep.h
     fs3estyle.h
     fs3eboopsimainwindow.h
@@ -67,6 +74,7 @@ set(FRIENDSH3EP_HEADERS
     compilers.h
     bdbprintf.h
     UniButtonP9/unibuttonp9.h
+    UniButtonBGBM/unibuttonbgbm.h
     TitleBarLayout/fs3etitlebar.h
     NavBarLayout/fs3enavbar.h
     TootTimeline/fs3etoottimeline.h

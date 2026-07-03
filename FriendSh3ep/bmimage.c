@@ -99,9 +99,10 @@ BOOL BmImage_Load(BmImage *img, struct Screen *screen)
 
     BmImage_Unload(img);
 
+//printf("load %s\n",img->filePath);
     if (screen) {
         ULONG depth = GetBitMapAttr( screen->RastPort.BitMap, BMA_DEPTH );
-        printf(" **** screen depth:%d\n",depth);
+       // printf(" **** screen depth:%d\n",depth);
         if(depth<=8)
         {   /* indexed palette, need remap */
             dto = NewDTObject((APTR)img->filePath,
@@ -163,6 +164,7 @@ BOOL BmImage_Load(BmImage *img, struct Screen *screen)
      * bmh_Width/bmh_Height as the picture; NULL if there is none. */
     img->mask = NULL;
     GetDTAttrs(dto, PDTA_MaskPlane, (ULONG)&img->mask, TAG_DONE);
+//  printf(" img->mask:%d\n",(int)img->mask);
 
     img->error = BMIMAGE_OK;
     return TRUE;
