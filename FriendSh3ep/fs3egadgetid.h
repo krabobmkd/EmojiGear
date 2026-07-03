@@ -28,6 +28,10 @@
 #define GID_TITLEBAR_ALTPOS      32
 #define GID_TITLEBAR_DEPTH       33
 
+/* These ones move to Title Bar layout */
+#define GID_TITLEBAR_SETTINGS    34
+#define GID_TITLEBAR_ACCOUNTS    35
+
 /* Navigation bar (Part B, NavBarLayout) */
 #define GID_NAV_HOME             40
 #define GID_NAV_LOCAL            41
@@ -35,9 +39,11 @@
 #define GID_NAV_SEARCH           43
 
 #define GID_NAV_NOTIFICATIONS    44
-#define GID_NAV_NEWTOOT          45
-#define GID_NAV_SETTINGS         46
-#define GID_NAV_ACCOUNTS         47
+#define GID_NAV_BOOKMARKS        45
+#define GID_NAV_NEWS             46
+#define GID_NAV_NEWTOOT          47
+
+
 
 /* The whole Toot TimeLine (part C) */
 #define GID_TTIMELINE         100

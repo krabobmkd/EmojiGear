@@ -22,7 +22,7 @@
 #include <intuition/classusr.h>
 #include "../fs3estyle.h"
 
-#define TBLAYOUT_NUMCHILDREN  5
+#define TBLAYOUT_NUMCHILDREN  7
 
 #define TBLAYOUT_Base         (TAG_USER | 0x53510UL)
 #define TBLAYOUT_DpiHeight    (TBLAYOUT_Base + 0)  /* UWORD: row height in pixels */

@@ -1,10 +1,13 @@
 /*
  * UniButtonP9 – GM_LAYOUT, GM_RENDER, GM_DOMAIN.
  *
- * Three OffscreenBitMaps cache the normal, selected, and disabled states.
- * Rebuilt in GM_RENDER (application-task context – FreeType calls safe).
- * GM_GOACTIVE / GM_GOINACTIVE only blit the cached bitmap (safe in input
- * device context).
+ * Three OffscreenBitMaps cache the normal, selected, and disabled states,
+ * each the full button surface (background + border-free skin + text).
+ * Rebuilt in GM_LAYOUT and GM_RENDER (application-task context – FreeType
+ * calls safe). g->Width/Height only ever change in GM_LAYOUT, so a resize
+ * is caught and rebuilt there, proactively, ahead of any later blit.
+ * GM_GOACTIVE / GM_HANDLEINPUT / GM_GOINACTIVE only blit the cached bitmap
+ * (safe in input device context; they must never trigger a rebuild).
  */
 #include <proto/exec.h>
 #include <proto/graphics.h>
@@ -80,10 +83,10 @@ static void ubtp9_build_one_state(UniButtonP9Data *inst, WORD gadW, WORD gadH,
         }
     }
 
-    w = inst->textWidth;
-    h = inst->textHeight;
-    if (w < 16) w = 16;
-    if (h < 8)  h = 8;
+    w = gadW;
+    h = gadH;
+    if (w < 1) w = 1;
+    if (h < 1) h = 1;
 
     if (!obm->_bm || obm->_w != w || obm->_h != h) {
         OffscreenBitMap_Close(obm);
@@ -103,8 +106,8 @@ static void ubtp9_build_one_state(UniButtonP9Data *inst, WORD gadW, WORD gadH,
 
     if (inst->text && inst->text[0] && inst->dc && scr) {
         struct URPTextPos pos;
-        pos.x = 0;
-        pos.y = inst->fontAscent;
+        pos.x = (w - inst->textWidth)  / 2;
+        pos.y = (h - inst->textHeight) / 2 + inst->fontAscent;
 
         URPDC_SetDrawColorFromPen(inst->dc, scr, (LONG)txtPen, (LONG)bgPen);
         SetAPen(rp, (LONG)txtPen);
@@ -140,8 +143,31 @@ void ubtp9_rebuild_cache(Class *cl, Object *o,
  */
 ULONG UniButtonP9_OnLayout(Class *cl, Object *o, struct gpLayout *msg)
 {
-    (void)cl; (void)o;
-    return DoSuperMethodA(cl, o, (APTR)msg);
+    UniButtonP9Data *inst = UBTP9_DATA(cl, o);
+    ULONG            ret  = DoSuperMethodA(cl, o, (APTR)msg);
+    struct Gadget   *g    = G(o);
+    WORD             gadW = g->Width;
+    WORD             gadH = g->Height;
+    struct Screen   *scr  = msg->gpl_GInfo ? msg->gpl_GInfo->gi_Screen : inst->screen;
+    struct DrawInfo *dri  = msg->gpl_GInfo ? msg->gpl_GInfo->gi_DrInfo : inst->drawInfo;
+
+    if (scr) inst->screen   = scr;
+    if (dri) inst->drawInfo = dri;
+
+    /* g->Width/Height only ever change here, in GM_LAYOUT (always
+     * application-task context) — never from GM_GOACTIVE/GM_HANDLEINPUT
+     * (input.device context, where FreeType calls are unsafe). Since the
+     * cache is now the full button surface, its size (and the text
+     * centering baked into it) depends on the gadget size, so a resize
+     * must rebuild it here, proactively, rather than leaving GM_RENDER's
+     * lazy rebuild to possibly fire from an input.device-context blit. */
+    if (gadW > 0 && gadH > 0 && scr &&
+        (!inst->cacheValid ||
+         inst->cacheBm[UBTP9_STATE_NORMAL]._w != gadW ||
+         inst->cacheBm[UBTP9_STATE_NORMAL]._h != gadH))
+        ubtp9_rebuild_cache(cl, o, gadW, gadH, dri, scr);
+
+    return ret;
 }
 
 /* =========================================================================
@@ -171,7 +197,9 @@ ULONG UniButtonP9_OnRender(Class *cl, Object *o, struct gpRender *msg)
     if (inst->selBgPen == 3 && dri)
         inst->selBgPen = (ULONG)dri->dri_Pens[FILLPEN];
 
-    needRebuild = (!inst->cacheValid);
+    needRebuild = (!inst->cacheValid) ||
+                  (inst->cacheBm[UBTP9_STATE_NORMAL]._w != gadW) ||
+                  (inst->cacheBm[UBTP9_STATE_NORMAL]._h != gadH);
 
     if (needRebuild && scr)
         ubtp9_rebuild_cache(cl, o, gadW, gadH, dri, scr);

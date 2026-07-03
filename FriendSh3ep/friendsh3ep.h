@@ -46,8 +46,9 @@ struct App {
     Object *titlebar_altposBtn;      /* GID_TITLEBAR_ALTPOS  */
     Object *titlebar_depthBtn;       /* GID_TITLEBAR_DEPTH   */
     Object *titlebar_userIcon;       /* placeholder for user avatar */
-    Object *titlebar_postsLabel;     /* post count (read-only) */
-    Object *titlebar_newPostsLabel;  /* new-post count (read-only) */
+    Object *titlebar_settingsBtn;       /* GID_TITLEBAR_DEPTH   */
+    Object *titlebar_accountBtn;       /* placeholder for user avatar */
+
 
     /* Part B: navigation bar (NavBarLayoutClass).
      * nav_btns[0..7] correspond to GID_NAV_HOME..GID_NAV_ACCOUNTS. */

@@ -31,39 +31,16 @@ void ubtp9_free_cache(UniButtonP9Data *inst)
 void ubtp9_blit_state(UniButtonP9Data *inst, struct Gadget *g,
                       struct RastPort *rp, int state)
 {
-    WORD textX, textY;
     OffscreenBitMap *obm = &inst->cacheBm[state];
 
     if (!inst->cacheValid) return;
     if (!obm->_bm) return;
 
-    textX = (g->Width  - obm->_w) / 2;
-    textY = (g->Height - obm->_h) / 2;
-
     BltBitMapRastPort(obm->_bm, 0, 0,
                       rp,
-                      (LONG)g->LeftEdge + textX, (LONG)g->TopEdge + textY,
-                      (LONG)obm->_w, (LONG)obm->_h,
+                      (LONG)g->LeftEdge, (LONG)g->TopEdge,
+                      (LONG)g->Width, (LONG)g->Height,
                       0xC0);
-
-    SetAPen(rp, (LONG)obm->_bgpen);
-    SetDrMd(rp, JAM1);
-    if (textY > 0)
-        RectFill(rp, (LONG)g->LeftEdge, (LONG)g->TopEdge,
-                     (LONG)(g->LeftEdge + g->Width - 1),
-                     (LONG)(g->TopEdge  + textY - 1));
-    if ((textY + obm->_h) < g->Height)
-        RectFill(rp, (LONG)g->LeftEdge, (LONG)(g->TopEdge + textY + obm->_h),
-                     (LONG)(g->LeftEdge + g->Width - 1),
-                     (LONG)(g->TopEdge  + g->Height - 1));
-    if (textX > 0)
-        RectFill(rp, (LONG)g->LeftEdge, (LONG)(g->TopEdge + textY),
-                     (LONG)(g->LeftEdge + textX - 1),
-                     (LONG)(g->TopEdge  + textY + obm->_h - 1));
-    if ((textX + obm->_w) < g->Width)
-        RectFill(rp, (LONG)(g->LeftEdge + textX + obm->_w), (LONG)(g->TopEdge + textY),
-                     (LONG)(g->LeftEdge + g->Width - 1),
-                     (LONG)(g->TopEdge  + textY + obm->_h - 1));
 }
 
 void ubtp9_render_self(Class *cl, Object *o, struct GadgetInfo *gi)
@@ -438,8 +415,6 @@ ULONG UniButtonP9_OnSet(Class *cl, Object *o, struct opSet *msg)
 
     if (redraw && inst->dc) {
         struct URPTextMetric m;
-        WORD gadW = G(o)->Width;
-        WORD gadH = G(o)->Height;
 
         if (inst->text && inst->text[0]) {
             URPDC_TextSizeUTF8(inst->dc, inst->text, -1, &m);
@@ -450,10 +425,15 @@ ULONG UniButtonP9_OnSet(Class *cl, Object *o, struct opSet *msg)
             inst->textHeight = 8;
         }
 
-        if (gadW > 0 && gadH > 0 && inst->screen)
-            ubtp9_rebuild_cache(cl, o, gadW, gadH, inst->drawInfo, inst->screen);
-        else
-            ubtp9_update_font_metrics(inst);
+        /* Don't bake the pixel cache here: G(o)->Width/Height may still be
+         * the pre-relayout size (e.g. a plain SetAttrs() font-size change
+         * ahead of a pending WM_RETHINK). The cache now stores the full
+         * button surface, so its size *and* the text centering within it
+         * depend on the final gadget size — only GM_RENDER is guaranteed
+         * to see that. Leaving cacheValid FALSE (set by ubtp9_free_cache
+         * above) means GM_RENDER's needRebuild check rebuilds with the
+         * authoritative gadW/gadH. */
+        ubtp9_update_font_metrics(inst);
     }
 
     if ((redraw || justBlit) && msg->ops_GInfo)

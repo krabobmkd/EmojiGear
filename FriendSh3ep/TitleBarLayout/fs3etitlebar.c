@@ -105,7 +105,7 @@ typedef struct {
     UWORD      childCount;
     UWORD      dpiHeight;
     FS3EStyle *style;
-    struct Task *allowedProcess;
+//    struct Task *allowedProcess;
 } TitleBarLayoutData;
 
 ULONG ASM SAVEDS TitleBarLayout_Dispatch(
@@ -156,7 +156,7 @@ static ULONG TitleBarLayout_OnNew(Class *cl, Object *o, struct opSet *msg)
         }
     }
 
-    inst->allowedProcess = FindTask(NULL);
+//    inst->allowedProcess = FindTask(NULL);
 
     return (ULONG)newObj;
 }
@@ -173,6 +173,19 @@ static ULONG TitleBarLayout_OnDispose(Class *cl, Object *o, Msg msg)
 /* ------------------------------------------------------------------ */
 /* GM_DOMAIN                                                            */
 /* ------------------------------------------------------------------ */
+
+static void prepDomain( struct gpDomain *d, struct GadgetInfo *gi)
+{
+    d->MethodID        = GM_DOMAIN;
+    d->gpd_GInfo       = gi;
+    d->gpd_RPort       = NULL;
+    d->gpd_Which       = GDOMAIN_MINIMUM;
+    d->gpd_Domain.Left = 0;
+    d->gpd_Domain.Top  = 0;
+    d->gpd_Domain.Width  = 1;
+    d->gpd_Domain.Height = 1;
+    d->gpd_Attrs       = 0;
+}
 
 static ULONG TitleBarLayout_OnDomain(Class *cl, Object *o, struct gpDomain *msg)
 {
@@ -259,23 +272,51 @@ static ULONG TitleBarLayout_OnLayout(Class *cl, Object *o, struct gpLayout *msg)
                   y2   + avGap,
                   iconSz, iconSz);
 
-    /* children[5] and [6]: postsLabel / newPostsLabel — disabled */
-    /*
+    /* settings and account buttons */
+    if (inst->childCount > 6)
     {
-        WORD labLeft  = left + iconSz + 2 * TBLAYOUT_ICON_MARGIN + 2;
-        WORD labW     = w - (labLeft - left);
-        WORD halfLabW = labW / 2;
 
-        if (labW < 1) labW = 1;
-        if (halfLabW < 1) halfLabW = 1;
+        struct Gadget *gsettingsbt = (struct Gadget *) inst->children[5];
+        struct Gadget *gaccbt = (struct Gadget *) inst->children[6];
+        struct gpDomain dmsettingsBt,dmAccountBt;
 
-        if (inst->childCount > 5)
-            setBounds(inst->children[5], labLeft, y2, halfLabW, row2H);
-        if (inst->childCount > 6)
-            setBounds(inst->children[6], labLeft + halfLabW, y2,
-                      labW - halfLabW, row2H);
+        prepDomain(&dmsettingsBt,msg->gpl_GInfo);
+        DoMethodA(inst->children[5], (Msg)&dmsettingsBt);
+
+        prepDomain(&dmAccountBt,msg->gpl_GInfo);
+        DoMethodA(inst->children[6], (Msg)&dmAccountBt);
+
+        // gsettingsbt->Width = dmAccountBt.gpd_Domain.Width;
+        // gsettingsbt->Height = dmAccountBt.gpd_Domain.Height;
+        // gsettingsbt->TopEdge = G(o)->TopEdge + G(o)->Height - gsettingsbt->Height - inst->style->avatarGap;
+        // gsettingsbt->TopEdge =
+        //     G(o)->LeftEdge + G(o)->Width - gsettingsbt->Height - inst->style->avatarGap;
+
+        gaccbt->Width = dmAccountBt.gpd_Domain.Width;
+        gaccbt->Height = dmAccountBt.gpd_Domain.Height;
+        gaccbt->TopEdge = G(o)->TopEdge + G(o)->Height - gaccbt->Height - inst->style->avatarGap;
+        gaccbt->LeftEdge =
+            G(o)->LeftEdge + G(o)->Width - gaccbt->Width - inst->style->avatarGap;
+
+        gsettingsbt->Width = dmsettingsBt.gpd_Domain.Width;
+        gsettingsbt->Height = dmsettingsBt.gpd_Domain.Height;
+        gsettingsbt->TopEdge = G(o)->TopEdge + G(o)->Height - gsettingsbt->Height - inst->style->avatarGap;
+        gsettingsbt->LeftEdge =
+            gaccbt->LeftEdge - gsettingsbt->Width - inst->style->avatarGap;
+
+        // if (dm.gpd_Domain.Width  > maxW) maxW = dm.gpd_Domain.Width;
+        // if (dm.gpd_Domain.Height > maxH) maxH = dm.gpd_Domain.Height;
+
+    // gad->LeftEdge = l;
+    // gad->TopEdge  = t;
+    // gad->Width    = (w > 0) ? w : 1;
+    // gad->Height   = (h > 0) ? h : 1;
+//gsettingsbt->Width
+        // setBounds(inst->children[5],
+        //           left + avGap,
+        //           y2   + avGap,
+        //           iconSz, iconSz);
     }
-    */
 
     /* Recurse into each child so nested layout.gadgets re-layout too */
     childMsg.MethodID    = GM_LAYOUT;

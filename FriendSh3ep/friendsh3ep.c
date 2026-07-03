@@ -181,7 +181,7 @@ static LibraryEntry libraryTable[] = {
 
 struct App *app = NULL;
 
-extern int refreshTitleBarLayout;
+//extern int refreshTitleBarLayout;
 
 /* Default DPI factor: 1 row = 14 pixels. */
 #define DEFAULT_DPI_HEIGHT 14
@@ -259,7 +259,10 @@ static void FS3EApp_SetButtonFontSize(ULONG pointSize)
 #define RESIZE_BTN(o) if (o) SetAttrs((Object *)(o), UBTP9_PointSize, pointSize, TAG_DONE)
         /* titlebar_postsLabel / newPostsLabel disabled */
         for (i = 0; i < 8; i++) RESIZE_BTN(app->nav_btns[i]);
+        RESIZE_BTN(app->titlebar_settingsBtn);
+        RESIZE_BTN(app->titlebar_accountBtn);
 #undef RESIZE_BTN
+
     }
 }
 
@@ -435,6 +438,21 @@ int main(int argc, char **argv)
         GA_Height, app->style.avatarSize,
         GA_RelVerify, TRUE,
         TAG_DONE);
+
+    app->titlebar_settingsBtn = (Object *)NewObject(UniButtonP9Class, NULL,
+        GA_ID,                  GID_TITLEBAR_SETTINGS,
+        GA_Text,                (ULONG)"\xE2\x9A\x99 Settings",
+        UBTP9_URPDrawContext,   (ULONG)app->buttonDC,
+        UBTP9_BevelStyle,       BVS_NONE, //BVS_NONE,
+        TAG_END);
+
+    app->titlebar_accountBtn = (Object *)NewObject(UniButtonP9Class, NULL,
+        GA_ID,                  GID_TITLEBAR_SETTINGS,
+        GA_Text,                (ULONG)"\xF0\x9F\x91\xA4 Accounts",
+        UBTP9_URPDrawContext,   (ULONG)app->buttonDC,
+        UBTP9_BevelStyle,       BVS_NONE, //BVS_NONE,
+        TAG_END);
+
     /* titlebar_postsLabel and titlebar_newPostsLabel disabled */
     /*
     app->titlebar_postsLabel    = makeLabel("Posts:0", dpiH);
@@ -464,6 +482,9 @@ int main(int argc, char **argv)
         LAYOUT_AddChild, (ULONG)app->titlebar_altposBtn,
         LAYOUT_AddChild, (ULONG)app->titlebar_depthBtn,
         LAYOUT_AddChild, (ULONG)app->titlebar_userIcon,
+
+        LAYOUT_AddChild, (ULONG)app->titlebar_settingsBtn,
+        LAYOUT_AddChild, (ULONG)app->titlebar_accountBtn,
         /* titlebar_postsLabel and titlebar_newPostsLabel disabled */
         TAG_END);
     if (!app->titleBarLayout) cleanexit("Can't create title bar layout");
@@ -479,9 +500,12 @@ int main(int argc, char **argv)
     app->nav_btns[3] = makeBtn(GID_NAV_SEARCH,        "\xF0\x9F\x94\x8D Search",    dpiH);
 
     app->nav_btns[4] = makeBtn(GID_NAV_NOTIFICATIONS, "\xF0\x9F\x9A\x80 Notif.",    dpiH);
-    app->nav_btns[5] = makeBtn(GID_NAV_NEWTOOT,       "\xF0\x9F\x97\xA3 Toot+",     dpiH);
-    app->nav_btns[6] = makeBtn(GID_NAV_SETTINGS,      "\xE2\x9A\x99 Settings",  dpiH);
-    app->nav_btns[7] = makeBtn(GID_NAV_ACCOUNTS,      "\xF0\x9F\x91\xA4 Accounts",  dpiH);
+    app->nav_btns[5] = makeBtn(GID_NAV_BOOKMARKS, "\xF0\x9F\x94\x96 Bookmark",    dpiH);
+    app->nav_btns[6] = makeBtn(GID_NAV_NEWS, "\xF0\x9F\x93\xB0 News",    dpiH);
+    app->nav_btns[7] = makeBtn(GID_NAV_NEWTOOT,       "\xF0\x9F\x97\xA3 Toot+",     dpiH);
+
+//    app->nav_btns[6] = makeBtn(GID_NAV_SETTINGS,      "\xE2\x9A\x99 Settings",  dpiH);
+//    app->nav_btns[7] = makeBtn(GID_NAV_ACCOUNTS,      "\xF0\x9F\x91\xA4 Accounts",  dpiH);
 
     {
         int i;
@@ -837,13 +861,15 @@ int main(int argc, char **argv)
                                 struct Layer *lay;
                                 LockLayerInfo(li);
                                 lay = li->top_layer;
-                                while (lay) {
+                               if(lay)
+                               //while (lay)
+                               {
                                     struct Window *w = (struct Window *)lay->Window;
                                     if (w && !(w->Flags & WFLG_BACKDROP)) {
                                         isFront = (w == CurrentMainWindow);
-                                        break;
+                                       // break;
                                     }
-                                    lay = lay->back;
+                                 //  lay = lay->back;
                                 }
                                 UnlockLayerInfo(li);
                                 if (isFront)
@@ -859,7 +885,8 @@ int main(int argc, char **argv)
                         case GID_NAV_LOCAL:
                         case GID_NAV_FEDERATED:
                         case GID_NAV_SEARCH:
-                        case GID_NAV_SETTINGS:
+                        case GID_NAV_BOOKMARKS:
+                        case GID_NAV_NEWS:
                             /* TODO: switch timeline / view */
                             break;
 
@@ -867,7 +894,7 @@ int main(int argc, char **argv)
                             FS3ETootView_Open(&app->tootView);
                             break;
 
-                        case GID_NAV_ACCOUNTS:
+                        case GID_TITLEBAR_ACCOUNTS:
                             FS3ELoginView_Open(&app->loginView);
                             break;
 
