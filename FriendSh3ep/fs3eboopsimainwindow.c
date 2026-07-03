@@ -73,6 +73,18 @@ static void GenericOpenWindow(FS3EMainWindow *mw, Object *window_obj)
      * must be done before opening window, and when screen is known. */
     FS3EStyle_ApplyColors(&app->style, CurrentMainScreen);
 
+    /* Load title bar button images for this screen and push them onto the
+     * (already created, still un-opened) title bar gadgets. Button cell
+     * size may have changed (theme-dependent), so ask for a full relayout.
+     * The title bar background (tbbg.png) is handled separately: its
+     * GA_BackFill hook was installed once at titleBarLayout's creation
+     * (see friendsh3ep.c) and re-reads the freshly loaded state itself. */
+    FS3EStyle_LoadThemeImages(&app->style, CurrentMainScreen);
+    FS3EStyle_SyncTitleBarButtons(&app->style,
+        app->titlebar_closeBtn, app->titlebar_iconifyBtn,
+        app->titlebar_altposBtn, app->titlebar_depthBtn);
+    DoMethod(window_obj, WM_RETHINK);
+
     CurrentMainWindow = (struct Window *)DoMethod(window_obj, WM_OPEN, NULL);
     if (!CurrentMainWindow) return;
 
@@ -150,8 +162,10 @@ void FS3EMain_Close(FS3EMainWindow *mw, Object *window_obj, int iconify)
         FreeScreenDrawInfo(CurrentMainScreen, mw->drawInfo);
         mw->drawInfo = NULL;
     }
-    if (CurrentMainScreen)
+    if (CurrentMainScreen) {
         FS3EStyle_ReleasePens(&app->style);
+        FS3EStyle_UnloadThemeImages(&app->style);
+    }
 
     if (mw->lockedScreen)
     {

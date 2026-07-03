@@ -15,6 +15,11 @@
  *
  * img->bitmap is owned by the datatype object (dtObject) and must NOT be
  * passed to FreeBitMap().  It becomes invalid after BmImage_Unload().
+ *
+ * img->mask (PDTA_MaskPlane) is picture.datatype's own transparency mask,
+ * generated from the source's transparent colour (e.g. a PNG palette entry
+ * flagged transparent) or alpha channel.  Also owned by dtObject; NULL when
+ * the source has no transparency.
  */
 
 #include "bmimage.h"
@@ -24,6 +29,8 @@
 #include <exec/types.h>
 #include <exec/memory.h>
 #include <proto/exec.h>
+#include <proto/graphics.h>
+#include <proto/intuition.h>
 
 #include <datatypes/datatypes.h>
 #include <datatypes/datatypesclass.h>
@@ -67,6 +74,7 @@ void BmImage_Unload(BmImage *img)
         img->dtObject = NULL;
     }
     img->bitmap = NULL;
+    img->mask   = NULL;
     img->width  = 0;
     img->height = 0;
 }
@@ -92,12 +100,28 @@ BOOL BmImage_Load(BmImage *img, struct Screen *screen)
     BmImage_Unload(img);
 
     if (screen) {
-        dto = NewDTObject((APTR)img->filePath,
-            DTA_GroupID,           GID_PICTURE,
-            PDTA_Screen,           (ULONG)screen,
-            PDTA_Remap,            TRUE,
-            PDTA_FreeSourceBitMap, TRUE,
-            TAG_DONE);
+        ULONG depth = GetBitMapAttr( screen->RastPort.BitMap, BMA_DEPTH );
+        printf(" **** screen depth:%d\n",depth);
+        if(depth<=8)
+        {   /* indexed palette, need remap */
+            dto = NewDTObject((APTR)img->filePath,
+                DTA_GroupID,           GID_PICTURE,
+                PDTA_Screen,           (ULONG)screen,
+                PDTA_Remap,            TRUE,
+                PDTA_FreeSourceBitMap, TRUE,
+                TAG_DONE);
+        } else
+        {
+            /* let's try to keep truecolor */
+            dto = NewDTObject((APTR)img->filePath,
+                DTA_GroupID,           GID_PICTURE,
+                PDTA_Screen,           (ULONG)screen,
+                PDTA_Remap,             FALSE,
+                PDTA_DestMode,          PMODE_V43, // me want 24b, else remaped to 8.
+                PDTA_SubClassRendersAll, TRUE, //  avoid one clean
+               // PDTA_FreeSourceBitMap, TRUE,
+                TAG_DONE);
+        }
     } else {
         dto = NewDTObject((APTR)img->filePath,
             DTA_GroupID, GID_PICTURE,
@@ -133,7 +157,14 @@ BOOL BmImage_Load(BmImage *img, struct Screen *screen)
 
     img->dtObject = dto;
     img->bitmap   = bm;
-    img->error    = BMIMAGE_OK;
+
+    /* Transparency mask, if the source declares a transparent colour or
+     * alpha channel (e.g. PNG palette index 0). One bit plane, same
+     * bmh_Width/bmh_Height as the picture; NULL if there is none. */
+    img->mask = NULL;
+    GetDTAttrs(dto, PDTA_MaskPlane, (ULONG)&img->mask, TAG_DONE);
+
+    img->error = BMIMAGE_OK;
     return TRUE;
 }
 

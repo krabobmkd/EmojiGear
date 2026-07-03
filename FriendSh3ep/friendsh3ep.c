@@ -143,6 +143,9 @@ struct Library *URPBase  = NULL;
 struct Library *DataTypesBase = NULL;
 /* images/bevel.image – optional, used by UniButton bevel frames */
 struct Library *BevelBase = NULL;
+/* images/bitmap.image – optional, used by fs3estyle.c for themed title bar
+ * button images (see FS3EStyle_LoadThemeImages) */
+struct Library *BitMapBase = NULL;
 
 
 /* locale.library - soft failure (English fallback) */
@@ -177,6 +180,8 @@ static LibraryEntry libraryTable[] = {
 };
 
 struct App *app = NULL;
+
+extern int refreshTitleBarLayout;
 
 /* Default DPI factor: 1 row = 14 pixels. */
 #define DEFAULT_DPI_HEIGHT 14
@@ -348,7 +353,8 @@ int main(int argc, char **argv)
         }
     }
 
-    BevelBase = OpenLibrary("images/bevel.image", 32); /* optional, no check */
+    BevelBase  = OpenLibrary("images/bevel.image",  32); /* optional, no check */
+    BitMapBase = OpenLibrary("images/bitmap.image", 44); /* optional, no check */
 
     LocaleBase = (struct LocaleBase *)OpenLibrary("locale.library", 38);
     FS3ELocale_Init("FriendSh3ep.catalog", 0);
@@ -444,6 +450,12 @@ int main(int argc, char **argv)
         LAYOUT_BevelStyle, BVS_NONE,
         LAYOUT_SpaceOuter, FALSE,
         LAYOUT_SpaceInner, FALSE,
+        /* GA_BackFill is applicability (OM_NEW) only -- must be installed
+         * here, not via a later SetAttrs. The hook (tiling tbbg.png) reads
+         * app->style's currently loaded background each time it runs, so
+         * it works correctly even though no theme is loaded yet at this
+         * point (see FS3EStyle_TitleBarBackFillFunc in fs3estyle.c). */
+        LAYOUT_BackFill,    (ULONG)&app->style.tbBgHook,
         TBLAYOUT_DpiHeight, (ULONG)dpiH,
         TBLAYOUT_Style,     (ULONG)&app->style,
         /* children in required order (see fs3etitlebar.h) */
@@ -462,11 +474,12 @@ int main(int argc, char **argv)
 // \xf0\x9f\x8f\xa0
 // single silhouette 	%F0%9F%91%A4
     app->nav_btns[0] = makeBtn(GID_NAV_HOME,          "\xE2\x8C\x82 Home",      dpiH);
-    app->nav_btns[1] = makeBtn(GID_NAV_NOTIFICATIONS, "\xF0\x9F\x9A\x80 Notif.",    dpiH);
-    app->nav_btns[2] = makeBtn(GID_NAV_LOCAL,         "\xF0\x9F\x91\xA5 Local",     dpiH);
-    app->nav_btns[3] = makeBtn(GID_NAV_FEDERATED,     "\xF0\x9F\x8C\x8E Fed.",      dpiH);
-    app->nav_btns[4] = makeBtn(GID_NAV_NEWTOOT,       "\xF0\x9F\x97\xA3 Toot+",     dpiH);
-    app->nav_btns[5] = makeBtn(GID_NAV_SEARCH,        "\xF0\x9F\x94\x8D Search",    dpiH);
+    app->nav_btns[1] = makeBtn(GID_NAV_LOCAL,         "\xF0\x9F\x91\xA5 Local",     dpiH);
+    app->nav_btns[2] = makeBtn(GID_NAV_FEDERATED,     "\xF0\x9F\x8C\x8E Fed.",      dpiH);
+    app->nav_btns[3] = makeBtn(GID_NAV_SEARCH,        "\xF0\x9F\x94\x8D Search",    dpiH);
+
+    app->nav_btns[4] = makeBtn(GID_NAV_NOTIFICATIONS, "\xF0\x9F\x9A\x80 Notif.",    dpiH);
+    app->nav_btns[5] = makeBtn(GID_NAV_NEWTOOT,       "\xF0\x9F\x97\xA3 Toot+",     dpiH);
     app->nav_btns[6] = makeBtn(GID_NAV_SETTINGS,      "\xE2\x9A\x99 Settings",  dpiH);
     app->nav_btns[7] = makeBtn(GID_NAV_ACCOUNTS,      "\xF0\x9F\x91\xA4 Accounts",  dpiH);
 
@@ -864,12 +877,13 @@ int main(int argc, char **argv)
                             const char *server = FS3ELoginView_GetUTF8Server(&app->loginView);
                             const char *user   = FS3ELoginView_GetUTF8User(&app->loginView);
                             const char *code   = FS3ELoginView_GetUTF8Code(&app->loginView);
-
+/*re
                             bdbprintf("FriendSh3ep: login requested "
                                       "(server=%s user=%s code=%s)\n",
                                       server ? server : "",
                                       user   ? user   : "",
                                       code   ? code   : "");
+                                      */
                             /* TODO: FS3ENETQ_LOGIN_START / LOGIN_FINISH */
                             break;
                         }
@@ -880,12 +894,12 @@ int main(int argc, char **argv)
                             const char *subject = FS3ETootView_GetUTF8Subject(&app->tootView);
                             const char *body    = FS3ETootView_GetUTF8Body(&app->tootView);
                             LONG visibility     = FS3ETootView_GetVisibility(&app->tootView);
-
+/*
                             bdbprintf("FriendSh3ep: toot requested "
                                       "(visibility=%ld subject=%s body=%s)\n",
                                       (long)visibility,
                                       subject ? subject : "",
-                                      body    ? body    : "");
+                                      body    ? body    : "");*/
                             /* TODO: FS3ENETQ_POST_STATUS */
                             break;
                         }
@@ -918,6 +932,12 @@ int main(int argc, char **argv)
                 if ((refreshFlags & reflags_tootTimeLine) && CurrentMainWindow && app->tootTimeline )
                     RefreshGList((struct Gadget *)app->tootTimeline,
                                  CurrentMainWindow, NULL, 1);
+                // if(refreshTitleBarLayout  && CurrentMainWindow)
+                // {
+                //     RefreshGList((struct Gadget *)app->titleBarLayout,
+                //                  CurrentMainWindow, NULL, 1);
+                //     refreshTitleBarLayout = 0;
+                // }
 
             }
         }
@@ -963,9 +983,11 @@ void exitclose(void)
 //  printf("exitclose5\n");
 // wait2sec();
         FS3EStyle_ReleaseDrawContexts(&app->style);
+        FS3EStyle_FreeThemeImages(&app->style);
 //  printf("exitclose6\n");
 // wait2sec();
-        if (BevelBase) { CloseLibrary(BevelBase); BevelBase = NULL; }
+        if (BevelBase)  { CloseLibrary(BevelBase);  BevelBase  = NULL; }
+        if (BitMapBase) { CloseLibrary(BitMapBase); BitMapBase = NULL; }
 
         if (app->netRequestPort)
         {

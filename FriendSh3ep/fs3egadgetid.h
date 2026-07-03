@@ -30,11 +30,12 @@
 
 /* Navigation bar (Part B, NavBarLayout) */
 #define GID_NAV_HOME             40
-#define GID_NAV_NOTIFICATIONS    41
-#define GID_NAV_LOCAL            42
-#define GID_NAV_FEDERATED        43
-#define GID_NAV_NEWTOOT          44
-#define GID_NAV_SEARCH           45
+#define GID_NAV_LOCAL            41
+#define GID_NAV_FEDERATED        42
+#define GID_NAV_SEARCH           43
+
+#define GID_NAV_NOTIFICATIONS    44
+#define GID_NAV_NEWTOOT          45
 #define GID_NAV_SETTINGS         46
 #define GID_NAV_ACCOUNTS         47
 
