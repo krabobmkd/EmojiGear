@@ -273,12 +273,13 @@ static ULONG TitleBarLayout_OnLayout(Class *cl, Object *o, struct gpLayout *msg)
                   iconSz, iconSz);
 
     /* settings and account buttons */
-    if (inst->childCount > 6)
+    if (inst->childCount > 7)
     {
 
         struct Gadget *gsettingsbt = (struct Gadget *) inst->children[5];
         struct Gadget *gaccbt = (struct Gadget *) inst->children[6];
-        struct gpDomain dmsettingsBt,dmAccountBt;
+        struct Gadget *gnewtbt = (struct Gadget *) inst->children[7];
+        struct gpDomain dmsettingsBt,dmAccountBt,dmntbt;
 
         prepDomain(&dmsettingsBt,msg->gpl_GInfo);
         DoMethodA(inst->children[5], (Msg)&dmsettingsBt);
@@ -286,17 +287,25 @@ static ULONG TitleBarLayout_OnLayout(Class *cl, Object *o, struct gpLayout *msg)
         prepDomain(&dmAccountBt,msg->gpl_GInfo);
         DoMethodA(inst->children[6], (Msg)&dmAccountBt);
 
+        prepDomain(&dmntbt,msg->gpl_GInfo);
+        DoMethodA(inst->children[7], (Msg)&dmntbt);
         // gsettingsbt->Width = dmAccountBt.gpd_Domain.Width;
         // gsettingsbt->Height = dmAccountBt.gpd_Domain.Height;
         // gsettingsbt->TopEdge = G(o)->TopEdge + G(o)->Height - gsettingsbt->Height - inst->style->avatarGap;
         // gsettingsbt->TopEdge =
         //     G(o)->LeftEdge + G(o)->Width - gsettingsbt->Height - inst->style->avatarGap;
 
+        gnewtbt->Width = dmntbt.gpd_Domain.Width;
+        gnewtbt->Height = dmntbt.gpd_Domain.Height;
+        gnewtbt->TopEdge = G(o)->TopEdge + G(o)->Height - gnewtbt->Height - inst->style->avatarGap;
+        gnewtbt->LeftEdge =
+            G(o)->LeftEdge + G(o)->Width - gnewtbt->Width - inst->style->avatarGap;
+
         gaccbt->Width = dmAccountBt.gpd_Domain.Width;
         gaccbt->Height = dmAccountBt.gpd_Domain.Height;
         gaccbt->TopEdge = G(o)->TopEdge + G(o)->Height - gaccbt->Height - inst->style->avatarGap;
         gaccbt->LeftEdge =
-            G(o)->LeftEdge + G(o)->Width - gaccbt->Width - inst->style->avatarGap;
+            gnewtbt->LeftEdge - gaccbt->Width - inst->style->avatarGap;
 
         gsettingsbt->Width = dmsettingsBt.gpd_Domain.Width;
         gsettingsbt->Height = dmsettingsBt.gpd_Domain.Height;

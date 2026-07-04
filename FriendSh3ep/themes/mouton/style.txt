@@ -7,6 +7,8 @@ titlebar.bg = tbbg.png
 ; will consider color 0 transparent:
 titlebar.buttons = tbbuttons.iff
 
+timeline.waitimage = mastodon64x64black.png
+
 ; ------ Patch9 style using bt1Patch9, used by buttons Settnigs and account 
 
 ; contains 4 images of same square size agregated horizontally,
@@ -18,16 +20,35 @@ bt1Patch9.cornersize = 8
 
 ; these colors reflects the central color in bt1Patch9.image
 ; this is needed to blend font in 8Bit mode
-bt1Patch9.bgcolor.enabled = #445566
-bt1Patch9.bgcolor.selected = #445566
-bt1Patch9.bgcolor.hover = #445566
-bt1Patch9.bgcolor.disabled = #445566
+bt1Patch9.bgcolor.enabled = #7B7BE3
+bt1Patch9.bgcolor.selected = #BCBCFF
+bt1Patch9.bgcolor.hover = #7B7BE3
+bt1Patch9.bgcolor.disabled = #aaaaaa
 
 ; text color for bt1Patch9
-bt1Patch9.textcolor.enabled = #cccccc
-bt1Patch9.textcolor.selected = #ffffff
+bt1Patch9.textcolor.enabled = #000000
+bt1Patch9.textcolor.selected = #222222
 bt1Patch9.textcolor.hover = #eeee44
-bt1Patch9.textcolor.disabled = #999999
+bt1Patch9.textcolor.disabled = #666666
+
+; ------ Patch9 style using bt2Patch9, for some other buttons (not wired
+; to any gadget yet -- see FS3EStyle_LoadThemeImages)
+
+; same layout as bt1Patch9.image: 4 images of same square size agregated
+; horizontally, for states normal, selected, hover, disabled, color 0
+; transparent.
+bt2Patch9.image = bt2patch9.iff
+bt2Patch9.cornersize = 8
+
+bt2Patch9.bgcolor.enabled = #83ED60
+bt2Patch9.bgcolor.selected = #B2FFC8
+bt2Patch9.bgcolor.hover = #83ED60
+bt2Patch9.bgcolor.disabled = #aaaaaa
+
+bt2Patch9.textcolor.enabled = #000000
+bt2Patch9.textcolor.selected = #222222
+bt2Patch9.textcolor.hover = #eeee44
+bt2Patch9.textcolor.disabled = #666666
 
 ; ---- NavBar Buttons that can uses images as background
 
@@ -40,4 +61,16 @@ btbgbm.textcolor.enabled = #000000
 btbgbm.textcolor.selected = #ffffff
 btbgbm.textcolor.hover = #eebb33
 btbgbm.textcolor.disabled = #999999
+
+; ---- TootTimeline colors (FS3EColorRole in fs3estyle.h) ----
+
+timeline.color.buttonbg = #303034
+timeline.color.button_selectedbg = #563acc
+timeline.color.timelinebg = #191b22
+timeline.color.username = #ffffff
+timeline.color.hashtag = #78bfff
+timeline.color.accent = #444466
+timeline.color.text = #dadde4
+timeline.color.text_dim = #707580
+timeline.color.action_text = #5599ee
 

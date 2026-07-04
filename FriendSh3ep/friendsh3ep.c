@@ -265,6 +265,7 @@ static void FS3EApp_SetButtonFontSize(ULONG pointSize)
         for (i = 0; i < 8; i++) RESIZE_BTN(app->nav_btns[i]);
         RESIZE_BTN(app->titlebar_settingsBtn);
         RESIZE_BTN(app->titlebar_accountBtn);
+        RESIZE_BTN(app->titlebar_newtootBtn);
 #undef RESIZE_BTN
 
     }
@@ -308,14 +309,19 @@ void FS3EApp_ApplyFontSettings(void)
 /* Create one UniButtonBGBM (flat-colour, cached-by-state), click arrives
  * via WMHI_GADGETUP. dpiH is reserved for future use; font size is
  * controlled by app->buttonDC. */
-static Object *makeBtn(ULONG gadID, const char *label, UWORD dpiH)
+static Object *makeBtn(ULONG gadID, const char *label, UWORD dpiH, int shiftx, int shifty, int pushbutton)
 {
     (void)dpiH;
     return (Object *)NewObject(UniButtonBGBMClass, NULL,
         GA_ID,                  gadID,
+        ICA_TARGET,             (ULONG)TargetInstance,
         GA_Text,                (ULONG)label,
+        UBGBM_PushButton,       pushbutton,
         UBGBM_URPDrawContext,   (ULONG)app->buttonDC,
         UBGBM_BevelStyle,       BVS_BUTTON, //BVS_NONE,
+        UBGBM_BgShiftX,         shiftx,
+        UBGBM_BgShiftY,         shifty,
+
         // UBGBM_TopMargin,        0,
         // UBGBM_BottomMargin,     0,
         TAG_END);
@@ -334,6 +340,31 @@ static Object *makeLabel(const char *text, UWORD dpiH)
         UBGBM_TopMargin,        0,
         UBGBM_BottomMargin,     0,
         TAG_END);
+}
+/* this is the unique entry to manage changing viewmode (from button, keys, menu) */
+void fs3e_setViewMode(ULONG viewMode)
+{
+    int i;
+    if(app->viewMode == viewMode) return;
+    if(viewMode >=VIEWMODE_NumberOf) return;
+    /* synchronize buttons states with no drama */
+    for(i=0;i<8;i++)
+    {
+        int btstate=0;
+        int wantedstate = (int)(i==viewMode);
+        if(!app->nav_btns[i]) continue;
+        GetAttr(GA_Selected,app->nav_btns[i],&btstate);
+        if(btstate != wantedstate)
+            SetGdAttrs(app->nav_btns[i],GA_Selected,wantedstate,TAG_END);
+
+    }
+
+    if (app->tootTimeline)
+        SetGdAttrs(app->tootTimeline, TTIMELINE_ViewMode, viewMode, TAG_END);
+
+    app->viewMode = viewMode;
+
+    /* start updating the TootTimeLine */
 }
 
 /* - - - - - - - - - - - - - - - - - - - MAIN - - - - - - - - - - - - - - - */
@@ -459,6 +490,12 @@ int main(int argc, char **argv)
         UBTP9_BevelStyle,       BVS_NONE, //BVS_NONE,
         TAG_END);
 
+    app->titlebar_newtootBtn = (Object *)NewObject(UniButtonP9Class, NULL,
+        GA_ID,                  GID_TITLEBAR_NEWTOOT,
+        GA_Text,                (ULONG)"\xE2\x9C\x8D Toot+",
+        UBTP9_URPDrawContext,   (ULONG)app->buttonDC,
+        UBTP9_BevelStyle,       BVS_NONE, //BVS_NONE,
+        TAG_END);
     /* titlebar_postsLabel and titlebar_newPostsLabel disabled */
     /*
     app->titlebar_postsLabel    = makeLabel("Posts:0", dpiH);
@@ -491,6 +528,7 @@ int main(int argc, char **argv)
 
         LAYOUT_AddChild, (ULONG)app->titlebar_settingsBtn,
         LAYOUT_AddChild, (ULONG)app->titlebar_accountBtn,
+        LAYOUT_AddChild, (ULONG)app->titlebar_newtootBtn,
         /* titlebar_postsLabel and titlebar_newPostsLabel disabled */
         TAG_END);
     if (!app->titleBarLayout) cleanexit("Can't create title bar layout");
@@ -499,17 +537,20 @@ int main(int argc, char **argv)
     /* Part B: navigation bar children (8 buttons)                         */
     /* ================================================================== */
 // \xf0\x9f\x8f\xa0
+{
+    const int basew=96;
 // single silhouette 	%F0%9F%91%A4
-    app->nav_btns[0] = makeBtn(GID_NAV_HOME,          "\xE2\x8C\x82 Home",      dpiH);
-    app->nav_btns[1] = makeBtn(GID_NAV_LOCAL,         "\xF0\x9F\x91\xA5 Local",     dpiH);
-    app->nav_btns[2] = makeBtn(GID_NAV_FEDERATED,     "\xF0\x9F\x8C\x8E Fed.",      dpiH);
-    app->nav_btns[3] = makeBtn(GID_NAV_SEARCH,        "\xF0\x9F\x94\x8D Search",    dpiH);
+    app->nav_btns[0] = makeBtn(GID_NAV_USER,          "\xF0\x9F\x97\xA3 User",      dpiH,0,0,TRUE);
+    app->nav_btns[1] = makeBtn(GID_NAV_HOME,          "\xE2\x8C\x82 Home",      dpiH,basew,0,TRUE);
+    app->nav_btns[2] = makeBtn(GID_NAV_LOCAL,         "\xF0\x9F\x91\xA5 Local",     dpiH,basew*2,0,TRUE);
+    app->nav_btns[3] = makeBtn(GID_NAV_FEDERATED,     "\xF0\x9F\x8C\x8E Fed.",      dpiH,basew*3,0,TRUE);
 
-    app->nav_btns[4] = makeBtn(GID_NAV_NOTIFICATIONS, "\xF0\x9F\x9A\x80 Notif.",    dpiH);
-    app->nav_btns[5] = makeBtn(GID_NAV_BOOKMARKS, "\xF0\x9F\x94\x96 Bookmark",    dpiH);
-    app->nav_btns[6] = makeBtn(GID_NAV_NEWS, "\xF0\x9F\x93\xB0 News",    dpiH);
-    app->nav_btns[7] = makeBtn(GID_NAV_NEWTOOT,       "\xF0\x9F\x97\xA3 Toot+",     dpiH);
-
+    app->nav_btns[4] = makeBtn(GID_NAV_SEARCH,        "\xF0\x9F\x94\x8D Search",    dpiH,0,32,TRUE);
+    app->nav_btns[5] = makeBtn(GID_NAV_NOTIFICATIONS, "\xF0\x9F\x9A\x80 Notif.",    dpiH,basew,32,TRUE);
+    app->nav_btns[6] = makeBtn(GID_NAV_BOOKMARKS, "\xF0\x9F\x94\x96 Bookmark",    dpiH,basew*2,32,TRUE);
+    app->nav_btns[7] = makeBtn(GID_NAV_NEWS, "\xF0\x9F\x93\xB0 News",    dpiH,basew*3,32,TRUE);
+//    app->nav_btns[7] = makeBtn(GID_NAV_NEWTOOT,       "\xF0\x9F\x97\xA3 Toot+",     dpiH,basew*3,32,FALSE);
+}
 //    app->nav_btns[6] = makeBtn(GID_NAV_SETTINGS,      "\xE2\x9A\x99 Settings",  dpiH);
 //    app->nav_btns[7] = makeBtn(GID_NAV_ACCOUNTS,      "\xF0\x9F\x91\xA4 Accounts",  dpiH);
 
@@ -552,6 +593,10 @@ int main(int argc, char **argv)
 
     /* ---- Fake posts for layout testing (oldest first = prepended bottom-up) ---- */
     {
+        /* viewModeBits = 0xFF: every channel (see TTIMELINE_NUM_VIEWMODES) --
+         * these are just test/demo data, not tied to any one real view, so
+         * they should show up regardless of which channel is active by
+         * default at startup. */
         static const TTLPostSetup fakePosts[] = {
             {
                 "Krabob",
@@ -559,14 +604,14 @@ int main(int argc, char **argv)
                 "Just released EmojiGear 4.3 for AmigaOS \xf0\x9f\x8e\x89 "
                 "Emoji now render on AGA screens using the new CLUT palette "
                 "blending path. Grab it from Aminet!",
-                "2h"
+                "2h", 0x03
             },
             {
                 "Boing Ball",
                 "@boing@commodore.social",
                 "Reminder: the original Amiga demo still runs faster than "
                 "most modern web pages \xf0\x9f\x8f\x80\xf0\x9f\x94\xb4\xf0\x9f\x94\xb5",
-                "5h"
+                "5h", 0x01
             },
             {
                 "Paula Chip",
@@ -574,14 +619,14 @@ int main(int argc, char **argv)
                 "Four-channel 8-bit audio, hardware sprites, blitter DMA "
                 "and a cooperative multitasker - the Amiga was decades ahead. "
                 "No wonder we never let go.",
-                "9h"
+                "9h", 0x0f
             },
             {
                 "Workbench Fan",
                 "@wbfan@amiga.social",
                 "Pro tip: you can drag the Workbench screen down to reveal "
                 "a CLI behind it. Most people never discover this \xf0\x9f\x92\xbb",
-                "1d"
+                "1d", 0x70
             },
             {
                 "Guru Meditation",
@@ -589,7 +634,7 @@ int main(int argc, char **argv)
                 "Software failure. Press left mouse button to continue.\n"
                 "Guru Meditation #00000003.00C0FFEE\n"
                 "(just kidding, everything is fine)",
-                "1d"
+                "1d", 0x7e
             },
             {
                 "AmiNet Bot",
@@ -597,7 +642,7 @@ int main(int argc, char **argv)
                 "New upload: utf8rastport.library 1.2 - Unicode text rendering "
                 "for AmigaOS RastPorts via FreeType2. Supports TrueType, "
                 "OpenType and color emoji. Tested on OS3.1/3.2/3.9 AGA and RTG.",
-                "2d"
+                "2d", 0x7e
             },
         };
         int i;
@@ -746,6 +791,13 @@ int main(int argc, char **argv)
                         if (key == 0x45) ok = FALSE; /* Escape */
 
                         GetAttr(WINDOW_Qualifier,app->window_obj,&qualifiers);
+
+                        /*keys F1-F8 are the view mode */
+                        if(!isUp && key >=0x50 && key<= 0x57)
+                        {
+                            fs3e_setViewMode((ULONG)(key-0x50));
+                        }
+
                         /* ctrl- and ctrl+ change font size */
                         if((qualifiers & IEQUALIFIER_CONTROL) !=0 &&
                             !(qualifiers & IEQUALIFIER_REPEAT) && !isUp)
@@ -886,17 +938,34 @@ int main(int argc, char **argv)
                             break;
 
                         /* ---- Navigation bar ---- */
+                        case GID_NAV_USER:
                         case GID_NAV_HOME:
-                        case GID_NAV_NOTIFICATIONS:
                         case GID_NAV_LOCAL:
                         case GID_NAV_FEDERATED:
                         case GID_NAV_SEARCH:
+                        case GID_NAV_NOTIFICATIONS:
                         case GID_NAV_BOOKMARKS:
                         case GID_NAV_NEWS:
-                            /* TODO: switch timeline / view */
-                            break;
+                            /* switch timeline / view */
+                            ptag = FindTagItem(GA_Selected, msg);
+                            if (ptag)  /* when push button down (selected true) */
+                            {
+                                if (ptag && ptag->ti_Data)
+                                {
+                                    /* possible because the GID order and the view enum match */
+                                    fs3e_setViewMode((ULONG)(sender_ID-GID_NAV_USER));
+                                } else
+                                {   /* if up but is current viewmode, put selection back. */
+                                    if(app->viewMode == (ULONG)(sender_ID-GID_NAV_USER))
+                                    {
+                                        SetGdAttrs(app->nav_btns[app->viewMode],
+                                                    GA_Selected,TRUE,TAG_END);
+                                    }
+                                }
 
-                        case GID_NAV_NEWTOOT:
+                            }
+                            break;
+                        case GID_TITLEBAR_NEWTOOT:
                             FS3ETootView_Open(&app->tootView);
                             break;
 

@@ -28,7 +28,6 @@
 #include <utility/hooks.h>
 
 #include "bmimage.h"
-#include "patch9.h"
 
 /* ------------------------------------------------------------------ */
 /* FS3EManagedColor — one color role: RGB definition + runtime pen     */
@@ -40,10 +39,36 @@ typedef struct {
     WORD  allocated;  /* 1 = obtained via ObtainBestPenA; 0 = FindColor result */
 } FS3EManagedColor;
 
+#define PATCH9_NORMAL     0
+#define PATCH9_SELECTED   1
+#define PATCH9_DISABLED   2
+#define PATCH9_HOVER      3
+#define PATCH9_NUM_STATES 4
+
+typedef struct Patch9 {
+    BmImage img;
+    WORD    cornerSize;   /* pixels kept unscaled at each corner */
+    WORD    patchWidth;   /* one sub-image's pixel width  (img.width / PATCH9_NUM_STATES) */
+    WORD    patchHeight;  /* one sub-image's pixel height (== img.height) */
+
+    FS3EManagedColor bgcolors[PATCH9_NUM_STATES]; /* fallback background pens for the 4 states */
+    FS3EManagedColor textcolors[PATCH9_NUM_STATES]; /* background pens for the 4 states */
+} Patch9;
+
+
 /* ------------------------------------------------------------------ */
 /* Color role enumeration                                               */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Every role here has a default RGB value (colorDefaults[] in fs3estyle.c)
+ * and a style.txt key (colorStyleKeys[] in fs3estyle.c) -- see
+ * themes/mouton/style.txt. FS3EStyle_LoadThemeImages() overrides each
+ * role's rgbcolor from its style.txt key (falling back to the default if
+ * the file or key is missing) before FS3EStyle_ApplyColors() resolves
+ * every role to a screen pen. Adding a role means adding both a
+ * colorDefaults[] entry and a colorStyleKeys[] entry, in the same order.
+ */
 typedef enum {
     FS3E_COLOR_BUTTON_BG = 0,       /* normal button / nav-bar button background */
     FS3E_COLOR_BUTTON_SELECTED_BG,  /* pressed / active button background */
@@ -54,6 +79,14 @@ typedef enum {
     FS3E_COLOR_TEXT,                /* main body text */
     FS3E_COLOR_TEXT_DIM,            /* secondary text: @acct, timestamps */
     FS3E_COLOR_ACTION_TEXT,         /* Reply / Boost / Fave button labels */
+
+    /* UniButtonBGBM image-backed nav buttons (btbgbm.* in style.txt) --
+     * not wired to any gadget yet, see FS3EStyle_LoadThemeImages(). */
+    FS3E_COLOR_BTBGBM_TEXT_ENABLED,
+    FS3E_COLOR_BTBGBM_TEXT_SELECTED,
+    FS3E_COLOR_BTBGBM_TEXT_HOVER,
+    FS3E_COLOR_BTBGBM_TEXT_DISABLED,
+
     FS3E_COLOR_COUNT                /* must be last */
 } FS3EColorRole;
 
@@ -67,6 +100,25 @@ typedef enum {
 #define FS3ESTYLE_THEME_DEFAULT_PATH "PROGDIR:/themes/mouton"
 
 #define FS3ESTYLE_TBBUTTON_COUNT 4
+
+/* UniButtonP9 Patch9 skin slots -- each one is a "<prefix>.image" /
+ * "<prefix>.cornersize" pair in style.txt (see FS3EStyle_LoadThemeImages'
+ * patch9Slots[] table in fs3estyle.c), loaded into st->patch9[slot].
+ * Add a new skin by adding both a slot constant here and a patch9Slots[]
+ * entry there, in the same order. */
+#define FS3ESTYLE_PATCH9_BT1  0
+#define FS3ESTYLE_PATCH9_BT2  1
+#define FS3ESTYLE_PATCH9_COUNT 2
+
+/* UniButtonBGBM image-backed nav button states (btbgbm.bitmap.* in
+ * style.txt) -- same order as UBGBM_STATE_NORMAL/SELECTED/DISABLED in
+ * UniButtonBGBM/unibuttonbgbm_private.h, so a gadget's state index can be
+ * used directly as st->btbgbmBitmap[state]. No hover slot -- no
+ * hover-tracking input handling exists for UniButtonBGBM either. */
+#define FS3ESTYLE_BTBGBM_ENABLED  0
+#define FS3ESTYLE_BTBGBM_SELECTED 1
+#define FS3ESTYLE_BTBGBM_DISABLED 2
+#define FS3ESTYLE_BTBGBM_COUNT    3
 
 /* ------------------------------------------------------------------ */
 /* FS3EStyle — the complete runtime color theme                        */
@@ -121,13 +173,28 @@ typedef struct {
     BmImage     tbBg;
     struct Hook tbBgHook;
 
-    /* UniButtonP9 patch9 background skin: bt1patch9.iff, 96x24 pixels --
-     * 4 sub-images of 24x24 (PATCH9_NORMAL/SELECTED/DISABLED/HOVER, left to
-     * right), corner size 8. Loaded from st->themePath like the other theme
-     * images. Optional -- if the file is missing, buttons that reference
-     * &st->bt1Patch9 via UBTP9_Patch9 just fall back to their flat colour
-     * fill (see Patch9_IsLoaded in patch9.h). */
-    Patch9 bt1Patch9;
+    /* UniButtonP9 patch9 background skins, one per FS3ESTYLE_PATCH9_* slot
+     * (bt1Patch9.x / bt2Patch9.x in style.txt) -- each a 4-sub-image strip
+     * (PATCH9_NORMAL/SELECTED/DISABLED/HOVER, left to right). Loaded from
+     * st->themePath like the other theme images. Optional per slot -- if a
+     * slot's file is missing, buttons that reference &st->patch9[slot] via
+     * UBTP9_Patch9 just fall back to their flat colour fill (see
+     * Patch9_IsLoaded in patch9.h). */
+    Patch9 patch9[FS3ESTYLE_PATCH9_COUNT];
+
+    /* UniButtonBGBM image-backed nav button skins (btbgbm.bitmap.* in
+     * style.txt), one full-opaque (no transparency/masking) background
+     * image per state -- FS3ESTYLE_BTBGBM_ENABLED/SELECTED/DISABLED.
+     * Optional per state -- a gadget referencing &st->btbgbmBitmap[state]
+     * via UBGBM_Style just falls back to its flat colour fill for any
+     * state whose image failed to load (see BmImage_IsLoaded). */
+    BmImage btbgbmBitmap[FS3ESTYLE_BTBGBM_COUNT];
+
+    /* TootTimeline "waiting" screen image (timeline.waitimage in
+     * style.txt), shown centered instead of the scrollable post list --
+     * see TTIMELINE_ViewMode in TootTimeline/fs3etoottimeline.h. Optional --
+     * if missing, the timeline just draws the waiting text alone. */
+    BmImage waitImage;
 } FS3EStyle;
 
 /* ------------------------------------------------------------------ */
@@ -180,11 +247,15 @@ void FS3EStyle_SetFontSize(FS3EStyle *st, int baseSize,
  * afterwards. */
 void FS3EStyle_SetThemePath(FS3EStyle *st, const char *path);
 
-/* Load title bar button images (tbbuttons.png), tbbg.png, and bt1patch9.iff
- * from st->themePath, remapped to scr (see bmimage.c / patch9.c). Call once
- * per screen open, alongside FS3EStyle_ApplyColors. Safe to call again on
- * theme or screen change -- disposes previously loaded images first. If
- * st->themePath is unset, defaults it first.
+/* Load title bar button images (tbbuttons.png), tbbg.png, every
+ * patch9[FS3ESTYLE_PATCH9_*] skin, and the btbgbmBitmap[] nav button skins
+ * from st->themePath, remapped to scr (see bmimage.c / patch9.c). Also
+ * overrides every FS3EColorRole's RGB
+ * value from style.txt (see colorStyleKeys[] in fs3estyle.c) -- call this
+ * before FS3EStyle_ApplyColors() so the override takes effect. Call once
+ * per screen open. Safe to call again on theme or screen change -- disposes
+ * previously loaded images first. If st->themePath is unset, defaults it
+ * first.
  * Returns FALSE if images/bitmap.image isn't open, or tbbuttons.png could
  * not be loaded -- st->tbImages[] stay NULL and
  * FS3EStyle_SyncTitleBarButtons() becomes a no-op, leaving gadgets with

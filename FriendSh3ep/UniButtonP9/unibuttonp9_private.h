@@ -83,7 +83,8 @@ typedef struct UniButtonP9Data {
  * =========================================================================
  */
 void ubtp9_update_font_metrics(UniButtonP9Data *inst);
-void ubtp9_state_pens(UniButtonP9Data *inst, int state, struct Screen *scr,
+int  ubtp9_patch9_state(int state);
+void ubtp9_state_pens(UniButtonP9Data *inst, int state,
                       ULONG *outBgPen, ULONG *outTxtPen, UWORD *outImageState);
 void ubtp9_blit_state(UniButtonP9Data *inst, struct Gadget *g,
                       struct RastPort *rp, int state, UWORD *outImageState);

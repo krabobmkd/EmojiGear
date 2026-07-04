@@ -144,7 +144,7 @@ typedef struct {
 /* ------------------------------------------------------------------ */
 
 typedef struct TTLPost {
-    struct MinNode  node;         /* doubly-linked in TTLData.posts, newest=head */
+    struct MinNode  node;         /* doubly-linked in one TTLChannel.posts, newest=head */
 
     LONG   timelineY;             /* Y of post top in timeline coordinates */
     LONG   height;                /* computed pixel height of this post */
@@ -160,6 +160,19 @@ typedef struct TTLPost {
     struct MinList  hotSpots;     /* list of TTLHotSpot   (for click events) */
     struct MinList  textSpans;    /* list of TTLTextSpan  (for text selection) */
 } TTLPost;
+
+/* ------------------------------------------------------------------ */
+/* TTLChannel — one independent post list (see TTIMELINE_NUM_VIEWMODES) */
+/* ------------------------------------------------------------------ */
+
+typedef struct {
+    struct MinList posts;         /* newest = head */
+    ULONG          postCount;
+
+    LONG    scrollY;              /* timeline Y at gadget top */
+    LONG    contentTopY;          /* Y of topmost post's top edge */
+    LONG    contentBottomY;       /* Y one pixel past the last post's bottom edge */
+} TTLChannel;
 
 /* ------------------------------------------------------------------ */
 /* TTLData — per-instance INST_DATA block                               */
@@ -198,14 +211,11 @@ typedef struct {
     struct Layer      *tileLayer;
     /* tileLayer->rp is the rendering RastPort */
 
-    /* ---- Timeline scroll / content extents ---- */
-    LONG    scrollY;         /* timeline Y at gadget top */
-    LONG    contentTopY;     /* Y of topmost post's top edge */
-    LONG    contentBottomY;  /* Y one pixel past the last post's bottom edge */
-
-    /* ---- Post list (newest = head) ---- */
-    struct MinList posts;
-    ULONG          postCount;
+    /* ---- Channels: one independent post list + scroll/content extent
+     * per fs3eViewMode slot (see TTIMELINE_NUM_VIEWMODES). Only
+     * channels[viewMode] is ever displayed/scrolled/tiled at a time --
+     * see ttl_active() below. ---- */
+    TTLChannel channels[TTIMELINE_NUM_VIEWMODES];
 
     /* ---- Text selection state ---- */
     TTLPost     *selPost;
@@ -233,6 +243,13 @@ typedef struct {
     /* Do layout from right process and render function */
     ULONG layoutToDo;
     WORD  LastLayoutedWidth,LastLayoutedHeight;
+
+    /* ---- Waiting screen (see TTIMELINE_ViewMode/WaitText) ----
+     * See ttl_is_waiting() below: waiting is purely "the active channel's
+     * post list is empty" -- switching to a channel that already has
+     * posts shows them immediately, switching to an empty one waits. */
+    ULONG viewMode;           /* index into channels[]; always < TTIMELINE_NUM_VIEWMODES */
+    char *waitText;           /* AllocVec'd; NULL/empty -> ttl_render_wait's default */
 
 } TTLData;
 
@@ -275,6 +292,21 @@ INLINE LONG ttl_tile_base(LONG tileIdx)
     return tileIdx * (LONG)TTL_TILE_HEIGHT;
 }
 
+/* The currently displayed/scrolled channel (see TTIMELINE_ViewMode).
+ * inst->viewMode is always kept < TTIMELINE_NUM_VIEWMODES (bounds-checked
+ * where it's set), so this is always a valid slot. */
+INLINE TTLChannel *ttl_active(TTLData *inst)
+{
+    return &inst->channels[inst->viewMode];
+}
+
+/* TRUE if the timeline should show the waiting screen instead of the
+ * scrollable post list: the active channel's post list is empty. */
+INLINE BOOL ttl_is_waiting(TTLData *inst)
+{
+    return (BOOL)(ttl_active(inst)->postCount == 0);
+}
+
 /* ------------------------------------------------------------------ */
 /* Prototypes                                                           */
 /* ------------------------------------------------------------------ */
@@ -305,8 +337,9 @@ TTLPost *ttl_post_alloc        (const TTLPostSetup *setup);
 void     ttl_post_free         (TTLPost *post);
 void     ttl_post_layout       (TTLData *inst, TTLPost *post);
 void     ttl_layout_all_posts  (TTLData *inst);
+void     ttl_clear_channel     (TTLData *inst, ULONG ch);
 void     ttl_clear_posts       (TTLData *inst);
-void     ttl_rebuild_ypositions(TTLData *inst);
+void     ttl_rebuild_ypositions(TTLData *inst, ULONG ch);
 
 /* fs3etoottimeline_tiles.c */
 BOOL     ttl_tiles_alloc  (TTLData *inst, struct RastPort *rp);

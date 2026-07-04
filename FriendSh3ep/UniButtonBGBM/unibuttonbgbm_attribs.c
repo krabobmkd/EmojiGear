@@ -28,6 +28,50 @@ void ubgbm_free_cache(UniButtonBGBMData *inst)
     inst->cacheValid = FALSE;
 }
 
+/* Blit a dstW x dstH crop of srcBm (srcW x srcH) starting at (shiftX,shiftY),
+ * to (dstX,dstY) -- no mask (style-image backgrounds are always fully
+ * opaque). The background image is expected to be deliberately larger than
+ * any button that crops it (see UBGBM_BgShiftX/Y), so shiftX/shiftY are
+ * clamped down just enough that the crop still fits inside the source
+ * bitmap; if the source is smaller than the requested crop even at offset
+ * 0, the blit itself is shrunk to the source's actual size instead of
+ * reading out of bounds. */
+static void ubgbm_blit_bg(struct BitMap *srcBm, WORD srcW, WORD srcH,
+                          WORD shiftX, WORD shiftY,
+                          struct RastPort *rp,
+                          WORD dstX, WORD dstY, WORD dstW, WORD dstH)
+{
+    WORD blitW, blitH;
+
+    if (srcW <= 0 || srcH <= 0 || dstW <= 0 || dstH <= 0) return;
+
+    if (shiftX < 0) shiftX = 0;
+    if (shiftY < 0) shiftY = 0;
+
+    blitW = dstW;
+    blitH = dstH;
+    if (blitW > srcW) blitW = srcW;
+    if (blitH > srcH) blitH = srcH;
+
+    if (shiftX + blitW > srcW) shiftX = srcW - blitW;
+    if (shiftY + blitH > srcH) shiftY = srcH - blitH;
+
+    BltBitMapRastPort(srcBm, (LONG)shiftX, (LONG)shiftY, rp,
+                      (LONG)dstX, (LONG)dstY, (LONG)blitW, (LONG)blitH, 0xC0);
+}
+
+/* FS3E_COLOR_BTBGBM_TEXT_* role for a given UBGBM_STATE_*. */
+static ULONG ubgbm_style_text_pen(UniButtonBGBMData *inst, int state)
+{
+    FS3EColorRole role;
+    switch (state) {
+    case UBGBM_STATE_SELECTED: role = FS3E_COLOR_BTBGBM_TEXT_SELECTED; break;
+    case UBGBM_STATE_DISABLED: role = FS3E_COLOR_BTBGBM_TEXT_DISABLED; break;
+    default:                   role = FS3E_COLOR_BTBGBM_TEXT_ENABLED;  break;
+    }
+    return (ULONG)FS3E_PEN(inst->style, role);
+}
+
 void ubgbm_blit_state(UniButtonBGBMData *inst, struct Gadget *g,
                       struct RastPort *rp, int state)
 {
@@ -36,8 +80,45 @@ void ubgbm_blit_state(UniButtonBGBMData *inst, struct Gadget *g,
 
     if (!inst->cacheValid) return;
 
-    /* Background: drawn live as a plain flat RectFill, then the cached
-     * text bitmap (built in ubgbm_build_one_state, application-task
+    if (inst->style && BmImage_IsLoaded(&inst->style->btbgbmBitmap[state])) {
+        BmImage *img = &inst->style->btbgbmBitmap[state];
+
+        /* Background: a cropped, fully opaque (no transparency/masking)
+         * window into the (deliberately oversized) source image at
+         * (bgShiftX,bgShiftY), directly on the real destination --
+         * blitter-only, safe from any context. Drawn live (never cached)
+         * because the image isn't flat -- see the file header comment for
+         * why that rules out pre-baking text against it in an offscreen
+         * cache. */
+        ubgbm_blit_bg(img->bitmap, (WORD)img->width, (WORD)img->height,
+                     inst->bgShiftX, inst->bgShiftY, rp,
+                     g->LeftEdge, g->TopEdge, g->Width, g->Height);
+
+        /* Text: also drawn live, directly on top of the image just drawn,
+         * via URPDrawTextUTF8, using FS3EStyle's colour for this state
+         * instead of UBGBM_TextPen. bgPen here is only the flat colour
+         * assumed for glyph anti-aliasing blend, same role as
+         * UBGBM_BgPen/SelBgPen play in flat-colour mode -- not read back
+         * from the image, which may not be flat. */
+        if (inst->text && inst->text[0] && inst->dc && inst->screen) {
+            struct URPTextPos pos;
+            ULONG txtPen = ubgbm_style_text_pen(inst, state);
+            ULONG bgPen  = (state == UBGBM_STATE_SELECTED) ? inst->selBgPen : inst->bgPen;
+
+            pos.x = g->LeftEdge + (g->Width  - inst->textWidth)  / 2;
+            pos.y = g->TopEdge  + (g->Height - inst->textHeight) / 2 + inst->fontAscent;
+
+            URPDC_SetDrawColorFromPen(inst->dc, inst->screen, (LONG)txtPen, (LONG)bgPen);
+            SetAPen(rp, (LONG)txtPen);
+            SetBPen(rp, (LONG)bgPen);
+            SetDrMd(rp, JAM2);
+            URPDrawTextUTF8(rp, inst->dc, &pos, inst->text, (ULONG)(-1));
+        }
+        return;
+    }
+
+    /* Flat-colour mode: background drawn live as a plain RectFill, then the
+     * cached text bitmap (built in ubgbm_build_one_state, application-task
      * context, FreeType-safe) blitted on top. Safe from
      * GM_GOACTIVE/GM_HANDLEINPUT/GM_GOINACTIVE's input.device context too,
      * since nothing here touches FreeType. */
@@ -83,6 +164,8 @@ void ubgbm_notify_pressed(Class *cl, Object *o, struct GadgetInfo *gi)
     tags[2] = GA_Selected;
     tags[3] = TRUE;
     tags[4] = TAG_DONE;
+
+    GetAttr(GA_Selected,o,&tags[3]);
 
     /* Direct DoMethodA to target: avoids the OS3.9 DoSuperMethodA/OM_NOTIFY bug */
     nmsg.MethodID     = OM_UPDATE;
@@ -324,6 +407,30 @@ ULONG UniButtonBGBM_OnSet(Class *cl, Object *o, struct opSet *msg)
             result = 1;
             break;
 
+        case UBGBM_Style:
+            /* Always invalidate, even if the pointer is unchanged: an
+             * FS3EStyle is an externally-owned, stable struct whose
+             * btbgbmBitmap[] can be reloaded in place (e.g.
+             * FS3EStyle_LoadThemeImages() on theme/screen change) without
+             * the pointer value ever changing. */
+            inst->style = (FS3EStyle *)tag->ti_Data;
+            ubgbm_free_cache(inst);
+            redraw = TRUE;
+            result = 1;
+            break;
+
+        case UBGBM_BgShiftX:
+            inst->bgShiftX = (WORD)(ULONG)tag->ti_Data;
+            justBlit = TRUE;
+            result = 1;
+            break;
+
+        case UBGBM_BgShiftY:
+            inst->bgShiftY = (WORD)(ULONG)tag->ti_Data;
+            justBlit = TRUE;
+            result = 1;
+            break;
+
         case GA_ReadOnly:
             inst->readOnly = tag->ti_Data ? TRUE : FALSE;
             result = 1;
@@ -479,6 +586,15 @@ ULONG UniButtonBGBM_OnGet(Class *cl, Object *o, struct opGet *msg)
         return TRUE;
     case UBGBM_PushButton:
         *msg->opg_Storage = (ULONG)inst->pushButton;
+        return TRUE;
+    case UBGBM_Style:
+        *msg->opg_Storage = (ULONG)inst->style;
+        return TRUE;
+    case UBGBM_BgShiftX:
+        *msg->opg_Storage = (ULONG)(LONG)inst->bgShiftX;
+        return TRUE;
+    case UBGBM_BgShiftY:
+        *msg->opg_Storage = (ULONG)(LONG)inst->bgShiftY;
         return TRUE;
     case GA_ReadOnly:
         *msg->opg_Storage = (ULONG)inst->readOnly;

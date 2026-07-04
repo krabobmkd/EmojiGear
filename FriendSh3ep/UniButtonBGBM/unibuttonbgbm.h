@@ -2,13 +2,21 @@
  * unibuttonbgbm.h – public API for the UniButtonBGBM private BOOPSI gadget.
  *
  * Fork of UniButtonP9 with prefix UBGBM_ instead of UBTP9_, stripped of
- * Patch9 support: this class always caches each state (normal/selected/
- * disabled) as a small offscreen bitmap (text only, blended against a flat
- * UBGBM_BgPen/UBGBM_SelBgPen fill), rebuilt in GM_RENDER (application-task
- * context – FreeType calls safe) and blitted as-is from GM_GOACTIVE/
- * GM_HANDLEINPUT/GM_GOINACTIVE (input.device context – no FreeType there).
+ * Patch9 support. Two backgrounds per state, chosen per state at blit time:
+ *
+ *   - Default: a small offscreen bitmap caches the state's text (blended
+ *     against a flat UBGBM_BgPen/UBGBM_SelBgPen fill), rebuilt in GM_RENDER
+ *     (application-task context – FreeType calls safe) and blitted as-is
+ *     from GM_GOACTIVE/GM_HANDLEINPUT/GM_GOINACTIVE (input.device context –
+ *     no FreeType there).
+ *   - UBGBM_Style set, and that state's image loaded: background is a
+ *     full-opaque image (no transparency) and text both drawn live
+ *     (no cache) -- see ubgbm_blit_state() in unibuttonbgbm_attribs.c for
+ *     why (the image isn't flat, so a cached flat-bgPen text rectangle
+ *     blitted on top would show as a visible mismatched box).
+ *
  * See UniButtonP9 (unibuttonp9.h) for the sibling class that always uses a
- * Patch9 9-slice skin and draws everything live instead.
+ * Patch9 9-slice skin and always draws everything live.
  *
  * Statically linked, private class (no AddClass/RemoveClass).
  * Requires URPBase (utf8rastport.library v4) opened by the caller.
@@ -81,6 +89,27 @@
 
 /* [ISG] (BOOL) Push/latch toggle mode. GA_Selected reflects latched state. */
 #define UBGBM_PushButton       (UBGBM_Dummy + 17)
+
+/* [IS] (FS3EStyle *) Optional theme: when set, and
+ * style->btbgbmBitmap[state] loaded (see fs3estyle.h), that state's
+ * background is a full-opaque (no transparency) image drawn live, and
+ * text uses FS3E_COLOR_BTBGBM_TEXT_* instead of UBGBM_TextPen/BgPen --
+ * see ubgbm_blit_state() in unibuttonbgbm_attribs.c. Any state whose
+ * image failed to load (or with no style set at all) keeps the normal
+ * cached flat-colour fill. Borrowed pointer: caller owns it; not copied. */
+#define UBGBM_Style            (UBGBM_Dummy + 18)
+
+/* [ISG] (WORD) X offset into the style-image background (UBGBM_Style)
+ * source bitmap, e.g. for a background image made deliberately larger
+ * than any button size, so different buttons/states can crop a different
+ * region of the same shared source. Default: 0. Clamped at draw time so
+ * bgShiftX + gadget width never exceeds the source bitmap's width (see
+ * ubgbm_blit_state() in unibuttonbgbm_attribs.c) -- no effect in
+ * flat-colour mode (no UBGBM_Style, or that state's image not loaded). */
+#define UBGBM_BgShiftX         (UBGBM_Dummy + 19)
+
+/* [ISG] (WORD) Same as UBGBM_BgShiftX, for the Y offset / gadget height. */
+#define UBGBM_BgShiftY         (UBGBM_Dummy + 20)
 
 /* =========================================================================
  * Class management

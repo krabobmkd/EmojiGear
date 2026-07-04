@@ -45,6 +45,9 @@ static FS3EAction s_actions[FS3EACTION_COUNT] = {
     /* FS3EACTION_VIEW_LOCAL       */ { Action_ViewLocal,      MSG_VIEW_LOCAL,            NULL },
     /* FS3EACTION_VIEW_FEDERATED   */ { Action_ViewFederated,  MSG_VIEW_FEDERATED,        NULL },
     /* FS3EACTION_VIEW_SEARCH      */ { Action_ViewSearch,     MSG_VIEW_SEARCH,           NULL },
+    /* FS3EACTION_VIEW_NOTIF       */ { Action_ViewNotif,      MSG_VIEW_NOTIFICATIONS,            NULL },
+    /* FS3EACTION_VIEW_BOOKMARKS   */ { Action_ViewBookmark,  MSG_VIEW_BOOKMARK,        NULL },
+    /* FS3EACTION_VIEW_NEWS      */ { Action_ViewNews,     MSG_VIEW_NEWS,           NULL },
 
     /* FS3EACTION_SETTINGS_THEME   */ { Action_SettingsTheme,  MSG_SETTINGS_THEME,        NULL },
     /* FS3EACTION_SETTINGS_GENERAL */ { Action_SettingsGeneral,MSG_SETTINGS_GENERAL,      NULL },
@@ -106,7 +109,7 @@ BOOL Action_About(struct App *ctx)
                                   "A Mastodon client for AmigaOS\n"
                                   "Version " FRIENDSH3EP_VERSION "\n\n"
                                   "Built with utf8rastport.library\n"
-                                  "and ReAction gadgets.";
+                                  "and BOOPSI gadgets.";
     es.es_GadgetFormat = (UBYTE *)"OK";
 
     EasyRequestArgs(NULL, &es, NULL, NULL);
@@ -127,35 +130,54 @@ BOOL Action_Quit(struct App *ctx)
 BOOL Action_ViewUser(struct App *ctx)
 {
     (void)ctx;
-    /* TODO: switch timeline to user view */
+    fs3e_setViewMode(VIEWMODE_User);
     return TRUE;
 }
 
 BOOL Action_ViewHome(struct App *ctx)
 {
     (void)ctx;
-    /* TODO: switch timeline to home view */
+    fs3e_setViewMode(VIEWMODE_Home);
     return TRUE;
 }
 
 BOOL Action_ViewLocal(struct App *ctx)
 {
     (void)ctx;
-    /* TODO: switch timeline to local view */
+    fs3e_setViewMode(VIEWMODE_Local);
     return TRUE;
 }
 
 BOOL Action_ViewFederated(struct App *ctx)
 {
     (void)ctx;
-    /* TODO: switch timeline to federated view */
+    fs3e_setViewMode(VIEWMODE_Fed);
     return TRUE;
 }
 
 BOOL Action_ViewSearch(struct App *ctx)
 {
     (void)ctx;
-    /* TODO: open search view */
+    fs3e_setViewMode(VIEWMODE_Search);
+    return TRUE;
+}
+
+BOOL Action_ViewNotif(struct App *ctx)
+{
+    (void)ctx;
+    fs3e_setViewMode(VIEWMODE_Notifs);
+    return TRUE;
+}
+BOOL Action_ViewBookmark(struct App *ctx)
+{
+    (void)ctx;
+    fs3e_setViewMode(VIEWMODE_Bookmarks);
+    return TRUE;
+}
+BOOL Action_ViewNews(struct App *ctx)
+{
+    (void)ctx;
+    fs3e_setViewMode(VIEWMODE_News);
     return TRUE;
 }
 

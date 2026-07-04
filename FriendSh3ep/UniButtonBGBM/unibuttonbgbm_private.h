@@ -17,6 +17,7 @@
 
 #include "unibuttonbgbm.h"
 #include "offscreenbm.h"
+#include "../fs3estyle.h"
 
 #include <libraries/utf8rastport.h>
 #include <proto/utf8rastport.h>
@@ -53,6 +54,16 @@ typedef struct UniButtonBGBMData {
     WORD    bottomMargin;
 
     char   *text;
+
+    /* Optional (see UBGBM_Style); borrowed, not owned. When set and a
+     * state's style->btbgbmBitmap[] loaded, that state draws its
+     * background image and text live instead of using cacheBm[]. */
+    FS3EStyle *style;
+
+    /* Crop offset into the style-image background source bitmap (see
+     * UBGBM_BgShiftX/Y); clamped at draw time. */
+    WORD    bgShiftX;
+    WORD    bgShiftY;
 
     OffscreenBitMap cacheBm[UBGBM_NUM_STATES];
     BOOL            cacheValid;

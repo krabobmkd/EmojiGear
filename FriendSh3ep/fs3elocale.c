@@ -71,6 +71,10 @@ static const char *defaultStrings[MSG_COUNT] = {
     /* MSG_VIEW_SEARCH */
     "Search",
 
+    "Notifications",
+    "Bookmarks",
+    "News",
+
     /* MSG_MENU_SETTINGS */
     "Settings",
     /* MSG_SETTINGS_THEME */

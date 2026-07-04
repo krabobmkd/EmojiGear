@@ -1,16 +1,24 @@
 /*
  * UniButtonBGBM – GM_LAYOUT, GM_RENDER, GM_DOMAIN.
  *
- * Three OffscreenBitMaps cache the normal, selected, and disabled states'
- * TEXT (sized to the text bounding box), rebuilt in GM_RENDER
+ * Flat-colour mode (default, or UBGBM_Style unset/that state's image not
+ * loaded): three OffscreenBitMaps cache the normal, selected, and disabled
+ * states' TEXT (sized to the text bounding box), rebuilt in GM_RENDER
  * (application-task context – FreeType calls safe). The background is a
  * flat colour, drawn live with a plain RectFill, then the cached text is
  * blitted on top -- see ubgbm_blit_state in unibuttonbgbm_attribs.c.
  * GM_GOACTIVE / GM_HANDLEINPUT / GM_GOINACTIVE only blit the cached bitmap
  * (safe in input device context; they must never trigger a rebuild).
  *
+ * Style-image mode (UBGBM_Style set and style->btbgbmBitmap[state]
+ * loaded): no cache for that state -- ubgbm_build_one_state() skips it
+ * entirely. Background (a full-opaque image, no transparency) and text
+ * are both drawn live in ubgbm_blit_state, same reasoning as UniButtonP9's
+ * Patch9 mode: the image isn't flat, so pre-baking text against an assumed
+ * flat bgPen and blitting it on top would show as a visible mismatched box.
+ *
  * See UniButtonP9 for the sibling class that always uses a Patch9 9-slice
- * skin and draws both skin and text live instead of caching anything.
+ * skin and always draws everything live.
  */
 #include <proto/exec.h>
 #include <proto/graphics.h>
@@ -86,6 +94,19 @@ static void ubgbm_build_one_state(UniButtonBGBMData *inst, WORD gadW, WORD gadH,
         }
     }
 
+    obm->_imageState = imageState;
+    obm->_bgpen      = bgPen;
+
+    /* Style-image mode: no cache at all for this state -- both the
+     * (non-flat) background image and text are drawn live in
+     * ubgbm_blit_state. Drop any stale bitmap from a previous flat-colour
+     * state (e.g. UBGBM_Style was just set, or that state's image just
+     * finished loading). */
+    if (inst->style && BmImage_IsLoaded(&inst->style->btbgbmBitmap[state])) {
+        OffscreenBitMap_Close(obm);
+        return;
+    }
+
     w = inst->textWidth;
     h = inst->textHeight;
     if (w < 16) w = 16;
@@ -104,8 +125,6 @@ static void ubgbm_build_one_state(UniButtonBGBMData *inst, WORD gadW, WORD gadH,
         SetDrMd(rp, JAM1);
         RectFill(rp, 0L, 0L, (LONG)(w - 1), (LONG)(h - 1));
     }
-    obm->_imageState = imageState;
-    obm->_bgpen      = bgPen;
 
     if (inst->text && inst->text[0] && inst->dc && scr) {
         struct URPTextPos pos;
@@ -189,7 +208,9 @@ ULONG UniButtonBGBM_OnRender(Class *cl, Object *o, struct gpRender *msg)
     else
         state = UBGBM_STATE_NORMAL;
 
-    if (inst->cacheValid && inst->cacheBm[state]._bm) {
+    if (inst->cacheValid &&
+        (inst->cacheBm[state]._bm ||
+         (inst->style && BmImage_IsLoaded(&inst->style->btbgbmBitmap[state])))) {
         ubgbm_blit_state(inst, g, rp, state);
     } else {
         SetAPen(rp, (LONG)inst->cacheBm[state]._bgpen);

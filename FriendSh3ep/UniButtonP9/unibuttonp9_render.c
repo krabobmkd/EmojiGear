@@ -46,44 +46,52 @@ void ubtp9_update_font_metrics(UniButtonP9Data *inst)
 }
 
 /* =========================================================================
+ * ubtp9_patch9_state
+ * =========================================================================
+ * Map UBTP9_STATE_* (bevel/gadget state) to PATCH9_* (skin/colour state) --
+ * shared by ubtp9_state_pens below and ubtp9_blit_state
+ * (unibuttonp9_attribs.c), which both need to index the same Patch9 skin
+ * image and per-state colours for a given gadget state.
+ */
+int ubtp9_patch9_state(int state)
+{
+    switch (state) {
+    case UBTP9_STATE_SELECTED: return PATCH9_SELECTED;
+    case UBTP9_STATE_DISABLED: return PATCH9_DISABLED;
+    default:                   return PATCH9_NORMAL;
+    }
+}
+
+/* =========================================================================
  * ubtp9_state_pens
  * =========================================================================
  * Shared with ubtp9_blit_state (unibuttonp9_attribs.c), which needs the
- * same disabled-state dimming for its live text draw, and GM_RENDER below,
- * which needs outImageState for the bevel. Pure pen/RGB math -- no
- * FreeType, safe from any context.
+ * same per-state pens for its live text draw (and, when the skin image
+ * isn't loaded, its flat rect fallback fill), and GM_RENDER below, which
+ * needs outImageState for the bevel. Pure pen lookups -- no FreeType, safe
+ * from any context.
+ *
+ * inst->patch9's bgcolors[]/textcolors[] are the theme's authored colours
+ * per PATCH9_* state (see fs3estyle.c's patch9Slots[] / style.txt), already
+ * resolved to screen pens by FS3EStyle_ApplyColors -- so disabled buttons
+ * just get the theme's own disabled colour instead of a computed dimming.
+ * Falls back to the gadget's own flat UBTP9_BgPen/SelBgPen/TextPen only if
+ * no Patch9 is attached yet (inst->patch9 NULL, e.g. before OM_SET applies
+ * UBTP9_Patch9).
  */
-void ubtp9_state_pens(UniButtonP9Data *inst, int state, struct Screen *scr,
+void ubtp9_state_pens(UniButtonP9Data *inst, int state,
                       ULONG *outBgPen, ULONG *outTxtPen, UWORD *outImageState)
 {
-    if (state == UBTP9_STATE_DISABLED && scr && scr->ViewPort.ColorMap) {
-        struct ColorMap *cm = scr->ViewPort.ColorMap;
-        ULONG txtRGB[3];
-        ULONG dimR, dimG, dimB;
+    int patch9State = ubtp9_patch9_state(state);
 
-        *outBgPen = (ULONG)FindColor(cm,
-                    0x88888888UL, 0x88888888UL, 0x88888888UL, (ULONG)-1);
+    *outImageState = (state == UBTP9_STATE_SELECTED) ? IDS_SELECTED : IDS_NORMAL;
 
-        GetRGB32(cm, inst->txtPen, 1UL, txtRGB);
-        dimR = (txtRGB[0] >> 1) + 0x44444444UL;
-        dimG = (txtRGB[1] >> 1) + 0x44444444UL;
-        dimB = (txtRGB[2] >> 1) + 0x44444444UL;
-        *outTxtPen = (ULONG)FindColor(cm, dimR, dimG, dimB, (ULONG)-1);
-
-        *outImageState = IDS_NORMAL;
+    if (inst->patch9) {
+        *outBgPen  = (ULONG)inst->patch9->bgcolors[patch9State].pen;
+        *outTxtPen = (ULONG)inst->patch9->textcolors[patch9State].pen;
     } else {
-        switch (state) {
-        case UBTP9_STATE_SELECTED:
-            *outBgPen      = inst->selBgPen;
-            *outTxtPen     = inst->txtPen;
-            *outImageState = IDS_SELECTED;
-            break;
-        default:
-            *outBgPen      = inst->bgPen;
-            *outTxtPen     = inst->txtPen;
-            *outImageState = IDS_NORMAL;
-            break;
-        }
+        *outBgPen  = (state == UBTP9_STATE_SELECTED) ? inst->selBgPen : inst->bgPen;
+        *outTxtPen = inst->txtPen;
     }
 }
 

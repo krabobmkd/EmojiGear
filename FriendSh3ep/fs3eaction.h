@@ -40,7 +40,11 @@ typedef enum {
     FS3EACTION_VIEW_HOME,
     FS3EACTION_VIEW_LOCAL,
     FS3EACTION_VIEW_FEDERATED,
+
     FS3EACTION_VIEW_SEARCH,
+    FS3EACTION_VIEW_NOTIF,
+    FS3EACTION_VIEW_BOOKMARKS,
+    FS3EACTION_VIEW_NEWS,
 
     /* Settings menu */
     FS3EACTION_SETTINGS_THEME,
@@ -72,6 +76,9 @@ BOOL Action_ViewHome(struct App *ctx);
 BOOL Action_ViewLocal(struct App *ctx);
 BOOL Action_ViewFederated(struct App *ctx);
 BOOL Action_ViewSearch(struct App *ctx);
+BOOL Action_ViewNotif(struct App *ctx);
+BOOL Action_ViewBookmark(struct App *ctx);
+BOOL Action_ViewNews(struct App *ctx);
 
 BOOL Action_SettingsTheme(struct App *ctx);
 BOOL Action_SettingsGeneral(struct App *ctx);

@@ -9,6 +9,7 @@
 #include <proto/graphics.h>
 #include <intuition/gadgetclass.h>
 #include <intuition/icclass.h>
+#include <string.h>
 
 #include "fs3etoottimeline_private.h"
 #include "../bdbprintf.h"
@@ -38,6 +39,9 @@ ULONG ttl_apply_tags(Class *cl, Object *o, struct opSet *msg, int couldRefreshDr
                 }
                 break;
             case TTIMELINE_ScrollY:
+                /* Applies to whichever channel is active when GM_RENDER
+                 * next runs (see TTL_OnRender) -- same deferred-apply
+                 * mechanism as before, now scoped to ttl_active(inst). */
                 if(inst->pendingScrollY != (LONG)tag->ti_Data)
                 {
                     inst->pendingScroll  = TRUE;
@@ -95,28 +99,44 @@ ULONG ttl_apply_tags(Class *cl, Object *o, struct opSet *msg, int couldRefreshDr
             case TTIMELINE_AddPost: {
                 const TTLPostSetup *setup = (const TTLPostSetup *)tag->ti_Data;
                 if (setup) {
-                    TTLPost *post = ttl_post_alloc(setup);
-                    if (post) {
+                    ULONG ch;
+                    for (ch = 0; ch < TTIMELINE_NUM_VIEWMODES; ch++) {
+                        TTLChannel *channel;
+                        TTLPost    *post;
+
+                        if (!(setup->viewModeBits & (1UL << ch))) continue;
+
+                        /* Independent copy per targeted channel: a post's
+                         * node can only ever be linked into one list, and
+                         * its timelineY is meaningless outside the
+                         * channel it was laid out for. */
+                        post = ttl_post_alloc(setup);
+                        if (!post) continue;
+
+                        channel = &inst->channels[ch];
                         ttl_post_layout(inst, post);
 
-                        if (inst->postCount == 0) {
-                            /* Very first post: anchor at Y=0 */
-                            inst->contentTopY    = 0;
-                            inst->contentBottomY = post->height;
-                            post->timelineY      = 0;
+                        if (channel->postCount == 0) {
+                            /* Very first post in this channel: anchor at Y=0 */
+                            channel->contentTopY    = 0;
+                            channel->contentBottomY = post->height;
+                            post->timelineY         = 0;
                         } else {
                             /* Prepend: new post goes above the current top.
                              * scrollY stays fixed so the user sees the same view. */
-                            inst->contentTopY -= post->height;
-                            post->timelineY    = inst->contentTopY;
+                            channel->contentTopY -= post->height;
+                            post->timelineY        = channel->contentTopY;
                         }
 
-                        AddHead((struct List *)&inst->posts, (struct Node *)&post->node);
-                        inst->postCount++;
+                        AddHead((struct List *)&channel->posts, (struct Node *)&post->node);
+                        channel->postCount++;
 
-                        ttl_tiles_invalidate_range(inst,
-                            post->timelineY,
-                            post->timelineY + post->height);
+                        /* Tiles only ever reflect the active channel. */
+                        if (ch == inst->viewMode)
+                            ttl_tiles_invalidate_range(inst,
+                                post->timelineY,
+                                post->timelineY + post->height);
+
                         redraw = TRUE;
                         used = 1;
                     }
@@ -129,6 +149,37 @@ ULONG ttl_apply_tags(Class *cl, Object *o, struct opSet *msg, int couldRefreshDr
                 redraw = TRUE;
                 used = 1;
                 break;
+
+            case TTIMELINE_ViewMode:
+                /* Out-of-range values are ignored. Waiting is purely
+                 * "the newly active channel's post list is empty" (see
+                 * ttl_is_waiting) -- no separate flag needed. */
+                if ((ULONG)tag->ti_Data < TTIMELINE_NUM_VIEWMODES &&
+                    inst->viewMode != (ULONG)tag->ti_Data)
+                {
+                    inst->viewMode = (ULONG)tag->ti_Data;
+                    /* Tiles only ever reflect one channel; a switch always
+                     * invalidates them all and re-clamps scrollY (via
+                     * layoutToDo -> ttl_do_layout) for the new channel. */
+                    ttl_tiles_invalidate_all(inst);
+                    inst->layoutToDo = TRUE;
+                    redraw = TRUE;
+                }
+                used = 1;
+                break;
+
+            case TTIMELINE_WaitText: {
+                const char *newText = (const char *)tag->ti_Data;
+                if (inst->waitText) { FreeVec(inst->waitText); inst->waitText = NULL; }
+                if (newText) {
+                    ULONG len = (ULONG)strlen(newText);
+                    inst->waitText = (char *)AllocVec(len + 1, MEMF_ANY);
+                    if (inst->waitText) CopyMem((APTR)newText, inst->waitText, len + 1);
+                }
+                redraw = TRUE;
+                used = 1;
+                break;
+            }
 
             case ICA_TARGET:
                 inst->target = (Object *)tag->ti_Data;
@@ -170,6 +221,7 @@ ULONG TTL_OnNew(Class *cl, Object *o, struct opSet *msg)
 {
     TTLData  *inst;
     Object   *newObj;
+    ULONG     ch;
 
     newObj = (Object *)DoSuperMethodA(cl, o, (APTR)msg);
     if (!newObj) return 0;
@@ -180,15 +232,18 @@ ULONG TTL_OnNew(Class *cl, Object *o, struct opSet *msg)
     inst->dpiHeight       = 14;
     inst->lineHeight      = 14;
     inst->lineAscent      = 11;
-    inst->contentTopY     = 0;
-    inst->contentBottomY  = 0;
-    inst->scrollY         = 0;
     inst->lastTileWidth   = -1;  /* force pool alloc on first layout */
     inst->layoutToDo = TRUE;
 
+    /* Must be a valid channels[] index -- ttl_active() dereferences it
+     * unconditionally, and nothing requires the caller to ever set
+     * TTIMELINE_ViewMode explicitly. */
+    inst->viewMode = 0;
+
     inst->callerTask = FindTask(NULL);
 
-    NewList((struct List *)&inst->posts);
+    for (ch = 0; ch < TTIMELINE_NUM_VIEWMODES; ch++)
+        NewList((struct List *)&inst->channels[ch].posts);
 
     ttl_apply_tags(cl,newObj, msg,FALSE);
 
@@ -202,9 +257,12 @@ ULONG TTL_OnNew(Class *cl, Object *o, struct opSet *msg)
 ULONG TTL_OnDispose(Class *cl, Object *o, Msg msg)
 {
     TTLData *inst = TTL_DATA(cl, o);
+    ULONG    ch;
 
-    ttl_clear_posts(inst);
+    for (ch = 0; ch < TTIMELINE_NUM_VIEWMODES; ch++)
+        ttl_clear_channel(inst, ch);
     ttl_tiles_free(inst);
+    if (inst->waitText) { FreeVec(inst->waitText); inst->waitText = NULL; }
 
     return DoSuperMethodA(cl, o, (APTR)msg);
 }
@@ -233,13 +291,19 @@ ULONG TTL_OnGet(Class *cl, Object *o, struct opGet *msg)
 
     switch (msg->opg_AttrID) {
         case TTIMELINE_ScrollY:
-            *msg->opg_Storage = (ULONG)inst->scrollY;
+            *msg->opg_Storage = (ULONG)ttl_active(inst)->scrollY;
             return 1;
         case TTIMELINE_ContentTopY:
-            *msg->opg_Storage = (ULONG)inst->contentTopY;
+            *msg->opg_Storage = (ULONG)ttl_active(inst)->contentTopY;
             return 1;
         case TTIMELINE_ContentBottomY:
-            *msg->opg_Storage = (ULONG)inst->contentBottomY;
+            *msg->opg_Storage = (ULONG)ttl_active(inst)->contentBottomY;
+            return 1;
+        case TTIMELINE_ViewMode:
+            *msg->opg_Storage = inst->viewMode;
+            return 1;
+        case TTIMELINE_WaitText:
+            *msg->opg_Storage = (ULONG)inst->waitText;
             return 1;
         default:
             return DoSuperMethodA(cl, o, (APTR)msg);

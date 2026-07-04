@@ -15,7 +15,9 @@
 
 #include "compilers.h"
 #include "fs3estyle.h"
+#include "patch9.h"
 #include "fs3eboopsimainwindow.h"
+#include "stylefile.h"
 #include "bdbprintf.h"
 /* Opened optionally in friendsh3ep.c, mirroring BevelBase: if the class
  * isn't available, FS3EStyle_LoadThemeImages() fails gracefully and title
@@ -61,6 +63,31 @@ static const ULONG defaultColors[FS3E_COLOR_COUNT] = {
     0x00DADDE4,   /* FS3E_COLOR_TEXT                light gray */
     0x00707580,   /* FS3E_COLOR_TEXT_DIM            muted gray */
     0x005599EE,   /* FS3E_COLOR_ACTION_TEXT         clear blue (Reply/Boost/Fave) */
+
+    0x00000000,   /* FS3E_COLOR_BTBGBM_TEXT_ENABLED */
+    0x00FFFFFF,   /* FS3E_COLOR_BTBGBM_TEXT_SELECTED */
+    0x00EEBB33,   /* FS3E_COLOR_BTBGBM_TEXT_HOVER */
+    0x00999999,   /* FS3E_COLOR_BTBGBM_TEXT_DISABLED */
+};
+
+/* style.txt key for each FS3EColorRole, in the same order as the enum --
+ * see themes/mouton/style.txt. FS3EStyle_LoadThemeImages() looks each of
+ * these up and overrides the matching defaultColors[] entry when present. */
+static const char *colorStyleKeys[FS3E_COLOR_COUNT] = {
+    "timeline.color.buttonbg",
+    "timeline.color.button_selectedbg",
+    "timeline.color.timelinebg",
+    "timeline.color.username",
+    "timeline.color.hashtag",
+    "timeline.color.accent",
+    "timeline.color.text",
+    "timeline.color.text_dim",
+    "timeline.color.action_text",
+
+    "btbgbm.textcolor.enabled",
+    "btbgbm.textcolor.selected",
+    "btbgbm.textcolor.hover",
+    "btbgbm.textcolor.disabled",
 };
 
 /* ------------------------------------------------------------------ */
@@ -99,6 +126,24 @@ static void release_pen(struct ColorMap *cm, FS3EManagedColor *c)
         ReleasePen(cm, (LONG)c->pen);
     c->pen       = 1;   /* fall back to pen 1, always valid */
     c->allocated = 0;
+}
+
+/* Same obtain/release pair, applied to a whole FS3EManagedColor[] base in
+ * one call -- FS3EStyle_ApplyColors/ReleasePens run this once for
+ * st->colors[] and once per st->patch9[] slot for bgcolors[]/textcolors[],
+ * so all three pen bases stay in lockstep through one shared loop body. */
+static void obtain_pens(struct ColorMap *cm, FS3EManagedColor *arr, int count)
+{
+    int i;
+    for (i = 0; i < count; i++)
+        obtain_pen(cm, &arr[i]);
+}
+
+static void release_pens(struct ColorMap *cm, FS3EManagedColor *arr, int count)
+{
+    int i;
+    for (i = 0; i < count; i++)
+        release_pen(cm, &arr[i]);
 }
 
 /* ------------------------------------------------------------------ */
@@ -240,7 +285,9 @@ void FS3EStyle_InitDefaults(FS3EStyle *st)
     st->tbBgHook.h_SubEntry = NULL;
     st->tbBgHook.h_Data     = NULL;  /* unused -- see FS3EStyle_TitleBarBackFillFunc */
 
-    memset(&st->bt1Patch9, 0, sizeof(st->bt1Patch9));
+    memset(&st->patch9, 0, sizeof(st->patch9));
+    memset(&st->btbgbmBitmap, 0, sizeof(st->btbgbmBitmap));
+    memset(&st->waitImage, 0, sizeof(st->waitImage));
 }
 
 void FS3EStyle_ApplyColors(FS3EStyle *st, struct Screen *scr)
@@ -257,8 +304,11 @@ void FS3EStyle_ApplyColors(FS3EStyle *st, struct Screen *scr)
     if (!scr) return;
 
     cm = scr->ViewPort.ColorMap;
-    for (i = 0; i < FS3E_COLOR_COUNT; i++)
-        obtain_pen(cm, &st->colors[i]);
+    obtain_pens(cm, st->colors, FS3E_COLOR_COUNT);
+    for (i = 0; i < FS3ESTYLE_PATCH9_COUNT; i++) {
+        obtain_pens(cm, st->patch9[i].bgcolors,   PATCH9_NUM_STATES);
+        obtain_pens(cm, st->patch9[i].textcolors, PATCH9_NUM_STATES);
+    }
 
     if(st->dcNormal) URPDC_SetDrawScreen(st->dcNormal,scr);
     if(st->dcMini) URPDC_SetDrawScreen(st->dcMini,scr);
@@ -273,8 +323,11 @@ void FS3EStyle_ReleasePens(FS3EStyle *st)
     if (!st || !st->screen) return;
 
     cm = st->screen->ViewPort.ColorMap;
-    for (i = 0; i < FS3E_COLOR_COUNT; i++)
-        release_pen(cm, &st->colors[i]);
+    release_pens(cm, st->colors, FS3E_COLOR_COUNT);
+    for (i = 0; i < FS3ESTYLE_PATCH9_COUNT; i++) {
+        release_pens(cm, st->patch9[i].bgcolors,   PATCH9_NUM_STATES);
+        release_pens(cm, st->patch9[i].textcolors, PATCH9_NUM_STATES);
+    }
 
     st->screen = NULL;
 }
@@ -372,9 +425,82 @@ void FS3EStyle_SetThemePath(FS3EStyle *st, const char *path)
     st->themePath = copy;
 }
 
+/* One style.txt-driven Patch9 skin slot: "<prefix>.image" / "<prefix>.cornersize",
+ * plus per-state bg/text colour defaults for "<prefix>.bgcolor.<suffix>" /
+ * "<prefix>.textcolor.<suffix>" (see patch9StateSuffix[] below). Arrays are
+ * indexed by PATCH9_NORMAL/SELECTED/DISABLED/HOVER, same as Patch9.bgcolors/
+ * textcolors themselves. */
+typedef struct {
+    const char *prefix;
+    const char *defaultFile;
+    WORD        defaultCorner;
+    ULONG       defaultBgColor[PATCH9_NUM_STATES];
+    ULONG       defaultTextColor[PATCH9_NUM_STATES];
+} FS3EPatch9SlotDef;
+
+static const FS3EPatch9SlotDef patch9Slots[FS3ESTYLE_PATCH9_COUNT] = {
+    { "bt1Patch9", "bt1patch9.iff", 8,
+      { 0x007B7BE3, 0x00BCBCFF, 0x00777777, 0x007B7BE3 },
+      { 0x00CCCCCC, 0x00FFFFFF, 0x00999999, 0x00EEEE44 } },
+    { "bt2Patch9", "bt2patch9.iff", 8,
+      { 0x0083ED60, 0x00B2FFC8, 0x00777777, 0x0083ED60 },
+      { 0x00CCCCCC, 0x00FFFFFF, 0x00999999, 0x00EEEE44 } },
+};
+
+/* style.txt suffix for each PATCH9_* state, e.g. "bt1Patch9.bgcolor.hover" --
+ * see themes/mouton/style.txt. */
+static const char *patch9StateSuffix[PATCH9_NUM_STATES] = {
+    "enabled",   /* PATCH9_NORMAL */
+    "selected",  /* PATCH9_SELECTED */
+    "disabled",  /* PATCH9_DISABLED */
+    "hover",     /* PATCH9_HOVER */
+};
+
+/* Load one Patch9 slot from style.txt (see patch9Slots[] above), falling
+ * back to defaultFile/defaultCorner/defaultBgColor/defaultTextColor if
+ * style.txt or the key is missing. Image load is optional/non-fatal -- a
+ * missing file just means buttons referencing this slot keep their flat
+ * colour fill (see Patch9_IsLoaded in patch9.h); the bg/textcolors are that
+ * flat fill (and the blend colours over the skin once loaded), so they are
+ * always set regardless of whether the image itself loaded. */
+static void fs3estyle_load_patch9_slot(FS3EStyle *st, const StyleFile *sf, int slot,
+                                       struct Screen *scr)
+{
+    const FS3EPatch9SlotDef *def = &patch9Slots[slot];
+    Patch9 *p9 = &st->patch9[slot];
+    char path[256];
+    char key[80];
+    int state;
+
+    snprintf(key, sizeof(key), "%s.image", def->prefix);
+    snprintf(path, sizeof(path), "%s/%s", st->themePath,
+             StyleFile_GetString(sf, key, def->defaultFile));
+
+    snprintf(key, sizeof(key), "%s.cornersize", def->prefix);
+
+    /* Patch9_Init() memsets the whole struct, so bg/textcolors are (re)set
+     * below, after Init -- setting them before would just get wiped. */
+    if (!Patch9_Init(p9, path,
+                     (WORD)StyleFile_GetInt(sf, key, def->defaultCorner)) ||
+        !Patch9_Load(p9, scr)) {
+        printf("FS3EStyle_LoadThemeImages: %s image not loaded (%s)\n",
+               def->prefix, path);
+    }
+
+    for (state = 0; state < PATCH9_NUM_STATES; state++) {
+        snprintf(key, sizeof(key), "%s.bgcolor.%s", def->prefix, patch9StateSuffix[state]);
+        p9->bgcolors[state].rgbcolor = StyleFile_GetColor(sf, key, def->defaultBgColor[state]);
+
+        snprintf(key, sizeof(key), "%s.textcolor.%s", def->prefix, patch9StateSuffix[state]);
+        p9->textcolors[state].rgbcolor = StyleFile_GetColor(sf, key, def->defaultTextColor[state]);
+    }
+}
+
 BOOL FS3EStyle_LoadThemeImages(FS3EStyle *st, struct Screen *scr)
 {
     char path[256];
+    char stylePath[280];
+    StyleFile sf;
     struct BitMap *bm;
     WORD cellW, cellH;
     int i;
@@ -385,12 +511,29 @@ BOOL FS3EStyle_LoadThemeImages(FS3EStyle *st, struct Screen *scr)
 
     if (!st->themePath) FS3EStyle_SetThemePath(st, NULL);
 
+    /* style.txt names the actual asset files/metrics below -- see
+     * themes/mouton/style.txt. Missing file/keys just fall back to the
+     * names this function always used, so this is safe unconditionally. */
+    snprintf(stylePath, sizeof(stylePath), "%s/style.txt", st->themePath);
+    StyleFile_Load(&sf, stylePath);
+
+    /* Override every FS3EColorRole's RGB value from its style.txt key (see
+     * colorStyleKeys[] above), falling back to whatever rgbcolor already
+     * holds (the FS3EStyle_InitDefaults() value, or a previous load's) if
+     * the file or key is missing. Must run before FS3EStyle_ApplyColors(),
+     * which resolves rgbcolor -> screen pen for every role -- the caller
+     * (GenericOpenWindow) already calls them in that order. */
+    for (i = 0; i < FS3E_COLOR_COUNT; i++)
+        st->colors[i].rgbcolor = StyleFile_GetColor(&sf, colorStyleKeys[i],
+                                                    st->colors[i].rgbcolor);
+
     if (!BitMapBase) {
         printf("FS3EStyle_LoadThemeImages: images/bitmap.image not open, skipping\n");
         return FALSE;
     }
 
-    snprintf(path, sizeof(path), "%s/tbbuttons.iff", st->themePath);
+    snprintf(path, sizeof(path), "%s/%s", st->themePath,
+             StyleFile_GetString(&sf, "titlebar.buttons", "tbbuttons.iff"));
 
     if (!BmImage_Init(&st->tbButtons, path)) {
         printf("FS3EStyle_LoadThemeImages: BmImage_Init failed for %s\n", path);
@@ -444,22 +587,58 @@ BOOL FS3EStyle_LoadThemeImages(FS3EStyle *st, struct Screen *scr)
      * friendsh3ep.c). Optional -- a missing file just means no custom
      * background, not a load failure. tbBgBitmap/Width/Height mirror
      * st->tbBg for FS3EStyle_TitleBarBackFillFunc -- see the note there. */
-    snprintf(path, sizeof(path), "%s/tbbg.png", st->themePath);
+    snprintf(path, sizeof(path), "%s/%s", st->themePath,
+             StyleFile_GetString(&sf, "titlebar.bg", "tbbg.png"));
     if (BmImage_Init(&st->tbBg, path) && BmImage_Load(&st->tbBg, scr)) {
         tbBgBitmap = st->tbBg.bitmap;
         tbBgWidth  = st->tbBg.width;
         tbBgHeight = st->tbBg.height;
     } else {
-        printf("FS3EStyle_LoadThemeImages: tbbg.png not loaded (%s)\n", path);
+        printf("FS3EStyle_LoadThemeImages: %s not loaded (%s)\n",
+               StyleFile_GetString(&sf, "titlebar.bg", "tbbg.png"), path);
     }
 
-    /* UniButtonP9 patch9 background skin: 96x24, 4 sub-images of 24x24
-     * (PATCH9_NORMAL/SELECTED/DISABLED/HOVER), corner size 8. Optional --
-     * a missing file just means buttons keep their flat colour fill. */
-    snprintf(path, sizeof(path), "%s/bt1patch9.iff", st->themePath);
-    if (!Patch9_Init(&st->bt1Patch9, path, 8) ||
-        !Patch9_Load(&st->bt1Patch9, scr)) {
-        printf("FS3EStyle_LoadThemeImages: bt1patch9.iff not loaded (%s)\n", path);
+    /* UniButtonP9 patch9 background skins: one Patch9 per
+     * FS3ESTYLE_PATCH9_* slot (see patch9Slots[] above), each a 4
+     * equal-size sub-image strip (PATCH9_NORMAL/SELECTED/DISABLED/HOVER)
+     * arranged horizontally. */
+    for (i = 0; i < FS3ESTYLE_PATCH9_COUNT; i++)
+        fs3estyle_load_patch9_slot(st, &sf, i, scr);
+
+    /* UniButtonBGBM image-backed nav button skins: one full-opaque
+     * background image per state, no masking. Optional per state -- a
+     * gadget falls back to its own flat colour fill for whichever states
+     * failed to load (see BmImage_IsLoaded in ubgbm_blit_state). */
+    {
+        static const char *btbgbmKeys[FS3ESTYLE_BTBGBM_COUNT] = {
+            "btbgbm.bitmap.enabled",
+            "btbgbm.bitmap.selected",
+            "btbgbm.bitmap.disabled",
+        };
+        static const char *btbgbmDefaults[FS3ESTYLE_BTBGBM_COUNT] = {
+            "tbbgenabled.jpg",
+            "tbbgselected.jpg",
+            "tbbgdisabled.jpg",
+        };
+
+        for (i = 0; i < FS3ESTYLE_BTBGBM_COUNT; i++) {
+            snprintf(path, sizeof(path), "%s/%s", st->themePath,
+                     StyleFile_GetString(&sf, btbgbmKeys[i], btbgbmDefaults[i]));
+            if (!BmImage_Init(&st->btbgbmBitmap[i], path) ||
+                !BmImage_Load(&st->btbgbmBitmap[i], scr)) {
+                printf("FS3EStyle_LoadThemeImages: btbgbm bitmap not loaded (%s)\n", path);
+            }
+        }
+    }
+
+    /* TootTimeline "waiting" screen image. Optional -- a missing file just
+     * means the waiting screen shows its text alone (see ttl_render_wait
+     * in TootTimeline/fs3etoottimeline_render.c). */
+    snprintf(path, sizeof(path), "%s/%s", st->themePath,
+             StyleFile_GetString(&sf, "timeline.waitimage", "waitimage.png"));
+    if (!BmImage_Init(&st->waitImage, path) ||
+        !BmImage_Load(&st->waitImage, scr)) {
+        printf("FS3EStyle_LoadThemeImages: timeline.waitimage not loaded (%s)\n", path);
     }
 
     return TRUE;
@@ -500,11 +679,16 @@ void FS3EStyle_SyncTitleBarButtons(FS3EStyle *st,
 
 void FS3EStyle_UnloadThemeImages(FS3EStyle *st)
 {
+    int i;
     if (!st) return;
     free_tb_images(st);
     BmImage_Unload(&st->tbButtons);
     BmImage_Unload(&st->tbBg);
-    Patch9_Unload(&st->bt1Patch9);
+    for (i = 0; i < FS3ESTYLE_PATCH9_COUNT; i++)
+        Patch9_Unload(&st->patch9[i]);
+    for (i = 0; i < FS3ESTYLE_BTBGBM_COUNT; i++)
+        BmImage_Unload(&st->btbgbmBitmap[i]);
+    BmImage_Unload(&st->waitImage);
     tbBgBitmap = NULL;
     tbBgWidth  = 0;
     tbBgHeight = 0;
@@ -515,10 +699,15 @@ void FS3EStyle_UnloadThemeImages(FS3EStyle *st)
 
 void FS3EStyle_FreeThemeImages(FS3EStyle *st)
 {
+    int i;
     if (!st) return;
     FS3EStyle_UnloadThemeImages(st);
     BmImage_Free(&st->tbButtons);
     BmImage_Free(&st->tbBg);
-    Patch9_Free(&st->bt1Patch9);
+    for (i = 0; i < FS3ESTYLE_PATCH9_COUNT; i++)
+        Patch9_Free(&st->patch9[i]);
+    for (i = 0; i < FS3ESTYLE_BTBGBM_COUNT; i++)
+        BmImage_Free(&st->btbgbmBitmap[i]);
+    BmImage_Free(&st->waitImage);
     if (st->themePath) { FreeVec(st->themePath); st->themePath = NULL; }
 }

@@ -176,7 +176,7 @@ TTLTile *ttl_tile_acquire(TTLData *inst, LONG tileBaseY)
     if (!found) {
         /* Evict the tile whose base is farthest from the current scroll */
         for (i = 0; i < inst->tileCount; i++) {
-            LONG d = inst->tiles[i].tileBaseY - inst->scrollY;
+            LONG d = inst->tiles[i].tileBaseY - ttl_active(inst)->scrollY;
             if (d < 0) d = -d;
             if (d > farthestDist) {
                 farthestDist = d;
@@ -371,9 +371,10 @@ void ttl_render_tile(TTLData *inst, TTLTile *tile)
     textW = (WORD)(inst->gadWidth - textX - TTL_POST_PAD_RIGHT);
     if (textW < 16) textW = 16;
 
-    /* Walk posts; they are sorted newest-first but their Y values are
-     * consecutive, so we can stop as soon as post->timelineY >= tileBaseY+TILE_H */
-    for (post = (TTLPost *)inst->posts.mlh_Head;
+    /* Walk the active channel's posts; they are sorted newest-first but
+     * their Y values are consecutive, so we can stop as soon as
+     * post->timelineY >= tileBaseY+TILE_H */
+    for (post = (TTLPost *)ttl_active(inst)->posts.mlh_Head;
          post->node.mln_Succ;
          post = (TTLPost *)post->node.mln_Succ)
     {

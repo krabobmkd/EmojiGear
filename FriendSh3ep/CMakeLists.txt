@@ -22,6 +22,7 @@ set(FRIENDSH3EP_SOURCES
 	bdbprintf.c
     bmimage.c
     patch9.c
+    stylefile.c
     friendsh3ep.c
     fs3estyle.c
     fs3eboopsimainwindow.c
@@ -59,6 +60,7 @@ set(FRIENDSH3EP_SOURCES
 set(FRIENDSH3EP_HEADERS
     bmimage.h
     patch9.h
+    stylefile.h
     friendsh3ep.h
     fs3estyle.h
     fs3eboopsimainwindow.h

@@ -75,4 +75,7 @@ void BmImage_Unload(BmImage *img);
  */
 void BmImage_Free(BmImage *img);
 
+/* TRUE once BmImage_Load() has succeeded and not been Unload()/Free()'d since. */
+BOOL BmImage_IsLoaded(const BmImage *img);
+
 #endif /* BMIMAGE_H */

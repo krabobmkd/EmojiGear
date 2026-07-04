@@ -180,3 +180,8 @@ void BmImage_Free(BmImage *img)
     }
 }
 
+BOOL BmImage_IsLoaded(const BmImage *img)
+{
+    return (BOOL)(img && img->bitmap != NULL);
+}
+

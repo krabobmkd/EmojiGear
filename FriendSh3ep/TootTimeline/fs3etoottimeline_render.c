@@ -42,7 +42,8 @@
 
 static void ttl_do_layout(Class *cl, Object *o, WORD newW, WORD newH, struct RastPort *rp)
 {
-    TTLData *inst = TTL_DATA(cl, o);
+    TTLData    *inst = TTL_DATA(cl, o);
+    TTLChannel *active;
     BOOL widthChanged = (newW != inst->lastTileWidth);
 
     inst->gadWidth  = newW;
@@ -51,18 +52,23 @@ static void ttl_do_layout(Class *cl, Object *o, WORD newW, WORD newH, struct Ras
     if (widthChanged || inst->tileCount == 0) {
         ttl_tiles_free(inst);
         ttl_tiles_alloc(inst,rp);
-        if (widthChanged) {
+        /* Relays out every channel (not just the active one) so any of
+         * them is ready to display correctly the moment it becomes
+         * active -- see ttl_layout_all_posts. It already rebuilds Y
+         * positions for every channel itself. */
+        if (widthChanged)
             ttl_layout_all_posts(inst);
-            ttl_rebuild_ypositions(inst);
-        }
     }
 
-    /* Clamp scrollY to valid range */
+    /* Clamp the active channel's scrollY to its valid range -- also runs
+     * on a pure TTIMELINE_ViewMode switch (no width change), since the
+     * newly active channel's extents may differ from the previous one's. */
+    active = ttl_active(inst);
     {
-        LONG maxScroll = inst->contentBottomY - inst->gadHeight;
-        if (maxScroll < inst->contentTopY) maxScroll = inst->contentTopY;
-        if (inst->scrollY < inst->contentTopY) inst->scrollY = inst->contentTopY;
-        if (inst->scrollY > maxScroll)         inst->scrollY = maxScroll;
+        LONG maxScroll = active->contentBottomY - inst->gadHeight;
+        if (maxScroll < active->contentTopY) maxScroll = active->contentTopY;
+        if (active->scrollY < active->contentTopY) active->scrollY = active->contentTopY;
+        if (active->scrollY > maxScroll)           active->scrollY = maxScroll;
     }
 }
 
@@ -109,6 +115,63 @@ ULONG TTL_OnDomain(Class *cl, Object *o, struct gpDomain *msg)
             break;
     }
     return 1;
+}
+
+/* ------------------------------------------------------------------ */
+/* Waiting screen (see TTIMELINE_ViewMode / ttl_is_waiting)              */
+/* ------------------------------------------------------------------ */
+
+#define TTL_WAIT_DEFAULT_TEXT "Loading\xE2\x80\xA6"   /* "Loading…" */
+#define TTL_WAIT_GAP 8   /* pixels between image and text */
+
+static void ttl_render_wait(TTLData *inst, struct RastPort *rp, struct Gadget *g)
+{
+    WORD  gadLeft = g->LeftEdge, gadTop = g->TopEdge;
+    WORD  gadW    = g->Width,    gadH   = g->Height;
+    BmImage *img  = &inst->style->waitImage;
+    BOOL  haveImg = BmImage_IsLoaded(img);
+    WORD  imgW    = haveImg ? (WORD)img->width  : 0;
+    WORD  imgH    = haveImg ? (WORD)img->height : 0;
+    const char *text = (inst->waitText && inst->waitText[0])
+                       ? inst->waitText : TTL_WAIT_DEFAULT_TEXT;
+    WORD  textW = 0, textH = 0, textAscent = 0;
+    WORD  blockH, blockTop;
+
+    SetAPen(rp, (LONG)FS3E_PEN(inst->style, FS3E_COLOR_TIMELINE_BG));
+    SetDrMd(rp, JAM1);
+    RectFill(rp, gadLeft, gadTop, gadLeft + gadW - 1, gadTop + gadH - 1);
+
+    if (inst->style->dcNormal && text[0]) {
+        struct URPTextMetric tm;
+        URPDC_TextSizeUTF8(inst->style->dcNormal, text, -1, &tm);
+        textW      = (tm.width  > 0) ? (WORD)tm.width  : 0;
+        textH      = (tm.height > 0) ? (WORD)tm.height : inst->lineHeight;
+        textAscent = (tm.baseY  > 0) ? (WORD)tm.baseY  : inst->lineAscent;
+    }
+
+    blockH   = (WORD)(imgH + ((haveImg && textW > 0) ? TTL_WAIT_GAP : 0) + textH);
+    blockTop = (WORD)(gadTop + (gadH - blockH) / 2);
+
+    if (haveImg) {
+        WORD imgX = (WORD)(gadLeft + (gadW - imgW) / 2);
+        BltBitMapRastPort(img->bitmap, 0, 0, rp, imgX, blockTop, imgW, imgH, 0xC0);
+    }
+
+    if (textW > 0) {
+        struct URPTextPos pos;
+        ULONG txtPen = FS3E_PEN(inst->style, FS3E_COLOR_TEXT);
+        ULONG bgPen  = FS3E_PEN(inst->style, FS3E_COLOR_TIMELINE_BG);
+
+        pos.x = (WORD)(gadLeft + (gadW - textW) / 2);
+        pos.y = (WORD)(blockTop + (haveImg ? imgH + TTL_WAIT_GAP : 0) + textAscent);
+
+        URPDC_SetDrawColorFromPen(inst->style->dcNormal, inst->screen,
+                                  (LONG)txtPen, (LONG)bgPen);
+        SetAPen(rp, (LONG)txtPen);
+        SetBPen(rp, (LONG)bgPen);
+        SetDrMd(rp, JAM2);
+        URPDrawTextUTF8(rp, inst->style->dcNormal, &pos, text, (ULONG)(-1));
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -165,13 +228,23 @@ ULONG TTL_OnRender(Class *cl, Object *o, struct gpRender *msg)
         inst->layoutToDo = FALSE;
     }
 
+    if (ttl_is_waiting(inst)) {
+        ttl_render_wait(inst, rp, g);
+       /* now use else so we have still the resize grip renderered */
+    } else
+    {
+        /* classic list draw mode start here */
+
+    {
+    TTLChannel *active = ttl_active(inst);
+
     /* Apply pending scroll */
     if (inst->pendingScroll) {
-        LONG maxScroll = inst->contentBottomY - gadH;
-        if (maxScroll < inst->contentTopY) maxScroll = inst->contentTopY;
-        inst->scrollY = inst->pendingScrollY;
-        if (inst->scrollY < inst->contentTopY) inst->scrollY = inst->contentTopY;
-        if (inst->scrollY > maxScroll)         inst->scrollY = maxScroll;
+        LONG maxScroll = active->contentBottomY - gadH;
+        if (maxScroll < active->contentTopY) maxScroll = active->contentTopY;
+        active->scrollY = inst->pendingScrollY;
+        if (active->scrollY < active->contentTopY) active->scrollY = active->contentTopY;
+        if (active->scrollY > maxScroll)           active->scrollY = maxScroll;
         inst->pendingScroll = FALSE;
     }
 
@@ -184,8 +257,8 @@ ULONG TTL_OnRender(Class *cl, Object *o, struct gpRender *msg)
 
     /* Warm window: a buffer of TTL_TILE_BUF tile rows above and below
      * the visible area ensures tiles are ready when the user scrolls. */
-    warmTop = inst->scrollY - (LONG)TTL_TILE_BUF * TTL_TILE_HEIGHT;
-    warmBot = inst->scrollY + gadH + (LONG)TTL_TILE_BUF * TTL_TILE_HEIGHT;
+    warmTop = active->scrollY - (LONG)TTL_TILE_BUF * TTL_TILE_HEIGHT;
+    warmBot = active->scrollY + gadH + (LONG)TTL_TILE_BUF * TTL_TILE_HEIGHT;
 
     /* Evict cold tiles */
     ttl_tile_evict_out_of_range(inst, warmTop, warmBot);
@@ -205,8 +278,8 @@ ULONG TTL_OnRender(Class *cl, Object *o, struct gpRender *msg)
 
         /* Only blit the portion that intersects the visible gadget area */
         {
-            LONG visTop = inst->scrollY;
-            LONG visBot = inst->scrollY + gadH;
+            LONG visTop = active->scrollY;
+            LONG visBot = active->scrollY + gadH;
 
             /* Intersection of tile and visible window in timeline coords */
             LONG clipTop = tileBaseY > visTop ? tileBaseY : visTop;
@@ -228,8 +301,8 @@ ULONG TTL_OnRender(Class *cl, Object *o, struct gpRender *msg)
     }
 
     /* Fill the area above the first post if visible */
-    if (inst->contentTopY > inst->scrollY) {
-        WORD fillBot = (WORD)(gadTop + (inst->contentTopY - inst->scrollY));
+    if (active->contentTopY > active->scrollY) {
+        WORD fillBot = (WORD)(gadTop + (active->contentTopY - active->scrollY));
         if (fillBot > gadTop) {
             SetAPen(rp, (LONG)FS3E_PEN(inst->style, FS3E_COLOR_TIMELINE_BG));
             RectFill(rp, gadLeft, gadTop, gadLeft+gadW-1, fillBot-1);
@@ -237,14 +310,18 @@ ULONG TTL_OnRender(Class *cl, Object *o, struct gpRender *msg)
     }
 
     /* Fill the area below the last post if visible */
-    if (inst->contentBottomY < inst->scrollY + gadH) {
-        WORD fillTop = (WORD)(gadTop + (inst->contentBottomY - inst->scrollY));
+    if (active->contentBottomY < active->scrollY + gadH) {
+        WORD fillTop = (WORD)(gadTop + (active->contentBottomY - active->scrollY));
         if (fillTop < gadTop + gadH) {
             if (fillTop < gadTop) fillTop = gadTop;
             SetAPen(rp, (LONG)FS3E_PEN(inst->style, FS3E_COLOR_TIMELINE_BG));
             RectFill(rp, gadLeft, fillTop, gadLeft+gadW-1, gadTop+gadH-1);
         }
     }
+
+    } /* end active-channel scope */
+
+    } /* end else of wait mode, fallback to grip display  */
 
     /* TODO: text-selection COMPLEMENT overlay (future: walk selSpanA..selSpanB) */
 

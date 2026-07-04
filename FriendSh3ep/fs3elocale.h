@@ -45,11 +45,16 @@ enum {
 
     /* Menu: View */
     MSG_MENU_VIEW,
+
     MSG_VIEW_USER,
     MSG_VIEW_HOME,
     MSG_VIEW_LOCAL,
     MSG_VIEW_FEDERATED,
     MSG_VIEW_SEARCH,
+
+    MSG_VIEW_NOTIFICATIONS,
+    MSG_VIEW_BOOKMARK,
+    MSG_VIEW_NEWS,
 
     /* Menu: Settings */
     MSG_MENU_SETTINGS,

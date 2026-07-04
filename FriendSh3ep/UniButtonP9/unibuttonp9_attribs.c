@@ -24,25 +24,28 @@ void ubtp9_blit_state(UniButtonP9Data *inst, struct Gadget *g,
                       struct RastPort *rp, int state, UWORD *outImageState)
 {
     ULONG bgPen, txtPen;
-    int   patch9State;
+    int   patch9State = ubtp9_patch9_state(state);
 
-    ubtp9_state_pens(inst, state, inst->screen, &bgPen, &txtPen, outImageState);
+    ubtp9_state_pens(inst, state, &bgPen, &txtPen, outImageState);
 
-    if (!Patch9_IsLoaded(inst->patch9)) return;
-
-    switch (state) {
-    case UBTP9_STATE_SELECTED: patch9State = PATCH9_SELECTED; break;
-    case UBTP9_STATE_DISABLED: patch9State = PATCH9_DISABLED; break;
-    default:                   patch9State = PATCH9_NORMAL;   break;
+    if (Patch9_IsLoaded(inst->patch9)) {
+        /* Skin: blitter-only, safe from any context (including
+         * GM_GOACTIVE/GM_HANDLEINPUT/GM_GOINACTIVE's input.device context).
+         * Drawing it live -- never caching it -- is what lets its transparent
+         * (masked) corners show whatever is really behind the button (a
+         * BackFill pattern, a parent's own skin, ...). */
+        Patch9_Draw(inst->patch9, patch9State, rp,
+                   g->LeftEdge, g->TopEdge, g->Width, g->Height);
+    } else {
+        /* Skin image missing or failed to load -- fall back to a flat
+         * rect in the state's bg pen (see ubtp9_state_pens), so the button
+         * still reads as a button instead of leaving whatever was behind
+         * it untouched. */
+        SetAPen(rp, (LONG)bgPen);
+        RectFill(rp, (LONG)g->LeftEdge, (LONG)g->TopEdge,
+                (LONG)(g->LeftEdge + g->Width - 1),
+                (LONG)(g->TopEdge  + g->Height - 1));
     }
-
-    /* Skin: blitter-only, safe from any context (including
-     * GM_GOACTIVE/GM_HANDLEINPUT/GM_GOINACTIVE's input.device context).
-     * Drawing it live -- never caching it -- is what lets its transparent
-     * (masked) corners show whatever is really behind the button (a
-     * BackFill pattern, a parent's own skin, ...). */
-    Patch9_Draw(inst->patch9, patch9State, rp,
-               g->LeftEdge, g->TopEdge, g->Width, g->Height);
 
     /* Text: also drawn live, directly on top of the skin just drawn, via
      * URPDrawTextUTF8 -- there's no flat, known colour to pre-bake a
@@ -87,6 +90,7 @@ void ubtp9_notify_pressed(Class *cl, Object *o, struct GadgetInfo *gi)
     tags[3] = TRUE;
     tags[4] = TAG_DONE;
 
+    GetAttr(GA_Selected,o,&tags[3]);
     /* Direct DoMethodA to target: avoids the OS3.9 DoSuperMethodA/OM_NOTIFY bug */
     nmsg.MethodID     = OM_UPDATE;
     nmsg.opu_AttrList = (struct TagItem *)tags;

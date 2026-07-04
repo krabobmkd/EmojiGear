@@ -380,64 +380,80 @@ void ttl_post_layout(TTLData *inst, TTLPost *post)
 /* ------------------------------------------------------------------ */
 /* ttl_layout_all_posts                                                 */
 /*                                                                      */
-/* Recompute heights for all posts and rebuild their Y positions.       */
+/* Recompute heights for all posts and rebuild their Y positions, in    */
+/* every channel -- not just the active one, so any channel is ready   */
+/* to display correctly the moment it becomes active via                */
+/* TTIMELINE_ViewMode, without needing per-channel dirty tracking.      */
 /* Called after font or width change.                                   */
 /* ------------------------------------------------------------------ */
 
 void ttl_layout_all_posts(TTLData *inst)
 {
-    TTLPost *post;
+    ULONG ch;
 //bdbprintf("ttl_layout_all_posts\n");
-    /* Re-layout all posts (may change heights) */
-    for (post = (TTLPost *)inst->posts.mlh_Head;
-         post->node.mln_Succ;
-         post = (TTLPost *)post->node.mln_Succ)
-    {
-        ttl_post_layout(inst, post);
-    }
+    for (ch = 0; ch < TTIMELINE_NUM_VIEWMODES; ch++) {
+        TTLPost *post;
+        struct MinList *posts = &inst->channels[ch].posts;
 
-    /* Recompute Y positions: head is newest, sits at contentTopY */
-    ttl_rebuild_ypositions(inst);
+        /* Re-layout all posts (may change heights) */
+        for (post = (TTLPost *)posts->mlh_Head;
+             post->node.mln_Succ;
+             post = (TTLPost *)post->node.mln_Succ)
+        {
+            ttl_post_layout(inst, post);
+        }
+
+        /* Recompute Y positions: head is newest, sits at contentTopY */
+        ttl_rebuild_ypositions(inst, ch);
+    }
 }
 
 /* ------------------------------------------------------------------ */
 /* ttl_rebuild_ypositions                                               */
 /*                                                                      */
-/* Walk the post list from head (newest) to tail (oldest), assigning   */
-/* consecutive timelineY values starting at inst->contentTopY.         */
-/* Updates contentBottomY.                                              */
+/* Walk channel ch's post list from head (newest) to tail (oldest),    */
+/* assigning consecutive timelineY values starting at its contentTopY. */
+/* Updates that channel's contentBottomY.                               */
 /* ------------------------------------------------------------------ */
 
-void ttl_rebuild_ypositions(TTLData *inst)
+void ttl_rebuild_ypositions(TTLData *inst, ULONG ch)
 {
 //bdbprintf("ttl_rebuild_ypositions\n");
-    TTLPost *post;
-    LONG     y = inst->contentTopY;
+    TTLChannel *channel = &inst->channels[ch];
+    TTLPost    *post;
+    LONG        y = channel->contentTopY;
 
-    for (post = (TTLPost *)inst->posts.mlh_Head;
+    for (post = (TTLPost *)channel->posts.mlh_Head;
          post->node.mln_Succ;
          post = (TTLPost *)post->node.mln_Succ)
     {
         post->timelineY = y;
         y += post->height;
     }
-    inst->contentBottomY = y;
+    channel->contentBottomY = y;
 }
 
 /* ------------------------------------------------------------------ */
-/* ttl_clear_posts                                                      */
+/* ttl_clear_channel / ttl_clear_posts                                  */
 /* ------------------------------------------------------------------ */
 
-void ttl_clear_posts(TTLData *inst)
+void ttl_clear_channel(TTLData *inst, ULONG ch)
 {
-//bdbprintf("ttl_clear_posts\n");
+    TTLChannel  *channel = &inst->channels[ch];
     struct Node *node;
-    while ((node = RemHead((struct List *)&inst->posts)) != NULL)
+//bdbprintf("ttl_clear_channel\n");
+    while ((node = RemHead((struct List *)&channel->posts)) != NULL)
         ttl_post_free((TTLPost *)node);
-    inst->postCount      = 0;
-    inst->contentTopY    = 0;
-    inst->contentBottomY = 0;
-    inst->scrollY        = 0;
+    channel->postCount      = 0;
+    channel->contentTopY    = 0;
+    channel->contentBottomY = 0;
+    channel->scrollY        = 0;
     inst->layoutToDo = TRUE;
     ttl_tiles_invalidate_all(inst);
+}
+
+/* Clear only the currently displayed channel (see TTIMELINE_ClearPosts). */
+void ttl_clear_posts(TTLData *inst)
+{
+    ttl_clear_channel(inst, inst->viewMode);
 }

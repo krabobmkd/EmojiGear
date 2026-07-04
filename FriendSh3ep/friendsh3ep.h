@@ -21,6 +21,19 @@
 
 #define FRIENDSH3EP_VERSION "0.2"
 
+typedef enum {
+    VIEWMODE_User    = 0,
+    VIEWMODE_Home,
+    VIEWMODE_Local,
+    VIEWMODE_Fed,
+    VIEWMODE_Search,
+    VIEWMODE_Notifs,
+    VIEWMODE_Bookmarks,
+    VIEWMODE_News,
+    VIEWMODE_NumberOf
+} fs3eViewMode;
+
+
 /* Application struct: holds every persistent BOOPSI object and IPC handle. */
 struct App {
     Object *window_obj;        /* window.class object (persistent) */
@@ -46,9 +59,9 @@ struct App {
     Object *titlebar_altposBtn;      /* GID_TITLEBAR_ALTPOS  */
     Object *titlebar_depthBtn;       /* GID_TITLEBAR_DEPTH   */
     Object *titlebar_userIcon;       /* placeholder for user avatar */
-    Object *titlebar_settingsBtn;       /* GID_TITLEBAR_DEPTH   */
-    Object *titlebar_accountBtn;       /* placeholder for user avatar */
-
+    Object *titlebar_settingsBtn;       /*  */
+    Object *titlebar_accountBtn;       /*  */
+    Object *titlebar_newtootBtn;       /*  */
 
     /* Part B: navigation bar (NavBarLayoutClass).
      * nav_btns[0..7] correspond to GID_NAV_HOME..GID_NAV_ACCOUNTS. */
@@ -71,6 +84,9 @@ struct App {
 
     /* Color theme — pens obtained from the current screen's ColorMap */
     FS3EStyle style;
+
+    /* enum fs3eViewMode */
+    ULONG     viewMode;
 };
 
 extern struct App *app;
@@ -78,4 +94,5 @@ extern struct App *app;
 /* Print pmessage (if non-NULL) and exit(0); runs exitclose() via atexit(). */
 void cleanexit(const char *pmessage);
 
+void fs3e_setViewMode(ULONG viewMode);
 #endif /* FRIENDSH3EP_H */

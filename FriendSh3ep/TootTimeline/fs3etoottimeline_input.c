@@ -34,10 +34,11 @@
 
 static void ttl_set_scroll(TTLData *inst, LONG newScrollY)
 {
-    LONG maxScroll = inst->contentBottomY - inst->gadHeight;
-    if (maxScroll < inst->contentTopY) maxScroll = inst->contentTopY;
-    if (newScrollY < inst->contentTopY) newScrollY = inst->contentTopY;
-    if (newScrollY > maxScroll)         newScrollY = maxScroll;
+    TTLChannel *active = ttl_active(inst);
+    LONG maxScroll = active->contentBottomY - inst->gadHeight;
+    if (maxScroll < active->contentTopY) maxScroll = active->contentTopY;
+    if (newScrollY < active->contentTopY) newScrollY = active->contentTopY;
+    if (newScrollY > maxScroll)           newScrollY = maxScroll;
     inst->pendingScroll  = TRUE;
     inst->pendingScrollY = newScrollY;
 }
@@ -46,11 +47,12 @@ static void ttl_set_scroll(TTLData *inst, LONG newScrollY)
 /* Hit-test helpers (future click / text selection)                    */
 /* ------------------------------------------------------------------ */
 
-/* Find the post whose Y range contains timelineY, or NULL. */
+/* Find the post whose Y range contains timelineY, or NULL, in the
+ * currently active channel. */
 static TTLPost *ttl_hit_post(TTLData *inst, LONG timelineY)
 {
     TTLPost *post;
-    for (post = (TTLPost *)inst->posts.mlh_Head;
+    for (post = (TTLPost *)ttl_active(inst)->posts.mlh_Head;
          post->node.mln_Succ;
          post = (TTLPost *)post->node.mln_Succ)
     {
@@ -107,13 +109,18 @@ ULONG TTL_OnGoActive(Class *cl, Object *o, struct gpInput *msg)
 
     *msg->gpi_Termination = 0;
 
+    /* No list to scroll while showing the waiting screen (see
+     * TTIMELINE_ViewMode / ttl_is_waiting) -- refuse activation entirely. */
+    if (ttl_is_waiting(inst))
+        return GMR_NOREUSE;
+
     if (msg->gpi_IEvent &&
         msg->gpi_IEvent->ie_Class == IECLASS_RAWMOUSE &&
         (msg->gpi_IEvent->ie_Code & ~IECODE_UP_PREFIX) == IECODE_LBUTTON)
     {
         inst->dragActive      = TRUE;
         inst->dragStartGadY   = msg->gpi_Mouse.Y;
-        inst->dragStartScrollY = inst->scrollY;
+        inst->dragStartScrollY = ttl_active(inst)->scrollY;
         return GMR_MEACTIVE;
     }
 
@@ -145,7 +152,7 @@ ULONG TTL_OnHandleInput(Class *cl, Object *o, struct gpInput *msg)
 
             if (dy < 4) {
                 /* Click: hit-test for hot-spot */
-                LONG timelineY = inst->scrollY + msg->gpi_Mouse.Y;
+                LONG timelineY = ttl_active(inst)->scrollY + msg->gpi_Mouse.Y;
                 TTLPost *post = ttl_hit_post(inst, timelineY);
                 if (post) {
                     /* Check hot-spots */

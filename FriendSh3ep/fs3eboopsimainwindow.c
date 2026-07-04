@@ -30,6 +30,7 @@
 #include <stdio.h>
 
 #include "UniButtonP9/unibuttonp9.h"
+#include "UniButtonBGBM/unibuttonbgbm.h"
 /* This is the Intuition-level Window. On OS3 it is recreated every time the
  * window is (re)opened: when iconifying/reopening, the BOOPSI objects are
  * kept but the Intuition-level Window/Screen instances are torn down. */
@@ -70,9 +71,7 @@ static void GenericOpenWindow(FS3EMainWindow *mw, Object *window_obj)
     if (CurrentMainWindow) return;  /* already open */
     if (!CurrentMainScreen) return; /* need an active screen */
 
-    /* Synchronize screen palette colors.
-     * must be done before opening window, and when screen is known. */
-    FS3EStyle_ApplyColors(&app->style, CurrentMainScreen);
+
 
     /* Load title bar button images for this screen and push them onto the
      * (already created, still un-opened) title bar gadgets. Button cell
@@ -85,19 +84,47 @@ static void GenericOpenWindow(FS3EMainWindow *mw, Object *window_obj)
         app->titlebar_closeBtn, app->titlebar_iconifyBtn,
         app->titlebar_altposBtn, app->titlebar_depthBtn);
 
+    /* Synchronize screen palette colors.
+     * must be done before opening window, and when screen is known.
+     * note: as datatype image reading in FS3EStyle_LoadThemeImages can realloc colors,
+     * better do this after for 8bit indexed palette modes:
+     */
+    FS3EStyle_ApplyColors(&app->style, CurrentMainScreen);
+
     if(app->titlebar_settingsBtn)
     {
+
         SetGdAttrs(app->titlebar_settingsBtn,
             UBTP9_Patch9,
-             (app->style.bt1Patch9.img.bitmap)?
-            (ULONG)&app->style.bt1Patch9:NULL,TAG_END);
+             (app->style.patch9[FS3ESTYLE_PATCH9_BT1].img.bitmap)?
+            (ULONG)&app->style.patch9[FS3ESTYLE_PATCH9_BT1]:NULL,TAG_END);
     }
     if(app->titlebar_accountBtn)
     {
         SetGdAttrs(app->titlebar_accountBtn,
             UBTP9_Patch9,
-             (app->style.bt1Patch9.img.bitmap)?
-            (ULONG)&app->style.bt1Patch9:NULL,TAG_END);
+             (app->style.patch9[FS3ESTYLE_PATCH9_BT1].img.bitmap)?
+            (ULONG)&app->style.patch9[FS3ESTYLE_PATCH9_BT1]:NULL,TAG_END);
+    }
+    if(app->titlebar_newtootBtn)
+    {
+        SetGdAttrs(app->titlebar_newtootBtn,
+            UBTP9_Patch9,
+             (app->style.patch9[FS3ESTYLE_PATCH9_BT2].img.bitmap)?
+            (ULONG)&app->style.patch9[FS3ESTYLE_PATCH9_BT2]:NULL,TAG_END);
+    }
+    /* nav_btns[] are UniButtonBGBM: always pass &app->style -- unlike
+     * UBTP9_Patch9 above, there's no need to gate this on any one image
+     * having loaded, since UniButtonBGBM checks style->btbgbmBitmap[state]
+     * per state and falls back to its flat colour fill for whichever
+     * states don't have one (see ubgbm_blit_state). */
+    {
+        int i;
+        for (i = 0; i < 8; i++) {
+            if (app->nav_btns[i])
+                SetGdAttrs(app->nav_btns[i],
+                    UBGBM_Style, (ULONG)&app->style, TAG_END);
+        }
     }
 
     DoMethod(window_obj, WM_RETHINK);
