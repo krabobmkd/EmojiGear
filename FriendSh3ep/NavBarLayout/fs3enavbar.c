@@ -9,8 +9,14 @@
  * Row-mode threshold: all 8 children's GM_DOMAIN(MINIMUM) widths are
  * queried; the maximum is generalMinW.  If the available width is at
  * least 8 * generalMinW we use a single row; otherwise two rows of 4.
- * Single-row mode: buttons fill the full height given by the parent.
- * Two-row mode: each row gets half the height.
+ *
+ * GM_DOMAIN always reserves height for 2 rows (2 * generalMinH), no
+ * matter which row mode is active -- this is what the parent layout
+ * hands back in GM_LAYOUT's h, so:
+ *   Single-row mode: buttons fill the full (2-row) height given by the
+ *                     parent, i.e. twice their minimal height.
+ *   Two-row mode:    each row gets half that height, i.e. exactly one
+ *                     button's minimal height.
  */
 
 #include <proto/exec.h>
@@ -139,22 +145,14 @@ static ULONG NavBarLayout_OnDomain(Class *cl, Object *o, struct gpDomain *msg)
 
     getChildMinSize(inst, msg->gpd_GInfo, &minW, &minH);
 
-    /* Determine row mode from the best width estimate we have:
-     *   1. G(o)->Width  — set after the first GM_LAYOUT, most accurate.
-     *   2. domain->Width — the width layout.gadget proposes for this query.
-     *   3. inst->twoRowMode — cached from the last GM_LAYOUT pass.
-     * The height is FIXED (MINIMUM == MAXIMUM) so layout.gadget does not
-     * stretch the nav bar vertically. */
-    {
-        WORD availW = G(o)->Width;
-        if (availW <= 0) availW = (WORD)domain->Width;
-
-        if (availW > 0)
-            inst->twoRowMode = (availW < (WORD)(NBLAYOUT_NUMBUTTONS * minW));
-        /* else keep inst->twoRowMode from last GM_LAYOUT */
-    }
-
-    fixedH = inst->twoRowMode ? (WORD)(minH * 2) : minH;
+    /* The height is FIXED (MINIMUM == MAXIMUM) so layout.gadget does not
+     * stretch the nav bar vertically, and it is ALWAYS room for 2 rows of
+     * buttons -- even in single-row mode, where the buttons then simply get
+     * twice their minimal height. This keeps the reserved height stable
+     * across row-mode flips, so it can't go stale relative to whatever
+     * row mode GM_LAYOUT later picks (which depends on the actual width at
+     * layout time, not on anything decided here). */
+    fixedH = (WORD)(minH * 2);
 
     switch (msg->gpd_Which) {
         case GDOMAIN_MINIMUM:
@@ -195,7 +193,9 @@ static ULONG NavBarLayout_OnLayout(Class *cl, Object *o, struct gpLayout *msg)
 
     getChildMinSize(inst, msg->gpl_GInfo, &minW, &minH);
 
-    /* Update cached row mode so GM_DOMAIN returns consistent heights */
+    /* Row mode is decided here, from the actual width handed to this
+     * layout pass -- GM_DOMAIN no longer depends on it (height is always
+     * fixed to 2 rows worth), so there's nothing to keep in sync. */
     inst->twoRowMode = (w < (WORD)(NBLAYOUT_NUMBUTTONS * minW));
 
     childMsg.MethodID    = GM_LAYOUT;

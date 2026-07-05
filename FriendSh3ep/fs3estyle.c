@@ -202,7 +202,7 @@ static void compute_layout(FS3EStyle *st)
     st->postPadLeft = (WORD)(lineH / 3 + 2);
     st->avatarGap   = (WORD)(lineH / 3 + 2);
 
-    printf("lineH:%d avatarGap:%d\n",lineH,st->avatarGap);
+ //   printf("lineH:%d avatarGap:%d\n",lineH,st->avatarGap);
 }
 
 /* Flush fonts in dc and re-add them at the given size.

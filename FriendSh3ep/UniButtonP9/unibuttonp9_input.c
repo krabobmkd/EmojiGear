@@ -14,6 +14,7 @@
 #include <intuition/gadgetclass.h>
 #include "unibuttonp9_private.h"
 
+#include "../bdbprintf.h"
 static BOOL mouse_over(struct Gadget *g, struct gpInput *gpi)
 {
     WORD mx = gpi->gpi_Mouse.X;
@@ -49,6 +50,7 @@ ULONG UniButtonP9_OnGoActive(Class *cl, Object *o, struct gpInput *msg)
 
     if (!msg->gpi_IEvent) return GMR_NOREUSE;
 
+bdbprintf("p9ongoac:inst->pushButton %d\n",inst->pushButton);
     if (inst->pushButton)
         inst->prevSelected = (BOOL)((G(o)->Flags & GFLG_SELECTED) != 0);
 
@@ -68,7 +70,7 @@ ULONG UniButtonP9_OnHandleInput(Class *cl, Object *o, struct gpInput *msg)
     BOOL                over;
 
     if (!ie) return GMR_MEACTIVE;
-
+bdbprintf("p9ongoac:inst->pushButton %d\n",inst->pushButton);
     if (ie->ie_Class == IECLASS_RAWMOUSE) {
 
         if (ie->ie_Code == SELECTUP) {

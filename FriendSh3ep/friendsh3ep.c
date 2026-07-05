@@ -252,28 +252,45 @@ static void FS3EApp_SetButtonFontSize(ULONG pointSize)
                                     : "OpenMoji-black-glyf.ttf",
         (int)pointSize, 0);
 
-    /* Notify existing buttons: nav_btns[] are UniButtonBGBM (UBGBM_PointSize
-     * triggers its cache invalidation); titlebar_settingsBtn/accountBtn are
-     * UniButtonP9 (UBTP9_PointSize just retriggers live metrics -- no
-     * cache there). Passing both tags to every button is harmless: each
-     * class's OM_SET ignores the tag it doesn't recognise.
+    /* Notify existing buttons, one macro per real class so each object is
+     * only ever sent tags its own OM_SET understands -- nav_btns[] are
+     * UniButtonBGBM (UBGBM_PointSize triggers its cache invalidation);
+     * titlebar_settingsBtn/accountBtn/newtootBtn are UniButtonP9
+     * (UBTP9_PointSize just retriggers live metrics -- no cache there).
      * Gadget pointers are NULL before buttons are created, so this is safe. */
     {
         int i;
-#define RESIZE_BTN(o) if (o) SetAttrs((Object *)(o), \
-            UBGBM_PointSize, pointSize, UBTP9_PointSize, pointSize, TAG_DONE)
-        for (i = 0; i < 8; i++) RESIZE_BTN(app->nav_btns[i]);
-        RESIZE_BTN(app->titlebar_settingsBtn);
-        RESIZE_BTN(app->titlebar_accountBtn);
-        RESIZE_BTN(app->titlebar_newtootBtn);
-#undef RESIZE_BTN
+#define RESIZE_BGBM_BTN(o) if (o) SetAttrs((Object *)(o), \
+            UBGBM_PointSize, pointSize, TAG_DONE)
+#define RESIZE_P9_BTN(o) if (o) SetAttrs((Object *)(o), \
+            UBTP9_PointSize, pointSize, TAG_DONE)
+        for (i = 0; i < 8; i++) RESIZE_BGBM_BTN(app->nav_btns[i]);
+        RESIZE_P9_BTN(app->titlebar_settingsBtn);
+        RESIZE_P9_BTN(app->titlebar_accountBtn);
+        RESIZE_P9_BTN(app->titlebar_newtootBtn);
+#undef RESIZE_BGBM_BTN
+#undef RESIZE_P9_BTN
 
     }
 }
-
+/* avoid flooding reloading font and remaking all layout when changing font fast */
+static int delayApplyFontSettings = FALSE;
 /* Re-apply font settings from app->settings to all draw contexts.
- * Called by fs3ethemeview.c / fs3eaction.c after font or rendering options change. */
+ * Called by fs3ethemeview.c / fs3eaction.c after font or rendering options change.
+  THIS is ithe public one
+ */
 void FS3EApp_ApplyFontSettings(void)
+{
+    if(!delayApplyFontSettings)
+    {
+        delayApplyFontSettings = TRUE;
+        if (myTask) Signal(myTask, SIGBREAKF_CTRL_F);
+    }
+}
+/* this is the private delayed version .
+This has to be followed by a WM_RETHINK to recompute whole layout against font size*
+- expect when used just before first window open  */
+static void FS3EApp_ApplyFontSettings_Delayed()
 {
     ULONG prefFlags;
     if (!app || !app->window_obj || !app->buttonDC) return;
@@ -296,14 +313,18 @@ void FS3EApp_ApplyFontSettings(void)
                           app->settings.fallback2FontPath,
                           app->settings.colorEmojiFontPath);
 
-    if (CurrentMainWindow && app->tootTimeline)
-        SetGadgetAttrs((struct Gadget *)app->tootTimeline,
-                       CurrentMainWindow, NULL,
-                       TTIMELINE_Style, (ULONG)&app->style,
-                       TAG_DONE);
+    /* SetAttrs (not SetGadgetAttrs) so this reaches the gadget even before
+     * the window is open (CurrentMainWindow is still NULL at startup, just
+     * before FS3EMain_Show()) -- OM_SET's redraw is already gated on
+     * msg->ops_GInfo, so no window is required to re-cache line metrics. */
+    if (app->tootTimeline)
+        SetAttrs(app->tootTimeline,
+                 TTIMELINE_Style, (ULONG)&app->style,
+                 TAG_DONE);
 
-    /* Recompute minimum gadget sizes and relayout the whole window */
-    DoMethod(app->window_obj, WM_RETHINK);
+
+
+    delayApplyFontSettings = FALSE;
 }
 
 /* Create one UniButtonBGBM (flat-colour, cached-by-state), click arrives
@@ -359,12 +380,17 @@ void fs3e_setViewMode(ULONG viewMode)
 
     }
 
+    /* now, it's official */
+    app->viewMode = viewMode;
+
+    /* tell TootTimeline we're to display that channel */
     if (app->tootTimeline)
         SetGdAttrs(app->tootTimeline, TTIMELINE_ViewMode, viewMode, TAG_END);
 
-    app->viewMode = viewMode;
-
-    /* start updating the TootTimeLine */
+    /* ask network process to update that Toot category specifically...
+       eventually, toots will be received later and feed more toots in the TootTimeLine.
+       TODO
+    */
 }
 
 /* - - - - - - - - - - - - - - - - - - - MAIN - - - - - - - - - - - - - - - */
@@ -711,7 +737,19 @@ int main(int argc, char **argv)
         TAG_END);
     if (!app->window_obj) cleanexit("Can't create window");
 
+    /* synchronize fonts against settings before first layout */
+    FS3EApp_ApplyFontSettings_Delayed();
+
+    /* home by default ? */
+    fs3e_setViewMode(VIEWMODE_Home);
+
     flushbdbprint();
+
+
+/*---*/
+
+
+
 
     FS3EMain_Show(&app->mainwindow, app->window_obj);
     if (!CurrentMainWindow) cleanexit("Can't open window");
@@ -870,7 +908,8 @@ int main(int argc, char **argv)
             FS3EThemeView_HandleInput(&app->themeView);
 
             /* Drain the BOOPSI notification queue (OM_NOTIFY via ICA_TARGET). */
-            if (DelayQueue && BoopsiDelay_HasMessages(DelayQueue)) {
+            if (DelayQueue && BoopsiDelay_HasMessages(DelayQueue))
+            {
                 struct TagItem *msg;
                 refreshFlags = 0;
 
@@ -954,7 +993,8 @@ int main(int argc, char **argv)
                                 {
                                     /* possible because the GID order and the view enum match */
                                     fs3e_setViewMode((ULONG)(sender_ID-GID_NAV_USER));
-                                } else
+                                }
+                                else
                                 {   /* if up but is current viewmode, put selection back. */
                                     if(app->viewMode == (ULONG)(sender_ID-GID_NAV_USER))
                                     {
@@ -1021,29 +1061,37 @@ int main(int argc, char **argv)
                         default:
                             break;
                     }
-                }
+                } // end while boopsimessage
 
-                if ((refreshFlags & reflags_subjectEditor) && app->tootView.window)
-                    RefreshGList((struct Gadget *)app->tootView.subjectEditor,
-                                 app->tootView.window, NULL, 1);
+            } // end if has boopsimessage
 
-                if ((refreshFlags & reflags_bodyEditor) && app->tootView.window)
-                    RefreshGList((struct Gadget *)app->tootView.bodyEditor,
-                                 app->tootView.window, NULL, 1);
+            if ((refreshFlags & reflags_subjectEditor) && app->tootView.window)
+                RefreshGList((struct Gadget *)app->tootView.subjectEditor,
+                             app->tootView.window, NULL, 1);
 
-                if ((refreshFlags & reflags_tootTimeLine) && CurrentMainWindow && app->tootTimeline )
-                    RefreshGList((struct Gadget *)app->tootTimeline,
-                                 CurrentMainWindow, NULL, 1);
-                // if(refreshTitleBarLayout  && CurrentMainWindow)
-                // {
-                //     RefreshGList((struct Gadget *)app->titleBarLayout,
-                //                  CurrentMainWindow, NULL, 1);
-                //     refreshTitleBarLayout = 0;
-                // }
+            if ((refreshFlags & reflags_bodyEditor) && app->tootView.window)
+                RefreshGList((struct Gadget *)app->tootView.bodyEditor,
+                             app->tootView.window, NULL, 1);
 
+            if ((refreshFlags & reflags_tootTimeLine) && CurrentMainWindow && app->tootTimeline )
+                RefreshGList((struct Gadget *)app->tootTimeline,
+                             CurrentMainWindow, NULL, 1);
+            // if(refreshTitleBarLayout  && CurrentMainWindow)
+            // {
+            //     RefreshGList((struct Gadget *)app->titleBarLayout,
+            //                  CurrentMainWindow, NULL, 1);
+            //     refreshTitleBarLayout = 0;
+            // }
+            // test trick
+
+            if(delayApplyFontSettings)
+            {
+                FS3EApp_ApplyFontSettings_Delayed();
+                /* Recompute minimum gadget sizes and relayout the whole window */
+                DoMethod(app->window_obj, WM_RETHINK);
             }
-        }
-    }
+        }  // ed while events
+    }// end paragraph
 
     return 0;
 }

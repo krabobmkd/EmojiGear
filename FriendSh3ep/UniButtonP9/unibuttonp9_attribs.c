@@ -310,6 +310,7 @@ ULONG UniButtonP9_OnSet(Class *cl, Object *o, struct opSet *msg)
             break;
 
         case UBTP9_PushButton:
+        bdbprintf("UBTP9_PushButton:%08x\n",tag->ti_Data);
             inst->pushButton = tag->ti_Data ? TRUE : FALSE;
             result = 1;
             break;
