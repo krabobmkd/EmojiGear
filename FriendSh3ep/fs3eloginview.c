@@ -20,8 +20,11 @@
 #include <proto/label.h>
 #include <images/label.h>
 
-#include <proto/unitexteditor.h>
-#include <gadgets/unitexteditor.h>
+#include <proto/string.h>
+#include <gadgets/string.h>
+
+// #include <proto/unitexteditor.h>
+// #include <gadgets/unitexteditor.h>
 
 #include <proto/window.h>
 #include <classes/window.h>
@@ -45,33 +48,34 @@ static Object *Spacer(void)
 }
 
 /* Build one "Label: [editor]" row, sharing a URPDrawContext across fields. */
-static Object *MakeFieldEditor(ULONG gadId, ULONG pointSize, ULONG *sharedDc)
+static Object *MakeFieldEditor(ULONG gadId)
 {
     Object *editor;
 
-    editor = (Object *)NewObject(UNITEXTEDITOR_GetClass(), NULL,
+    editor = (Object *)NewObject(STRING_GetClass(), NULL,
         GA_ID,                  gadId,
         ICA_TARGET,             (ULONG)TargetInstance,
-        /* The gadget keeps BOOPSI activation and handles keys itself,
-         * so this sub-window does not need to track/forward focus. */
-        UTED_KeyMessageMode,    UKM_Internal,
-        UTED_BevelStyle,        BVS_FIELD,
-        UTED_PointSize,         pointSize,
-        UTED_TextPen,           1UL,
-        UTED_BgPen,             0UL,
-        UTED_MaxDisplayLines,   1UL,
-        UTED_NoLineFeed,        TRUE,
-        UTED_WordWrap,          FALSE,
-        UTED_LeftMargin,        2,
-        UTED_TopMargin,         3,
-        UTED_BottomMargin,      1,
-        UTED_LineSpacing,       0,
-        (*sharedDc) ? UTED_URPDrawContext : UTED_AddFont,
-        (*sharedDc) ? *sharedDc : (ULONG)"LiberationSans-Regular.ttf",
+        GA_TabCycle, TRUE,
+        // /* The gadget keeps BOOPSI activation and handles keys itself,
+        //  * so this sub-window does not need to track/forward focus. */
+        // UTED_KeyMessageMode,    UKM_Internal,
+        // UTED_BevelStyle,        BVS_FIELD,
+        // UTED_PointSize,         pointSize,
+        // UTED_TextPen,           1UL,
+        // UTED_BgPen,             0UL,
+        // UTED_MaxDisplayLines,   1UL,
+        // UTED_NoLineFeed,        TRUE,
+        // UTED_WordWrap,          FALSE,
+        // UTED_LeftMargin,        2,
+        // UTED_TopMargin,         3,
+        // UTED_BottomMargin,      1,
+        // UTED_LineSpacing,       0,
+        // (*sharedDc) ? UTED_URPDrawContext : UTED_AddFont,
+        // (*sharedDc) ? *sharedDc : (ULONG)"LiberationSans-Regular.ttf",
         TAG_END);
 
-    if (editor && !*sharedDc)
-        GetAttr(UTED_URPDrawContext, editor, sharedDc);
+    // if (editor && !*sharedDc)
+    //     GetAttr(UTED_URPDrawContext, editor, sharedDc);
 
     return editor;
 }
@@ -80,7 +84,6 @@ BOOL FS3ELoginView_Create(FS3ELoginView *lv, ULONG pointSize)
 {
     Object *serverLabel, *userLabel, *codeLabel;
     Object *formGroup, *centerRow, *outerCol;
-    ULONG sharedDc = 0;
 
     {
         LONG sl = lv->left, st = lv->top, sw = lv->width, sh = lv->height;
@@ -88,9 +91,9 @@ BOOL FS3ELoginView_Create(FS3ELoginView *lv, ULONG pointSize)
         lv->left = sl; lv->top = st; lv->width = sw; lv->height = sh;
     }
 
-    lv->serverEditor = MakeFieldEditor(GID_LOGIN_SERVER_EDITOR, pointSize, &sharedDc);
-    lv->userEditor   = MakeFieldEditor(GID_LOGIN_USER_EDITOR,   pointSize, &sharedDc);
-    lv->codeEditor   = MakeFieldEditor(GID_LOGIN_CODE_EDITOR,   pointSize, &sharedDc);
+    lv->serverEditor = MakeFieldEditor(GID_LOGIN_SERVER_EDITOR);
+    lv->userEditor   = MakeFieldEditor(GID_LOGIN_USER_EDITOR);
+    lv->codeEditor   = MakeFieldEditor(GID_LOGIN_CODE_EDITOR);
 
     if (!lv->serverEditor || !lv->userEditor || !lv->codeEditor)
         return FALSE;
@@ -110,6 +113,7 @@ BOOL FS3ELoginView_Create(FS3ELoginView *lv, ULONG pointSize)
         GA_RelVerify, TRUE,
         ICA_TARGET,   (ULONG)TargetInstance,
         GA_Text,      (ULONG)LOC(MSG_LOGIN_LOGIN),
+        GA_TabCycle, TRUE,
         TAG_END);
     if (!lv->loginBtn) return FALSE;
 
@@ -174,7 +178,7 @@ BOOL FS3ELoginView_Create(FS3ELoginView *lv, ULONG pointSize)
         WA_Width,  320,
         WA_Height, 200,
         WA_IDCMP,  IDCMP_CLOSEWINDOW | IDCMP_GADGETUP | IDCMP_NEWSIZE,
-        WA_Flags,  WFLG_DRAGBAR | WFLG_DEPTHGADGET | WFLG_CLOSEGADGET |
+        WA_Flags,  WFLG_DRAGBAR | WFLG_DEPTHGADGET | WFLG_CLOSEGADGET | WFLG_SIZEGADGET |
                    WFLG_ACTIVATE | WFLG_SMART_REFRESH,
         WA_Title,  (ULONG)LOC(MSG_LOGIN_TITLE),
         WINDOW_ParentGroup, (ULONG)lv->layout,
@@ -289,32 +293,38 @@ ULONG FS3ELoginView_GetSignalMask(FS3ELoginView *lv)
     return (1L << lv->window->UserPort->mp_SigBit);
 }
 
-static const char *GetEditorUTF8Text(Object *editor)
+// static const char *GetEditorUTF8Text(Object *editor)
+// {
+//     const char *text = NULL;
+
+//     if (!editor) return NULL;
+
+//     SetAttrs(editor, UTED_LineTextToGet, 0, TAG_END);
+//     GetAttr(UTED_LineUTF8TextBuffer, editor, (ULONG *)&text);
+
+//     return text;
+// }
+
+const char *FS3ELoginView_GetANSIServer(FS3ELoginView *lv)
 {
-    const char *text = NULL;
-
-    if (!editor) return NULL;
-
-    SetAttrs(editor, UTED_LineTextToGet, 0, TAG_END);
-    GetAttr(UTED_LineUTF8TextBuffer, editor, (ULONG *)&text);
-
+    const char *text;
+    if (!lv) return NULL;
+    GetAttr(GA_Text, lv->serverEditor, (ULONG *)&text);
     return text;
 }
 
-const char *FS3ELoginView_GetUTF8Server(FS3ELoginView *lv)
+const char *FS3ELoginView_GetANSIUser(FS3ELoginView *lv)
 {
+    const char *text;
     if (!lv) return NULL;
-    return GetEditorUTF8Text(lv->serverEditor);
+    GetAttr(GA_Text, lv->userEditor, (ULONG *)&text);
+    return text;
 }
 
-const char *FS3ELoginView_GetUTF8User(FS3ELoginView *lv)
+const char *FS3ELoginView_GetANSICode(FS3ELoginView *lv)
 {
+    const char *text;
     if (!lv) return NULL;
-    return GetEditorUTF8Text(lv->userEditor);
-}
-
-const char *FS3ELoginView_GetUTF8Code(FS3ELoginView *lv)
-{
-    if (!lv) return NULL;
-    return GetEditorUTF8Text(lv->codeEditor);
+    GetAttr(GA_Text, lv->codeEditor, (ULONG *)&text);
+    return text;
 }

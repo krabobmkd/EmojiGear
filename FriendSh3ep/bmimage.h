@@ -63,6 +63,23 @@ BOOL BmImage_Init(BmImage *img, const char *path);
 BOOL BmImage_Load(BmImage *img, struct Screen *screen);
 
 /*
+ * Load (or reload) the bitmap like BmImage_Load(), but scale it first via
+ * picture.datatype's PDTM_SCALE (PDTA_ScaleQuality on, i.e. "slow'n'nice").
+ *
+ * targetWidth x targetHeight is treated like a bounding box: the source
+ * rectangle is scaled (up or down) preserving its aspect ratio so it fits
+ * entirely inside that box, touching either its left/right borders or its
+ * top/bottom borders (whichever axis is the tighter fit) -- same rule
+ * "avatar/attachment thumbnail" callers expect from a target-box fit.
+ * img->width/height are the resulting scaled size, not targetWidth/Height.
+ *
+ * Pass screen=NULL to load raw (un-remapped); same lifecycle/ownership as
+ * BmImage_Load() otherwise.
+ */
+BOOL BmImage_LoadScaled(BmImage *img, struct Screen *screen,
+                         UWORD targetWidth, UWORD targetHeight);
+
+/*
  * Dispose the datatype object and clear bitmap/dimensions.
  * File path is kept so BmImage_Load() can be called again.
  * Call on iconify or screen close.

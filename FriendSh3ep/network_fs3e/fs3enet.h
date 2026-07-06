@@ -27,7 +27,8 @@ enum FS3ENetRequestType
     FS3ENETQ_LOGIN_FINISH,   /* exchange oauth code for access token (Phase 1) */
     FS3ENETQ_TIMELINE,       /* fetch a timeline page                (Phase 2) */
     FS3ENETQ_POST_STATUS,    /* publish a new status (toot)          (Phase 2) */
-    FS3ENETQ_FETCH_IMAGE     /* fetch/return cached avatar or media   (Phase 2) */
+    FS3ENETQ_FETCH_IMAGE,    /* fetch/return cached avatar or media   (Phase 2) */
+    FS3ENETQ_FLUSH_CACHE     /* delete every file in the disk cache               */
 };
 
 /* Result codes returned in FS3ENetMessage.fs3em_Result on reply. */
@@ -169,5 +170,12 @@ struct MsgPort *FS3ENet_Start(const char *cacheDir);
  * temporary port created by the caller to receive the shutdown reply.
  */
 void FS3ENet_Stop(struct MsgPort *requestPort, struct MsgPort *replyPort);
+
+/*
+ * Ask the network process to flush (delete every file in) its disk cache
+ * and wait for the reply. requestPort/replyPort as FS3ENet_Stop().
+ * Returns TRUE on FS3ENETR_OK, FALSE otherwise (including requestPort==NULL).
+ */
+BOOL FS3ENet_FlushCache(struct MsgPort *requestPort, struct MsgPort *replyPort);
 
 #endif /* FS3ENET_H */

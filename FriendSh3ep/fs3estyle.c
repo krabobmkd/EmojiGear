@@ -285,6 +285,10 @@ void FS3EStyle_InitDefaults(FS3EStyle *st)
     st->tbBgHook.h_SubEntry = NULL;
     st->tbBgHook.h_Data     = NULL;  /* unused -- see FS3EStyle_TitleBarBackFillFunc */
 
+    memset(&st->titlebarTitle, 0, sizeof(st->titlebarTitle));
+    st->titlebarTitleX = 0;
+    st->titlebarTitleY = 0;
+
     memset(&st->patch9, 0, sizeof(st->patch9));
     memset(&st->btbgbmBitmap, 0, sizeof(st->btbgbmBitmap));
     memset(&st->waitImage, 0, sizeof(st->waitImage));
@@ -598,6 +602,20 @@ BOOL FS3EStyle_LoadThemeImages(FS3EStyle *st, struct Screen *scr)
                StyleFile_GetString(&sf, "titlebar.bg", "tbbg.png"), path);
     }
 
+    /* Title bar title/logo image: titlebar.title in style.txt, blitted
+     * directly by TitleBarLayout_OnRender at (titlebarTitleX,
+     * titlebarTitleY) offset from the title bar's top-left, masked on
+     * color 0 (see BmImage_Load's PDTA_MaskPlane). Optional -- a missing
+     * file just means no title image is drawn. */
+    snprintf(path, sizeof(path), "%s/%s", st->themePath,
+             StyleFile_GetString(&sf, "titlebar.title", "title.iff"));
+    if (!BmImage_Init(&st->titlebarTitle, path) ||
+        !BmImage_Load(&st->titlebarTitle, scr)) {
+        printf("FS3EStyle_LoadThemeImages: titlebar.title not loaded (%s)\n", path);
+    }
+    st->titlebarTitleX = (WORD)StyleFile_GetInt(&sf, "titlebar.title.x", 0);
+    st->titlebarTitleY = (WORD)StyleFile_GetInt(&sf, "titlebar.title.y", 0);
+
     /* UniButtonP9 patch9 background skins: one Patch9 per
      * FS3ESTYLE_PATCH9_* slot (see patch9Slots[] above), each a 4
      * equal-size sub-image strip (PATCH9_NORMAL/SELECTED/DISABLED/HOVER)
@@ -684,6 +702,7 @@ void FS3EStyle_UnloadThemeImages(FS3EStyle *st)
     free_tb_images(st);
     BmImage_Unload(&st->tbButtons);
     BmImage_Unload(&st->tbBg);
+    BmImage_Unload(&st->titlebarTitle);
     for (i = 0; i < FS3ESTYLE_PATCH9_COUNT; i++)
         Patch9_Unload(&st->patch9[i]);
     for (i = 0; i < FS3ESTYLE_BTBGBM_COUNT; i++)
@@ -704,6 +723,7 @@ void FS3EStyle_FreeThemeImages(FS3EStyle *st)
     FS3EStyle_UnloadThemeImages(st);
     BmImage_Free(&st->tbButtons);
     BmImage_Free(&st->tbBg);
+    BmImage_Free(&st->titlebarTitle);
     for (i = 0; i < FS3ESTYLE_PATCH9_COUNT; i++)
         Patch9_Free(&st->patch9[i]);
     for (i = 0; i < FS3ESTYLE_BTBGBM_COUNT; i++)

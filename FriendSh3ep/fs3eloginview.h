@@ -49,8 +49,8 @@ BOOL FS3ELoginView_HandleInput(FS3ELoginView *lv);
 ULONG FS3ELoginView_GetSignalMask(FS3ELoginView *lv);
 
 /* Field accessors. DO NOT KEEP the returned pointer; can return NULL. */
-const char *FS3ELoginView_GetUTF8Server(FS3ELoginView *lv);
-const char *FS3ELoginView_GetUTF8User(FS3ELoginView *lv);
-const char *FS3ELoginView_GetUTF8Code(FS3ELoginView *lv);
+const char *FS3ELoginView_GetANSIServer(FS3ELoginView *lv);
+const char *FS3ELoginView_GetANSIUser(FS3ELoginView *lv);
+const char *FS3ELoginView_GetANSICode(FS3ELoginView *lv);
 
 #endif /* FS3ELOGINVIEW_H */

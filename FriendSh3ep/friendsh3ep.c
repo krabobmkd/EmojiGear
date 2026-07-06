@@ -48,6 +48,9 @@
 #include <proto/button.h>
 #include <gadgets/button.h>
 
+#include <proto/string.h>
+#include <gadgets/string.h>
+
 #include <proto/label.h>
 #include <images/label.h>
 
@@ -131,10 +134,12 @@ struct Library         *GadToolsBase  = NULL;
 struct Library *WindowBase         = NULL;
 struct Library *LayoutBase         = NULL;
 struct Library *ButtonBase         = NULL;
+struct Library *StringBase         = NULL;
 struct Library *LabelBase          = NULL;
 struct Library *CheckboxBase       = NULL;
 struct Library *ChooserBase        = NULL;
 struct Library *GetFileBase        = NULL;
+struct Library *IntegerBase        = NULL;
 struct Library *UniTextEditorBase  = NULL;
 struct Library *UniButtonBase      = NULL;
 
@@ -169,10 +174,12 @@ static LibraryEntry libraryTable[] = {
     {"window.class",                42, &WindowBase},
     {"gadgets/layout.gadget",       42, &LayoutBase},
     {"gadgets/button.gadget",       42, &ButtonBase},
+    {"gadgets/string.gadget",       42, &StringBase},
     {"images/label.image",          42, &LabelBase},
     {"gadgets/checkbox.gadget",      42, &CheckboxBase},
     {"gadgets/chooser.gadget",       44, &ChooserBase},
     {"gadgets/getfile.gadget",       42, &GetFileBase},
+    {"gadgets/integer.gadget",       44, &IntegerBase},
     {"gadgets/unitexteditor.gadget",  4, &UniTextEditorBase},
     {"gadgets/unibutton.gadget",     4, &UniButtonBase},
     {"utf8rastport.library",         4, &URPBase},
@@ -393,6 +400,19 @@ void fs3e_setViewMode(ULONG viewMode)
     */
 }
 
+/* Close every classic BOOPSI sub-window (but don't dispose them -- they
+ * stay alive for the next open). Called just before the main window is
+ * iconified: none of these belong on the Workbench screen once the main
+ * window is gone, and CurrentMainScreen may be closed/reopened across an
+ * iconify/uniconify cycle. */
+static void closeExternalViews(void)
+{
+    FS3ELoginView_Close(&app->loginView);
+    FS3ETootView_Close(&app->tootView);
+    FS3EThemeView_Close(&app->themeView);
+    FS3ESettingsView_Close(&app->settingsView);
+}
+
 /* - - - - - - - - - - - - - - - - - - - MAIN - - - - - - - - - - - - - - - */
 
 int main(int argc, char **argv)
@@ -470,6 +490,9 @@ int main(int argc, char **argv)
 
     if (!FS3EThemeView_Create(&app->themeView, LOC(MSG_THEMEV_TITLE)))
         cleanexit("Can't create theme view");
+
+    if (!FS3ESettingsView_Create(&app->settingsView, LOC(MSG_SETTINGSV_TITLE)))
+        cleanexit("Can't create settings view");
 
 
     /* ================================================================== */
@@ -777,8 +800,9 @@ int main(int argc, char **argv)
             loginSig = FS3ELoginView_GetSignalMask(&app->loginView);
             tootSig  = FS3ETootView_GetSignalMask(&app->tootView);
             ULONG themeSig = FS3EThemeView_GetSignalMask(&app->themeView);
+            ULONG settingsSig = FS3ESettingsView_GetSignalMask(&app->settingsView);
 
-            waitedSignals = winsignal | loginSig | tootSig | themeSig |
+            waitedSignals = winsignal | loginSig | tootSig | themeSig | settingsSig |
                 (1L << app->app_port->mp_SigBit) |
                 SIGBREAKF_CTRL_C |
                 SIGBREAKF_CTRL_F;
@@ -811,6 +835,7 @@ int main(int argc, char **argv)
 
                     case WMHI_ICONIFY:
                         FS3EMenu_Close(&app->menu, CurrentMainWindow);
+                        closeExternalViews();
                         FS3EMain_Close(&app->mainwindow, app->window_obj, TRUE);
                         break;
 
@@ -906,6 +931,7 @@ int main(int argc, char **argv)
             FS3ELoginView_HandleInput(&app->loginView);
             FS3ETootView_HandleInput(&app->tootView);
             FS3EThemeView_HandleInput(&app->themeView);
+            FS3ESettingsView_HandleInput(&app->settingsView);
 
             /* Drain the BOOPSI notification queue (OM_NOTIFY via ICA_TARGET). */
             if (DelayQueue && BoopsiDelay_HasMessages(DelayQueue))
@@ -929,6 +955,7 @@ int main(int argc, char **argv)
 
                         case GID_TITLEBAR_ICONIFY:
                         printf("GID_TITLEBAR_ICONIFY\n");
+                            closeExternalViews();
                             FS3EMain_Close(&app->mainwindow, app->window_obj, TRUE);
                             break;
 
@@ -1016,9 +1043,9 @@ int main(int argc, char **argv)
                         /* ---- Login sub-window ---- */
                         case GID_LOGIN_LOGIN_BUTTON:
                         {
-                            const char *server = FS3ELoginView_GetUTF8Server(&app->loginView);
-                            const char *user   = FS3ELoginView_GetUTF8User(&app->loginView);
-                            const char *code   = FS3ELoginView_GetUTF8Code(&app->loginView);
+                            const char *server = FS3ELoginView_GetANSIServer(&app->loginView);
+                            const char *user   = FS3ELoginView_GetANSIUser(&app->loginView);
+                            const char *code   = FS3ELoginView_GetANSICode(&app->loginView);
 /*re
                             bdbprintf("FriendSh3ep: login requested "
                                       "(server=%s user=%s code=%s)\n",
@@ -1107,6 +1134,7 @@ void exitclose(void)
         FS3ELoginView_Dispose(&app->loginView);
         FS3ETootView_Dispose(&app->tootView);
         FS3EThemeView_Dispose(&app->themeView);
+        FS3ESettingsView_Dispose(&app->settingsView);
 //  printf("exitclose2\n");
 // wait2sec();
         if (app->window_obj)

@@ -15,6 +15,7 @@
 #include "fs3eloginview.h"
 #include "fs3etootview.h"
 #include "fs3ethemeview.h"
+#include "fs3esettingsview.h"
 #include "fs3estyle.h"
 #include "fs3emenu.h"
 #include "fs3esettings.h"
@@ -78,6 +79,7 @@ struct App {
     FS3ELoginView  loginView;
     FS3ETootView   tootView;
     FS3EThemeView  themeView;
+    FS3ESettingsView settingsView;
 
     /* fs3enet request port, see network_fs3e/fs3enet.h */
     struct MsgPort *netRequestPort;

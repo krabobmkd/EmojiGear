@@ -411,7 +411,7 @@ BOOL FS3EThemeView_Create(FS3EThemeView *tv, const char *title)
         WA_Top,   80,
         WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_GADGETUP | IDCMP_RAWKEY,
         WA_Flags, WFLG_DRAGBAR | WFLG_DEPTHGADGET |
-                  WFLG_CLOSEGADGET | WFLG_ACTIVATE |
+                  WFLG_CLOSEGADGET | WFLG_ACTIVATE | WFLG_SIZEGADGET |
                   WFLG_SMART_REFRESH,
         WA_Title, (ULONG)title,
         WINDOW_ParentGroup, (ULONG)tv->mainLayout,

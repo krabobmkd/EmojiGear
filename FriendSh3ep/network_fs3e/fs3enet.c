@@ -177,6 +177,27 @@ void FS3ENet_Stop(struct MsgPort *requestPort, struct MsgPort *replyPort)
     GetMsg(replyPort);
 }
 
+BOOL FS3ENet_FlushCache(struct MsgPort *requestPort, struct MsgPort *replyPort)
+{
+    FS3ENetMessage msg;
+
+    if (!requestPort)
+        return FALSE;
+
+    msg.fs3em_Msg.mn_ReplyPort = replyPort;
+    msg.fs3em_Msg.mn_Length    = sizeof(msg);
+    msg.fs3em_Type             = FS3ENETQ_FLUSH_CACHE;
+    msg.fs3em_Data             = NULL;
+    msg.fs3em_DataLen          = 0;
+
+    PutMsg(requestPort, (struct Message *)&msg);
+
+    WaitPort(replyPort);
+    GetMsg(replyPort);
+
+    return (msg.fs3em_Result == FS3ENETR_OK);
+}
+
 /* Entry point of the network process, running as its own AmigaDOS task. */
 static void FS3ENet_ProcEntry(void)
 {
@@ -401,6 +422,12 @@ static void FS3ENet_HandleFetchImage(FS3ENetMessage *fs3em)
     fs3em->fs3em_Result  = FS3ENETR_OK;
 }
 
+/* FS3ENETQ_FLUSH_CACHE — delete every file in the disk cache directory. */
+static void FS3ENet_HandleFlushCache(FS3ENetMessage *fs3em)
+{
+    fs3em->fs3em_Result = FS3ECache_Flush() ? FS3ENETR_OK : FS3ENETR_NETWORK_ERROR;
+}
+
 /* Handles one request. FS3ENETQ_TIMELINE and FS3ENETQ_POST_STATUS are
  * stubbed until Phase 2 completes the timeline/post flow. */
 static void FS3ENet_Dispatch(FS3ENetMessage *fs3em)
@@ -417,6 +444,10 @@ static void FS3ENet_Dispatch(FS3ENetMessage *fs3em)
 
         case FS3ENETQ_FETCH_IMAGE:
             FS3ENet_HandleFetchImage(fs3em);
+            break;
+
+        case FS3ENETQ_FLUSH_CACHE:
+            FS3ENet_HandleFlushCache(fs3em);
             break;
 
         case FS3ENETQ_TIMELINE:

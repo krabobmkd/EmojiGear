@@ -42,6 +42,18 @@ typedef struct FS3ESettings {
      * NULL or "" → network process uses FS3ECACHE_DEFAULT_DIR. */
     char *cachePath;
 
+    /* User data directory (accounts, drafts, etc.) -- not consumed by any
+     * subsystem yet. AllocVec'd, always non-NULL; default "PROGDIR:.user". */
+    char *userDataPath;
+
+    /* Maximum on-disk media cache size, in megabytes. Not yet enforced by
+     * the network process (see FS3ECache_Flush for the manual alternative);
+     * default 4. */
+    int   maxCacheSizeMB;
+
+    /* Seconds between polling the server for new toots; default 60. */
+    int   tootCheckIntervalSec;
+
 } FS3ESettings;
 
 /*

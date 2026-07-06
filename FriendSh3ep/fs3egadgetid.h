@@ -68,4 +68,11 @@
 #define GID_THEMEV_PRESET_MONO        214
 #define GID_THEMEV_THEME_CHOOSER      215
 
+/* General settings window (fs3esettingsview.c) */
+#define GID_SETTINGSV_CACHE_PATH      300
+#define GID_SETTINGSV_USERDATA_PATH   301
+#define GID_SETTINGSV_MAX_CACHE_SIZE  302
+#define GID_SETTINGSV_FLUSH_CACHE     303
+#define GID_SETTINGSV_CHECK_INTERVAL  304
+
 #endif /* FS3EGADGETID_H */

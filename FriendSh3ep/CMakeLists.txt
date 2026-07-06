@@ -30,6 +30,7 @@ set(FRIENDSH3EP_SOURCES
     fs3eloginview.c
     fs3etootview.c
     fs3ethemeview.c
+    fs3esettingsview.c
     fs3elocale.c
     fs3emenu.c
     fs3eaction.c
@@ -68,6 +69,7 @@ set(FRIENDSH3EP_HEADERS
     fs3eloginview.h
     fs3etootview.h
     fs3ethemeview.h
+    fs3esettingsview.h
     fs3elocale.h
     fs3emenu.h
     fs3eaction.h

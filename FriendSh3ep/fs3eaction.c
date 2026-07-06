@@ -21,6 +21,7 @@
 #include "fs3eloginview.h"
 #include "fs3etootview.h"
 #include "fs3ethemeview.h"
+#include "fs3esettingsview.h"
 #include "fs3esettings.h"
 
 /* Forward-declared in friendsh3ep.c */
@@ -107,6 +108,8 @@ BOOL Action_About(struct App *ctx)
     es.es_Title        = (UBYTE *)"About FriendSh3ep";
     es.es_TextFormat   = (UBYTE *)"FriendSh3ep\n"
                                   "A Mastodon client for AmigaOS\n"
+                                  " License GPL  sources at:\n"
+                                  "github.com/krabobmkd/EmojiGear/FriendSh3ep"
                                   "Version " FRIENDSH3EP_VERSION "\n\n"
                                   "Built with utf8rastport.library\n"
                                   "and BOOPSI gadgets.";
@@ -194,8 +197,8 @@ BOOL Action_SettingsTheme(struct App *ctx)
 
 BOOL Action_SettingsGeneral(struct App *ctx)
 {
-    (void)ctx;
-    /* TODO: open general settings window */
+    if (!ctx) return FALSE;
+    FS3ESettingsView_Open(&ctx->settingsView);
     return TRUE;
 }
 

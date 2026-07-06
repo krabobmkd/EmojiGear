@@ -3,6 +3,11 @@
 
 ; bg of whole titlebar, can be truecolor or not.
 titlebar.bg = tbbg.png
+; titlebar title/logo image, color 0 transparent, blitted at
+; (titlebar.title.x, titlebar.title.y) offset from the title bar's top-left.
+titlebar.title = titlebig.iff
+titlebar.title.x = 58
+titlebar.title.y = 2
 
 ; will consider color 0 transparent:
 titlebar.buttons = tbbuttons.iff

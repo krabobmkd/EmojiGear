@@ -9,6 +9,7 @@
 #include "friendsh3ep.h"
 #include "fs3eboopsimainwindow.h"
 #include "../EmojiGear/tooltypepref.h"
+#include "network_fs3e/fs3enet_cache.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -32,6 +33,9 @@
 #define TT_WINDOW         "WINDOW"         /* "left:top:width:height"             */
 #define TT_WINDOWALT      "WINDOWALT"      /* "left:top:width:height" ZipWindow alternate */
 #define TT_CACHEPATH      "CACHEPATH"      /* media cache directory path          */
+#define TT_USERDATAPATH   "USERDATAPATH"   /* user data directory path            */
+#define TT_MAXCACHESIZE   "MAXCACHESIZEMB" /* max cache size, megabytes           */
+#define TT_CHECKINTERVAL  "CHECKINTERVALSEC" /* server poll interval, seconds     */
 
 /* -------------------------------------------------------------------------- */
 
@@ -116,7 +120,32 @@ void FS3ESettings_Load(FS3ESettings *s)
     val = ToolTypePrefs_Get(TT_CACHEPATH);
     if (val && val[0] != '\0')
         s->cachePath = StrDup(val);
-    /* NULL cachePath → network process uses its own FS3ECACHE_DEFAULT_DIR */
+    else
+        s->cachePath = StrDup(FS3ECACHE_DEFAULT_DIR);
+
+    /* User data directory */
+    s->userDataPath = NULL;
+    val = ToolTypePrefs_Get(TT_USERDATAPATH);
+    if (val && val[0] != '\0')
+        s->userDataPath = StrDup(val);
+    else
+        s->userDataPath = StrDup("PROGDIR:.user");
+
+    /* Max cache size (MB) */
+    s->maxCacheSizeMB = 4;
+    val = ToolTypePrefs_Get(TT_MAXCACHESIZE);
+    if (val && val[0] != '\0') {
+        int mb = atoi(val);
+        if (mb >= 1 && mb <= 4096) s->maxCacheSizeMB = mb;
+    }
+
+    /* Server poll interval (seconds) */
+    s->tootCheckIntervalSec = 60;
+    val = ToolTypePrefs_Get(TT_CHECKINTERVAL);
+    if (val && val[0] != '\0') {
+        int secs = atoi(val);
+        if (secs >= 5 && secs <= 3600) s->tootCheckIntervalSec = secs;
+    }
 
     /* Main window position - written directly into app->mainwindow */
     if (app) {
@@ -194,11 +223,24 @@ void FS3ESettings_Save(FS3ESettings *s)
     else
         ToolTypePrefs_Remove(TT_THEME);
 
-    /* Media cache path — only write when non-default to keep the .info clean */
+    /* Media cache path */
     if (s->cachePath && s->cachePath[0] != '\0')
         ToolTypePrefs_Set(TT_CACHEPATH, s->cachePath);
     else
         ToolTypePrefs_Remove(TT_CACHEPATH);
+
+    /* User data directory */
+    if (s->userDataPath && s->userDataPath[0] != '\0')
+        ToolTypePrefs_Set(TT_USERDATAPATH, s->userDataPath);
+    else
+        ToolTypePrefs_Remove(TT_USERDATAPATH);
+
+    /* Cache/server tuning */
+    snprintf(buf, sizeof(buf), "%d", s->maxCacheSizeMB);
+    ToolTypePrefs_Set(TT_MAXCACHESIZE, buf);
+
+    snprintf(buf, sizeof(buf), "%d", s->tootCheckIntervalSec);
+    ToolTypePrefs_Set(TT_CHECKINTERVAL, buf);
 
     /* Main window position */
     if (app && app->window_obj) {
@@ -235,6 +277,7 @@ void FS3ESettings_Close(FS3ESettings *s)
     FreeVec(s->colorEmojiFontPath); s->colorEmojiFontPath = NULL;
     FreeVec(s->themeName);          s->themeName          = NULL;
     FreeVec(s->cachePath);         s->cachePath         = NULL;
+    FreeVec(s->userDataPath);      s->userDataPath      = NULL;
 
     ToolTypePrefs_Close();
 }

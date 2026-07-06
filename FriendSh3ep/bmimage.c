@@ -79,7 +79,15 @@ void BmImage_Unload(BmImage *img)
     img->height = 0;
 }
 
-BOOL BmImage_Load(BmImage *img, struct Screen *screen)
+/* Shared by BmImage_Load/BmImage_LoadScaled. When scale is TRUE, the source
+ * is scaled (see PDTM_SCALE) to fit within targetWidth x targetHeight
+ * before img->width/height are read back -- see BmImage_LoadScaled's doc
+ * comment for the fit rule. PDTM_SCALE only works before the object's
+ * first layout, so this must run between NewDTObject and the
+ * DTM_PROCLAYOUT call below (picture_dtc.doc: "Scaling is only possible
+ * before the first GM_LAYOUT has been performed"). */
+static BOOL bmimage_load_internal(BmImage *img, struct Screen *screen,
+                                   BOOL scale, UWORD targetWidth, UWORD targetHeight)
 {
     Object              *dto  = NULL;
     struct BitMapHeader *bmhd = NULL;
@@ -135,10 +143,49 @@ BOOL BmImage_Load(BmImage *img, struct Screen *screen)
         return FALSE;
     }
 
-    /* Decode image and perform colour remapping on the calling process. */
+    if (scale) {
+        /* Native size, available right after NewDTObject (PDTA_BitMapHeader
+         * is get-only, filled in during OM_NEW) -- used to compute the
+         * contain-fit target size below. */
+        GetDTAttrs(dto, PDTA_BitMapHeader, (ULONG)&bmhd, TAG_DONE);
+        if (!bmhd || bmhd->bmh_Width < 1 || bmhd->bmh_Height < 1 ||
+            targetWidth < 1 || targetHeight < 1) {
+            DisposeDTObject(dto);
+            img->error = BMIMAGE_ERR_NO_BITMAP;
+            return FALSE;
+        }
+
+        {
+            ULONG origW = bmhd->bmh_Width;
+            ULONG origH = bmhd->bmh_Height;
+            ULONG dstW, dstH;
+
+            /* Fit origW x origH inside targetWidth x targetHeight,
+             * preserving aspect ratio: whichever axis would overshoot the
+             * box first is clamped to the box, the other axis follows the
+             * same ratio (touches its border only if the aspect matches
+             * exactly). */
+            if (origW * (ULONG)targetHeight > origH * (ULONG)targetWidth) {
+                dstW = targetWidth;
+                dstH = (origH * targetWidth) / origW;
+            } else {
+                dstH = targetHeight;
+                dstW = (origW * targetHeight) / origH;
+            }
+            if (dstW < 1) dstW = 1;
+            if (dstH < 1) dstH = 1;
+
+            SetDTAttrs(dto, NULL, NULL, PDTA_ScaleQuality, TRUE, TAG_DONE);
+            DoDTMethod(dto, NULL, NULL, PDTM_SCALE, dstW, dstH, 0);
+        }
+        bmhd = NULL;
+    }
+
+    /* Decode image and perform colour remapping (and scaling, if requested
+     * above) on the calling process. */
     DoDTMethod(dto, NULL, NULL, DTM_PROCLAYOUT, NULL, TRUE);
 
-    /* Read back dimensions. */
+    /* Read back dimensions -- the scaled size when scale is TRUE. */
     GetDTAttrs(dto, PDTA_BitMapHeader, (ULONG)&bmhd, TAG_DONE);
     if (bmhd) {
         img->width  = bmhd->bmh_Width;
@@ -168,6 +215,17 @@ BOOL BmImage_Load(BmImage *img, struct Screen *screen)
 
     img->error = BMIMAGE_OK;
     return TRUE;
+}
+
+BOOL BmImage_Load(BmImage *img, struct Screen *screen)
+{
+    return bmimage_load_internal(img, screen, FALSE, 0, 0);
+}
+
+BOOL BmImage_LoadScaled(BmImage *img, struct Screen *screen,
+                         UWORD targetWidth, UWORD targetHeight)
+{
+    return bmimage_load_internal(img, screen, TRUE, targetWidth, targetHeight);
 }
 
 void BmImage_Free(BmImage *img)

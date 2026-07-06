@@ -120,6 +120,25 @@ static const char *defaultStrings[MSG_COUNT] = {
     "Theme",
     /* MSG_THEMEV_THEME_DEFAULT */
     "Default",
+
+    /* MSG_SETTINGSV_TITLE */
+    "General Settings",
+    /* MSG_SETTINGSV_PATHS_GROUP */
+    "Paths",
+    /* MSG_SETTINGSV_CACHE_PATH */
+    "Cache directory",
+    /* MSG_SETTINGSV_USERDATA_PATH */
+    "User data directory",
+    /* MSG_SETTINGSV_CACHE_GROUP */
+    "Cache",
+    /* MSG_SETTINGSV_MAX_CACHE_SIZE */
+    "Max cache size (MB)",
+    /* MSG_SETTINGSV_FLUSH_CACHE */
+    "Flush cache",
+    /* MSG_SETTINGSV_SERVER_GROUP */
+    "Server",
+    /* MSG_SETTINGSV_CHECK_INTERVAL */
+    "Check interval (seconds)",
 };
 
 /* LocaleBase declared in friendsh3ep.c */

@@ -51,6 +51,7 @@
 #include "fs3etitlebar.h"
 
 #include "../bdbprintf.h"
+#include "../patch9.h"
 
 /* Drag state owned by the main loop — set here during GM_GOACTIVE so that
  * WMHI_MOUSEMOVE events in the same WM_HANDLEINPUT drain already see the flag. */
@@ -417,6 +418,24 @@ static ULONG TitleBarLayout_OnRender(Class *cl, Object *o, struct gpRender *msg)
 
     if (rp && w > 0 && h > 0)
         EraseRect(rp, left, top, left + w - 1, top + h - 1);
+
+    /* Title bar title/logo image (titlebar.title in style.txt), masked on
+     * color 0 -- drawn once here, before children, so it never overlaps a
+     * child's own render. See FS3EStyle_LoadThemeImages. */
+    if (rp && inst->style && BmImage_IsLoaded(&inst->style->titlebarTitle)) {
+        BmImage *timg = &inst->style->titlebarTitle;
+        WORD     dstX = left + inst->style->titlebarTitleX;
+        WORD     dstY = top  + inst->style->titlebarTitleY;
+
+        if (timg->mask) {
+            BltMaskBitMapRastPort(timg->bitmap, 0, 0, rp, dstX, dstY,
+                                  (LONG)timg->width, (LONG)timg->height,
+                                  PATCH9_MASK_MINTERM, timg->mask);
+        } else {
+            BltBitMapRastPort(timg->bitmap, 0, 0, rp, dstX, dstY,
+                              (LONG)timg->width, (LONG)timg->height, 0xC0);
+        }
+    }
 
     childMsg.MethodID   = GM_RENDER;
     childMsg.gpr_GInfo  = msg->gpr_GInfo;

@@ -173,6 +173,18 @@ typedef struct {
     BmImage     tbBg;
     struct Hook tbBgHook;
 
+    /* Title bar title/logo image: titlebar.title in style.txt, blitted
+     * directly onto the RastPort by TitleBarLayout_OnRender, after the
+     * EraseRect backfill and before children are rendered. Color 0 in the
+     * source is transparent (masked blit via BmImage's PDTA_MaskPlane, same
+     * as tbButtons). Positioned at (titlebarTitleX, titlebarTitleY) offset
+     * from the title bar's LeftEdge/TopEdge -- titlebar.title.x /
+     * titlebar.title.y in style.txt. Optional -- a missing file just means
+     * no title image is drawn (see BmImage_IsLoaded). */
+    BmImage titlebarTitle;
+    WORD    titlebarTitleX;
+    WORD    titlebarTitleY;
+
     /* UniButtonP9 patch9 background skins, one per FS3ESTYLE_PATCH9_* slot
      * (bt1Patch9.x / bt2Patch9.x in style.txt) -- each a 4-sub-image strip
      * (PATCH9_NORMAL/SELECTED/DISABLED/HOVER, left to right). Loaded from
