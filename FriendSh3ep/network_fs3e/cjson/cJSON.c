@@ -409,7 +409,35 @@ loop_end:
         item->valueint = (int)number;
     }
 #else
-    item->valueint = (int) strtol((const char*)number_c_string, (char**)&after_end, 10);
+    /* Integer-only path (JSON_DONTUSE_FLOAT / no-FPU target).
+     * Parse the integer portion; then advance past any decimal fraction and
+     * exponent so the buffer offset covers the whole token.  This handles
+     * float-formatted values from servers that emit e.g. "10.5" or ".0". */
+    if (number_c_string[0] != decimal_point && !(number_c_string[0] == '-' && number_c_string[1] == decimal_point))
+    {
+        item->valueint = (int)strtol((const char*)number_c_string, (char**)&after_end, 10);
+    }
+    else
+    {
+        /* Leading '.' or '-.': integer part is 0; position after_end at the
+         * dot so the fraction-skip loop below consumes the decimal tail. */
+        item->valueint = 0;
+        after_end = number_c_string;
+        if (*after_end == '-') { after_end++; } /* skip optional leading minus */
+    }
+    /* Skip decimal fraction */
+    if (*after_end == decimal_point)
+    {
+        after_end++;
+        while (*after_end >= '0' && *after_end <= '9') { after_end++; }
+    }
+    /* Skip exponent */
+    if (*after_end == 'e' || *after_end == 'E')
+    {
+        after_end++;
+        if (*after_end == '+' || *after_end == '-') { after_end++; }
+        while (*after_end >= '0' && *after_end <= '9') { after_end++; }
+    }
 #endif
 
     item->type = cJSON_Number;
@@ -1444,8 +1472,8 @@ static cJSON_bool parse_value(cJSON * const item, parse_buffer * const input_buf
     {
         return parse_string(item, input_buffer);
     }
-    /* number */
-    if (can_access_at_index(input_buffer, 0) && ((buffer_at_offset(input_buffer)[0] == '-') || ((buffer_at_offset(input_buffer)[0] >= '0') && (buffer_at_offset(input_buffer)[0] <= '9'))))
+    /* number — also accept leading '.' (e.g. ".0") produced by some Mastodon instances */
+    if (can_access_at_index(input_buffer, 0) && ((buffer_at_offset(input_buffer)[0] == '-') || (buffer_at_offset(input_buffer)[0] == '.') || ((buffer_at_offset(input_buffer)[0] >= '0') && (buffer_at_offset(input_buffer)[0] <= '9'))))
     {
         return parse_number(item, input_buffer);
     }

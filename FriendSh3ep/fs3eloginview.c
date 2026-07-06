@@ -1,9 +1,10 @@
 /*
  * fs3eloginview.c - Login sub-window layout for FriendSh3ep.
  *
- * See fs3eloginview.h. Pattern adapted from EmojiGear/egsearchbox.c:
- * a self-contained BOOPSI window+layout subtree with Create/Dispose/
- * Open/Close/HandleInput/GetSignalMask.
+ * Two-phase OAuth layout:
+ *   Phase 1 (always enabled):  Server, User, [Connect button]
+ *   Phase 2 (disabled until URL arrives):
+ *       Instruction label, URL display editor, Code field, [Submit Code button]
  */
 
 #include <string.h>
@@ -23,21 +24,25 @@
 #include <proto/string.h>
 #include <gadgets/string.h>
 
-// #include <proto/unitexteditor.h>
-// #include <gadgets/unitexteditor.h>
-
 #include <proto/window.h>
 #include <classes/window.h>
 
 #include <intuition/icclass.h>
 
+#include <proto/texteditor.h>
+#include <gadgets/texteditor.h>
+
 #include "fs3eloginview.h"
+#include "clipboard.h"
 #include "fs3eboopsimainwindow.h"
 #include "fs3eboopsimessage.h"
 #include "fs3egadgetid.h"
 #include "fs3elocale.h"
 
-/* A transparent, read-only button used as a layout spacer. */
+#define INSTRUCT_INITIAL "Click Connect to get the authorization URL."
+#define INSTRUCT_READY   "Open this URL in your browser, then paste the code below, it has been copied to clipboard:"
+
+/* Transparent spacer to push content. */
 static Object *Spacer(void)
 {
     return (Object *)NewObject(BUTTON_GetClass(), NULL,
@@ -47,43 +52,43 @@ static Object *Spacer(void)
         TAG_END);
 }
 
-/* Build one "Label: [editor]" row, sharing a URPDrawContext across fields. */
-static Object *MakeFieldEditor(ULONG gadId)
+/* Single-line editable string gadget. */
+static Object *MakeEditor(ULONG gadId)
 {
-    Object *editor;
-
-    editor = (Object *)NewObject(STRING_GetClass(), NULL,
-        GA_ID,                  gadId,
-        ICA_TARGET,             (ULONG)TargetInstance,
+    return (Object *)NewObject(STRING_GetClass(), NULL,
+        GA_ID,       gadId,
+        ICA_TARGET,  (ULONG)TargetInstance,
         GA_TabCycle, TRUE,
-        // /* The gadget keeps BOOPSI activation and handles keys itself,
-        //  * so this sub-window does not need to track/forward focus. */
-        // UTED_KeyMessageMode,    UKM_Internal,
-        // UTED_BevelStyle,        BVS_FIELD,
-        // UTED_PointSize,         pointSize,
-        // UTED_TextPen,           1UL,
-        // UTED_BgPen,             0UL,
-        // UTED_MaxDisplayLines,   1UL,
-        // UTED_NoLineFeed,        TRUE,
-        // UTED_WordWrap,          FALSE,
-        // UTED_LeftMargin,        2,
-        // UTED_TopMargin,         3,
-        // UTED_BottomMargin,      1,
-        // UTED_LineSpacing,       0,
-        // (*sharedDc) ? UTED_URPDrawContext : UTED_AddFont,
-        // (*sharedDc) ? *sharedDc : (ULONG)"LiberationSans-Regular.ttf",
         TAG_END);
+}
 
-    // if (editor && !*sharedDc)
-    //     GetAttr(UTED_URPDrawContext, editor, sharedDc);
+/* Read-only string gadget (user can activate + AMIGA-C to copy, not edit). */
+static Object *MakeReadOnlyEditor(ULONG gadId, BOOL disabled)
+{
+    return (Object *)NewObject(TEXTEDITOR_GetClass(), NULL,
+        GA_ID,            gadId,
+        GA_ReadOnly,      TRUE,
+        GA_Disabled,      (ULONG)disabled,
+        TAG_END);
+}
 
-    return editor;
+/* No-bevel read-only button used as a dynamic text label. */
+static Object *MakeInstructLabel(BOOL disabled)
+{
+    return (Object *)NewObject(TEXTEDITOR_GetClass(), NULL,
+        GA_ReadOnly,        TRUE,
+        GA_Disabled,        (ULONG)disabled,
+        GA_TEXTEDITOR_BevelStyle,  BVS_NONE,
+      //  BUTTON_Transparent, TRUE,
+        GA_Text,            (ULONG)INSTRUCT_INITIAL,
+        TAG_END);
 }
 
 BOOL FS3ELoginView_Create(FS3ELoginView *lv, ULONG pointSize)
 {
-    Object *serverLabel, *userLabel, *codeLabel;
+    Object *serverLabel, *userLabel, *codeLabel, *urlLabel;
     Object *formGroup, *centerRow, *outerCol;
+    Object *divider;
 
     {
         LONG sl = lv->left, st = lv->top, sw = lv->width, sh = lv->height;
@@ -91,44 +96,66 @@ BOOL FS3ELoginView_Create(FS3ELoginView *lv, ULONG pointSize)
         lv->left = sl; lv->top = st; lv->width = sw; lv->height = sh;
     }
 
-    lv->serverEditor = MakeFieldEditor(GID_LOGIN_SERVER_EDITOR);
-    lv->userEditor   = MakeFieldEditor(GID_LOGIN_USER_EDITOR);
-    lv->codeEditor   = MakeFieldEditor(GID_LOGIN_CODE_EDITOR);
-
-    if (!lv->serverEditor || !lv->userEditor || !lv->codeEditor)
-        return FALSE;
-
-    serverLabel = (Object *)NewObject(LABEL_GetClass(), NULL,
-        LABEL_Text, (ULONG)LOC(MSG_LOGIN_SERVER),
-        TAG_END);
-    userLabel = (Object *)NewObject(LABEL_GetClass(), NULL,
-        LABEL_Text, (ULONG)LOC(MSG_LOGIN_USER),
-        TAG_END);
-    codeLabel = (Object *)NewObject(LABEL_GetClass(), NULL,
-        LABEL_Text, (ULONG)LOC(MSG_LOGIN_CODE),
-        TAG_END);
+    /* --- Phase 1 gadgets (always enabled) --- */
+    lv->serverEditor = MakeEditor(GID_LOGIN_SERVER_EDITOR);
+    lv->userEditor   = MakeEditor(GID_LOGIN_USER_EDITOR);
+    if (!lv->serverEditor || !lv->userEditor) return FALSE;
 
     lv->loginBtn = (Object *)NewObject(BUTTON_GetClass(), NULL,
         GA_ID,        (ULONG)GID_LOGIN_LOGIN_BUTTON,
         GA_RelVerify, TRUE,
         ICA_TARGET,   (ULONG)TargetInstance,
         GA_Text,      (ULONG)LOC(MSG_LOGIN_LOGIN),
-        GA_TabCycle, TRUE,
+        GA_TabCycle,  TRUE,
         TAG_END);
     if (!lv->loginBtn) return FALSE;
 
+    serverLabel = (Object *)NewObject(LABEL_GetClass(), NULL,
+        LABEL_Text, (ULONG)LOC(MSG_LOGIN_SERVER), TAG_END);
+    userLabel = (Object *)NewObject(LABEL_GetClass(), NULL,
+        LABEL_Text, (ULONG)LOC(MSG_LOGIN_USER), TAG_END);
+
+    /* --- Phase 2 gadgets (disabled until URL arrives) --- */
+    lv->urlInstructLabel = MakeInstructLabel(TRUE);
+    if (!lv->urlInstructLabel) return FALSE;
+
+    lv->urlEditor = MakeReadOnlyEditor(GID_LOGIN_URL_EDITOR, TRUE);
+    if (!lv->urlEditor) return FALSE;
+
+    lv->codeEditor = MakeEditor(GID_LOGIN_CODE_EDITOR);
+    if (!lv->codeEditor) return FALSE;
+    SetAttrs(lv->codeEditor, GA_Disabled, TRUE, TAG_END);
+
+    lv->submitCodeBtn = (Object *)NewObject(BUTTON_GetClass(), NULL,
+        GA_ID,        (ULONG)GID_LOGIN_SUBMIT_CODE_BUTTON,
+        GA_RelVerify, TRUE,
+        ICA_TARGET,   (ULONG)TargetInstance,
+        GA_Text,      (ULONG)"Submit Code",
+        GA_Disabled,  TRUE,
+        GA_TabCycle,  TRUE,
+        TAG_END);
+    if (!lv->submitCodeBtn) return FALSE;
+
+    urlLabel = (Object *)NewObject(LABEL_GetClass(), NULL,
+        LABEL_Text, (ULONG)"URL:", TAG_END);
+    codeLabel = (Object *)NewObject(LABEL_GetClass(), NULL,
+        LABEL_Text, (ULONG)LOC(MSG_LOGIN_CODE), TAG_END);
+
+    /* thin horizontal line between the two phases */
+    divider = Spacer();
+
     /* ------------------------------------------------------------------ */
-    /* Centered named group: "Login to Mastodon"                          */
+    /* Centered named group                                                */
     /* ------------------------------------------------------------------ */
     formGroup = (Object *)NewObject(LAYOUT_GetClass(), NULL,
-        LAYOUT_Orientation,   LAYOUT_ORIENT_VERT,
-        LAYOUT_BevelStyle,    BVS_GROUP,
-        LAYOUT_Label,         (ULONG)LOC(MSG_LOGIN_TITLE),
+        LAYOUT_Orientation, LAYOUT_ORIENT_VERT,
+        LAYOUT_BevelStyle,  BVS_GROUP,
+        LAYOUT_Label,       (ULONG)LOC(MSG_LOGIN_TITLE),
+        LAYOUT_BackFill,    NULL,
+        LAYOUT_SpaceOuter,  TRUE,
+        LAYOUT_SpaceInner,  TRUE,
 
-        LAYOUT_BackFill,     NULL,
-        LAYOUT_SpaceOuter,    TRUE,
-        LAYOUT_SpaceInner,    TRUE,
-
+        /* --- Phase 1 --- */
         LAYOUT_AddChild,      (ULONG)lv->serverEditor,
             CHILD_WeightedHeight, 0,
             CHILD_Label,          (ULONG)serverLabel,
@@ -137,24 +164,40 @@ BOOL FS3ELoginView_Create(FS3ELoginView *lv, ULONG pointSize)
             CHILD_WeightedHeight, 0,
             CHILD_Label,          (ULONG)userLabel,
 
+        LAYOUT_AddChild,      (ULONG)lv->loginBtn,
+            CHILD_WeightedHeight, 0,
+
+        /* thin spacer between phases */
+        LAYOUT_AddChild,      (ULONG)divider,
+            CHILD_WeightedHeight, 0,
+            CHILD_MinHeight,      4,
+            CHILD_MaxHeight,      4,
+
+        /* --- Phase 2 --- */
+        LAYOUT_AddChild,      (ULONG)lv->urlInstructLabel,
+            CHILD_WeightedHeight, 0,
+
+        LAYOUT_AddChild,      (ULONG)lv->urlEditor,
+            CHILD_WeightedHeight, 0,
+            CHILD_Label,          (ULONG)urlLabel,
+
         LAYOUT_AddChild,      (ULONG)lv->codeEditor,
             CHILD_WeightedHeight, 0,
             CHILD_Label,          (ULONG)codeLabel,
 
-        LAYOUT_AddChild,      (ULONG)lv->loginBtn,
+        LAYOUT_AddChild,      (ULONG)lv->submitCodeBtn,
             CHILD_WeightedHeight, 0,
 
         TAG_END);
     if (!formGroup) return FALSE;
 
-    /* Center the group horizontally and vertically in the window. */
     centerRow = (Object *)NewObject(LAYOUT_GetClass(), NULL,
         LAYOUT_Orientation, LAYOUT_ORIENT_HORIZ,
         LAYOUT_AddChild,    (ULONG)Spacer(),
             CHILD_WeightedWidth, 1,
         LAYOUT_AddChild,    (ULONG)formGroup,
             CHILD_WeightedWidth, 0,
-            CHILD_MinWidth,      260,
+            CHILD_MinWidth,      300,
         LAYOUT_AddChild,    (ULONG)Spacer(),
             CHILD_WeightedWidth, 1,
         TAG_END);
@@ -175,11 +218,11 @@ BOOL FS3ELoginView_Create(FS3ELoginView *lv, ULONG pointSize)
     lv->windowObj = (Object *)NewObject(WINDOW_GetClass(), NULL,
         WA_Left,   160,
         WA_Top,    80,
-        WA_Width,  320,
-        WA_Height, 200,
+        WA_Width,  360,
+        WA_Height, 280,
         WA_IDCMP,  IDCMP_CLOSEWINDOW | IDCMP_GADGETUP | IDCMP_NEWSIZE,
-        WA_Flags,  WFLG_DRAGBAR | WFLG_DEPTHGADGET | WFLG_CLOSEGADGET | WFLG_SIZEGADGET |
-                   WFLG_ACTIVATE | WFLG_SMART_REFRESH,
+        WA_Flags,  WFLG_DRAGBAR | WFLG_DEPTHGADGET | WFLG_CLOSEGADGET |
+                   WFLG_SIZEGADGET | WFLG_ACTIVATE | WFLG_SMART_REFRESH,
         WA_Title,  (ULONG)LOC(MSG_LOGIN_TITLE),
         WINDOW_ParentGroup, (ULONG)lv->layout,
         TAG_END);
@@ -210,7 +253,7 @@ void FS3ELoginView_Open(FS3ELoginView *lv)
     if (lv->window) {
         WindowToFront(lv->window);
         ActivateWindow(lv->window);
-        return; /* already open */
+        return;
     }
 
     if (CurrentMainScreen) {
@@ -249,7 +292,7 @@ BOOL FS3ELoginView_HandleInput(FS3ELoginView *lv)
     ULONG result;
 
     if (!lv || !lv->windowObj) return FALSE;
-    if (!lv->window) return TRUE; /* closed, that's fine */
+    if (!lv->window) return TRUE;
 
     while ((result = DoMethod(lv->windowObj, WM_HANDLEINPUT, NULL))
            != WMHI_LASTMSG)
@@ -261,18 +304,20 @@ BOOL FS3ELoginView_HandleInput(FS3ELoginView *lv)
                 return TRUE;
 
             case WMHI_NEWSIZE:
+                /* Refresh string gadgets after resize (layout handles buttons). */
                 if (lv->serverEditor)
                     RefreshGList((struct Gadget *)lv->serverEditor, lv->window, NULL, 1);
                 if (lv->userEditor)
-                    RefreshGList((struct Gadget *)lv->userEditor, lv->window, NULL, 1);
+                    RefreshGList((struct Gadget *)lv->userEditor,   lv->window, NULL, 1);
+                if (lv->urlEditor)
+                    RefreshGList((struct Gadget *)lv->urlEditor,    lv->window, NULL, 1);
                 if (lv->codeEditor)
-                    RefreshGList((struct Gadget *)lv->codeEditor, lv->window, NULL, 1);
+                    RefreshGList((struct Gadget *)lv->codeEditor,   lv->window, NULL, 1);
                 break;
 
             case WMHI_GADGETUP:
             {
                 ULONG gadId = result & WMHI_GADGETMASK;
-
                 BoopsiDelay_BeginMessage(DelayQueue, gadId);
                 BoopsiDelay_AddTag(DelayQueue, WMHI_GADGETUP, 1);
                 BoopsiDelay_EndMessage(DelayQueue);
@@ -293,38 +338,71 @@ ULONG FS3ELoginView_GetSignalMask(FS3ELoginView *lv)
     return (1L << lv->window->UserPort->mp_SigBit);
 }
 
-// static const char *GetEditorUTF8Text(Object *editor)
-// {
-//     const char *text = NULL;
+/* Called when LOGIN_START reply arrives. Enables the phase-2 section
+ * and displays the authorize URL. */
+void FS3ELoginView_SetAuthorizeUrl(FS3ELoginView *lv, const char *url)
+{
+    if (!lv || !url) return;
 
-//     if (!editor) return NULL;
+    Clipboard_WriteText(url);
 
-//     SetAttrs(editor, UTED_LineTextToGet, 0, TAG_END);
-//     GetAttr(UTED_LineUTF8TextBuffer, editor, (ULONG *)&text);
+    if (lv->window) {
+        SetGadgetAttrs((struct Gadget *)lv->urlInstructLabel, lv->window, NULL,
+            GA_Disabled, FALSE,
+            GA_TEXTEDITOR_Contents,     (ULONG)INSTRUCT_READY,
+            TAG_DONE);
+      //  RefreshGList((struct Gadget *)lv->urlInstructLabel, lv->window, NULL, 1);
 
-//     return text;
-// }
+        SetGadgetAttrs((struct Gadget *)lv->urlEditor, lv->window, NULL,
+            GA_Disabled,      FALSE,
+            GA_TEXTEDITOR_Contents,  (ULONG)url,
+            TAG_DONE);
+       // RefreshGList((struct Gadget *)lv->urlEditor, lv->window, NULL, 1);
+
+        SetGadgetAttrs((struct Gadget *)lv->codeEditor, lv->window, NULL,
+            GA_Disabled, FALSE,
+            TAG_DONE);
+     //   RefreshGList((struct Gadget *)lv->codeEditor, lv->window, NULL, 1);
+
+        SetGadgetAttrs((struct Gadget *)lv->submitCodeBtn, lv->window, NULL,
+            GA_Disabled, FALSE,
+            TAG_DONE);
+      //  RefreshGList((struct Gadget *)lv->submitCodeBtn, lv->window, NULL, 1);
+    } else {
+        /* Window closed — update attrs so they're correct when re-opened. */
+        SetAttrs(lv->urlInstructLabel,
+            GA_Disabled, FALSE,
+            GA_TEXTEDITOR_Contents,     (ULONG)INSTRUCT_READY,
+            TAG_END);
+        SetAttrs(lv->urlEditor,
+            GA_Disabled,     FALSE,
+            GA_TEXTEDITOR_Contents, (ULONG)url,
+            TAG_END);
+        SetAttrs(lv->codeEditor,    GA_Disabled, FALSE, TAG_END);
+        SetAttrs(lv->submitCodeBtn, GA_Disabled, FALSE, TAG_END);
+    }
+}
 
 const char *FS3ELoginView_GetANSIServer(FS3ELoginView *lv)
 {
-    const char *text;
-    if (!lv) return NULL;
-    GetAttr(GA_Text, lv->serverEditor, (ULONG *)&text);
+    const char *text = NULL;
+    if (!lv || !lv->serverEditor) return NULL;
+    GetAttr(STRINGA_TextVal, lv->serverEditor, (ULONG *)&text);
     return text;
 }
 
 const char *FS3ELoginView_GetANSIUser(FS3ELoginView *lv)
 {
-    const char *text;
-    if (!lv) return NULL;
-    GetAttr(GA_Text, lv->userEditor, (ULONG *)&text);
+    const char *text = NULL;
+    if (!lv || !lv->userEditor) return NULL;
+    GetAttr(STRINGA_TextVal, lv->userEditor, (ULONG *)&text);
     return text;
 }
 
 const char *FS3ELoginView_GetANSICode(FS3ELoginView *lv)
 {
-    const char *text;
-    if (!lv) return NULL;
-    GetAttr(GA_Text, lv->codeEditor, (ULONG *)&text);
+    const char *text = NULL;
+    if (!lv || !lv->codeEditor) return NULL;
+    GetAttr(STRINGA_TextVal, lv->codeEditor, (ULONG *)&text);
     return text;
 }

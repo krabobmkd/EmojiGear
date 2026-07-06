@@ -19,8 +19,18 @@
 #include "fs3estyle.h"
 #include "fs3emenu.h"
 #include "fs3esettings.h"
+#include "avatarimages.h"
 
 #define FRIENDSH3EP_VERSION "0.2"
+
+/* Login two-phase OAuth state machine */
+typedef enum {
+    FS3ELOGIN_IDLE = 0,
+    FS3ELOGIN_WAITING_START,   /* LOGIN_START sent, awaiting async reply */
+    FS3ELOGIN_WAITING_CODE,    /* authorize URL shown; waiting for code paste */
+    FS3ELOGIN_WAITING_FINISH,  /* LOGIN_FINISH sent, awaiting async reply */
+    FS3ELOGIN_DONE
+} FS3ELoginPhase;
 
 typedef enum {
     VIEWMODE_User    = 0,
@@ -81,8 +91,35 @@ struct App {
     FS3EThemeView  themeView;
     FS3ESettingsView settingsView;
 
-    /* fs3enet request port, see network_fs3e/fs3enet.h */
+    /* fs3enet ports: requestPort send-only; replyPort receives async replies */
     struct MsgPort *netRequestPort;
+    struct MsgPort *netReplyPort;
+
+    /* Login two-phase state machine (FS3ELoginPhase) */
+    ULONG  loginPhase;
+    char  *loginApiBaseUrl;    /* saved between LOGIN_START reply and LOGIN_FINISH send */
+    char  *loginClientId;
+    char  *loginClientSecret;
+
+    /* Logged-in account — all NULL when not logged in */
+    char  *accountApiBaseUrl;
+    char  *accountAccessToken;
+    char  *accountDisplayName;
+    char  *accountAcct;
+    char  *accountAvatarURL;
+
+    /* Bitmask of VIEWMODE channels that have a fetch in flight or already
+     * have data.  Bit i set → do not re-fetch channel i automatically. */
+    ULONG  timelineFetchedMask;
+
+    /* Bitmask of channels whose last fetch returned an error.
+     * Cleared for a channel when a new fetch starts for it. */
+    ULONG  timelineErrorMask;
+    /* FS3ENetResult of the last timeline fetch that failed (for message text). */
+    ULONG  lastTimelineResult;
+
+    /* Avatar bitmap cache — one scaled BmImage per @user@instance */
+    struct AvatarImages *avatarImages;
 
     /* Color theme — pens obtained from the current screen's ColorMap */
     FS3EStyle style;

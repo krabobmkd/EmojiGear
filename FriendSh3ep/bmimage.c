@@ -37,6 +37,7 @@
 #include <datatypes/pictureclass.h>
 #include <proto/datatypes.h>
 
+#include "friendsh3ep.h"
 /* DataTypesBase is defined and opened via libraryTable in friendsh3ep.c. */
 extern struct Library *DataTypesBase;
 
@@ -144,6 +145,7 @@ static BOOL bmimage_load_internal(BmImage *img, struct Screen *screen,
     }
 
     if (scale) {
+ printf("want scale %d %d\n",targetWidth,targetHeight);
         /* Native size, available right after NewDTObject (PDTA_BitMapHeader
          * is get-only, filled in during OM_NEW) -- used to compute the
          * contain-fit target size below. */
@@ -174,16 +176,28 @@ static BOOL bmimage_load_internal(BmImage *img, struct Screen *screen,
             }
             if (dstW < 1) dstW = 1;
             if (dstH < 1) dstH = 1;
-
+    printf("do scale %d %d\n",dstW,dstH);
             SetDTAttrs(dto, NULL, NULL, PDTA_ScaleQuality, TRUE, TAG_DONE);
+            {
+                struct pdtScale pdt;
+                pdt.MethodID = PDTM_SCALE;
+                pdt.ps_NewWidth = dstW;
+                pdt.ps_NewHeight = dstH;
+                pdt.ps_Flags = 0;
+                DoDTMethodA(dto,NULL,NULL, (Msg)&pdt);
+
+            }
+            /*
+
             DoDTMethod(dto, NULL, NULL, PDTM_SCALE, dstW, dstH, 0);
+            */
         }
         bmhd = NULL;
     }
 
-    /* Decode image and perform colour remapping (and scaling, if requested
-     * above) on the calling process. */
-    DoDTMethod(dto, NULL, NULL, DTM_PROCLAYOUT, NULL, TRUE);
+        /* Decode image and perform colour remapping (and scaling, if requested
+          * above) on the calling process. */
+        DoDTMethod(dto, NULL, NULL, DTM_PROCLAYOUT, NULL, TRUE);
 
     /* Read back dimensions -- the scaled size when scale is TRUE. */
     GetDTAttrs(dto, PDTA_BitMapHeader, (ULONG)&bmhd, TAG_DONE);
@@ -194,9 +208,12 @@ static BOOL bmimage_load_internal(BmImage *img, struct Screen *screen,
 
     /* Prefer the screen-remapped bitmap; fall back to raw source bitmap. */
     GetDTAttrs(dto, PDTA_DestBitMap, (ULONG)&bm, TAG_DONE);
+    printf("PDTA_DestBitMap:%08x\n",(int)bm);
     if (!bm)
+    {
         GetDTAttrs(dto, PDTA_BitMap, (ULONG)&bm, TAG_DONE);
-
+      printf("PDTA_BitMap:%08x\n",(int)bm);
+    }
     if (!bm) {
         DisposeDTObject(dto);
         img->error = BMIMAGE_ERR_NO_BITMAP;

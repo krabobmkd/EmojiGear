@@ -89,6 +89,10 @@ extern WORD windowResizeLastTargetH;  /* last height sent to SizeWindow */
  * stored in FS3EStyle.postPadLeft / FS3EStyle.avatarGap, computed from the
  * current font size by FS3EStyle_SetFontSize / FS3EStyle_InitDefaults. */
 
+/* Forward declaration — full type in ../avatarimages.h, included by
+ * files that actually call AvatarImages_Get(). */
+struct AvatarImages;
+
 /* ------------------------------------------------------------------ */
 /* TTLTile — one pre-rendered bitmap strip                              */
 /* ------------------------------------------------------------------ */
@@ -118,6 +122,7 @@ struct TTLHotSpot {
 #define TTL_SPAN_ACCT      1
 #define TTL_SPAN_BODY      2
 #define TTL_SPAN_TIMESTAMP 3
+#define TTL_SPAN_BOOSTBY   4
 
 /* Hot-spot types */
 #define TTL_HOT_AVATAR     0
@@ -155,6 +160,8 @@ typedef struct TTLPost {
     char  *acct;
     char  *body;
     char  *timestamp;
+    char  *boostBy;    /* booster display name, NULL for original posts */
+    char  *avatarURL;  /* CDN URL; used to trigger deferred download */
 
     /* Per-post spatial index lists */
     struct MinList  hotSpots;     /* list of TTLHotSpot   (for click events) */
@@ -250,6 +257,9 @@ typedef struct {
      * posts shows them immediately, switching to an empty one waits. */
     ULONG viewMode;           /* index into channels[]; always < TTIMELINE_NUM_VIEWMODES */
     char *waitText;           /* AllocVec'd; NULL/empty -> ttl_render_wait's default */
+
+    /* ---- Avatar bitmap cache (not owned; pointer set via TTIMELINE_AvatarImages) ---- */
+    struct AvatarImages *avatarImages;
 
 } TTLData;
 

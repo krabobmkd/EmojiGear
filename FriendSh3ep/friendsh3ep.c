@@ -51,6 +51,9 @@
 #include <proto/string.h>
 #include <gadgets/string.h>
 
+#include <proto/texteditor.h>
+#include <gadgets/texteditor.h>
+
 #include <proto/label.h>
 #include <images/label.h>
 
@@ -135,6 +138,7 @@ struct Library *WindowBase         = NULL;
 struct Library *LayoutBase         = NULL;
 struct Library *ButtonBase         = NULL;
 struct Library *StringBase         = NULL;
+struct Library *TextFieldBase      = NULL;
 struct Library *LabelBase          = NULL;
 struct Library *CheckboxBase       = NULL;
 struct Library *ChooserBase        = NULL;
@@ -175,6 +179,7 @@ static LibraryEntry libraryTable[] = {
     {"gadgets/layout.gadget",       42, &LayoutBase},
     {"gadgets/button.gadget",       42, &ButtonBase},
     {"gadgets/string.gadget",       42, &StringBase},
+    {"gadgets/texteditor.gadget",   42, &TextFieldBase},
     {"images/label.image",          42, &LabelBase},
     {"gadgets/checkbox.gadget",      42, &CheckboxBase},
     {"gadgets/chooser.gadget",       44, &ChooserBase},
@@ -200,6 +205,393 @@ void cleanexit(const char *pmessage)
 {
     if (pmessage) printf("%s\n", pmessage);
     exit(0);
+}
+
+/* - - - - - - - - - - - - - - - - NETWORK HELPERS - - - - - - - - - - - - - */
+
+static char *NetStrDup(const char *s)
+{
+    ULONG len;
+    char *copy;
+    if (!s || !s[0]) return NULL;
+    len  = (ULONG)strlen(s) + 1;
+    copy = (char *)AllocVec(len, MEMF_ANY);
+    if (copy) CopyMem(s, copy, len);
+    return copy;
+}
+
+/* Send a pre-allocated request block to the network process asynchronously.
+ * On failure, frees data and returns FALSE. */
+static BOOL FS3EApp_NetSend(ULONG type, APTR data, ULONG dataLen)
+{
+    FS3ENetMessage *msg;
+    if (!app->netRequestPort || !app->netReplyPort || !data) {
+        if (data) FreeVec(data);
+        return FALSE;
+    }
+    msg = (FS3ENetMessage *)AllocVec(sizeof(FS3ENetMessage), MEMF_CLEAR);
+    if (!msg) { FreeVec(data); return FALSE; }
+    msg->fs3em_Msg.mn_Length   = sizeof(*msg);
+    msg->fs3em_Msg.mn_ReplyPort = app->netReplyPort;
+    msg->fs3em_Type    = type;
+    msg->fs3em_Data    = data;
+    msg->fs3em_DataLen = dataLen;
+    PutMsg(app->netRequestPort, &msg->fs3em_Msg);
+    return TRUE;
+}
+
+/* Free login interim state (called on login error or completion). */
+static void FS3EApp_FreeLoginState(void)
+{
+    if (app->loginApiBaseUrl)   { FreeVec(app->loginApiBaseUrl);   app->loginApiBaseUrl   = NULL; }
+    if (app->loginClientId)     { FreeVec(app->loginClientId);     app->loginClientId     = NULL; }
+    if (app->loginClientSecret) { FreeVec(app->loginClientSecret); app->loginClientSecret = NULL; }
+    app->loginPhase = FS3ELOGIN_IDLE;
+}
+
+/* Free stored account credentials. */
+static void FS3EApp_FreeAccount(void)
+{
+    if (app->accountApiBaseUrl)  { FreeVec(app->accountApiBaseUrl);  app->accountApiBaseUrl  = NULL; }
+    if (app->accountAccessToken) { FreeVec(app->accountAccessToken); app->accountAccessToken = NULL; }
+    if (app->accountDisplayName) { FreeVec(app->accountDisplayName); app->accountDisplayName = NULL; }
+    if (app->accountAcct)        { FreeVec(app->accountAcct);        app->accountAcct        = NULL; }
+    if (app->accountAvatarURL)   { FreeVec(app->accountAvatarURL);   app->accountAvatarURL   = NULL; }
+}
+
+/* Store account credentials from a LOGIN_FINISH reply. */
+static void FS3EApp_SetAccount(const char *apiBaseUrl, const char *accessToken,
+                               const char *displayName, const char *acct,
+                               const char *avatarURL)
+{
+    FS3EApp_FreeAccount();
+    app->accountApiBaseUrl  = NetStrDup(apiBaseUrl);
+    app->accountAccessToken = NetStrDup(accessToken);
+    app->accountDisplayName = NetStrDup(displayName);
+    app->accountAcct        = NetStrDup(acct);
+    app->accountAvatarURL   = NetStrDup(avatarURL);
+}
+
+/* Save credentials to PROGDIR:account.dat (5 lines). */
+static void FS3EApp_SaveAccount(void)
+{
+    BPTR f;
+    if (!app->accountApiBaseUrl || !app->accountAccessToken) return;
+    f = Open("PROGDIR:account.dat", MODE_NEWFILE);
+    if (!f) return;
+    FPuts(f, app->accountApiBaseUrl);                              FPuts(f, "\n");
+    FPuts(f, app->accountAccessToken);                             FPuts(f, "\n");
+    FPuts(f, app->accountDisplayName ? app->accountDisplayName : ""); FPuts(f, "\n");
+    FPuts(f, app->accountAcct        ? app->accountAcct        : ""); FPuts(f, "\n");
+    FPuts(f, app->accountAvatarURL   ? app->accountAvatarURL   : ""); FPuts(f, "\n");
+    Close(f);
+    printf("FS3EApp_SaveAccount: saved %s @ %s\n",
+           app->accountAcct ? app->accountAcct : "?",
+           app->accountApiBaseUrl);
+}
+
+/* Load credentials from PROGDIR:account.dat. Returns TRUE if valid. */
+static BOOL FS3EApp_LoadAccount(void)
+{
+    BPTR f;
+    char apiBaseUrl[256], accessToken[512];
+    char displayName[128], acct[128], avatarURL[512];
+    ULONG n;
+
+    f = Open("PROGDIR:account.dat", MODE_OLDFILE);
+    if (!f) return FALSE;
+
+    /* FGets includes the trailing '\n' — strip it. */
+#define RLINE(buf) \
+    (FGets(f, buf, sizeof(buf)) && (buf[0] != '\0') && \
+     ((n = strlen(buf)) > 0) && (buf[n-1] == '\n' ? (buf[n-1] = '\0', 1) : 1))
+
+    if (!RLINE(apiBaseUrl) || !RLINE(accessToken) || !apiBaseUrl[0] || !accessToken[0]) {
+        Close(f);
+        printf("FS3EApp_LoadAccount: no valid saved account\n");
+        return FALSE;
+    }
+    if (!RLINE(displayName)) displayName[0] = '\0';
+    if (!RLINE(acct))        acct[0]        = '\0';
+    if (!RLINE(avatarURL))   avatarURL[0]   = '\0';
+#undef RLINE
+
+    Close(f);
+
+    printf("FS3EApp_LoadAccount: loaded %s @ %s\n", acct, apiBaseUrl);
+    FS3EApp_SetAccount(apiBaseUrl, accessToken, displayName, acct, avatarURL);
+    app->loginPhase = FS3ELOGIN_DONE;
+    return TRUE;
+}
+
+/* Timeline name for a given VIEWMODE_* value; NULL = no standard timeline. */
+static const char *ViewModeTimeline(ULONG viewMode)
+{
+    switch (viewMode) {
+        case VIEWMODE_Home:  return "home?limit=20";
+        case VIEWMODE_Local: return "public?local=true&limit=20";
+        case VIEWMODE_Fed:   return "public?limit=20";
+        default:             return NULL;
+    }
+}
+
+/* Ensure server URL has a scheme and no trailing slash.
+ * "mastoot.fr" → "https://mastoot.fr"
+ * "https://mastoot.fr/" → "https://mastoot.fr" */
+static const char *NormalizeServerUrl(const char *server, char *buf, ULONG bufSize)
+{
+    ULONG len;
+    if (!server || !server[0]) return server;
+    if (strncmp(server, "http://", 7) == 0 || strncmp(server, "https://", 8) == 0)
+        strncpy(buf, server, bufSize - 1);
+    else
+        snprintf(buf, bufSize, "https://%s", server);
+    buf[bufSize - 1] = '\0';
+    len = (ULONG)strlen(buf);
+    while (len > 0 && buf[len - 1] == '/') buf[--len] = '\0';
+    return buf;
+}
+
+/* Update TTIMELINE_WaitText to reflect current connection / login state.
+ * Called whenever the state machine advances so the empty-channel placeholder
+ * always shows a meaningful message. */
+static void FS3EApp_CheckConnectionState(void)
+{
+    const char *text = NULL;
+    ULONG bit;
+
+    if (!app->tootTimeline) return;
+
+    /* Login phase takes priority over everything else. */
+    switch ((FS3ELoginPhase)app->loginPhase) {
+        case FS3ELOGIN_WAITING_START:
+            text = "Connecting to server...";
+            break;
+        case FS3ELOGIN_WAITING_CODE:
+            text = "Open the URL in your browser,\n"
+                   "then paste the code and click Login.";
+            break;
+        case FS3ELOGIN_WAITING_FINISH:
+            text = "Verifying account...";
+            break;
+        default:
+            break;
+    }
+
+    if (!text) {
+        if (!app->accountAccessToken) {
+            text = "No account.\n"
+                   "Open the Login window to connect.";
+        } else {
+            bit = (1UL << app->viewMode);
+            if (app->timelineErrorMask & bit) {
+                switch (app->lastTimelineResult) {
+                    case FS3ENETR_NETWORK_ERROR:
+                        text = "No internet connection.";  break;
+                    case FS3ENETR_HTTP_ERROR:
+                        text = "Server error.";            break;
+                    case FS3ENETR_AUTH_ERROR:
+                        text = "Authentication failed.";   break;
+                    default:
+                        text = "Connection error.";        break;
+                }
+            } else if (app->timelineFetchedMask & bit) {
+                text = "Updating...";
+            } else {
+                text = "Account connected.";
+            }
+        }
+    }
+
+    SetGdAttrs(app->tootTimeline, TTIMELINE_WaitText, (ULONG)text, TAG_END);
+}
+
+/* Send an async TIMELINE request for viewMode if credentials are available
+ * and a fetch hasn't already been started for that channel. */
+static void FS3EApp_FetchTimeline(ULONG viewMode)
+{
+    const char *tl;
+    FS3ENetTimelineReq *req;
+    ULONG bit = (1UL << viewMode);
+
+    if (!app->accountApiBaseUrl || !app->accountAccessToken) return;
+    if (app->timelineFetchedMask & bit) return;
+    tl = ViewModeTimeline(viewMode);
+    if (!tl) return;
+
+    printf("FS3EApp_FetchTimeline: viewMode=%u timeline=%s\n", (unsigned)viewMode, tl);
+
+    req = FS3ENetTimelineReq_Alloc(viewMode,
+              app->accountApiBaseUrl, app->accountAccessToken,
+              tl, NULL);
+    if (!req) return;
+
+    if (FS3EApp_NetSend(FS3ENETQ_TIMELINE, req,
+            sizeof(FS3ENetTimelineReq) /* net process only reads char* fields */)) {
+        app->timelineFetchedMask |= bit;
+        app->timelineErrorMask   &= ~bit; /* clear any previous error for this channel */
+        FS3EApp_CheckConnectionState();
+    }
+}
+
+/* Visibility index (from FS3ETootView) → Mastodon API string. */
+static const char *VisibilityString(LONG idx)
+{
+    static const char *const s[] = { "public", "unlisted", "private", "direct" };
+    if (idx < 0 || idx > 3) return "public";
+    return s[(ULONG)idx];
+}
+
+/* Handle one reply message from the network process. */
+static void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
+{
+    switch (msg->fs3em_Type)
+    {
+    case FS3ENETQ_LOGIN_START:
+        if (msg->fs3em_Result == FS3ENETR_OK) {
+            FS3ENetLoginStartReply *reply = (FS3ENetLoginStartReply *)msg->fs3em_Data;
+            /* Save client credentials for phase 2 */
+            if (app->loginClientId)     FreeVec(app->loginClientId);
+            if (app->loginClientSecret) FreeVec(app->loginClientSecret);
+            app->loginClientId     = NetStrDup(reply->fs3enl_ClientId);
+            app->loginClientSecret = NetStrDup(reply->fs3enl_ClientSecret);
+            app->loginPhase = FS3ELOGIN_WAITING_CODE;
+
+            printf("login reply: LOGIN_START ok, clientId=%s url=%s\n",
+                   reply->fs3enl_ClientId, reply->fs3enl_AuthorizeUrl);
+
+            /* Show the URL in the login window and enable phase-2 widgets. */
+            FS3ELoginView_SetAuthorizeUrl(&app->loginView, reply->fs3enl_AuthorizeUrl);
+        } else {
+            printf("login reply: LOGIN_START FAILED result=%u\n", (unsigned)msg->fs3em_Result);
+            FS3EApp_FreeLoginState();
+        }
+        break;
+
+    case FS3ENETQ_LOGIN_FINISH:
+        if (msg->fs3em_Result == FS3ENETR_OK) {
+            FS3ENetLoginFinishReply *reply = (FS3ENetLoginFinishReply *)msg->fs3em_Data;
+            printf("login reply: LOGIN_FINISH ok, acct=%s displayName=%s\n",
+                   reply->fs3enl_Account.fma_Acct    ? reply->fs3enl_Account.fma_Acct    : "?",
+                   reply->fs3enl_Account.fma_DisplayName ? reply->fs3enl_Account.fma_DisplayName : "?");
+            FS3EApp_SetAccount(app->loginApiBaseUrl,
+                               reply->fs3enl_AccessToken,
+                               reply->fs3enl_Account.fma_DisplayName,
+                               reply->fs3enl_Account.fma_Acct,
+                               reply->fs3enl_Account.fma_AvatarURL);
+            FS3EApp_SaveAccount();
+            FS3EApp_FreeLoginState();
+            app->loginPhase = FS3ELOGIN_DONE;
+            /* Fetch the current view mode timeline */
+            app->timelineFetchedMask = 0; /* reset so new account fetches fresh */
+            FS3EApp_FetchTimeline(app->viewMode);
+            FS3ELoginView_Close(&app->loginView);
+        } else {
+            struct EasyStruct es = {
+                sizeof(struct EasyStruct), 0,
+                (UBYTE *)"FriendSh3ep - Login Error",
+                (UBYTE *)"Could not exchange the authorization code.\nCheck the code and try again.",
+                (UBYTE *)"OK"
+            };
+            printf("login reply: LOGIN_FINISH FAILED result=%u\n", (unsigned)msg->fs3em_Result);
+            EasyRequestArgs(CurrentMainWindow, &es, NULL, NULL);
+            app->loginPhase = FS3ELOGIN_WAITING_CODE; /* let user retry code */
+        }
+        break;
+
+    case FS3ENETQ_TIMELINE:
+        if (msg->fs3em_Result == FS3ENETR_OK && app->tootTimeline) {
+            FS3ENetTimelineReply *reply = (FS3ENetTimelineReply *)msg->fs3em_Data;
+            FS3ENetStatus *statuses = (FS3ENetStatus *)(reply + 1);
+            ULONG i;
+            printf("timeline reply: viewMode=%u count=%u\n",
+                   (unsigned)reply->fs3et_ViewModeBit, (unsigned)reply->fs3et_Count);
+            /* Fetch is complete — clear the in-flight bit so CheckConnectionState
+             * can show the "connected" idle message instead of "Updating…". */
+            app->timelineFetchedMask &= ~(1UL << reply->fs3et_ViewModeBit);
+            /* Add newest-first (Mastodon returns newest first; prepend oldest first
+             * so the newest ends up at top of the TootTimeline channel). */
+            for (i = reply->fs3et_Count; i-- > 0; ) {
+                TTLPostSetup post;
+                post.username    = statuses[i].fmas_DisplayName[0]
+                                   ? statuses[i].fmas_DisplayName
+                                   : statuses[i].fmas_Acct;
+                post.acct        = statuses[i].fmas_Acct;
+                post.body        = statuses[i].fmas_Content;
+                post.timestamp   = statuses[i].fmas_CreatedAt;
+                post.boostBy     = statuses[i].fmas_BoostBy;
+                post.avatarURL   = statuses[i].fmas_AvatarURL;
+
+                /* Trigger avatar download for this user if not already requested. */
+                if (app->avatarImages &&
+                    statuses[i].fmas_AvatarURL &&
+                    statuses[i].fmas_AvatarURL[0] &&
+                    statuses[i].fmas_Acct &&
+                    !AvatarImages_IsRequested(app->avatarImages,
+                                              statuses[i].fmas_Acct))
+                {
+                    ULONG reqSize = sizeof(FS3ENetFetchImageReq)
+                                  + strlen(statuses[i].fmas_AvatarURL) + 1
+                                  + strlen(statuses[i].fmas_Acct) + 1;
+                    FS3ENetFetchImageReq *req =
+                        FS3ENetFetchImageReq_Alloc(statuses[i].fmas_AvatarURL,
+                                                   statuses[i].fmas_Acct);
+                    if (req) {
+                        if (FS3EApp_NetSend(FS3ENETQ_FETCH_IMAGE, req, reqSize))
+                            AvatarImages_MarkRequested(app->avatarImages,
+                                                       statuses[i].fmas_Acct);
+                        else
+                            FreeVec(req);
+                    }
+                }
+                post.viewModeBits = (1UL << reply->fs3et_ViewModeBit);
+                SetAttrs(app->tootTimeline,
+                         TTIMELINE_AddPost, (ULONG)&post, TAG_DONE);
+            }
+            if (CurrentMainWindow)
+                RefreshGList((struct Gadget *)app->tootTimeline,
+                             CurrentMainWindow, NULL, 1);
+        } else if (msg->fs3em_Result != FS3ENETR_OK) {
+            FS3ENetTimelineReq *req = (FS3ENetTimelineReq *)msg->fs3em_Data;
+            ULONG bit = req ? (1UL << req->fs3et_ViewModeBit) : 0;
+            app->timelineErrorMask   |= bit;
+            app->timelineFetchedMask &= ~bit; /* allow retry on next view switch */
+            app->lastTimelineResult   = msg->fs3em_Result;
+            printf("timeline reply: FAILED viewMode=%u result=%u\n",
+                   req ? (unsigned)req->fs3et_ViewModeBit : 0,
+                   (unsigned)msg->fs3em_Result);
+        }
+        break;
+
+    case FS3ENETQ_FETCH_IMAGE:
+        if (msg->fs3em_Result == FS3ENETR_OK && app->avatarImages) {
+            FS3ENetFetchImageReply *reply = (FS3ENetFetchImageReply *)msg->fs3em_Data;
+            if (reply && reply->fs3enf_Key && reply->fs3enf_LocalPath) {
+                AvatarImages_GotFile(app->avatarImages, reply->fs3enf_Key,
+                                     reply->fs3enf_LocalPath,
+                                     CurrentMainScreen,
+                                     (UWORD)app->style.avatarSize);
+                if (CurrentMainWindow)
+                    RefreshGList((struct Gadget *)app->tootTimeline,
+                                 CurrentMainWindow, NULL, 1);
+            }
+        }
+        break;
+
+    case FS3ENETQ_POST_STATUS:
+        if (msg->fs3em_Result == FS3ENETR_OK) {
+            printf("post reply: POST_STATUS ok\n");
+            FS3ETootView_Close(&app->tootView);
+        } else {
+            printf("post reply: POST_STATUS FAILED result=%u\n", (unsigned)msg->fs3em_Result);
+        }
+        break;
+
+    default:
+        break;
+    }
+
+    FS3EApp_CheckConnectionState();
 }
 
 /* - - - - - - - - - - - - - - - - - - - HELPERS - - - - - - - - - - - - - */
@@ -329,7 +721,10 @@ static void FS3EApp_ApplyFontSettings_Delayed()
                  TTIMELINE_Style, (ULONG)&app->style,
                  TAG_DONE);
 
-
+    /* Reload all cached avatar bitmaps at the new size. */
+    if (app->avatarImages && CurrentMainScreen)
+        AvatarImages_Reload(app->avatarImages, CurrentMainScreen,
+                            (UWORD)app->style.avatarSize);
 
     delayApplyFontSettings = FALSE;
 }
@@ -394,10 +789,11 @@ void fs3e_setViewMode(ULONG viewMode)
     if (app->tootTimeline)
         SetGdAttrs(app->tootTimeline, TTIMELINE_ViewMode, viewMode, TAG_END);
 
-    /* ask network process to update that Toot category specifically...
-       eventually, toots will be received later and feed more toots in the TootTimeLine.
-       TODO
-    */
+    /* If logged in and this channel hasn't been fetched yet, start a fetch. */
+    FS3EApp_FetchTimeline(viewMode);
+
+    /* Update WaitText for channels that don't trigger a fetch (Search, Notifs, …). */
+    FS3EApp_CheckConnectionState();
 }
 
 /* Close every classic BOOPSI sub-window (but don't dispose them -- they
@@ -474,16 +870,33 @@ int main(int argc, char **argv)
         (or from an external theme file ?)
     */
     FS3EStyle_InitDefaults(&app->style);
+
+    app->avatarImages = AvatarImages_Create();
+
  printf("FS3ENet_Start\n");
     /* --- Network process ------------------------------------------------ */
+    app->netReplyPort = CreateMsgPort();
+    if (!app->netReplyPort) cleanexit("Can't create network reply port");
+
     app->netRequestPort = FS3ENet_Start(app->settings.cachePath);
     if (!app->netRequestPort)
         printf("FriendSh3ep: network process failed - continuing without\n");
+
+    /* Try to load saved credentials; timeline fetch fires later in setViewMode */
+    FS3EApp_LoadAccount();
  printf("FS3ENet_Start end\n");
  printf("windows creates\n");
     /* --- Classic BOOPSI sub-windows ------------------------------------- */
     if (!FS3ELoginView_Create(&app->loginView, 14))
         cleanexit("Can't create login view");
+
+    /* Pre-fill login view from loaded account so the user sees they're connected. */
+    if (app->accountApiBaseUrl && app->loginView.serverEditor)
+        SetAttrs(app->loginView.serverEditor,
+                 STRINGA_TextVal, (ULONG)app->accountApiBaseUrl, TAG_END);
+    if (app->accountAcct && app->loginView.userEditor)
+        SetAttrs(app->loginView.userEditor,
+                 STRINGA_TextVal, (ULONG)app->accountAcct, TAG_END);
 
     if (!FS3ETootView_Create(&app->tootView, 14))
         cleanexit("Can't create toot view");
@@ -638,72 +1051,15 @@ int main(int argc, char **argv)
         TAG_END);
  printf("end create ttl\n");
     if (!app->tootTimeline) cleanexit("Can't create toot timeline");
+
+    if (app->avatarImages)
+        SetAttrs(app->tootTimeline,
+                 TTIMELINE_AvatarImages, (ULONG)app->avatarImages,
+                 TAG_DONE);
+
  flushbdbprint();
 
-    /* ---- Fake posts for layout testing (oldest first = prepended bottom-up) ---- */
-    {
-        /* viewModeBits = 0xFF: every channel (see TTIMELINE_NUM_VIEWMODES) --
-         * these are just test/demo data, not tied to any one real view, so
-         * they should show up regardless of which channel is active by
-         * default at startup. */
-        static const TTLPostSetup fakePosts[] = {
-            {
-                "Krabob",
-                "@krabob@amiga.social",
-                "Just released EmojiGear 4.3 for AmigaOS \xf0\x9f\x8e\x89 "
-                "Emoji now render on AGA screens using the new CLUT palette "
-                "blending path. Grab it from Aminet!",
-                "2h", 0x03
-            },
-            {
-                "Boing Ball",
-                "@boing@commodore.social",
-                "Reminder: the original Amiga demo still runs faster than "
-                "most modern web pages \xf0\x9f\x8f\x80\xf0\x9f\x94\xb4\xf0\x9f\x94\xb5",
-                "5h", 0x01
-            },
-            {
-                "Paula Chip",
-                "@paula@demoscene.social",
-                "Four-channel 8-bit audio, hardware sprites, blitter DMA "
-                "and a cooperative multitasker - the Amiga was decades ahead. "
-                "No wonder we never let go.",
-                "9h", 0x0f
-            },
-            {
-                "Workbench Fan",
-                "@wbfan@amiga.social",
-                "Pro tip: you can drag the Workbench screen down to reveal "
-                "a CLI behind it. Most people never discover this \xf0\x9f\x92\xbb",
-                "1d", 0x70
-            },
-            {
-                "Guru Meditation",
-                "@guru@amiga.social",
-                "Software failure. Press left mouse button to continue.\n"
-                "Guru Meditation #00000003.00C0FFEE\n"
-                "(just kidding, everything is fine)",
-                "1d", 0x7e
-            },
-            {
-                "AmiNet Bot",
-                "@aminetbot@fosstodon.org",
-                "New upload: utf8rastport.library 1.2 - Unicode text rendering "
-                "for AmigaOS RastPorts via FreeType2. Supports TrueType, "
-                "OpenType and color emoji. Tested on OS3.1/3.2/3.9 AGA and RTG.",
-                "2d", 0x7e
-            },
-        };
-        int i;
-        /* Prepend oldest first so newest ends up at top */
-
-        for (i = (int)(sizeof(fakePosts)/sizeof(fakePosts[0])) - 1; i >= 0; i--) {
-            SetAttrs(app->tootTimeline,
-                TTIMELINE_AddPost, (ULONG)&fakePosts[i],
-                TAG_DONE);
-        }
-
-    }
+    /* (fake test posts removed — real data comes from FS3ENETQ_TIMELINE replies) */
  flushbdbprint();
 
     /* ================================================================== */
@@ -804,6 +1160,7 @@ int main(int argc, char **argv)
 
             waitedSignals = winsignal | loginSig | tootSig | themeSig | settingsSig |
                 (1L << app->app_port->mp_SigBit) |
+                (app->netReplyPort ? (1L << app->netReplyPort->mp_SigBit) : 0) |
                 SIGBREAKF_CTRL_C |
                 SIGBREAKF_CTRL_F;
 
@@ -836,6 +1193,8 @@ int main(int argc, char **argv)
                     case WMHI_ICONIFY:
                         FS3EMenu_Close(&app->menu, CurrentMainWindow);
                         closeExternalViews();
+                        if (app->avatarImages)
+                            AvatarImages_Unload(app->avatarImages);
                         FS3EMain_Close(&app->mainwindow, app->window_obj, TRUE);
                         break;
 
@@ -843,6 +1202,9 @@ int main(int argc, char **argv)
                         FS3EMain_Show(&app->mainwindow, app->window_obj);
                         if (!CurrentMainWindow) cleanexit("can't re-open window");
                         FS3EMenu_Create(&app->menu, CurrentMainScreen, CurrentMainWindow);
+                        if (app->avatarImages && CurrentMainScreen)
+                            AvatarImages_Reload(app->avatarImages, CurrentMainScreen,
+                                                (UWORD)app->style.avatarSize);
                         break;
 
                     case WMHI_RAWKEY:
@@ -932,6 +1294,18 @@ int main(int argc, char **argv)
             FS3ETootView_HandleInput(&app->tootView);
             FS3EThemeView_HandleInput(&app->themeView);
             FS3ESettingsView_HandleInput(&app->settingsView);
+
+            /* Drain async network replies */
+            if (app->netReplyPort &&
+                (currentSignals & (1L << app->netReplyPort->mp_SigBit)))
+            {
+                FS3ENetMessage *netMsg;
+                while ((netMsg = (FS3ENetMessage *)GetMsg(app->netReplyPort)) != NULL) {
+                    FS3EApp_HandleNetReply(netMsg);
+                    FreeVec(netMsg->fs3em_Data);
+                    FreeVec(netMsg);
+                }
+            }
 
             /* Drain the BOOPSI notification queue (OM_NOTIFY via ICA_TARGET). */
             if (DelayQueue && BoopsiDelay_HasMessages(DelayQueue))
@@ -1040,20 +1414,59 @@ int main(int argc, char **argv)
                             FS3ELoginView_Open(&app->loginView);
                             break;
 
-                        /* ---- Login sub-window ---- */
+                        /* ---- Login sub-window: phase 1 ---- */
                         case GID_LOGIN_LOGIN_BUTTON:
                         {
-                            const char *server = FS3ELoginView_GetANSIServer(&app->loginView);
-                            const char *user   = FS3ELoginView_GetANSIUser(&app->loginView);
-                            const char *code   = FS3ELoginView_GetANSICode(&app->loginView);
-/*re
-                            bdbprintf("FriendSh3ep: login requested "
-                                      "(server=%s user=%s code=%s)\n",
-                                      server ? server : "",
-                                      user   ? user   : "",
-                                      code   ? code   : "");
-                                      */
-                            /* TODO: FS3ENETQ_LOGIN_START / LOGIN_FINISH */
+                            char serverBuf[256];
+                            const char *server = NormalizeServerUrl(
+                                FS3ELoginView_GetANSIServer(&app->loginView),
+                                serverBuf, sizeof(serverBuf));
+                            /* If already connected, clicking Connect starts a
+                             * fresh re-authentication (clears the old account). */
+                            if (app->loginPhase == FS3ELOGIN_DONE) {
+                                FS3EApp_FreeAccount();
+                                app->loginPhase = FS3ELOGIN_IDLE;
+                                app->timelineFetchedMask = 0;
+                                app->timelineErrorMask   = 0;
+                            }
+                            if (app->loginPhase == FS3ELOGIN_IDLE && server && server[0]) {
+                                FS3ENetLoginStartReq *req = FS3ENetLoginStartReq_Alloc(server);
+                                if (req) {
+                                    printf("login: phase IDLE, sending LOGIN_START server=%s\n", server);
+                                    if (app->loginApiBaseUrl) FreeVec(app->loginApiBaseUrl);
+                                    app->loginApiBaseUrl = NetStrDup(server);
+                                    if (FS3EApp_NetSend(FS3ENETQ_LOGIN_START, req, sizeof(*req))) {
+                                        app->loginPhase = FS3ELOGIN_WAITING_START;
+                                        FS3EApp_CheckConnectionState();
+                                    }
+                                }
+                            }
+                            break;
+                        }
+
+                        /* ---- Login sub-window: phase 2 ---- */
+                        case GID_LOGIN_SUBMIT_CODE_BUTTON:
+                        {
+                            const char *code = FS3ELoginView_GetANSICode(&app->loginView);
+                            if (app->loginPhase == FS3ELOGIN_WAITING_CODE &&
+                                code && code[0] &&
+                                app->loginApiBaseUrl &&
+                                app->loginClientId && app->loginClientSecret)
+                            {
+                                FS3ENetLoginFinishReq *req =
+                                    FS3ENetLoginFinishReq_Alloc(
+                                        app->loginApiBaseUrl,
+                                        app->loginClientId,
+                                        app->loginClientSecret,
+                                        code);
+                                if (req) {
+                                    printf("login: phase WAITING_CODE, sending LOGIN_FINISH\n");
+                                    if (FS3EApp_NetSend(FS3ENETQ_LOGIN_FINISH, req, sizeof(*req))) {
+                                        app->loginPhase = FS3ELOGIN_WAITING_FINISH;
+                                        FS3EApp_CheckConnectionState();
+                                    }
+                                }
+                            }
                             break;
                         }
 
@@ -1063,13 +1476,16 @@ int main(int argc, char **argv)
                             const char *subject = FS3ETootView_GetUTF8Subject(&app->tootView);
                             const char *body    = FS3ETootView_GetUTF8Body(&app->tootView);
                             LONG visibility     = FS3ETootView_GetVisibility(&app->tootView);
-/*
-                            bdbprintf("FriendSh3ep: toot requested "
-                                      "(visibility=%ld subject=%s body=%s)\n",
-                                      (long)visibility,
-                                      subject ? subject : "",
-                                      body    ? body    : "");*/
-                            /* TODO: FS3ENETQ_POST_STATUS */
+                            if (body && body[0] && app->accountAccessToken) {
+                                FS3ENetPostStatusReq *req =
+                                    FS3ENetPostStatusReq_Alloc(
+                                        app->accountApiBaseUrl,
+                                        app->accountAccessToken,
+                                        body,
+                                        VisibilityString(visibility),
+                                        subject ? subject : "");
+                                FS3EApp_NetSend(FS3ENETQ_POST_STATUS, req, sizeof(*req));
+                            }
                             break;
                         }
 
@@ -1159,6 +1575,11 @@ void exitclose(void)
         /* Release shared DCs after all gadgets using them are disposed. */
         if (app->buttonDC) { URPDC_Release(app->buttonDC); app->buttonDC = NULL; }
 
+        if (app->avatarImages) {
+            AvatarImages_Dispose(app->avatarImages);
+            app->avatarImages = NULL;
+        }
+
 //  printf("exitclose5\n");
 // wait2sec();
         FS3EStyle_ReleaseDrawContexts(&app->style);
@@ -1170,13 +1591,30 @@ void exitclose(void)
 
         if (app->netRequestPort)
         {
-            struct MsgPort *netReplyPort = CreateMsgPort();
-            if (netReplyPort)
-            {
-                FS3ENet_Stop(app->netRequestPort, netReplyPort);
-                DeleteMsgPort(netReplyPort);
+            /* Stop the network process using our persistent reply port if
+             * available, otherwise create a temporary one. */
+            struct MsgPort *stopReplyPort = app->netReplyPort
+                ? app->netReplyPort : CreateMsgPort();
+            if (stopReplyPort) {
+                FS3ENet_Stop(app->netRequestPort, stopReplyPort);
+                if (stopReplyPort != app->netReplyPort)
+                    DeleteMsgPort(stopReplyPort);
             }
         }
+        /* Drain and free any remaining async replies */
+        if (app->netReplyPort) {
+            FS3ENetMessage *netMsg;
+            while ((netMsg = (FS3ENetMessage *)GetMsg(app->netReplyPort)) != NULL) {
+                FreeVec(netMsg->fs3em_Data);
+                FreeVec(netMsg);
+            }
+            DeleteMsgPort(app->netReplyPort);
+            app->netReplyPort = NULL;
+        }
+
+        FS3EApp_FreeLoginState();
+        FS3EApp_FreeAccount();
+
 //  printf("exitclose7\n");
 // wait2sec();
         FS3EMsg_Close();

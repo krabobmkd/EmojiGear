@@ -85,9 +85,58 @@ FS3ENetLoginFinishReq *FS3ENetLoginFinishReq_Alloc(const char *apiBaseUrl,
     return req;
 }
 
-FS3ENetFetchImageReq *FS3ENetFetchImageReq_Alloc(const char *url)
+FS3ENetTimelineReq *FS3ENetTimelineReq_Alloc(ULONG viewModeBit,
+    const char *apiBaseUrl, const char *accessToken,
+    const char *timeline, const char *maxId)
 {
-    ULONG total = sizeof(FS3ENetFetchImageReq) + FS3ENet_PackLen(url);
+    ULONG total = sizeof(FS3ENetTimelineReq)
+                + FS3ENet_PackLen(apiBaseUrl)
+                + FS3ENet_PackLen(accessToken)
+                + FS3ENet_PackLen(timeline)
+                + FS3ENet_PackLen(maxId);
+    FS3ENetTimelineReq *req =
+        (FS3ENetTimelineReq *)AllocVec(total, MEMF_ANY);
+    char *p;
+
+    if (!req) return NULL;
+    req->fs3et_ViewModeBit = viewModeBit;
+    p = (char *)req + sizeof(*req);
+    FS3ENet_PackStr(&req->fs3et_ApiBaseUrl,   &p, apiBaseUrl);
+    FS3ENet_PackStr(&req->fs3et_AccessToken,  &p, accessToken);
+    FS3ENet_PackStr(&req->fs3et_Timeline,     &p, timeline);
+    FS3ENet_PackStr(&req->fs3et_MaxId,        &p, maxId);
+    return req;
+}
+
+FS3ENetPostStatusReq *FS3ENetPostStatusReq_Alloc(
+    const char *apiBaseUrl, const char *accessToken,
+    const char *content, const char *visibility, const char *spoiler)
+{
+    ULONG total = sizeof(FS3ENetPostStatusReq)
+                + FS3ENet_PackLen(apiBaseUrl)
+                + FS3ENet_PackLen(accessToken)
+                + FS3ENet_PackLen(content)
+                + FS3ENet_PackLen(visibility)
+                + FS3ENet_PackLen(spoiler);
+    FS3ENetPostStatusReq *req =
+        (FS3ENetPostStatusReq *)AllocVec(total, MEMF_ANY);
+    char *p;
+
+    if (!req) return NULL;
+    p = (char *)req + sizeof(*req);
+    FS3ENet_PackStr(&req->fs3ep_ApiBaseUrl,   &p, apiBaseUrl);
+    FS3ENet_PackStr(&req->fs3ep_AccessToken,  &p, accessToken);
+    FS3ENet_PackStr(&req->fs3ep_Content,      &p, content);
+    FS3ENet_PackStr(&req->fs3ep_Visibility,   &p, visibility);
+    FS3ENet_PackStr(&req->fs3ep_Spoiler,      &p, spoiler);
+    return req;
+}
+
+FS3ENetFetchImageReq *FS3ENetFetchImageReq_Alloc(const char *url, const char *key)
+{
+    ULONG total = sizeof(FS3ENetFetchImageReq)
+                + FS3ENet_PackLen(url)
+                + FS3ENet_PackLen(key);
     FS3ENetFetchImageReq *req =
         (FS3ENetFetchImageReq *)AllocVec(total, MEMF_ANY);
     char *p;
@@ -95,6 +144,7 @@ FS3ENetFetchImageReq *FS3ENetFetchImageReq_Alloc(const char *url)
     if (!req) return NULL;
     p = (char *)req + sizeof(*req);
     FS3ENet_PackStr(&req->fs3enf_Url, &p, url);
+    FS3ENet_PackStr(&req->fs3enf_Key, &p, key ? key : "");
     return req;
 }
 
@@ -267,17 +317,23 @@ static void FS3ENet_HandleLoginStart(FS3ENetMessage *fs3em)
 
     if (!req || fs3em->fs3em_DataLen < sizeof(*req))
     {
+        printf("net: LOGIN_START parse error\n");
         fs3em->fs3em_Result = FS3ENETR_PARSE_ERROR;
         return;
     }
+
+    printf("net: LOGIN_START server=%s\n", req->fs3enl_ApiBaseUrl ? req->fs3enl_ApiBaseUrl : "NULL");
 
     if (!FS3EMastodon_CreateApp(req->fs3enl_ApiBaseUrl, FS3ENET_CLIENT_NAME,
             clientId, sizeof(clientId),
             clientSecret, sizeof(clientSecret)))
     {
+        printf("net: LOGIN_START CreateApp failed\n");
         fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
         return;
     }
+
+    printf("net: LOGIN_START app registered, clientId=%s\n", clientId);
 
     FS3EMastodon_BuildAuthorizeURL(req->fs3enl_ApiBaseUrl, clientId,
         authorizeUrl, sizeof(authorizeUrl));
@@ -303,6 +359,7 @@ static void FS3ENet_HandleLoginStart(FS3ENetMessage *fs3em)
     fs3em->fs3em_Data    = reply;
     fs3em->fs3em_DataLen = total;
     fs3em->fs3em_Result  = FS3ENETR_OK;
+    printf("net: LOGIN_START done, url=%s\n", authorizeUrl);
 }
 
 /* FS3ENETQ_LOGIN_FINISH - exchange the OOB code for an access token and
@@ -318,20 +375,27 @@ static void FS3ENet_HandleLoginFinish(FS3ENetMessage *fs3em)
 
     if (!req || fs3em->fs3em_DataLen < sizeof(*req))
     {
+        printf("net: LOGIN_FINISH parse error\n");
         fs3em->fs3em_Result = FS3ENETR_PARSE_ERROR;
         return;
     }
+
+    printf("net: LOGIN_FINISH server=%s\n", req->fs3enl_ApiBaseUrl ? req->fs3enl_ApiBaseUrl : "NULL");
 
     if (!FS3EMastodon_ExchangeCode(req->fs3enl_ApiBaseUrl, req->fs3enl_ClientId,
             req->fs3enl_ClientSecret, req->fs3enl_Code,
             accessToken, sizeof(accessToken)))
     {
+        printf("net: LOGIN_FINISH ExchangeCode failed\n");
         fs3em->fs3em_Result = FS3ENETR_AUTH_ERROR;
         return;
     }
 
+    printf("net: LOGIN_FINISH token obtained, verifying credentials\n");
+
     if (!FS3EMastodon_VerifyCredentials(req->fs3enl_ApiBaseUrl, accessToken, &tmpAcc))
     {
+        printf("net: LOGIN_FINISH VerifyCredentials failed\n");
         FS3EMastodonAccount_Free(&tmpAcc);
         fs3em->fs3em_Result = FS3ENETR_AUTH_ERROR;
         return;
@@ -363,6 +427,7 @@ static void FS3ENet_HandleLoginFinish(FS3ENetMessage *fs3em)
 
     FS3EMastodonAccount_Free(&tmpAcc);
 
+    printf("net: LOGIN_FINISH done, acct=%s\n", reply->fs3enl_Account.fma_Acct ? reply->fs3enl_Account.fma_Acct : "?");
     FreeVec(fs3em->fs3em_Data);
     fs3em->fs3em_Data    = reply;
     fs3em->fs3em_DataLen = total;
@@ -405,7 +470,9 @@ static void FS3ENet_HandleFetchImage(FS3ENetMessage *fs3em)
         FS3EHttp_FreeResponse(&resp);
     }
 
-    total = sizeof(FS3ENetFetchImageReply) + FS3ENet_PackLen(localPath);
+    total = sizeof(FS3ENetFetchImageReply)
+          + FS3ENet_PackLen(localPath)
+          + FS3ENet_PackLen(req->fs3enf_Key);
     reply = (FS3ENetFetchImageReply *)AllocVec(total, MEMF_ANY);
     if (!reply)
     {
@@ -415,11 +482,246 @@ static void FS3ENet_HandleFetchImage(FS3ENetMessage *fs3em)
 
     p = (char *)reply + sizeof(*reply);
     FS3ENet_PackStr(&reply->fs3enf_LocalPath, &p, localPath);
+    FS3ENet_PackStr(&reply->fs3enf_Key,       &p, req->fs3enf_Key ? req->fs3enf_Key : "");
 
     FreeVec(fs3em->fs3em_Data);
     fs3em->fs3em_Data    = reply;
     fs3em->fs3em_DataLen = total;
     fs3em->fs3em_Result  = FS3ENETR_OK;
+}
+
+/* Strip HTML tags from Mastodon status content.
+ * <p> and <br> become newlines; all other tags are removed.
+ * HTML entities &amp; &lt; &gt; &nbsp; &apos; &quot; are decoded.
+ * Leading newlines are suppressed. */
+static void StripHTML(const char *html, char *out, ULONG outSize)
+{
+    ULONG oi = 0;
+    const char *s = html;
+    int in_tag = 0;
+    int first = 1;
+
+    if (!html || !out || outSize == 0) { if (out && outSize) out[0] = '\0'; return; }
+
+    while (*s && oi + 1 < outSize) {
+        if (in_tag) {
+            if (*s == '>') in_tag = 0;
+            s++;
+            continue;
+        }
+        if (*s == '<') {
+            /* block elements become newlines */
+            if ((s[1] == 'b' || s[1] == 'B') && (s[2] == 'r' || s[2] == 'R')) {
+                if (!first) out[oi++] = '\n';
+            } else if ((s[1] == 'p' || s[1] == 'P') &&
+                       (s[2] == '>' || s[2] == ' ' || s[2] == '/')) {
+                if (!first) out[oi++] = '\n';
+            }
+            in_tag = 1;
+            s++;
+            continue;
+        }
+        if (*s == '&') {
+            if (strncmp(s, "&amp;",  5) == 0) { out[oi++] = '&';  s += 5; first = 0; continue; }
+            if (strncmp(s, "&lt;",   4) == 0) { out[oi++] = '<';  s += 4; first = 0; continue; }
+            if (strncmp(s, "&gt;",   4) == 0) { out[oi++] = '>';  s += 4; first = 0; continue; }
+            if (strncmp(s, "&nbsp;", 6) == 0) { out[oi++] = ' ';  s += 6; first = 0; continue; }
+            if (strncmp(s, "&apos;", 6) == 0) { out[oi++] = '\''; s += 6; first = 0; continue; }
+            if (strncmp(s, "&quot;", 6) == 0) { out[oi++] = '"';  s += 6; first = 0; continue; }
+        }
+        out[oi++] = *s++;
+        first = 0;
+    }
+    /* trim trailing newlines */
+    while (oi > 0 && out[oi - 1] == '\n') oi--;
+    out[oi] = '\0';
+}
+
+/* FS3ENETQ_TIMELINE — fetch statuses and pack them into a flat reply block. */
+#define MAX_STATUSES_TIMELINE 40
+
+static void FS3ENet_HandleTimeline(FS3ENetMessage *fs3em)
+{
+    FS3ENetTimelineReq   *req = (FS3ENetTimelineReq *)fs3em->fs3em_Data;
+    FS3ENetTimelineReply *reply;
+    cJSON *json = NULL;
+    cJSON *item;
+    ULONG count = 0, total;
+    char *p;
+    char stripped[2048];
+
+    if (!req || fs3em->fs3em_DataLen < sizeof(*req)) {
+        printf("net: TIMELINE parse error\n");
+        fs3em->fs3em_Result = FS3ENETR_PARSE_ERROR;
+        return;
+    }
+
+    printf("net: TIMELINE viewMode=%lu timeline=%s\n",
+           req->fs3et_ViewModeBit,
+           req->fs3et_Timeline ? req->fs3et_Timeline : "NULL");
+
+    if (!FS3EMastodon_GetTimeline(req->fs3et_ApiBaseUrl,
+            req->fs3et_AccessToken,
+            req->fs3et_Timeline, &json)) {
+        printf("net: TIMELINE GetTimeline failed\n");
+        fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
+        return;
+    }
+
+    /* Pass 1: count statuses and compute flat-block size. */
+    total = sizeof(FS3ENetTimelineReply);
+    cJSON_ArrayForEach(item, json) {
+        /* For reblogs: content lives in item.reblog; author is item.reblog.account.
+         * The booster is item.account.  For original posts reblog is null/absent. */
+        const cJSON *reblog = cJSON_GetObjectItemCaseSensitive(item, "reblog");
+        const cJSON *src    = (reblog && !cJSON_IsNull(reblog)) ? reblog : item;
+        const cJSON *acct   = cJSON_GetObjectItemCaseSensitive(src,  "account");
+        const cJSON *bAcct  = cJSON_GetObjectItemCaseSensitive(item, "account");
+        const cJSON *v;
+
+        if (count >= MAX_STATUSES_TIMELINE) break;
+        total += sizeof(FS3ENetStatus);
+
+        v = acct ? cJSON_GetObjectItemCaseSensitive(acct, "display_name") : NULL;
+        total += (v && cJSON_IsString(v) && v->valuestring) ? strlen(v->valuestring) + 1 : 1;
+
+        v = acct ? cJSON_GetObjectItemCaseSensitive(acct, "acct") : NULL;
+        total += (v && cJSON_IsString(v) && v->valuestring) ? strlen(v->valuestring) + 1 : 1;
+
+        /* reserve original HTML length for stripped content (stripped ≤ original) */
+        v = cJSON_GetObjectItemCaseSensitive(src, "content");
+        total += (v && cJSON_IsString(v) && v->valuestring) ? strlen(v->valuestring) + 1 : 1;
+
+        v = cJSON_GetObjectItemCaseSensitive(item, "created_at");
+        total += (v && cJSON_IsString(v) && v->valuestring) ? strlen(v->valuestring) + 1 : 1;
+
+        v = acct ? cJSON_GetObjectItemCaseSensitive(acct, "avatar") : NULL;
+        total += (v && cJSON_IsString(v) && v->valuestring) ? strlen(v->valuestring) + 1 : 1;
+
+        v = cJSON_GetObjectItemCaseSensitive(item, "id");
+        total += (v && cJSON_IsString(v) && v->valuestring) ? strlen(v->valuestring) + 1 : 1;
+
+        /* booster display_name (empty string for non-reblogs) */
+        if (src != item) {
+            v = bAcct ? cJSON_GetObjectItemCaseSensitive(bAcct, "display_name") : NULL;
+            total += (v && cJSON_IsString(v) && v->valuestring) ? strlen(v->valuestring) + 1 : 1;
+        } else {
+            total += 1; /* empty string */
+        }
+
+        count++;
+    }
+
+    reply = (FS3ENetTimelineReply *)AllocVec(total, MEMF_ANY);
+    if (!reply) {
+        cJSON_Delete(json);
+        fs3em->fs3em_Result = FS3ENETR_NETWORK_ERROR;
+        return;
+    }
+    reply->fs3et_ViewModeBit = req->fs3et_ViewModeBit;
+    reply->fs3et_Count       = count;
+
+    /* Pass 2: pack strings into the block. */
+    {
+        FS3ENetStatus *statuses = (FS3ENetStatus *)(reply + 1);
+        ULONG i = 0;
+        p = (char *)(statuses + count);
+
+        cJSON_ArrayForEach(item, json) {
+            const cJSON *reblog, *src, *acct, *bAcct, *v;
+            const char *str;
+            if (i >= count) break;
+
+            reblog = cJSON_GetObjectItemCaseSensitive(item, "reblog");
+            src    = (reblog && !cJSON_IsNull(reblog)) ? reblog : item;
+            acct   = cJSON_GetObjectItemCaseSensitive(src,  "account");
+            bAcct  = cJSON_GetObjectItemCaseSensitive(item, "account");
+
+            v = acct ? cJSON_GetObjectItemCaseSensitive(acct, "display_name") : NULL;
+            str = (v && cJSON_IsString(v)) ? v->valuestring : "";
+            FS3ENet_PackStr(&statuses[i].fmas_DisplayName, &p, str);
+
+            v = acct ? cJSON_GetObjectItemCaseSensitive(acct, "acct") : NULL;
+            str = (v && cJSON_IsString(v)) ? v->valuestring : "";
+            FS3ENet_PackStr(&statuses[i].fmas_Acct, &p, str);
+
+            v = cJSON_GetObjectItemCaseSensitive(src, "content");
+            str = (v && cJSON_IsString(v)) ? v->valuestring : "";
+            StripHTML(str, stripped, sizeof(stripped));
+            FS3ENet_PackStr(&statuses[i].fmas_Content, &p, stripped);
+
+            v = cJSON_GetObjectItemCaseSensitive(item, "created_at");
+            str = (v && cJSON_IsString(v)) ? v->valuestring : "";
+            FS3ENet_PackStr(&statuses[i].fmas_CreatedAt, &p, str);
+
+            v = acct ? cJSON_GetObjectItemCaseSensitive(acct, "avatar") : NULL;
+            str = (v && cJSON_IsString(v)) ? v->valuestring : "";
+            FS3ENet_PackStr(&statuses[i].fmas_AvatarURL, &p, str);
+
+            v = cJSON_GetObjectItemCaseSensitive(item, "id");
+            str = (v && cJSON_IsString(v)) ? v->valuestring : "";
+            FS3ENet_PackStr(&statuses[i].fmas_Id, &p, str);
+
+            if (src != item) {
+                v = bAcct ? cJSON_GetObjectItemCaseSensitive(bAcct, "display_name") : NULL;
+                str = (v && cJSON_IsString(v)) ? v->valuestring : "";
+            } else {
+                str = "";
+            }
+            FS3ENet_PackStr(&statuses[i].fmas_BoostBy, &p, str);
+
+            i++;
+        }
+    }
+
+    cJSON_Delete(json);
+    FreeVec(fs3em->fs3em_Data);
+    fs3em->fs3em_Data    = reply;
+    fs3em->fs3em_DataLen = total;
+    fs3em->fs3em_Result  = FS3ENETR_OK;
+    printf("net: TIMELINE done, count=%lu viewMode=%lu\n",
+           (unsigned long)count, (unsigned long)reply->fs3et_ViewModeBit);
+}
+
+/* FS3ENETQ_POST_STATUS — publish a toot and return its id. */
+static void FS3ENet_HandlePostStatus(FS3ENetMessage *fs3em)
+{
+    FS3ENetPostStatusReq   *req = (FS3ENetPostStatusReq *)fs3em->fs3em_Data;
+    FS3ENetPostStatusReply *reply;
+    char statusId[64];
+    ULONG total;
+    char *p;
+
+    if (!req || fs3em->fs3em_DataLen < sizeof(*req)) {
+        printf("net: POST_STATUS parse error\n");
+        fs3em->fs3em_Result = FS3ENETR_PARSE_ERROR;
+        return;
+    }
+
+    printf("net: POST_STATUS visibility=%s\n",
+           req->fs3ep_Visibility ? req->fs3ep_Visibility : "public");
+
+    if (!FS3EMastodon_PostStatus(req->fs3ep_ApiBaseUrl, req->fs3ep_AccessToken,
+            req->fs3ep_Content, req->fs3ep_Visibility,
+            statusId, sizeof(statusId)))
+    {
+        printf("net: POST_STATUS PostStatus failed\n");
+        fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
+        return;
+    }
+
+    total = sizeof(FS3ENetPostStatusReply) + FS3ENet_PackLen(statusId);
+    reply = (FS3ENetPostStatusReply *)AllocVec(total, MEMF_ANY);
+    if (!reply) { fs3em->fs3em_Result = FS3ENETR_NETWORK_ERROR; return; }
+
+    p = (char *)reply + sizeof(*reply);
+    FS3ENet_PackStr(&reply->fs3ep_StatusId, &p, statusId);
+
+    FreeVec(fs3em->fs3em_Data);
+    fs3em->fs3em_Data    = reply;
+    fs3em->fs3em_DataLen = total;
+    fs3em->fs3em_Result  = FS3ENETR_OK;
+    printf("net: POST_STATUS done, statusId=%s\n", statusId);
 }
 
 /* FS3ENETQ_FLUSH_CACHE — delete every file in the disk cache directory. */
@@ -451,9 +753,14 @@ static void FS3ENet_Dispatch(FS3ENetMessage *fs3em)
             break;
 
         case FS3ENETQ_TIMELINE:
+            FS3ENet_HandleTimeline(fs3em);
+            break;
+
         case FS3ENETQ_POST_STATUS:
+            FS3ENet_HandlePostStatus(fs3em);
+            break;
+
         default:
-            /* TODO: Phase 2 */
             fs3em->fs3em_Result = FS3ENETR_OK;
             break;
     }

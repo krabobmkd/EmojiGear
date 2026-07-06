@@ -147,14 +147,17 @@ typedef struct FS3ENetLoginFinishReply
 typedef struct FS3ENetFetchImageReq
 {
     char *fs3enf_Url;
+    char *fs3enf_Key;  /* caller key echoed in reply; for avatars: @acct string */
 } FS3ENetFetchImageReq;
 
-/* Allocates a flat request block for FETCH_IMAGE. FreeVec() when done. */
-FS3ENetFetchImageReq *FS3ENetFetchImageReq_Alloc(const char *url);
+/* Allocates a flat request block for FETCH_IMAGE. FreeVec() when done.
+ * key is echoed back in the reply so the caller knows which entry to update. */
+FS3ENetFetchImageReq *FS3ENetFetchImageReq_Alloc(const char *url, const char *key);
 
 typedef struct FS3ENetFetchImageReply
 {
-    char *fs3enf_LocalPath;  /* e.g. "T:FS3ECache/1a2b3c4d" */
+    char *fs3enf_LocalPath;  /* e.g. "PROGDIR:.cache/1a2b3c4d" */
+    char *fs3enf_Key;        /* echoed from request */
 } FS3ENetFetchImageReply;
 
 /*
@@ -177,5 +180,72 @@ void FS3ENet_Stop(struct MsgPort *requestPort, struct MsgPort *replyPort);
  * Returns TRUE on FS3ENETR_OK, FALSE otherwise (including requestPort==NULL).
  */
 BOOL FS3ENet_FlushCache(struct MsgPort *requestPort, struct MsgPort *replyPort);
+
+/*
+ * FS3ENETQ_TIMELINE — fetch the newest page of statuses for a timeline.
+ *
+ * fs3et_ViewModeBit identifies the UI channel (VIEWMODE_* value from
+ * friendsh3ep.h); it is echoed unchanged into FS3ENetTimelineReply so the
+ * GUI can route replies back to the right TootTimeline channel.
+ * fs3et_AccessToken may be "" for public timelines.
+ * fs3et_MaxId may be NULL/empty to request the newest page.
+ *
+ * On FS3ENETR_OK, fs3em_Data is replaced with a flat FS3ENetTimelineReply
+ * block; fs3em_Data on error still points at the original request block.
+ */
+typedef struct FS3ENetTimelineReq {
+    ULONG  fs3et_ViewModeBit;   /* echoed in reply */
+    char  *fs3et_ApiBaseUrl;
+    char  *fs3et_AccessToken;   /* "" = no auth (public timelines) */
+    char  *fs3et_Timeline;      /* "home", "public", "public?local=true", … */
+    char  *fs3et_MaxId;         /* "" = newest page */
+} FS3ENetTimelineReq;
+
+FS3ENetTimelineReq *FS3ENetTimelineReq_Alloc(ULONG viewModeBit,
+    const char *apiBaseUrl, const char *accessToken,
+    const char *timeline, const char *maxId);
+
+/* Single status entry inside a FS3ENetTimelineReply.
+ * All char * fields point into the same flat block — one FreeVec() on
+ * the enclosing FS3ENetTimelineReply frees everything. */
+typedef struct FS3ENetStatus {
+    char *fmas_DisplayName;  /* original author display_name (UTF-8) */
+    char *fmas_Acct;         /* original author @user@instance handle */
+    char *fmas_Content;      /* HTML-stripped plain text */
+    char *fmas_CreatedAt;    /* ISO 8601 timestamp string */
+    char *fmas_AvatarURL;    /* original author CDN avatar URL */
+    char *fmas_Id;           /* status id string (for pagination) */
+    char *fmas_BoostBy;      /* booster display_name, "" if not a reblog */
+} FS3ENetStatus;
+
+/* Header of the flat timeline reply block.
+ * Statuses follow immediately: (FS3ENetStatus *)(reply + 1)[i] */
+typedef struct FS3ENetTimelineReply {
+    ULONG fs3et_ViewModeBit; /* echoed from request */
+    ULONG fs3et_Count;
+    /* FS3ENetStatus[fs3et_Count] follows immediately in memory */
+} FS3ENetTimelineReply;
+
+/*
+ * FS3ENETQ_POST_STATUS — publish a new status (toot).
+ *
+ * fs3ep_Spoiler is the CW/subject text; pass "" for no content warning.
+ * On FS3ENETR_OK, fs3em_Data is replaced with an FS3ENetPostStatusReply.
+ */
+typedef struct FS3ENetPostStatusReq {
+    char *fs3ep_ApiBaseUrl;
+    char *fs3ep_AccessToken;
+    char *fs3ep_Content;     /* UTF-8 post body */
+    char *fs3ep_Visibility;  /* "public", "unlisted", "private", "direct" */
+    char *fs3ep_Spoiler;     /* CW text; "" = no content warning */
+} FS3ENetPostStatusReq;
+
+FS3ENetPostStatusReq *FS3ENetPostStatusReq_Alloc(
+    const char *apiBaseUrl, const char *accessToken,
+    const char *content, const char *visibility, const char *spoiler);
+
+typedef struct FS3ENetPostStatusReply {
+    char *fs3ep_StatusId; /* new status id string */
+} FS3ENetPostStatusReply;
 
 #endif /* FS3ENET_H */

@@ -214,6 +214,8 @@ TTLPost *ttl_post_alloc(const TTLPostSetup *setup)
         post->acct      = dup_str(setup->acct);
         post->body      = dup_str(setup->body);
         post->timestamp = dup_str(setup->timestamp);
+        post->boostBy   = (setup->boostBy  && setup->boostBy[0])  ? dup_str(setup->boostBy)  : NULL;
+        post->avatarURL = (setup->avatarURL && setup->avatarURL[0]) ? dup_str(setup->avatarURL) : NULL;
     }
 
     return post;
@@ -233,6 +235,8 @@ void ttl_post_free(TTLPost *post)
     if (post->acct)      FreeVec(post->acct);
     if (post->body)      FreeVec(post->body);
     if (post->timestamp) FreeVec(post->timestamp);
+    if (post->boostBy)   FreeVec(post->boostBy);
+    if (post->avatarURL) FreeVec(post->avatarURL);
     FreeVec(post);
 }
 
@@ -269,6 +273,14 @@ void ttl_post_layout(TTLData *inst, TTLPost *post)
     avatarH = avatarW;  /* square avatar */
 
     curRelY = TTL_POST_PAD_TOP;
+
+    /* "↺ Name boosted" line (dcMini) — only for reblogs */
+    if (post->boostBy && post->boostBy[0]) {
+        TTLTextSpan *sp = ttl_span_alloc(post->boostBy, TTL_SPAN_BOOSTBY,
+                                          curRelY, textX, inst);
+        if (sp) AddTail((struct List *)&post->textSpans, (struct Node *)&sp->node);
+        curRelY += inst->miniLineHeight;
+    }
 
     /* Username span (dcUsername metrics) */
     if (post->username && post->username[0]) {

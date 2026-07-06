@@ -116,7 +116,7 @@ BOOL FS3EMastodon_CreateApp(const char *apiBaseUrl, const char *clientName,
         encName, encRedirect, encScopes);
 
     snprintf(url, sizeof(url), "%s/api/v1/apps", apiBaseUrl);
-
+ printf("url:%s\n",url);
     if (!FS3EHttp_Post(url, NULL, "application/x-www-form-urlencoded",
                      body, strlen(body), &resp))
         return FALSE;
@@ -246,30 +246,55 @@ BOOL FS3EMastodon_GetTimeline(const char *apiBaseUrl, const char *accessToken,
     *outJson = NULL;
 
     snprintf(url, sizeof(url), "%s/api/v1/timelines/%s", apiBaseUrl, timeline);
-    FS3EMastodon_BuildAuthHeader(authHeader, sizeof(authHeader), accessToken);
 
-    headers[0].fhh_Name  = "Authorization";
-    headers[0].fhh_Value = authHeader;
-    headers[1].fhh_Name  = NULL;
-    headers[1].fhh_Value = NULL;
+    if (accessToken && accessToken[0]) {
+        FS3EMastodon_BuildAuthHeader(authHeader, sizeof(authHeader), accessToken);
+        headers[0].fhh_Name  = "Authorization";
+        headers[0].fhh_Value = authHeader;
+        headers[1].fhh_Name  = NULL;
+        headers[1].fhh_Value = NULL;
+    } else {
+        headers[0].fhh_Name  = NULL;
+        headers[0].fhh_Value = NULL;
+    }
 
-    if (!FS3EHttp_Get(url, headers, &resp))
-        return FALSE;
+    printf("net: GetTimeline GET %s\n", url);
 
-    json = cJSON_Parse((char *)resp.fhr_Body);
-
-    FS3EHttp_FreeResponse(&resp);
-
-    if (!json || !cJSON_IsArray(json))
-    {
-        if (json)
-            cJSON_Delete(json);
-
+    if (!FS3EHttp_Get(url, headers, &resp)) {
+        printf("net: GetTimeline HTTP GET failed\n");
         return FALSE;
     }
 
-    *outJson = json;
+    printf("net: GetTimeline response %lu bytes\n", resp.fhr_BodyLen);
 
+    json = cJSON_Parse((char *)resp.fhr_Body);
+
+    if (!json || !cJSON_IsArray(json))
+    {
+        if (!json) {
+            const char *errptr = cJSON_GetErrorPtr();
+            printf("net: GetTimeline cJSON_Parse failed near: %.80s\n",
+                   errptr ? errptr : "(null)");
+        } else {
+            printf("net: GetTimeline parsed ok but not an array (type=%d)\n",
+                   json->type);
+            cJSON_Delete(json);
+            json = NULL;
+        }
+        /* Print first 200 bytes of the body for context */
+        if (resp.fhr_Body) {
+            char preview[201];
+            ULONG plen = resp.fhr_BodyLen < 200 ? resp.fhr_BodyLen : 200;
+            CopyMem(resp.fhr_Body, preview, plen);
+            preview[plen] = '\0';
+            printf("net: GetTimeline body start: %s\n", preview);
+        }
+        FS3EHttp_FreeResponse(&resp);
+        return FALSE;
+    }
+
+    FS3EHttp_FreeResponse(&resp);
+    *outJson = json;
     return TRUE;
 }
 

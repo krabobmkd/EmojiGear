@@ -9,10 +9,12 @@
  */
 
 /* Login window (fs3eloginview.c) */
-#define GID_LOGIN_SERVER_EDITOR  10
-#define GID_LOGIN_USER_EDITOR    11
-#define GID_LOGIN_CODE_EDITOR    12
-#define GID_LOGIN_LOGIN_BUTTON   13
+#define GID_LOGIN_SERVER_EDITOR      10
+#define GID_LOGIN_USER_EDITOR        11
+#define GID_LOGIN_CODE_EDITOR        12
+#define GID_LOGIN_LOGIN_BUTTON       13  /* phase 1: connect / register app */
+#define GID_LOGIN_URL_EDITOR         14  /* read-only display of authorize URL */
+#define GID_LOGIN_SUBMIT_CODE_BUTTON 15  /* phase 2: submit the auth code */
 
 /* New toot window (fs3etootview.c) */
 #define GID_TOOT_SUBJECT_EDITOR  20

@@ -33,8 +33,10 @@
 #include <graphics/rastport.h>
 #include <graphics/layers.h>
 #include <string.h>
+#include <stdio.h>
 
 #include "fs3etoottimeline_private.h"
+#include "../avatarimages.h"
 #include "../bdbprintf.h"
 
 /* ------------------------------------------------------------------ */
@@ -387,20 +389,32 @@ void ttl_render_tile(TTLData *inst, TTLTile *tile)
         /* drawY = Y within tile of the post top (may be negative) */
         WORD drawY = (WORD)(postTop - tileBaseY);
 
-        /* ---- Avatar placeholder rectangle ---- */
+        /* ---- Avatar: blit from cache if available, else draw placeholder ---- */
         {
             WORD ay = (WORD)(drawY + TTL_POST_PAD_TOP);
             WORD ax = padLeft;
             WORD as = avatarW;
+            BmImage *avBm = inst->avatarImages
+                            ? AvatarImages_Get(inst->avatarImages, post->acct)
+                            : NULL;
 
-            SetAPen(rp, (LONG)FS3E_PEN(inst->style, FS3E_COLOR_ACCENT));
-            RectFill(rp, ax, ay, ax + as - 1, ay + as - 1);
-            /* A small cross in timeline bg so the placeholder is obvious */
-            SetAPen(rp, bgpen);
-            Move(rp, ax,          ay + as/2);
-            Draw(rp, ax + as - 1, ay + as/2);
-            Move(rp, ax + as/2,   ay);
-            Draw(rp, ax + as/2,   ay + as - 1);
+            if (avBm && avBm->bitmap) {
+                /* Centre the (possibly narrower/shorter) scaled bitmap in the box */
+                WORD bx = (WORD)(ax + (as - (WORD)avBm->width)  / 2);
+                WORD by = (WORD)(ay + (as - (WORD)avBm->height) / 2);
+                BltBitMapRastPort(avBm->bitmap, 0, 0, rp,
+                                  bx, by, (ULONG)avBm->width, (ULONG)avBm->height,
+                                  0xC0);
+            } else {
+                /* Placeholder: filled rectangle with cross */
+                SetAPen(rp, (LONG)FS3E_PEN(inst->style, FS3E_COLOR_ACCENT));
+                RectFill(rp, ax, ay, ax + as - 1, ay + as - 1);
+                SetAPen(rp, bgpen);
+                Move(rp, ax,          ay + as/2);
+                Draw(rp, ax + as - 1, ay + as/2);
+                Move(rp, ax + as/2,   ay);
+                Draw(rp, ax + as/2,   ay + as - 1);
+            }
         }
 
         /* ---- Text rendering (requires style DCs) ---- */
@@ -420,8 +434,21 @@ void ttl_render_tile(TTLData *inst, TTLTile *tile)
 
 // bdbprintf("ttl_render_tile bgPen:%d\n",bgPen);
 // bdbprintf("ttl_render_tile txtPen:%d\n",txtPen);
+            curY = (WORD)(drawY + TTL_POST_PAD_TOP);
+
+            /* "↺ Name boosted" header line (dcMini, dim pen) — reblogs only */
+            if (post->boostBy && post->boostBy[0]) {
+                char boostLine[128];
+
+                snprintf(boostLine, sizeof(boostLine),
+                         "\xE2\x99\xBB %s boosted", post->boostBy);
+                baselineY = (WORD)(curY + inst->miniLineAscent);
+                URPDC_SetDrawColorFromPen(dcMini, inst->screen, dimPen, bgPen);
+                tile_draw_text(inst, rp, textX, baselineY, boostLine, dcMini);
+                curY += inst->miniLineHeight;
+            }
+
             /* Username (dcUsername) */
-            curY      = (WORD)(drawY + TTL_POST_PAD_TOP);
             baselineY = (WORD)(curY + inst->nameLineAscent);
             URPDC_SetDrawColorFromPen(dcName, inst->screen, namePen, bgPen);
             tile_draw_text(inst, rp, textX, baselineY, post->username, dcName);

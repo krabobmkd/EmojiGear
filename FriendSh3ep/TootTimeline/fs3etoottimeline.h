@@ -48,6 +48,8 @@
  * below the waitImage in waiting mode. Gadget copies the string. Falls
  * back to a built-in default if never set / set to NULL. */
 #define TTIMELINE_WaitText       (TTIMELINE_Base + 10)
+/* [IS] AvatarImages*: avatar bitmap cache; gadget reads from it during render */
+#define TTIMELINE_AvatarImages   (TTIMELINE_Base + 11)
 
 /* ------------------------------------------------------------------ */
 /* Notification tags  (sent to ICA_TARGET via OM_NOTIFY)               */
@@ -69,10 +71,12 @@
 /* ------------------------------------------------------------------ */
 
 typedef struct TTLPostSetup {
-    const char *username;   /* display name (UTF-8) */
-    const char *acct;       /* @user@instance (UTF-8) */
-    const char *body;       /* post body text (UTF-8) */
-    const char *timestamp;  /* short age string, e.g. "3h" (UTF-8) */
+    const char *username;    /* original author display name (UTF-8) */
+    const char *acct;        /* original author @user@instance (UTF-8) */
+    const char *body;        /* post body text (UTF-8) */
+    const char *timestamp;   /* short age string, e.g. "3h" (UTF-8) */
+    const char *boostBy;     /* booster display name, NULL/"" for originals */
+    const char *avatarURL;   /* CDN URL of original author's avatar */
     ULONG       viewModeBits; /* bit i set = also prepend to channel i (see
                                 * TTIMELINE_NUM_VIEWMODES); a post can be
                                 * added to more than one channel at once,

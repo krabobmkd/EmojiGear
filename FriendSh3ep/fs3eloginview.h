@@ -23,10 +23,16 @@ typedef struct FS3ELoginView {
 
     Object *layout;        /* outer layout - add to a parent or as ParentGroup */
 
-    Object *serverEditor;  /* single-line UniTextEditor: instance/server */
-    Object *userEditor;    /* single-line UniTextEditor: user/account */
-    Object *codeEditor;    /* single-line UniTextEditor: OAuth code */
-    Object *loginBtn;
+    /* Phase 1: always enabled */
+    Object *serverEditor;      /* string.gadget: instance/server URL */
+    Object *userEditor;        /* string.gadget: user/account (informational) */
+    Object *loginBtn;          /* "Connect" button — sends LOGIN_START */
+
+    /* Phase 2: disabled until server returns the authorize URL */
+    Object *urlInstructLabel;  /* read-only no-bevel button — instruction text */
+    Object *urlEditor;         /* read-only string.gadget showing the authorize URL */
+    Object *codeEditor;        /* string.gadget: OAuth code pasted by user */
+    Object *submitCodeBtn;     /* "Submit Code" button — sends LOGIN_FINISH */
 } FS3ELoginView;
 
 /* Build the BOOPSI window+layout. pointSize is forwarded to the
@@ -52,5 +58,9 @@ ULONG FS3ELoginView_GetSignalMask(FS3ELoginView *lv);
 const char *FS3ELoginView_GetANSIServer(FS3ELoginView *lv);
 const char *FS3ELoginView_GetANSIUser(FS3ELoginView *lv);
 const char *FS3ELoginView_GetANSICode(FS3ELoginView *lv);
+
+/* Called when LOGIN_START reply arrives with the authorize URL.
+ * Populates urlEditor and enables the phase-2 widgets. */
+void FS3ELoginView_SetAuthorizeUrl(FS3ELoginView *lv, const char *url);
 
 #endif /* FS3ELOGINVIEW_H */

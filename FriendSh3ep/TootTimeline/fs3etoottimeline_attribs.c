@@ -181,6 +181,11 @@ ULONG ttl_apply_tags(Class *cl, Object *o, struct opSet *msg, int couldRefreshDr
                 break;
             }
 
+            case TTIMELINE_AvatarImages:
+                inst->avatarImages = (struct AvatarImages *)tag->ti_Data;
+                used = 1;
+                break;
+
             case ICA_TARGET:
                 inst->target = (Object *)tag->ti_Data;
                 used = 1;

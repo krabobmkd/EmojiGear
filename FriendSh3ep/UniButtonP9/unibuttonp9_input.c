@@ -50,7 +50,7 @@ ULONG UniButtonP9_OnGoActive(Class *cl, Object *o, struct gpInput *msg)
 
     if (!msg->gpi_IEvent) return GMR_NOREUSE;
 
-bdbprintf("p9ongoac:inst->pushButton %d\n",inst->pushButton);
+//bdbprintf("p9ongoac:inst->pushButton %d\n",inst->pushButton);
     if (inst->pushButton)
         inst->prevSelected = (BOOL)((G(o)->Flags & GFLG_SELECTED) != 0);
 
