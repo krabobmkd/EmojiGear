@@ -70,7 +70,7 @@ ULONG UniButtonP9_OnHandleInput(Class *cl, Object *o, struct gpInput *msg)
     BOOL                over;
 
     if (!ie) return GMR_MEACTIVE;
-bdbprintf("p9ongoac:inst->pushButton %d\n",inst->pushButton);
+
     if (ie->ie_Class == IECLASS_RAWMOUSE) {
 
         if (ie->ie_Code == SELECTUP) {
@@ -95,6 +95,7 @@ bdbprintf("p9ongoac:inst->pushButton %d\n",inst->pushButton);
 
             G(o)->Flags &= ~GFLG_SELECTED;
             render(cl, o, msg->gpi_GInfo);
+
             if (over) {
                 ubtp9_notify_pressed(cl, o, msg->gpi_GInfo);
                 *msg->gpi_Termination = 0;

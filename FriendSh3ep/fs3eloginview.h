@@ -63,4 +63,9 @@ const char *FS3ELoginView_GetANSICode(FS3ELoginView *lv);
  * Populates urlEditor and enables the phase-2 widgets. */
 void FS3ELoginView_SetAuthorizeUrl(FS3ELoginView *lv, const char *url);
 
+/* Empties serverEditor/userEditor. Call once credentials are confirmed
+ * (saved account loaded, or a fresh login just completed) so there's
+ * nothing left pre-filled to accidentally resubmit. */
+void FS3ELoginView_ClearFields(FS3ELoginView *lv);
+
 #endif /* FS3ELOGINVIEW_H */

@@ -30,7 +30,8 @@ typedef enum {
     BMIMAGE_ERR_NO_MEMORY,      /* AllocVec failed */
     BMIMAGE_ERR_NO_DATATYPES,   /* datatypes.library v44 not available */
     BMIMAGE_ERR_OPEN_FAILED,    /* NewDTObject returned NULL */
-    BMIMAGE_ERR_NO_BITMAP       /* layout ok but no bitmap returned */
+    BMIMAGE_ERR_NO_BITMAP,      /* layout ok but no bitmap returned */
+    BMIMAGE_ERR_WRITE_FAILED    /* couldn't write the scaled BMP thumbnail to disk */
 } BmImageError;
 
 typedef struct BmImage {
@@ -63,8 +64,21 @@ BOOL BmImage_Init(BmImage *img, const char *path);
 BOOL BmImage_Load(BmImage *img, struct Screen *screen);
 
 /*
- * Load (or reload) the bitmap like BmImage_Load(), but scale it first via
- * picture.datatype's PDTM_SCALE (PDTA_ScaleQuality on, i.e. "slow'n'nice").
+ * Load (or reload) the bitmap like BmImage_Load(), but scale it first.
+ * Does NOT use picture.datatype's PDTM_SCALE (it has known OS bugs), nor a
+ * source-less in-memory picture.datatype object (creating one doesn't work
+ * on OS3). Instead, the scaled image is materialised as a BMP file next to
+ * the source (same directory, named "<filePath>.<targetWidth>x<targetHeight>.bmp")
+ * and loaded from disk like any other image -- see bmimage.c's file header
+ * for the full pipeline. This works regardless of screen depth (truecolor
+ * or paletted).
+ *
+ * That BMP thumbnail is a disk cache in its own right: if it already exists
+ * from a previous call with the same targetWidth/targetHeight, it's loaded
+ * directly with no decode/scale work at all. It lives alongside the source
+ * file, so callers whose source path is itself inside a managed cache
+ * directory (see network_fs3e/fs3enet_cache.h) get thumbnail cleanup for
+ * free whenever that directory is flushed.
  *
  * targetWidth x targetHeight is treated like a bounding box: the source
  * rectangle is scaled (up or down) preserving its aspect ratio so it fits
@@ -74,7 +88,8 @@ BOOL BmImage_Load(BmImage *img, struct Screen *screen);
  * img->width/height are the resulting scaled size, not targetWidth/Height.
  *
  * Pass screen=NULL to load raw (un-remapped); same lifecycle/ownership as
- * BmImage_Load() otherwise.
+ * BmImage_Load() otherwise. Unlike BmImage_Load(), the resulting img->mask
+ * is always NULL -- BMP has no alpha/transparent-colour channel.
  */
 BOOL BmImage_LoadScaled(BmImage *img, struct Screen *screen,
                          UWORD targetWidth, UWORD targetHeight);

@@ -85,6 +85,23 @@ FS3ENetLoginFinishReq *FS3ENetLoginFinishReq_Alloc(const char *apiBaseUrl,
     return req;
 }
 
+FS3ENetVerifyAccountReq *FS3ENetVerifyAccountReq_Alloc(const char *apiBaseUrl,
+    const char *accessToken)
+{
+    ULONG total = sizeof(FS3ENetVerifyAccountReq)
+                + FS3ENet_PackLen(apiBaseUrl)
+                + FS3ENet_PackLen(accessToken);
+    FS3ENetVerifyAccountReq *req =
+        (FS3ENetVerifyAccountReq *)AllocVec(total, MEMF_ANY);
+    char *p;
+
+    if (!req) return NULL;
+    p = (char *)req + sizeof(*req);
+    FS3ENet_PackStr(&req->fs3eva_ApiBaseUrl,  &p, apiBaseUrl);
+    FS3ENet_PackStr(&req->fs3eva_AccessToken, &p, accessToken);
+    return req;
+}
+
 FS3ENetTimelineReq *FS3ENetTimelineReq_Alloc(ULONG viewModeBit,
     const char *apiBaseUrl, const char *accessToken,
     const char *timeline, const char *maxId)
@@ -434,6 +451,65 @@ static void FS3ENet_HandleLoginFinish(FS3ENetMessage *fs3em)
     fs3em->fs3em_Result  = FS3ENETR_OK;
 }
 
+/* FS3ENETQ_VERIFY_ACCOUNT — same verify_credentials call LOGIN_FINISH ends
+ * with, but starting from an access token the GUI already has instead of
+ * an OAuth code exchange. */
+static void FS3ENet_HandleVerifyAccount(FS3ENetMessage *fs3em)
+{
+    FS3ENetVerifyAccountReq   *req = (FS3ENetVerifyAccountReq *)fs3em->fs3em_Data;
+    FS3ENetVerifyAccountReply *reply;
+    FS3EMastodonAccount        tmpAcc = {0};
+    ULONG total;
+    char *p;
+
+    if (!req || fs3em->fs3em_DataLen < sizeof(*req))
+    {
+        printf("net: VERIFY_ACCOUNT parse error\n");
+        fs3em->fs3em_Result = FS3ENETR_PARSE_ERROR;
+        return;
+    }
+
+    printf("net: VERIFY_ACCOUNT server=%s\n", req->fs3eva_ApiBaseUrl ? req->fs3eva_ApiBaseUrl : "NULL");
+
+    if (!FS3EMastodon_VerifyCredentials(req->fs3eva_ApiBaseUrl, req->fs3eva_AccessToken, &tmpAcc))
+    {
+        printf("net: VERIFY_ACCOUNT VerifyCredentials failed\n");
+        FS3EMastodonAccount_Free(&tmpAcc);
+        fs3em->fs3em_Result = FS3ENETR_AUTH_ERROR;
+        return;
+    }
+
+    total = sizeof(FS3ENetVerifyAccountReply)
+          + FS3ENet_PackLen(tmpAcc.fma_Id)
+          + FS3ENet_PackLen(tmpAcc.fma_Username)
+          + FS3ENet_PackLen(tmpAcc.fma_Acct)
+          + FS3ENet_PackLen(tmpAcc.fma_DisplayName)
+          + FS3ENet_PackLen(tmpAcc.fma_AvatarURL);
+
+    reply = (FS3ENetVerifyAccountReply *)AllocVec(total, MEMF_ANY);
+    if (!reply)
+    {
+        FS3EMastodonAccount_Free(&tmpAcc);
+        fs3em->fs3em_Result = FS3ENETR_NETWORK_ERROR;
+        return;
+    }
+
+    p = (char *)reply + sizeof(*reply);
+    FS3ENet_PackStr(&reply->fs3eva_Account.fma_Id,          &p, tmpAcc.fma_Id);
+    FS3ENet_PackStr(&reply->fs3eva_Account.fma_Username,    &p, tmpAcc.fma_Username);
+    FS3ENet_PackStr(&reply->fs3eva_Account.fma_Acct,        &p, tmpAcc.fma_Acct);
+    FS3ENet_PackStr(&reply->fs3eva_Account.fma_DisplayName, &p, tmpAcc.fma_DisplayName);
+    FS3ENet_PackStr(&reply->fs3eva_Account.fma_AvatarURL,   &p, tmpAcc.fma_AvatarURL);
+
+    FS3EMastodonAccount_Free(&tmpAcc);
+
+    printf("net: VERIFY_ACCOUNT done, acct=%s\n", reply->fs3eva_Account.fma_Acct ? reply->fs3eva_Account.fma_Acct : "?");
+    FreeVec(fs3em->fs3em_Data);
+    fs3em->fs3em_Data    = reply;
+    fs3em->fs3em_DataLen = total;
+    fs3em->fs3em_Result  = FS3ENETR_OK;
+}
+
 /* FS3ENETQ_FETCH_IMAGE — check disk cache, fetch on miss, reply with path. */
 static void FS3ENet_HandleFetchImage(FS3ENetMessage *fs3em)
 {
@@ -490,9 +566,43 @@ static void FS3ENet_HandleFetchImage(FS3ENetMessage *fs3em)
     fs3em->fs3em_Result  = FS3ENETR_OK;
 }
 
+/* Encodes Unicode code point cp as UTF-8 into out (up to 4 bytes), bounded
+ * by outSize. Returns the number of bytes written (0 if it doesn't fit).
+ * FriendSh3ep renders text through utf8rastport.library throughout, so
+ * decoded numeric HTML entities (e.g. &#8217; for a curly quote) must come
+ * out as proper UTF-8, not a truncated single byte. */
+static ULONG EncodeUTF8(ULONG cp, char *out, ULONG outSize)
+{
+    if (cp < 0x80) {
+        if (outSize < 1) return 0;
+        out[0] = (char)cp;
+        return 1;
+    } else if (cp < 0x800) {
+        if (outSize < 2) return 0;
+        out[0] = (char)(0xC0 | (cp >> 6));
+        out[1] = (char)(0x80 | (cp & 0x3F));
+        return 2;
+    } else if (cp < 0x10000) {
+        if (outSize < 3) return 0;
+        out[0] = (char)(0xE0 | (cp >> 12));
+        out[1] = (char)(0x80 | ((cp >> 6) & 0x3F));
+        out[2] = (char)(0x80 | (cp & 0x3F));
+        return 3;
+    } else {
+        if (outSize < 4) return 0;
+        out[0] = (char)(0xF0 | (cp >> 18));
+        out[1] = (char)(0x80 | ((cp >> 12) & 0x3F));
+        out[2] = (char)(0x80 | ((cp >> 6) & 0x3F));
+        out[3] = (char)(0x80 | (cp & 0x3F));
+        return 4;
+    }
+}
+
 /* Strip HTML tags from Mastodon status content.
  * <p> and <br> become newlines; all other tags are removed.
- * HTML entities &amp; &lt; &gt; &nbsp; &apos; &quot; are decoded.
+ * HTML entities &amp; &lt; &gt; &nbsp; &apos; &quot; are decoded, as are
+ * numeric references &#39; (decimal) and &#x27; (hex), UTF-8 encoded via
+ * EncodeUTF8 above.
  * Leading newlines are suppressed. */
 static void StripHTML(const char *html, char *out, ULONG outSize)
 {
@@ -528,6 +638,34 @@ static void StripHTML(const char *html, char *out, ULONG outSize)
             if (strncmp(s, "&nbsp;", 6) == 0) { out[oi++] = ' ';  s += 6; first = 0; continue; }
             if (strncmp(s, "&apos;", 6) == 0) { out[oi++] = '\''; s += 6; first = 0; continue; }
             if (strncmp(s, "&quot;", 6) == 0) { out[oi++] = '"';  s += 6; first = 0; continue; }
+            if (s[1] == '#') {
+                const char *p2 = s + 2;
+                int   hex = 0;
+                int   any = 0;
+                ULONG cp  = 0;
+
+                if (*p2 == 'x' || *p2 == 'X') { hex = 1; p2++; }
+
+                for (;;) {
+                    char c = *p2;
+                    int  d;
+                    if (c >= '0' && c <= '9')                    d = c - '0';
+                    else if (hex && c >= 'a' && c <= 'f')        d = c - 'a' + 10;
+                    else if (hex && c >= 'A' && c <= 'F')        d = c - 'A' + 10;
+                    else break;
+                    cp = cp * (ULONG)(hex ? 16 : 10) + (ULONG)d;
+                    p2++;
+                    any = 1;
+                }
+
+                if (any && *p2 == ';') {
+                    oi += EncodeUTF8(cp, out + oi, outSize - oi);
+                    s = p2 + 1;
+                    first = 0;
+                    continue;
+                }
+                /* not a well-formed numeric entity -- fall through, copy '&' verbatim */
+            }
         }
         out[oi++] = *s++;
         first = 0;
@@ -758,6 +896,10 @@ static void FS3ENet_Dispatch(FS3ENetMessage *fs3em)
 
         case FS3ENETQ_POST_STATUS:
             FS3ENet_HandlePostStatus(fs3em);
+            break;
+
+        case FS3ENETQ_VERIFY_ACCOUNT:
+            FS3ENet_HandleVerifyAccount(fs3em);
             break;
 
         default:

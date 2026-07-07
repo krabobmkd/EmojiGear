@@ -28,7 +28,8 @@ enum FS3ENetRequestType
     FS3ENETQ_TIMELINE,       /* fetch a timeline page                (Phase 2) */
     FS3ENETQ_POST_STATUS,    /* publish a new status (toot)          (Phase 2) */
     FS3ENETQ_FETCH_IMAGE,    /* fetch/return cached avatar or media   (Phase 2) */
-    FS3ENETQ_FLUSH_CACHE     /* delete every file in the disk cache               */
+    FS3ENETQ_FLUSH_CACHE,    /* delete every file in the disk cache               */
+    FS3ENETQ_VERIFY_ACCOUNT  /* re-verify an existing access token, backfill account fields */
 };
 
 /* Result codes returned in FS3ENetMessage.fs3em_Result on reply. */
@@ -129,6 +130,31 @@ typedef struct FS3ENetLoginFinishReply
     char               *fs3enl_AccessToken;
     FS3EMastodonAccount  fs3enl_Account;
 } FS3ENetLoginFinishReply;
+
+/*
+ * FS3ENETQ_VERIFY_ACCOUNT — re-runs verify_credentials for an access token
+ * the GUI already has (no OAuth exchange, unlike LOGIN_FINISH). Used to
+ * backfill account fields added after a user's account.dat was last saved
+ * (e.g. fma_Id, needed by VIEWMODE_User's accounts/{id}/statuses fetch) --
+ * see FS3EApp_LoadAccount() in friendsh3ep.c.
+ *
+ * On FS3ENETR_OK, fs3em_Data is replaced with an FS3ENetVerifyAccountReply.
+ * On error, fs3em_Data still points at the original request block.
+ */
+typedef struct FS3ENetVerifyAccountReq
+{
+    char *fs3eva_ApiBaseUrl;
+    char *fs3eva_AccessToken;
+} FS3ENetVerifyAccountReq;
+
+/* Allocates a flat request block for VERIFY_ACCOUNT. FreeVec() when done. */
+FS3ENetVerifyAccountReq *FS3ENetVerifyAccountReq_Alloc(const char *apiBaseUrl,
+    const char *accessToken);
+
+typedef struct FS3ENetVerifyAccountReply
+{
+    FS3EMastodonAccount fs3eva_Account;
+} FS3ENetVerifyAccountReply;
 
 /*
  * FS3ENETQ_FETCH_IMAGE — fetch a media URL (avatar, attachment thumbnail,

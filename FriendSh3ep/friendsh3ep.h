@@ -69,7 +69,13 @@ struct App {
     Object *titlebar_iconifyBtn;     /* GID_TITLEBAR_ICONIFY */
     Object *titlebar_altposBtn;      /* GID_TITLEBAR_ALTPOS  */
     Object *titlebar_depthBtn;       /* GID_TITLEBAR_DEPTH   */
-    Object *titlebar_userIcon;       /* placeholder for user avatar */
+    Object *titlebar_userIcon;       /* BUTTON.gadget showing the connected user's avatar */
+    Object *titlebarUserIconImage;   /* images/bitmap.image wrapper set as its GA_Image;
+                                       * rebuilt (see FS3EApp_UpdateUserIcon) whenever the
+                                       * underlying AvatarImages entry's BmImage reloads --
+                                       * BITMAP_BitMap/BITMAP_MaskPlane are captured by value
+                                       * at NewObject() time, so a stale wrapper would point
+                                       * at a freed struct BitMap. NULL when no avatar loaded. */
     Object *titlebar_settingsBtn;       /*  */
     Object *titlebar_accountBtn;       /*  */
     Object *titlebar_newtootBtn;       /*  */
@@ -107,6 +113,9 @@ struct App {
     char  *accountDisplayName;
     char  *accountAcct;
     char  *accountAvatarURL;
+    char  *accountId;         /* Mastodon numeric account id (fma_Id); used
+                                * for VIEWMODE_User's accounts/{id}/statuses
+                                * fetch (see ViewModeTimeline). */
 
     /* Bitmask of VIEWMODE channels that have a fetch in flight or already
      * have data.  Bit i set → do not re-fetch channel i automatically. */

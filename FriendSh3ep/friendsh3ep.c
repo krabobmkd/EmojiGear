@@ -48,6 +48,9 @@
 #include <proto/button.h>
 #include <gadgets/button.h>
 
+#include <proto/bitmap.h>
+#include <images/bitmap.h>
+
 #include <proto/string.h>
 #include <gadgets/string.h>
 
@@ -157,6 +160,8 @@ struct Library *BevelBase = NULL;
  * button images (see FS3EStyle_LoadThemeImages) */
 struct Library *BitMapBase = NULL;
 
+/* this one is optional and can be NULL */
+struct Library *CyberGfxBase = NULL;
 
 /* locale.library - soft failure (English fallback) */
 struct LocaleBase *LocaleBase = NULL;
@@ -179,7 +184,7 @@ static LibraryEntry libraryTable[] = {
     {"gadgets/layout.gadget",       42, &LayoutBase},
     {"gadgets/button.gadget",       42, &ButtonBase},
     {"gadgets/string.gadget",       42, &StringBase},
-    {"gadgets/texteditor.gadget",   42, &TextFieldBase},
+    {"gadgets/texteditor.gadget",   15, &TextFieldBase}, /* os3.9 is 15 */
     {"images/label.image",          42, &LabelBase},
     {"gadgets/checkbox.gadget",      42, &CheckboxBase},
     {"gadgets/chooser.gadget",       44, &ChooserBase},
@@ -233,6 +238,7 @@ static BOOL FS3EApp_NetSend(ULONG type, APTR data, ULONG dataLen)
     if (!msg) { FreeVec(data); return FALSE; }
     msg->fs3em_Msg.mn_Length   = sizeof(*msg);
     msg->fs3em_Msg.mn_ReplyPort = app->netReplyPort;
+
     msg->fs3em_Type    = type;
     msg->fs3em_Data    = data;
     msg->fs3em_DataLen = dataLen;
@@ -257,12 +263,13 @@ static void FS3EApp_FreeAccount(void)
     if (app->accountDisplayName) { FreeVec(app->accountDisplayName); app->accountDisplayName = NULL; }
     if (app->accountAcct)        { FreeVec(app->accountAcct);        app->accountAcct        = NULL; }
     if (app->accountAvatarURL)   { FreeVec(app->accountAvatarURL);   app->accountAvatarURL   = NULL; }
+    if (app->accountId)          { FreeVec(app->accountId);          app->accountId          = NULL; }
 }
 
 /* Store account credentials from a LOGIN_FINISH reply. */
 static void FS3EApp_SetAccount(const char *apiBaseUrl, const char *accessToken,
                                const char *displayName, const char *acct,
-                               const char *avatarURL)
+                               const char *avatarURL, const char *accountId)
 {
     FS3EApp_FreeAccount();
     app->accountApiBaseUrl  = NetStrDup(apiBaseUrl);
@@ -270,35 +277,190 @@ static void FS3EApp_SetAccount(const char *apiBaseUrl, const char *accessToken,
     app->accountDisplayName = NetStrDup(displayName);
     app->accountAcct        = NetStrDup(acct);
     app->accountAvatarURL   = NetStrDup(avatarURL);
+    app->accountId          = NetStrDup(accountId);
+
+    /* DISABLED: titlebar_userIcon consistently showed trashed/garbage
+     * image data after a font-size change + relayout, across several fix
+     * attempts (dispose/attach ordering, deferred vs immediate rebuild),
+     * and may be tangled up with an intermittent whole-system freeze on
+     * quit. Disabling the whole feature (this fetch trigger, and
+     * FS3EApp_UpdateUserIcon() below) until it can be root-caused with
+     * real debugging tools (Enforcer/MuForce) rather than guesswork.
+     * titlebar_userIcon itself still exists as an empty gadget slot.
+     *
+     * Fetch our own avatar the same way timeline posts do (see
+     * FS3ENETQ_FETCH_IMAGE handling in FS3EApp_HandleNetReply) --
+     * AvatarImages is keyed by acct, so this reuses the exact same cache
+     * entry/scale pipeline; FS3EApp_UpdateUserIcon() picks up the result
+     * once the reply arrives.
+    if (app->avatarImages && app->accountAcct &&
+        app->accountAvatarURL && app->accountAvatarURL[0] &&
+        !AvatarImages_IsRequested(app->avatarImages, app->accountAcct))
+    {
+        ULONG reqSize = sizeof(FS3ENetFetchImageReq)
+                      + strlen(app->accountAvatarURL) + 1
+                      + strlen(app->accountAcct) + 1;
+        FS3ENetFetchImageReq *req =
+            FS3ENetFetchImageReq_Alloc(app->accountAvatarURL, app->accountAcct);
+        if (req) {
+            if (FS3EApp_NetSend(FS3ENETQ_FETCH_IMAGE, req, reqSize))
+                AvatarImages_MarkRequested(app->avatarImages, app->accountAcct);
+            else
+                FreeVec(req);
+        }
+    }
+    */
 }
 
-/* Save credentials to PROGDIR:account.dat (5 lines). */
+/* DISABLED (see the matching note in FS3EApp_SetAccount()): this
+ * consistently left titlebar_userIcon showing trashed/garbage image data
+ * after a font-size change + relayout, across several fix attempts, and
+ * may be tied to an intermittent whole-system freeze on quit. No-op until
+ * it can be root-caused with real debugging tools rather than guesswork.
+ * Original body kept below, commented out, for whoever picks this back up.
+ *
+static void FS3EApp_UpdateUserIcon(void)
+{
+    BmImage *bm;
+    Object  *newImg;
+    Object  *oldImg;
+
+    if (!BitMapBase || !app->titlebar_userIcon || !app->accountAcct) return;
+
+    bm = AvatarImages_Get(app->avatarImages, app->accountAcct);
+    if (!bm || !BmImage_IsLoaded(bm)) return;
+
+    newImg = (Object *)NewObject(BITMAP_GetClass(), NULL,
+        BITMAP_BitMap,      (ULONG)bm->bitmap,
+        BITMAP_Width,       bm->width,
+        BITMAP_Height,      bm->height,
+        BITMAP_MaskPlane,   (ULONG)bm->mask,
+        BITMAP_Masking,     bm->mask ? TRUE : FALSE,
+        BITMAP_Transparent, bm->mask ? TRUE : FALSE,
+        TAG_DONE);
+    if (!newImg) return;
+
+    SetGdAttrs(app->titlebar_userIcon, GA_Image, (ULONG)newImg, TAG_DONE);
+
+    oldImg = app->titlebarUserIconImage;
+    app->titlebarUserIconImage = newImg;
+    if (oldImg) DisposeObject(oldImg);
+
+    if (CurrentMainWindow)
+        RefreshGList((struct Gadget *)app->titlebar_userIcon, CurrentMainWindow, NULL, 1);
+}
+*/
+static void FS3EApp_UpdateUserIcon(void)
+{
+    /* no-op -- see comment above */
+}
+
+/* -------------------------------------------------------------------------
+ * Recursive directory creation (AmigaOS mkdir -p equivalent). Mirrors
+ * FS3ECache_MakeDir() in network_fs3e/fs3enet_cache.c -- that one is
+ * `static` and private to the network process, so it can't be called from
+ * here; same AmigaOS path-splitting rules apply:
+ *   "VOL:dir/sub"  -> last '/'  splits "VOL:dir" / "sub"
+ *   "VOL:leaf"     -> no '/',   ':' splits volume root "VOL:" / "leaf"
+ *   "VOL:"         -> volume/assign root; Lock() tells us if it exists
+ * ---------------------------------------------------------------------- */
+static BOOL FS3EApp_MakeDirRecursive(const char *path)
+{
+    BPTR        lock;
+    const char *sep;
+    char        parent[512];
+    ULONG       parentLen;
+
+    lock = Lock(path, SHARED_LOCK);
+    if (lock) { UnLock(lock); return TRUE; }
+
+    sep = strrchr(path, '/');
+    if (sep) {
+        /* Parent is everything before the last '/'. */
+        parentLen = (ULONG)(sep - path);
+        if (parentLen == 0 || parentLen >= sizeof(parent)) return FALSE;
+        memcpy(parent, path, parentLen);
+        parent[parentLen] = '\0';
+        if (!FS3EApp_MakeDirRecursive(parent)) return FALSE;
+    } else {
+        /* No slash: path is "VOL:leaf". Parent is the volume/assign root
+         * "VOL:" which must already exist (we can't create a volume). */
+        sep = strchr(path, ':');
+        if (!sep) return FALSE;  /* relative path with no drive — refuse */
+        parentLen = (ULONG)(sep - path + 1);   /* include ':' */
+        if (parentLen >= sizeof(parent)) return FALSE;
+        memcpy(parent, path, parentLen);
+        parent[parentLen] = '\0';
+        lock = Lock(parent, SHARED_LOCK);
+        if (!lock) return FALSE;   /* volume/assign offline */
+        UnLock(lock);
+    }
+
+    lock = CreateDir(path);
+    if (!lock) {
+        /* Another process may have created it between our Lock check and
+         * CreateDir — verify before reporting failure. */
+        lock = Lock(path, SHARED_LOCK);
+        if (!lock) return FALSE;
+    }
+    UnLock(lock);
+    return TRUE;
+}
+
+/* Builds "<userDataPath>/account.dat" into buf, creating userDataPath
+ * (recursively) first if it doesn't exist yet. userDataPath is anything
+ * user-related that isn't disposable cache (unlike settings.cachePath,
+ * which FS3ECache_Flush is free to empty) -- see FS3ESettings.userDataPath,
+ * defaults to "PROGDIR:.user". Returns FALSE if the directory couldn't be
+ * created/reached. */
+static BOOL FS3EApp_AccountDatPath(char *buf, ULONG bufSize)
+{
+    const char *dir = (app->settings.userDataPath && app->settings.userDataPath[0])
+                     ? app->settings.userDataPath : "PROGDIR:.user";
+    if (!FS3EApp_MakeDirRecursive(dir)) return FALSE;
+    snprintf(buf, bufSize, "%s/account.dat", dir);
+    return TRUE;
+}
+
+/* Save credentials to <userDataPath>/account.dat (6 lines). */
 static void FS3EApp_SaveAccount(void)
 {
     BPTR f;
+    char path[300];
     if (!app->accountApiBaseUrl || !app->accountAccessToken) return;
-    f = Open("PROGDIR:account.dat", MODE_NEWFILE);
+    if (!FS3EApp_AccountDatPath(path, sizeof(path))) {
+        printf("FS3EApp_SaveAccount: can't create user data dir %s\n",
+               app->settings.userDataPath ? app->settings.userDataPath : "?");
+        return;
+    }
+    f = Open(path, MODE_NEWFILE);
     if (!f) return;
     FPuts(f, app->accountApiBaseUrl);                              FPuts(f, "\n");
     FPuts(f, app->accountAccessToken);                             FPuts(f, "\n");
     FPuts(f, app->accountDisplayName ? app->accountDisplayName : ""); FPuts(f, "\n");
     FPuts(f, app->accountAcct        ? app->accountAcct        : ""); FPuts(f, "\n");
     FPuts(f, app->accountAvatarURL   ? app->accountAvatarURL   : ""); FPuts(f, "\n");
+    FPuts(f, app->accountId          ? app->accountId          : ""); FPuts(f, "\n");
     Close(f);
     printf("FS3EApp_SaveAccount: saved %s @ %s\n",
            app->accountAcct ? app->accountAcct : "?",
            app->accountApiBaseUrl);
 }
 
-/* Load credentials from PROGDIR:account.dat. Returns TRUE if valid. */
+/* Load credentials from <userDataPath>/account.dat. Returns TRUE if valid.
+ * accountId (6th line) is read optionally like displayName/acct/avatarURL --
+ * an account.dat saved before this field existed just loads with no id
+ * (VIEWMODE_User's fetch stays disabled until the user reconnects once). */
 static BOOL FS3EApp_LoadAccount(void)
 {
     BPTR f;
+    char path[300];
     char apiBaseUrl[256], accessToken[512];
-    char displayName[128], acct[128], avatarURL[512];
+    char displayName[128], acct[128], avatarURL[512], accountId[64];
     ULONG n;
 
-    f = Open("PROGDIR:account.dat", MODE_OLDFILE);
+    if (!FS3EApp_AccountDatPath(path, sizeof(path))) return FALSE;
+    f = Open(path, MODE_OLDFILE);
     if (!f) return FALSE;
 
     /* FGets includes the trailing '\n' — strip it. */
@@ -314,24 +476,58 @@ static BOOL FS3EApp_LoadAccount(void)
     if (!RLINE(displayName)) displayName[0] = '\0';
     if (!RLINE(acct))        acct[0]        = '\0';
     if (!RLINE(avatarURL))   avatarURL[0]   = '\0';
+    if (!RLINE(accountId))   accountId[0]   = '\0';
 #undef RLINE
 
     Close(f);
 
     printf("FS3EApp_LoadAccount: loaded %s @ %s\n", acct, apiBaseUrl);
-    FS3EApp_SetAccount(apiBaseUrl, accessToken, displayName, acct, avatarURL);
+    FS3EApp_SetAccount(apiBaseUrl, accessToken, displayName, acct, avatarURL, accountId);
     app->loginPhase = FS3ELOGIN_DONE;
     return TRUE;
 }
 
-/* Timeline name for a given VIEWMODE_* value; NULL = no standard timeline. */
-static const char *ViewModeTimeline(ULONG viewMode)
+/* account.dat files saved before accountId existed load with an empty id,
+ * which silently disables VIEWMODE_User's fetch (ViewModeTimeline returns
+ * FALSE without it). Re-verify the existing access token to backfill it
+ * instead of requiring the user to log out and back in -- see
+ * FS3ENETQ_VERIFY_ACCOUNT's reply case in FS3EApp_HandleNetReply(). */
+static void FS3EApp_BackfillAccountId(void)
+{
+    FS3ENetVerifyAccountReq *req;
+
+    if (!app->accountApiBaseUrl || !app->accountAccessToken) return;
+    if (app->accountId && app->accountId[0]) return;
+
+    req = FS3ENetVerifyAccountReq_Alloc(app->accountApiBaseUrl, app->accountAccessToken);
+    if (!req) return;
+
+    FS3EApp_NetSend(FS3ENETQ_VERIFY_ACCOUNT, req,
+        sizeof(FS3ENetVerifyAccountReq) /* net process only reads char* fields */);
+}
+
+/* Builds the /api/v1/-relative path to fetch for a given VIEWMODE_* value
+ * into buf (see FS3EMastodon_GetTimeline, which just appends this onto
+ * "apiBaseUrl/api/v1/"). Returns FALSE if there's nothing to fetch yet
+ * (unknown view mode, or VIEWMODE_User before accountId is known). */
+static BOOL ViewModeTimeline(ULONG viewMode, char *buf, ULONG bufSize)
 {
     switch (viewMode) {
-        case VIEWMODE_Home:  return "home?limit=20";
-        case VIEWMODE_Local: return "public?local=true&limit=20";
-        case VIEWMODE_Fed:   return "public?limit=20";
-        default:             return NULL;
+        case VIEWMODE_Home:
+            snprintf(buf, bufSize, "timelines/home?limit=20");
+            return TRUE;
+        case VIEWMODE_Local:
+            snprintf(buf, bufSize, "timelines/public?local=true&limit=20");
+            return TRUE;
+        case VIEWMODE_Fed:
+            snprintf(buf, bufSize, "timelines/public?limit=20");
+            return TRUE;
+        case VIEWMODE_User:
+            if (!app->accountId || !app->accountId[0]) return FALSE;
+            snprintf(buf, bufSize, "accounts/%s/statuses?limit=20", app->accountId);
+            return TRUE;
+        default:
+            return FALSE;
     }
 }
 
@@ -410,14 +606,13 @@ static void FS3EApp_CheckConnectionState(void)
  * and a fetch hasn't already been started for that channel. */
 static void FS3EApp_FetchTimeline(ULONG viewMode)
 {
-    const char *tl;
+    char tl[128];
     FS3ENetTimelineReq *req;
     ULONG bit = (1UL << viewMode);
 
     if (!app->accountApiBaseUrl || !app->accountAccessToken) return;
     if (app->timelineFetchedMask & bit) return;
-    tl = ViewModeTimeline(viewMode);
-    if (!tl) return;
+    if (!ViewModeTimeline(viewMode, tl, sizeof(tl))) return;
 
     printf("FS3EApp_FetchTimeline: viewMode=%u timeline=%s\n", (unsigned)viewMode, tl);
 
@@ -478,13 +673,18 @@ static void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                                reply->fs3enl_AccessToken,
                                reply->fs3enl_Account.fma_DisplayName,
                                reply->fs3enl_Account.fma_Acct,
-                               reply->fs3enl_Account.fma_AvatarURL);
+                               reply->fs3enl_Account.fma_AvatarURL,
+                               reply->fs3enl_Account.fma_Id);
             FS3EApp_SaveAccount();
             FS3EApp_FreeLoginState();
             app->loginPhase = FS3ELOGIN_DONE;
             /* Fetch the current view mode timeline */
             app->timelineFetchedMask = 0; /* reset so new account fetches fresh */
             FS3EApp_FetchTimeline(app->viewMode);
+            /* Credentials just confirmed -- empty the fields so there's
+             * nothing to accidentally resubmit later (see the matching
+             * clear at startup, right after FS3ELoginView_Create). */
+            FS3ELoginView_ClearFields(&app->loginView);
             FS3ELoginView_Close(&app->loginView);
         } else {
             struct EasyStruct es = {
@@ -496,6 +696,33 @@ static void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
             printf("login reply: LOGIN_FINISH FAILED result=%u\n", (unsigned)msg->fs3em_Result);
             EasyRequestArgs(CurrentMainWindow, &es, NULL, NULL);
             app->loginPhase = FS3ELOGIN_WAITING_CODE; /* let user retry code */
+        }
+        break;
+
+    case FS3ENETQ_VERIFY_ACCOUNT:
+        /* Backfill for an account.dat saved before accountId existed (see
+         * FS3EApp_BackfillAccountId()). Re-runs the same "resync from
+         * server" FS3EApp_SetAccount() does at login, just without a fresh
+         * access token -- apiBaseUrl/accessToken are unchanged, only the
+         * account fields (chiefly fma_Id) are new. */
+        if (msg->fs3em_Result == FS3ENETR_OK) {
+            FS3ENetVerifyAccountReply *reply = (FS3ENetVerifyAccountReply *)msg->fs3em_Data;
+            printf("verify-account reply: ok, acct=%s id=%s\n",
+                   reply->fs3eva_Account.fma_Acct ? reply->fs3eva_Account.fma_Acct : "?",
+                   reply->fs3eva_Account.fma_Id   ? reply->fs3eva_Account.fma_Id   : "?");
+            FS3EApp_SetAccount(app->accountApiBaseUrl,
+                               app->accountAccessToken,
+                               reply->fs3eva_Account.fma_DisplayName,
+                               reply->fs3eva_Account.fma_Acct,
+                               reply->fs3eva_Account.fma_AvatarURL,
+                               reply->fs3eva_Account.fma_Id);
+            FS3EApp_SaveAccount();
+            /* In case the user is already sitting on a channel that
+             * couldn't fetch without an id (VIEWMODE_User). */
+            FS3EApp_FetchTimeline(app->viewMode);
+        } else {
+            printf("verify-account reply: FAILED result=%u (keeping existing account fields)\n",
+                   (unsigned)msg->fs3em_Result);
         }
         break;
 
@@ -571,6 +798,8 @@ static void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                                      reply->fs3enf_LocalPath,
                                      CurrentMainScreen,
                                      (UWORD)app->style.avatarSize);
+                if (app->accountAcct && strcmp(reply->fs3enf_Key, app->accountAcct) == 0)
+                    FS3EApp_UpdateUserIcon();
                 if (CurrentMainWindow)
                     RefreshGList((struct Gadget *)app->tootTimeline,
                                  CurrentMainWindow, NULL, 1);
@@ -721,10 +950,17 @@ static void FS3EApp_ApplyFontSettings_Delayed()
                  TTIMELINE_Style, (ULONG)&app->style,
                  TAG_DONE);
 
-    /* Reload all cached avatar bitmaps at the new size. */
-    if (app->avatarImages && CurrentMainScreen)
+    /* Reload all cached avatar bitmaps at the new size, then immediately
+     * rebuild the titlebar user-icon wrapper -- AvatarImages_Reload() frees
+     * the previous BmImage's dtObject/BitMap as part of reloading it, so
+     * the wrapper must never be left pointing at that freed bitmap even
+     * across the WM_RETHINK the caller sends right after this call
+     * returns (see FS3EApp_UpdateUserIcon()'s comment for why). */
+    if (app->avatarImages && CurrentMainScreen) {
         AvatarImages_Reload(app->avatarImages, CurrentMainScreen,
                             (UWORD)app->style.avatarSize);
+        FS3EApp_UpdateUserIcon();
+    }
 
     delayApplyFontSettings = FALSE;
 }
@@ -834,6 +1070,10 @@ int main(int argc, char **argv)
         }
     }
 
+    /* CyberGfxBase NULL accepted */
+    CyberGfxBase = OpenLibrary("cybergraphics.library", 1);
+
+
     BevelBase  = OpenLibrary("images/bevel.image",  32); /* optional, no check */
     BitMapBase = OpenLibrary("images/bitmap.image", 44); /* optional, no check */
 
@@ -884,19 +1124,19 @@ int main(int argc, char **argv)
 
     /* Try to load saved credentials; timeline fetch fires later in setViewMode */
     FS3EApp_LoadAccount();
+    FS3EApp_BackfillAccountId();
  printf("FS3ENet_Start end\n");
  printf("windows creates\n");
     /* --- Classic BOOPSI sub-windows ------------------------------------- */
     if (!FS3ELoginView_Create(&app->loginView, 14))
         cleanexit("Can't create login view");
 
-    /* Pre-fill login view from loaded account so the user sees they're connected. */
-    if (app->accountApiBaseUrl && app->loginView.serverEditor)
-        SetAttrs(app->loginView.serverEditor,
-                 STRINGA_TextVal, (ULONG)app->accountApiBaseUrl, TAG_END);
-    if (app->accountAcct && app->loginView.userEditor)
-        SetAttrs(app->loginView.userEditor,
-                 STRINGA_TextVal, (ULONG)app->accountAcct, TAG_END);
+    /* Credentials already confirmed (loaded from account.dat above) --
+     * leave server/user entries empty rather than pre-filling them, so
+     * there's nothing to accidentally resubmit and trigger a fresh
+     * re-auth (see GID_LOGIN_LOGIN_BUTTON's "already connected" branch). */
+    if (app->accountApiBaseUrl)
+        FS3ELoginView_ClearFields(&app->loginView);
 
     if (!FS3ETootView_Create(&app->tootView, 14))
         cleanexit("Can't create toot view");
@@ -913,32 +1153,38 @@ int main(int argc, char **argv)
     /* ================================================================== */
 
     app->titlebar_closeBtn   = (Object *)NewObject(BUTTON_GetClass(), NULL,
+    // because just WMHI_GadgetUp    ICA_TARGET, (ULONG)TargetInstance,
         GA_ID,   GID_TITLEBAR_CLOSE,
         //GA_Text, "X",
         GA_RelVerify, TRUE,
          TAG_DONE);
     app->titlebar_iconifyBtn = (Object *)NewObject(BUTTON_GetClass(), NULL,
+     // because just WMHI_GadgetUp    ICA_TARGET, (ULONG)TargetInstance,
         GA_ID,   GID_TITLEBAR_ICONIFY,
         //GA_Text, "-",
         GA_RelVerify, TRUE,
          TAG_DONE);
     app->titlebar_altposBtn  = (Object *)NewObject(BUTTON_GetClass(), NULL,
+      // because just WMHI_GadgetUp   ICA_TARGET, (ULONG)TargetInstance,
         GA_ID,   GID_TITLEBAR_ALTPOS,
         //GA_Text, "=",
         GA_RelVerify, TRUE,
          TAG_DONE);
     app->titlebar_depthBtn   = (Object *)NewObject(BUTTON_GetClass(), NULL,
+     // because just WMHI_GadgetUp    ICA_TARGET, (ULONG)TargetInstance,
         GA_ID,   GID_TITLEBAR_DEPTH,
         //GA_Text, "^",
         GA_RelVerify, TRUE,
          TAG_DONE);
     app->titlebar_userIcon   = (Object *)NewObject(BUTTON_GetClass(), NULL,
+      //TODO  ICA_TARGET, (ULONG)TargetInstance,
         GA_Width,  app->style.avatarSize,
         GA_Height, app->style.avatarSize,
         GA_RelVerify, TRUE,
         TAG_DONE);
  //printf("p9bm:%08x\n",(int)app->style.bt1Patch9.img.bitmap);
     app->titlebar_settingsBtn = (Object *)NewObject(UniButtonP9Class, NULL,
+        ICA_TARGET, (ULONG)TargetInstance,
         GA_ID,                  GID_TITLEBAR_SETTINGS,
         GA_Text,                (ULONG)"\xE2\x9A\x99 Settings",
         UBTP9_URPDrawContext,   (ULONG)app->buttonDC,
@@ -946,6 +1192,7 @@ int main(int argc, char **argv)
         TAG_END);
 
     app->titlebar_accountBtn = (Object *)NewObject(UniButtonP9Class, NULL,
+        ICA_TARGET, (ULONG)TargetInstance,
         GA_ID,                  GID_TITLEBAR_ACCOUNTS,
         GA_Text,                (ULONG)"\xF0\x9F\x91\xA4 Accounts",
         UBTP9_URPDrawContext,   (ULONG)app->buttonDC,
@@ -953,6 +1200,7 @@ int main(int argc, char **argv)
         TAG_END);
 
     app->titlebar_newtootBtn = (Object *)NewObject(UniButtonP9Class, NULL,
+        ICA_TARGET, (ULONG)TargetInstance,
         GA_ID,                  GID_TITLEBAR_NEWTOOT,
         GA_Text,                (ULONG)"\xE2\x9C\x8D Toot+",
         UBTP9_URPDrawContext,   (ULONG)app->buttonDC,
@@ -1184,6 +1432,7 @@ int main(int argc, char **argv)
                          * clicks arrive here with the gadget's GA_ID. */
                         ULONG senderId = result & WMHI_GADGETMASK;
                         printf("WMHI_GADGETUP senderId:%d\n",senderId);
+                        // test: do not redirect those
                         BoopsiDelay_BeginMessage(DelayQueue, senderId);
                         BoopsiDelay_AddTag(DelayQueue, WMHI_GADGETUP, 1);
                         BoopsiDelay_EndMessage(DelayQueue);
@@ -1202,9 +1451,11 @@ int main(int argc, char **argv)
                         FS3EMain_Show(&app->mainwindow, app->window_obj);
                         if (!CurrentMainWindow) cleanexit("can't re-open window");
                         FS3EMenu_Create(&app->menu, CurrentMainScreen, CurrentMainWindow);
-                        if (app->avatarImages && CurrentMainScreen)
+                        if (app->avatarImages && CurrentMainScreen) {
                             AvatarImages_Reload(app->avatarImages, CurrentMainScreen,
                                                 (UWORD)app->style.avatarSize);
+                            FS3EApp_UpdateUserIcon();
+                        }
                         break;
 
                     case WMHI_RAWKEY:
@@ -1324,56 +1575,71 @@ int main(int argc, char **argv)
 
                         /* ---- Title bar ---- */
                         case GID_TITLEBAR_CLOSE:
-                            ok = FALSE;
+                          //  ptag = FindTagItem(GA_Selected, msg);
+                          //  if (ptag && ptag->ti_Data)  /* when push button down (selected true) */
+                            {
+                                ok = FALSE;
+                            }
                             break;
 
                         case GID_TITLEBAR_ICONIFY:
-                        printf("GID_TITLEBAR_ICONIFY\n");
-                            closeExternalViews();
-                            FS3EMain_Close(&app->mainwindow, app->window_obj, TRUE);
+                           // ptag = FindTagItem(GA_Selected, msg);
+                           // if (ptag && ptag->ti_Data)  /* when push button down (selected true) */
+                            {
+                                closeExternalViews();
+                                FS3EMain_Close(&app->mainwindow, app->window_obj, TRUE);
+                            }
                             break;
 
                         case GID_TITLEBAR_ALTPOS:
-                            if (CurrentMainWindow) {
-                                LONG prevL = app->altWinLeft,  prevT = app->altWinTop;
-                                LONG prevW = app->altWinWidth, prevH = app->altWinHeight;
-                                /* Save current geometry as the new alternate */
-                                app->altWinLeft   = CurrentMainWindow->LeftEdge;
-                                app->altWinTop    = CurrentMainWindow->TopEdge;
-                                app->altWinWidth  = CurrentMainWindow->Width;
-                                app->altWinHeight = CurrentMainWindow->Height;
-                                /* Move to previous alternate if valid */
-                                if (prevW > 0 && prevH > 0)
-                                    ChangeWindowBox(CurrentMainWindow,
-                                                    prevL, prevT, prevW, prevH);
+                            // ptag = FindTagItem(GA_Selected, msg);
+                            // if (ptag && ptag->ti_Data==0)  /* when push button down (selected true) */
+                             {
+                                if (CurrentMainWindow) {
+                                    LONG prevL = app->altWinLeft,  prevT = app->altWinTop;
+                                    LONG prevW = app->altWinWidth, prevH = app->altWinHeight;
+                                    /* Save current geometry as the new alternate */
+                                    app->altWinLeft   = CurrentMainWindow->LeftEdge;
+                                    app->altWinTop    = CurrentMainWindow->TopEdge;
+                                    app->altWinWidth  = CurrentMainWindow->Width;
+                                    app->altWinHeight = CurrentMainWindow->Height;
+                                    /* Move to previous alternate if valid */
+                                    if (prevW > 0 && prevH > 0)
+                                        ChangeWindowBox(CurrentMainWindow,
+                                                        prevL, prevT, prevW, prevH);
+                                }
                             }
                             break;
 
                         case GID_TITLEBAR_DEPTH:
-                            if (CurrentMainWindow && CurrentMainScreen) {
-                                /* Walk layers front→back; first layer whose
-                                 * Window is non-NULL and not a backdrop is the
-                                 * true frontmost user window. */
-                                BOOL isFront = FALSE;
-                                struct Layer_Info *li = &CurrentMainScreen->LayerInfo;
-                                struct Layer *lay;
-                                LockLayerInfo(li);
-                                lay = li->top_layer;
-                               if(lay)
-                               //while (lay)
-                               {
-                                    struct Window *w = (struct Window *)lay->Window;
-                                    if (w && !(w->Flags & WFLG_BACKDROP)) {
-                                        isFront = (w == CurrentMainWindow);
-                                       // break;
+                           // ptag = FindTagItem(GA_Selected, msg);
+                           // if (ptag && ptag->ti_Data)  /* when push button down (selected true) */
+                            {
+                                if (CurrentMainWindow && CurrentMainScreen) {
+                                    /* Walk layers front→back; first layer whose
+                                     * Window is non-NULL and not a backdrop is the
+                                     * true frontmost user window. */
+                                    BOOL isFront = FALSE;
+                                    struct Layer_Info *li = &CurrentMainScreen->LayerInfo;
+                                    struct Layer *lay;
+                                    LockLayerInfo(li);
+                                    lay = li->top_layer;
+                                   if(lay)
+                                   //while (lay)
+                                   {
+                                        struct Window *w = (struct Window *)lay->Window;
+                                        if (w && !(w->Flags & WFLG_BACKDROP)) {
+                                            isFront = (w == CurrentMainWindow);
+                                           // break;
+                                        }
+                                     //  lay = lay->back;
                                     }
-                                 //  lay = lay->back;
+                                    UnlockLayerInfo(li);
+                                    if (isFront)
+                                        WindowToBack(CurrentMainWindow);
+                                    else
+                                        WindowToFront(CurrentMainWindow);
                                 }
-                                UnlockLayerInfo(li);
-                                if (isFront)
-                                    WindowToBack(CurrentMainWindow);
-                                else
-                                    WindowToFront(CurrentMainWindow);
                             }
                             break;
 
@@ -1407,37 +1673,52 @@ int main(int argc, char **argv)
                             }
                             break;
                         case GID_TITLEBAR_NEWTOOT:
-                            FS3ETootView_Open(&app->tootView);
+                        printf("GID_TITLEBAR_NEWTOOT\n");
+                            ptag = FindTagItem(GA_Selected, msg);
+                            if (ptag /*&& ptag->ti_Data*/)  /* when push button down (selected true) */
+                            {
+                                FS3ETootView_Open(&app->tootView);
+                            }
                             break;
 
                         case GID_TITLEBAR_ACCOUNTS:
-                            FS3ELoginView_Open(&app->loginView);
+                            ptag = FindTagItem(GA_Selected, msg);
+                            if (ptag /*&& ptag->ti_Data*/)  /* when push button down (selected true) */
+                            {
+                                FS3ELoginView_Open(&app->loginView);
+                            }
                             break;
 
                         /* ---- Login sub-window: phase 1 ---- */
                         case GID_LOGIN_LOGIN_BUTTON:
                         {
-                            char serverBuf[256];
-                            const char *server = NormalizeServerUrl(
-                                FS3ELoginView_GetANSIServer(&app->loginView),
-                                serverBuf, sizeof(serverBuf));
-                            /* If already connected, clicking Connect starts a
-                             * fresh re-authentication (clears the old account). */
-                            if (app->loginPhase == FS3ELOGIN_DONE) {
-                                FS3EApp_FreeAccount();
-                                app->loginPhase = FS3ELOGIN_IDLE;
-                                app->timelineFetchedMask = 0;
-                                app->timelineErrorMask   = 0;
-                            }
-                            if (app->loginPhase == FS3ELOGIN_IDLE && server && server[0]) {
-                                FS3ENetLoginStartReq *req = FS3ENetLoginStartReq_Alloc(server);
-                                if (req) {
-                                    printf("login: phase IDLE, sending LOGIN_START server=%s\n", server);
-                                    if (app->loginApiBaseUrl) FreeVec(app->loginApiBaseUrl);
-                                    app->loginApiBaseUrl = NetStrDup(server);
-                                    if (FS3EApp_NetSend(FS3ENETQ_LOGIN_START, req, sizeof(*req))) {
-                                        app->loginPhase = FS3ELOGIN_WAITING_START;
-                                        FS3EApp_CheckConnectionState();
+                            ptag = FindTagItem(GA_Selected, msg);
+                            if (ptag && ptag->ti_Data)  /* when push button down (selected true) */
+                            {
+                                char serverBuf[256];
+
+                                printf(" **** GOT GID_LOGIN_LOGIN_BUTTON\n");
+                                const char *server = NormalizeServerUrl(
+                                    FS3ELoginView_GetANSIServer(&app->loginView),
+                                    serverBuf, sizeof(serverBuf));
+                                /* If already connected, clicking Connect starts a
+                                 * fresh re-authentication (clears the old account). */
+                                if (app->loginPhase == FS3ELOGIN_DONE) {
+                                    FS3EApp_FreeAccount();
+                                    app->loginPhase = FS3ELOGIN_IDLE;
+                                    app->timelineFetchedMask = 0;
+                                    app->timelineErrorMask   = 0;
+                                }
+                                if (app->loginPhase == FS3ELOGIN_IDLE && server && server[0]) {
+                                    FS3ENetLoginStartReq *req = FS3ENetLoginStartReq_Alloc(server);
+                                    if (req) {
+                                        printf("login: phase IDLE, sending LOGIN_START server=%s\n", server);
+                                        if (app->loginApiBaseUrl) FreeVec(app->loginApiBaseUrl);
+                                        app->loginApiBaseUrl = NetStrDup(server);
+                                        if (FS3EApp_NetSend(FS3ENETQ_LOGIN_START, req, sizeof(*req))) {
+                                            app->loginPhase = FS3ELOGIN_WAITING_START;
+                                            FS3EApp_CheckConnectionState();
+                                        }
                                     }
                                 }
                             }
@@ -1447,23 +1728,27 @@ int main(int argc, char **argv)
                         /* ---- Login sub-window: phase 2 ---- */
                         case GID_LOGIN_SUBMIT_CODE_BUTTON:
                         {
-                            const char *code = FS3ELoginView_GetANSICode(&app->loginView);
-                            if (app->loginPhase == FS3ELOGIN_WAITING_CODE &&
-                                code && code[0] &&
-                                app->loginApiBaseUrl &&
-                                app->loginClientId && app->loginClientSecret)
+                            ptag = FindTagItem(GA_Selected, msg);
+                            if (ptag && ptag->ti_Data)  /* when push button down (selected true) */
                             {
-                                FS3ENetLoginFinishReq *req =
-                                    FS3ENetLoginFinishReq_Alloc(
-                                        app->loginApiBaseUrl,
-                                        app->loginClientId,
-                                        app->loginClientSecret,
-                                        code);
-                                if (req) {
-                                    printf("login: phase WAITING_CODE, sending LOGIN_FINISH\n");
-                                    if (FS3EApp_NetSend(FS3ENETQ_LOGIN_FINISH, req, sizeof(*req))) {
-                                        app->loginPhase = FS3ELOGIN_WAITING_FINISH;
-                                        FS3EApp_CheckConnectionState();
+                                const char *code = FS3ELoginView_GetANSICode(&app->loginView);
+                                if (app->loginPhase == FS3ELOGIN_WAITING_CODE &&
+                                    code && code[0] &&
+                                    app->loginApiBaseUrl &&
+                                    app->loginClientId && app->loginClientSecret)
+                                {
+                                    FS3ENetLoginFinishReq *req =
+                                        FS3ENetLoginFinishReq_Alloc(
+                                            app->loginApiBaseUrl,
+                                            app->loginClientId,
+                                            app->loginClientSecret,
+                                            code);
+                                    if (req) {
+                                        printf("login: phase WAITING_CODE, sending LOGIN_FINISH\n");
+                                        if (FS3EApp_NetSend(FS3ENETQ_LOGIN_FINISH, req, sizeof(*req))) {
+                                            app->loginPhase = FS3ELOGIN_WAITING_FINISH;
+                                            FS3EApp_CheckConnectionState();
+                                        }
                                     }
                                 }
                             }
@@ -1473,18 +1758,22 @@ int main(int argc, char **argv)
                         /* ---- New toot sub-window ---- */
                         case GID_TOOT_SEND_BUTTON:
                         {
-                            const char *subject = FS3ETootView_GetUTF8Subject(&app->tootView);
-                            const char *body    = FS3ETootView_GetUTF8Body(&app->tootView);
-                            LONG visibility     = FS3ETootView_GetVisibility(&app->tootView);
-                            if (body && body[0] && app->accountAccessToken) {
-                                FS3ENetPostStatusReq *req =
-                                    FS3ENetPostStatusReq_Alloc(
-                                        app->accountApiBaseUrl,
-                                        app->accountAccessToken,
-                                        body,
-                                        VisibilityString(visibility),
-                                        subject ? subject : "");
-                                FS3EApp_NetSend(FS3ENETQ_POST_STATUS, req, sizeof(*req));
+                            ptag = FindTagItem(GA_Selected, msg);
+                            if (ptag && ptag->ti_Data)  /* when push button down (selected true) */
+                            {
+                                const char *subject = FS3ETootView_GetUTF8Subject(&app->tootView);
+                                const char *body    = FS3ETootView_GetUTF8Body(&app->tootView);
+                                LONG visibility     = FS3ETootView_GetVisibility(&app->tootView);
+                                if (body && body[0] && app->accountAccessToken) {
+                                    FS3ENetPostStatusReq *req =
+                                        FS3ENetPostStatusReq_Alloc(
+                                            app->accountApiBaseUrl,
+                                            app->accountAccessToken,
+                                            body,
+                                            VisibilityString(visibility),
+                                            subject ? subject : "");
+                                    FS3EApp_NetSend(FS3ENETQ_POST_STATUS, req, sizeof(*req));
+                                }
                             }
                             break;
                         }
@@ -1529,6 +1818,9 @@ int main(int argc, char **argv)
 
             if(delayApplyFontSettings)
             {
+                /* Rebuilds the titlebar user-icon wrapper itself (see its
+                 * call inside here) -- must happen before RETHINK, not
+                 * after; see FS3EApp_UpdateUserIcon()'s comment. */
                 FS3EApp_ApplyFontSettings_Delayed();
                 /* Recompute minimum gadget sizes and relayout the whole window */
                 DoMethod(app->window_obj, WM_RETHINK);
@@ -1574,6 +1866,14 @@ void exitclose(void)
 // wait2sec();
         /* Release shared DCs after all gadgets using them are disposed. */
         if (app->buttonDC) { URPDC_Release(app->buttonDC); app->buttonDC = NULL; }
+
+        /* window_obj (and its titlebar_userIcon gadget) is already disposed
+         * above -- just free the wrapper Image object itself before the
+         * BmImage/BitMap it points at goes away with avatarImages. */
+        if (app->titlebarUserIconImage) {
+            DisposeObject(app->titlebarUserIconImage);
+            app->titlebarUserIconImage = NULL;
+        }
 
         if (app->avatarImages) {
             AvatarImages_Dispose(app->avatarImages);

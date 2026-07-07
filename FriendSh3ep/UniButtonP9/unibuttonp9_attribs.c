@@ -91,6 +91,7 @@ void ubtp9_notify_pressed(Class *cl, Object *o, struct GadgetInfo *gi)
     tags[4] = TAG_DONE;
 
     GetAttr(GA_Selected,o,&tags[3]);
+
     /* Direct DoMethodA to target: avoids the OS3.9 DoSuperMethodA/OM_NOTIFY bug */
     nmsg.MethodID     = OM_UPDATE;
     nmsg.opu_AttrList = (struct TagItem *)tags;
@@ -310,7 +311,7 @@ ULONG UniButtonP9_OnSet(Class *cl, Object *o, struct opSet *msg)
             break;
 
         case UBTP9_PushButton:
-        bdbprintf("UBTP9_PushButton:%08x\n",tag->ti_Data);
+
             inst->pushButton = tag->ti_Data ? TRUE : FALSE;
             result = 1;
             break;

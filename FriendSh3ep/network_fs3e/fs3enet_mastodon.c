@@ -245,7 +245,7 @@ BOOL FS3EMastodon_GetTimeline(const char *apiBaseUrl, const char *accessToken,
 
     *outJson = NULL;
 
-    snprintf(url, sizeof(url), "%s/api/v1/timelines/%s", apiBaseUrl, timeline);
+    snprintf(url, sizeof(url), "%s/api/v1/%s", apiBaseUrl, timeline);
 
     if (accessToken && accessToken[0]) {
         FS3EMastodon_BuildAuthHeader(authHeader, sizeof(authHeader), accessToken);

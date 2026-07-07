@@ -383,6 +383,30 @@ void FS3ELoginView_SetAuthorizeUrl(FS3ELoginView *lv, const char *url)
     }
 }
 
+/* Empties the server/user entry fields -- called once credentials are
+ * confirmed (a saved account loaded, or a fresh LOGIN_FINISH succeeds), so
+ * there's nothing pre-filled left to accidentally resubmit and trigger a
+ * fresh re-auth (see GID_LOGIN_LOGIN_BUTTON's "already connected" branch
+ * in friendsh3ep.c). */
+void FS3ELoginView_ClearFields(FS3ELoginView *lv)
+{
+    if (!lv) return;
+
+    if (lv->window) {
+        if (lv->serverEditor)
+            SetGadgetAttrs((struct Gadget *)lv->serverEditor, lv->window, NULL,
+                STRINGA_TextVal, (ULONG)"", TAG_DONE);
+        if (lv->userEditor)
+            SetGadgetAttrs((struct Gadget *)lv->userEditor, lv->window, NULL,
+                STRINGA_TextVal, (ULONG)"", TAG_DONE);
+    } else {
+        if (lv->serverEditor)
+            SetAttrs(lv->serverEditor, STRINGA_TextVal, (ULONG)"", TAG_END);
+        if (lv->userEditor)
+            SetAttrs(lv->userEditor, STRINGA_TextVal, (ULONG)"", TAG_END);
+    }
+}
+
 const char *FS3ELoginView_GetANSIServer(FS3ELoginView *lv)
 {
     const char *text = NULL;

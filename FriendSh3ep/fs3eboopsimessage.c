@@ -25,6 +25,8 @@
 
 #include "TitleBarLayout/fs3etitlebar.h"
 #include "TootTimeline/fs3etoottimeline.h"
+
+
 /* Maximum tag entries in the queue */
 #define BOOPSIDELAY_QUEUE_SIZE 256
 

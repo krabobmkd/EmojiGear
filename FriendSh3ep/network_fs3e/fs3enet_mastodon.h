@@ -83,9 +83,10 @@ BOOL FS3EMastodon_VerifyCredentials(const char *apiBaseUrl, const char *accessTo
                                    FS3EMastodonAccount *outAccount);
 
 /*
- * GET /api/v1/timelines/{timeline} (e.g. "home" or "public"). On success
- * *outJson is a cJSON array of Status objects owned by the caller, who
- * must cJSON_Delete() it.
+ * GET /api/v1/{timeline} -- timeline is the full path relative to /api/v1/,
+ * e.g. "timelines/home?limit=20" or "accounts/123/statuses?limit=20"
+ * (a user's own toots). On success *outJson is a cJSON array of Status
+ * objects owned by the caller, who must cJSON_Delete() it.
  */
 BOOL FS3EMastodon_GetTimeline(const char *apiBaseUrl, const char *accessToken,
                              const char *timeline, cJSON **outJson);
