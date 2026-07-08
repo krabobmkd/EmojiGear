@@ -22,6 +22,9 @@ set(FRIENDSH3EP_SOURCES
 	bdbprintf.c
     avatarimages.c
     bmimage.c
+    fs3ethumb.c
+    rgbscale.c
+    rgbimage.c
     clipboard.c
     patch9.c
     stylefile.c

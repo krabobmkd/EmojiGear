@@ -147,5 +147,11 @@
 #ifdef __CLIB_PRAGMA_AMICALL
  #pragma amicall(URPBase, 0x90, URPDC_UpdateColorMap(a0,a1))
 #endif /* __CLIB_PRAGMA_AMICALL */
+#ifdef __CLIB_PRAGMA_LIBCALL
+ #pragma libcall URPBase URPDC_RemapRGB24ToPen8 96 0a9804
+#endif /* __CLIB_PRAGMA_LIBCALL */
+#ifdef __CLIB_PRAGMA_AMICALL
+ #pragma amicall(URPBase, 0x96, URPDC_RemapRGB24ToPen8(a0,a1,a2,d0))
+#endif /* __CLIB_PRAGMA_AMICALL */
 
 #endif /* PRAGMAS_UTF8RASTPORT_PRAGMAS_H */

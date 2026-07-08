@@ -1,18 +1,29 @@
 /*
  * avatarimages.h - GUI-side avatar bitmap cache for FriendSh3ep.
  *
- * Maintains one BmImage per unique @user@instance, scaled to the current
- * avatarSize.  All bitmaps must be closed on iconify and reloaded when the
- * display returns.  When avatarSize changes (font/DPI adjustment) call
- * AvatarImages_Reload() with the new size to rescale everything.
+ * Maintains one fixed-size RgbImage per unique @user@instance (see
+ * rgbimage.h). Unlike the old BmImage-based cache, this buffer is a plain
+ * Fast-RAM RGB pixel array with no screen-bound resource and no per-DPI
+ * variant: AvatarImages_Get()'s result is box-fit-scaled to the live
+ * avatarSize at *draw* time (RgbImage_DrawScaled), so a font/DPI change or
+ * an iconify/uniconify cycle needs no reload, unload, or rescale here at
+ * all -- see PlanToReworkThumbnails.txt steps 2-3.
  *
- * Download flow:
+ * Download flow (see fs3ethumb.h for the thumbnail process this relies on
+ * to keep the GUI task from freezing on a large avatar upload):
  *   1. Timeline arrives → for each post whose acct is not yet requested,
  *      send FS3ENETQ_FETCH_IMAGE(url, key=acct) to the network process.
  *   2. Network process checks disk cache, downloads on miss, replies with
- *      the local file path.
- *   3. GUI calls AvatarImages_GotFile(key, localPath, screen, size).
- *   4. Tile renderer calls AvatarImages_Get(acct) and blits the bitmap.
+ *      the local (possibly large, original-size) file path.
+ *   3. GUI marks the acct thumb-requested (AvatarImages_MarkThumbRequested)
+ *      and sends FS3EThumb_Request(path, acct, 64, 64) to the thumbnail
+ *      process -- the expensive decode+scale happens off the GUI task.
+ *   4. Thumbnail process replies with a small, already-scaled BMP path.
+ *      GUI calls AvatarImages_ThumbReady(acct, thumbPath): a cheap direct
+ *      read of that small file's pixels (RgbImage_LoadBmp), no datatype
+ *      decode and no scaling.
+ *   5. Tile renderer calls AvatarImages_Get(acct) and draws it with
+ *      RgbImage_DrawScaled() at whatever size the tile needs.
  */
 
 #ifndef AVATARIMAGES_H
@@ -20,17 +31,16 @@
 
 #include <exec/types.h>
 #include <intuition/intuition.h>
-#include "bmimage.h"
+#include "rgbimage.h"
 
 #define AVATAR_CACHE_MAX  128   /* max unique users kept in memory */
 #define AVATAR_ACCT_SIZE  128   /* max @user@instance length + NUL */
-#define AVATAR_PATH_SIZE  256   /* max disk-cache path length + NUL */
 
 typedef struct {
-    char    acct[AVATAR_ACCT_SIZE]; /* key: @user@instance */
-    char    filePath[AVATAR_PATH_SIZE]; /* disk path; "" = not on disk yet */
-    BmImage bm;                     /* scaled bitmap (may be unloaded) */
-    BOOL    requested;              /* FETCH_IMAGE sent, reply pending */
+    char     acct[AVATAR_ACCT_SIZE]; /* key: @user@instance */
+    RgbImage img;                    /* fixed-size RGB pixel buffer */
+    BOOL     requested;              /* FETCH_IMAGE sent, reply pending */
+    BOOL     thumbRequested;         /* FS3ETHUMBQ_MAKE sent, reply pending */
 } AvatarEntry;
 
 typedef struct AvatarImages {
@@ -41,11 +51,11 @@ typedef struct AvatarImages {
 /* Allocate the cache.  Returns NULL on memory failure. */
 AvatarImages *AvatarImages_Create(void);
 
-/* Unload all bitmaps and free the cache struct. */
+/* Frees all pixel buffers and the cache struct. */
 void          AvatarImages_Dispose(AvatarImages *ai);
 
-/* Return the loaded BmImage for acct, or NULL if not loaded yet. */
-BmImage      *AvatarImages_Get(AvatarImages *ai, const char *acct);
+/* Return the loaded RgbImage for acct, or NULL if not loaded yet. */
+RgbImage     *AvatarImages_Get(AvatarImages *ai, const char *acct);
 
 /* TRUE if a FETCH_IMAGE request has already been sent for this acct. */
 BOOL          AvatarImages_IsRequested(AvatarImages *ai, const char *acct);
@@ -53,18 +63,16 @@ BOOL          AvatarImages_IsRequested(AvatarImages *ai, const char *acct);
 /* Record that a FETCH_IMAGE was sent for acct (prevents double-fetch). */
 void          AvatarImages_MarkRequested(AvatarImages *ai, const char *acct);
 
-/* Called when the network process replies with a downloaded file.
- * Loads and scales the bitmap; returns the BmImage or NULL on failure. */
-BmImage      *AvatarImages_GotFile(AvatarImages *ai, const char *acct,
-                                    const char *filePath,
-                                    struct Screen *screen, UWORD size);
+/* TRUE if a thumbnail-process request has already been sent for this acct. */
+BOOL          AvatarImages_IsThumbRequested(AvatarImages *ai, const char *acct);
 
-/* Unload all bitmaps (iconify / screen close).  File paths are kept. */
-void          AvatarImages_Unload(AvatarImages *ai);
+/* Record that an FS3ETHUMBQ_MAKE was sent for acct (prevents double-request). */
+void          AvatarImages_MarkThumbRequested(AvatarImages *ai, const char *acct);
 
-/* Reload all bitmaps that have a file on disk.  Pass the new avatarSize
- * so that a font/DPI change rescales all avatars at once. */
-void          AvatarImages_Reload(AvatarImages *ai,
-                                   struct Screen *screen, UWORD size);
+/* Called when the thumbnail process replies with a scaled-down thumbnail
+ * file (see fs3ethumb.h). Loads its pixels; returns the RgbImage or NULL
+ * on failure. */
+RgbImage     *AvatarImages_ThumbReady(AvatarImages *ai, const char *acct,
+                                       const char *thumbPath);
 
 #endif /* AVATARIMAGES_H */

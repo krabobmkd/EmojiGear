@@ -71,6 +71,7 @@ VOID URPDrawTextUTF8(struct RastPort * rp, struct URPDrawContext * dc, struct UR
 
 VOID URPDC_SetDrawScreen(struct URPDrawContext * dc, struct Screen * screen);
 VOID URPDC_UpdateColorMap(struct URPDrawContext * dc, struct Screen * screen);
+ULONG URPDC_RemapRGB24ToPen8(struct URPDrawContext * dc, CONST UBYTE * srcRGB, UBYTE * dstPen, ULONG pixelCount);
 
 #ifdef __cplusplus
 }

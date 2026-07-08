@@ -95,6 +95,30 @@ BOOL BmImage_LoadScaled(BmImage *img, struct Screen *screen,
                          UWORD targetWidth, UWORD targetHeight);
 
 /*
+ * Screen-less half of the BmImage_LoadScaled pipeline: decode srcPath,
+ * box-fit scale it to targetWidth x targetHeight (same pyramid-halve +
+ * fixed-point nearest-neighbor pass, same aspect-fit rule), and write the
+ * result to the "<srcPath>.<targetWidth>x<targetHeight>.bmp" disk cache --
+ * without the final reload-into-a-screen-bitmap step, so it never touches
+ * Intuition. Safe to call from a screen-less background task (see
+ * fs3ethumb.h's thumbnail process), which is the only reason this is
+ * exposed separately from BmImage_LoadScaled (which now calls this
+ * internally, then opens the result to a screen itself).
+ *
+ * On a cache hit (thumbnail already on disk from a previous call with the
+ * same srcPath/targetWidth/targetHeight), returns TRUE immediately without
+ * decoding anything. outThumbPath is filled either way. Returns FALSE (with
+ * outThumbPath untouched) on decode/scale/I-O failure; if outError is
+ * non-NULL, it receives the BmImageError describing why.
+ *
+ * Requires DataTypesBase to already be open in the calling task's process
+ * image -- true for the thumbnail process since it shares the GUI
+ * executable's global data (see fs3ethumb.c).
+ */
+BOOL BmImage_GenerateScaledBmp(const char *srcPath, UWORD targetWidth, UWORD targetHeight,
+                                char *outThumbPath, ULONG outPathSize, BmImageError *outError);
+
+/*
  * Dispose the datatype object and clear bitmap/dimensions.
  * File path is kept so BmImage_Load() can be called again.
  * Call on iconify or screen close.

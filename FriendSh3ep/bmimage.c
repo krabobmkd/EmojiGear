@@ -61,6 +61,7 @@
  */
 
 #include "bmimage.h"
+#include "rgbscale.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -280,74 +281,6 @@ static BOOL bmimage_scale_read_source_rgb(BmImage *img,
     return TRUE;
 }
 
-/* Nearest-neighbor resample of an RGB24 buffer using 16.16 fixed-point
- * accumulators -- one divide per axis to derive the step (dx/dy), then just
- * an add + shift per pixel. Same technique as blit_bgra_to_rgba_raw() in
- * libutf8rastport/utf8rastport.c; good enough for thumbnail-sized avatars
- * on a 68020. Revisit with a bilinear/box filter only if visual quality
- * turns out to matter. */
-static void bmimage_scale_rgb_nearest(const UBYTE *src, ULONG srcW, ULONG srcH,
-                                       UBYTE *dst, ULONG dstW, ULONG dstH)
-{
-    ULONG srcRowBytes = srcW * 3;
-    ULONG dstRowBytes = dstW * 3;
-    ULONG dx = (dstW > 0) ? (srcW << 16) / dstW : 0;
-    ULONG dy = (dstH > 0) ? (srcH << 16) / dstH : 0;
-    ULONG accumY = 0;
-    ULONG y;
-
-    for (y = 0; y < dstH; y++) {
-        const UBYTE *srow = src + (accumY >> 16) * srcRowBytes;
-        UBYTE *dp = dst + y * dstRowBytes;
-        ULONG accumX = 0;
-        ULONG x;
-
-        for (x = 0; x < dstW; x++) {
-            const UBYTE *sp = srow + (accumX >> 16) * 3;
-            dp[0] = sp[0];
-            dp[1] = sp[1];
-            dp[2] = sp[2];
-            dp += 3;
-            accumX += dx;
-        }
-        accumY += dy;
-    }
-}
-
-/* 2x2 box-filter downscale of an RGB24 image: each output pixel is the
- * average of the 2x2 source block ((A+B+C+D)>>2 per channel, no
- * multiplication). Output = (srcW/2) x (srcH/2). Same technique as
- * halve_bgra() in libutf8rastport/utf8rastport.c.
- *
- * Safe to halve in-place (dst pointing back into src's buffer): output row
- * N reads source rows 2N/2N+1, and the output footprint is 1/4 of the
- * input's, so the write head never catches the read head -- same
- * reasoning as halve_bgra()'s doc comment. */
-static void bmimage_halve_rgb(const UBYTE *src, ULONG srcW, ULONG srcH, ULONG srcRowBytes,
-                               UBYTE *dst, ULONG dstRowBytes)
-{
-    const UBYTE *srcY = src;
-    UBYTE       *dstY = dst;
-    ULONG y, x;
-
-    for (y = 0; y < srcH / 2; y++) {
-        const UBYTE *row0 = srcY;
-        const UBYTE *row1 = srcY + srcRowBytes;
-        UBYTE       *dp   = dstY;
-
-        for (x = 0; x < srcW / 2; x++) {
-            dp[0] = (UBYTE)((row0[0] + row0[3 + 0] + row1[0] + row1[3 + 0]) >> 2);
-            dp[1] = (UBYTE)((row0[1] + row0[3 + 1] + row1[1] + row1[3 + 1]) >> 2);
-            dp[2] = (UBYTE)((row0[2] + row0[3 + 2] + row1[2] + row1[3 + 2]) >> 2);
-            dp += 3;
-            row0 += 6; /* advance 2 source pixels */
-            row1 += 6;
-        }
-        srcY += srcRowBytes * 2;
-        dstY += dstRowBytes;
-    }
-}
-
 #define BMIMAGE_BMP_HEADER_SIZE 54  /* BITMAPFILEHEADER(14) + BITMAPINFOHEADER(40) */
 
 static void bmimage_put_u16le(UBYTE *p, UWORD v)
@@ -430,14 +363,94 @@ static BOOL bmimage_write_bmp(const char *path, const UBYTE *rgbBuf, ULONG w, UL
     return ok;
 }
 
+BOOL BmImage_GenerateScaledBmp(const char *srcPath, UWORD targetWidth, UWORD targetHeight,
+                                char *outThumbPath, ULONG outPathSize, BmImageError *outError)
+{
+    BmImage tmp;
+    UBYTE  *srcBuf = NULL;
+    UBYTE  *dstBuf = NULL;
+    ULONG   origW, origH, dstW, dstH;
+    BPTR    probe;
+
+    if (outError) *outError = BMIMAGE_OK;
+
+    if (!srcPath || srcPath[0] == '\0' || !outThumbPath || outPathSize < 1) {
+        if (outError) *outError = BMIMAGE_ERR_NO_PATH;
+        return FALSE;
+    }
+
+    if (!DataTypesBase) {
+        if (outError) *outError = BMIMAGE_ERR_NO_DATATYPES;
+        return FALSE;
+    }
+
+    if (targetWidth < 1 || targetHeight < 1) {
+        if (outError) *outError = BMIMAGE_ERR_NO_BITMAP;
+        return FALSE;
+    }
+
+    /* Thumbnail is a sibling BMP file keyed off the *requested* box size --
+     * deterministic without decoding the source first. Cache hit: skip the
+     * whole decode/scale/write dance. */
+    snprintf(outThumbPath, outPathSize, "%s.%ldx%ld.bmp",
+             srcPath, (long)targetWidth, (long)targetHeight);
+
+    probe = Open((STRPTR)outThumbPath, MODE_OLDFILE);
+    if (probe) {
+        Close(probe);
+        return TRUE;
+    }
+
+    memset(&tmp, 0, sizeof(tmp));
+    tmp.filePath = (char *)srcPath; /* read-only use; not owned/freed here */
+
+    if (!bmimage_scale_read_source_rgb(&tmp, &srcBuf, &origW, &origH)) {
+        if (outError) *outError = tmp.error;
+        return FALSE;
+    }
+
+    /* Fit origW x origH inside targetWidth x targetHeight, preserving aspect
+     * ratio: whichever axis would overshoot the box first is clamped to the
+     * box, the other axis follows the same ratio (touches its border only
+     * if the aspect matches exactly). */
+    if (origW * (ULONG)targetHeight > origH * (ULONG)targetWidth) {
+        dstW = targetWidth;
+        dstH = (origH * targetWidth) / origW;
+    } else {
+        dstH = targetHeight;
+        dstW = (origW * targetHeight) / origH;
+    }
+    if (dstW < 1) dstW = 1;
+    if (dstH < 1) dstH = 1;
+
+    dstBuf = (UBYTE *)AllocVec(dstW * 3 * dstH, MEMF_ANY);
+    if (!dstBuf) {
+        FreeVec(srcBuf);
+        if (outError) *outError = BMIMAGE_ERR_NO_MEMORY;
+        return FALSE;
+    }
+
+    /* Pyramid pre-downscale + fixed-point nearest resample -- see
+     * rgbscale.h; same technique as blit_bgra_to_rgba_HQ() in
+     * libutf8rastport/utf8rastport.c. */
+    RgbScale_ToSize(srcBuf, origW, origH, dstBuf, dstW, dstH);
+    FreeVec(srcBuf);
+
+    if (!bmimage_write_bmp(outThumbPath, dstBuf, dstW, dstH)) {
+        FreeVec(dstBuf);
+        if (outError) *outError = BMIMAGE_ERR_WRITE_FAILED;
+        return FALSE;
+    }
+    FreeVec(dstBuf);
+
+    return TRUE;
+}
+
 BOOL BmImage_LoadScaled(BmImage *img, struct Screen *screen,
                          UWORD targetWidth, UWORD targetHeight)
 {
-    char   thumbPath[320];
-    UBYTE *srcBuf = NULL;
-    UBYTE *dstBuf = NULL;
-    ULONG  origW, origH, dstW, dstH;
-    BPTR   probe;
+    char        thumbPath[320];
+    BmImageError genErr = BMIMAGE_OK;
 
     if (!img) return FALSE;
 
@@ -458,89 +471,11 @@ BOOL BmImage_LoadScaled(BmImage *img, struct Screen *screen,
 
     BmImage_Unload(img);
 
-    /* Thumbnail is a sibling BMP file keyed off the *requested* box size --
-     * deterministic without decoding the source first. Cache hit: skip the
-     * whole decode/scale/write dance and just open it like any other file. */
-    snprintf(thumbPath, sizeof(thumbPath), "%s.%ldx%ld.bmp",
-             img->filePath, (long)targetWidth, (long)targetHeight);
-
-    probe = Open((STRPTR)thumbPath, MODE_OLDFILE);
-    if (probe) {
-        Close(probe);
-        return bmimage_open_file_to_screen(img, thumbPath, screen);
-    }
-
-    if (!bmimage_scale_read_source_rgb(img, &srcBuf, &origW, &origH))
-        return FALSE;
-
-    /* Fit origW x origH inside targetWidth x targetHeight, preserving aspect
-     * ratio: whichever axis would overshoot the box first is clamped to the
-     * box, the other axis follows the same ratio (touches its border only
-     * if the aspect matches exactly). */
-    if (origW * (ULONG)targetHeight > origH * (ULONG)targetWidth) {
-        dstW = targetWidth;
-        dstH = (origH * targetWidth) / origW;
-    } else {
-        dstH = targetHeight;
-        dstW = (origW * targetHeight) / origH;
-    }
-    if (dstW < 1) dstW = 1;
-    if (dstH < 1) dstH = 1;
-
-    dstBuf = (UBYTE *)AllocVec(dstW * 3 * dstH, MEMF_ANY);
-    if (!dstBuf) {
-        FreeVec(srcBuf);
-        img->error = BMIMAGE_ERR_NO_MEMORY;
+    if (!BmImage_GenerateScaledBmp(img->filePath, targetWidth, targetHeight,
+                                    thumbPath, sizeof(thumbPath), &genErr)) {
+        img->error = genErr;
         return FALSE;
     }
-
-    /* Pyramid pre-downscale: repeatedly box-average-halve (no per-pixel
-     * multiply, just (A+B+C+D)>>2) until neither axis is more than 2x the
-     * target, so the final fixed-point nearest-neighbor pass never has to
-     * skip more than one source pixel out of two -- averages the source
-     * instead of dropping most of it. Same approach as
-     * blit_bgra_to_rgba_HQ() in libutf8rastport/utf8rastport.c. Scratch is
-     * grown once (first halving is the largest output) and reused in-place
-     * for every further halving. */
-    {
-        const UBYTE *curBuf      = srcBuf;
-        ULONG        curW        = origW;
-        ULONG        curH        = origH;
-        ULONG        curRowBytes = origW * 3;
-        UBYTE       *scratch     = NULL;
-
-        while (curW > dstW * 2 || curH > dstH * 2) {
-            ULONG halfW, halfH, halfRowBytes;
-
-            halfW = curW / 2;
-            halfH = curH / 2;
-            if (halfW < 1 || halfH < 1) break;
-            halfRowBytes = halfW * 3;
-
-            if (!scratch) {
-                scratch = (UBYTE *)AllocVec(halfRowBytes * halfH, MEMF_ANY);
-                if (!scratch) break; /* fall back to NN straight from curBuf */
-            }
-
-            bmimage_halve_rgb(curBuf, curW, curH, curRowBytes, scratch, halfRowBytes);
-
-            curBuf      = scratch;
-            curRowBytes = halfRowBytes;
-            curW        = halfW;
-            curH        = halfH;
-        }
-
-        bmimage_scale_rgb_nearest(curBuf, curW, curH, dstBuf, dstW, dstH);
-        if (scratch) FreeVec(scratch);
-    }
-    FreeVec(srcBuf);
-
-    if (!bmimage_write_bmp(thumbPath, dstBuf, dstW, dstH)) {
-        FreeVec(dstBuf);
-        img->error = BMIMAGE_ERR_WRITE_FAILED;
-        return FALSE;
-    }
-    FreeVec(dstBuf);
 
     return bmimage_open_file_to_screen(img, thumbPath, screen);
 }

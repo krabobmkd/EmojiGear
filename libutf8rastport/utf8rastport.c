@@ -1487,6 +1487,45 @@ ULONG URPDC_UpdateColorMap(REG(a0, struct URPDrawContext *dc), REG(a1, struct Sc
     return result;
 }
 
+/*
+ * URPDC_RemapRGB24ToPen8() – bulk RGB24→CLUT pen remap using the table
+ * built by URPDC_UpdateColorMap()/URPDC_SetDrawScreen(). Same nearest-pen
+ * lookup formula as the internal glyph remapper
+ * (urp_build_clut_bitmaps_rgba() above): index = (R>>4)<<8 | (G>>4)<<4 |
+ * (B>>4) into dc->clutRemap[].
+ *
+ * srcRGB is pixelCount tightly-packed 3-byte (R,G,B) pixels (e.g. a decoded
+ * thumbnail); dstPen receives one pen byte per pixel, suitable for
+ * graphics.library/WritePixelArray8(). Intended for depth<=8 screens where
+ * cybergraphics.library/ScalePixelArray()'s own RECTFMT_LUT8 path isn't
+ * available/desired (see FriendSh3ep/PlanToReworkThumbnails.txt step 2-3).
+ *
+ * Returns 0 (nothing written) if dc/srcRGB/dstPen is NULL or the colour map
+ * hasn't been built yet (dc->clutValid == 0) -- call
+ * URPDC_UpdateColorMap()/URPDC_SetDrawScreen() first. Returns pixelCount on
+ * success.
+ */
+ULONG URPDC_RemapRGB24ToPen8(REG(a0, struct URPDrawContext *dc),
+                              REG(a1, CONST UBYTE *srcRGB),
+                              REG(a2, UBYTE *dstPen),
+                              REG(d0, ULONG pixelCount))
+{
+    ULONG i;
+
+    if (!dc || !srcRGB || !dstPen) return 0;
+    if (!dc->clutValid) return 0;
+
+    for (i = 0; i < pixelCount; i++) {
+        const UBYTE *sp = srcRGB + i * 3UL;
+        dstPen[i] = dc->clutRemap[
+            ((ULONG)(sp[0] >> 4) << 8) |
+            ((ULONG)(sp[1] >> 4) << 4) |
+             (ULONG)(sp[2] >> 4)];
+    }
+
+    return pixelCount;
+}
+
 
 /* Forward declaration – defined later in this file */
 static struct URPGlyphEntry *urp_get_glyph(struct URPDrawContext *dc,

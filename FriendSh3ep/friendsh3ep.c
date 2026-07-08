@@ -96,6 +96,7 @@
 #include "TootTimeline/fs3etoottimeline.h"
 
 #include "network_fs3e/fs3enet.h"
+#include "fs3ethumb.h"
 
 const char *pVersion = "$VER: FriendSh3ep " FRIENDSH3EP_VERSION;
 
@@ -192,7 +193,7 @@ static LibraryEntry libraryTable[] = {
     {"gadgets/integer.gadget",       44, &IntegerBase},
     {"gadgets/unitexteditor.gadget",  4, &UniTextEditorBase},
     {"gadgets/unibutton.gadget",     4, &UniButtonBase},
-    {"utf8rastport.library",         4, &URPBase},
+    {"utf8rastport.library",         5, &URPBase},
     {"datatypes.library",           44, &DataTypesBase},
     {NULL, 0, NULL}
 };
@@ -793,16 +794,18 @@ static void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
     case FS3ENETQ_FETCH_IMAGE:
         if (msg->fs3em_Result == FS3ENETR_OK && app->avatarImages) {
             FS3ENetFetchImageReply *reply = (FS3ENetFetchImageReply *)msg->fs3em_Data;
-            if (reply && reply->fs3enf_Key && reply->fs3enf_LocalPath) {
-                AvatarImages_GotFile(app->avatarImages, reply->fs3enf_Key,
-                                     reply->fs3enf_LocalPath,
-                                     CurrentMainScreen,
-                                     (UWORD)app->style.avatarSize);
-                if (app->accountAcct && strcmp(reply->fs3enf_Key, app->accountAcct) == 0)
-                    FS3EApp_UpdateUserIcon();
-                if (CurrentMainWindow)
-                    RefreshGList((struct Gadget *)app->tootTimeline,
-                                 CurrentMainWindow, NULL, 1);
+            if (reply && reply->fs3enf_Key && reply->fs3enf_LocalPath &&
+                app->thumbRequestPort && app->thumbReplyPort &&
+                !AvatarImages_IsThumbRequested(app->avatarImages, reply->fs3enf_Key))
+            {
+                /* Hand the (possibly large, original-size) downloaded file
+                 * to the thumbnail process instead of decoding/scaling it
+                 * here -- see fs3ethumb.h. Its reply lands in
+                 * FS3EApp_HandleThumbReply(). */
+                if (FS3EThumb_Request(app->thumbRequestPort, app->thumbReplyPort,
+                        reply->fs3enf_LocalPath, reply->fs3enf_Key,
+                        FS3ETHUMB_AVATAR_SIZE, FS3ETHUMB_AVATAR_SIZE))
+                    AvatarImages_MarkThumbRequested(app->avatarImages, reply->fs3enf_Key);
             }
         }
         break;
@@ -821,6 +824,26 @@ static void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
     }
 
     FS3EApp_CheckConnectionState();
+}
+
+/* FS3ETHUMBQ_MAKE reply -- the thumbnail process has finished decoding and
+ * box-fit-scaling one avatar's original download down to a small BMP (see
+ * fs3ethumb.h). All that remains on the GUI task is a cheap direct read of
+ * that already-small file's pixels; scaling to the live avatarSize happens
+ * at draw time (RgbImage_DrawScaled), not here. */
+static void FS3EApp_HandleThumbReply(FS3EThumbMessage *msg)
+{
+    if (msg->fs3etm_Result == FS3ETHUMBR_OK && app->avatarImages &&
+        msg->fs3etm_Key[0] && msg->fs3etm_ThumbPath[0])
+    {
+        AvatarImages_ThumbReady(app->avatarImages, msg->fs3etm_Key,
+                                 msg->fs3etm_ThumbPath);
+        if (app->accountAcct && strcmp(msg->fs3etm_Key, app->accountAcct) == 0)
+            FS3EApp_UpdateUserIcon();
+        if (CurrentMainWindow)
+            RefreshGList((struct Gadget *)app->tootTimeline,
+                         CurrentMainWindow, NULL, 1);
+    }
 }
 
 /* - - - - - - - - - - - - - - - - - - - HELPERS - - - - - - - - - - - - - */
@@ -950,17 +973,11 @@ static void FS3EApp_ApplyFontSettings_Delayed()
                  TTIMELINE_Style, (ULONG)&app->style,
                  TAG_DONE);
 
-    /* Reload all cached avatar bitmaps at the new size, then immediately
-     * rebuild the titlebar user-icon wrapper -- AvatarImages_Reload() frees
-     * the previous BmImage's dtObject/BitMap as part of reloading it, so
-     * the wrapper must never be left pointing at that freed bitmap even
-     * across the WM_RETHINK the caller sends right after this call
-     * returns (see FS3EApp_UpdateUserIcon()'s comment for why). */
-    if (app->avatarImages && CurrentMainScreen) {
-        AvatarImages_Reload(app->avatarImages, CurrentMainScreen,
-                            (UWORD)app->style.avatarSize);
+    /* Avatar bitmaps are plain Fast-RAM RGB pixel arrays now (see
+     * rgbimage.h), rescaled at draw time -- a DPI/font-size change needs no
+     * avatar reload or rescale at all, just a titlebar user-icon rebuild. */
+    if (app->avatarImages)
         FS3EApp_UpdateUserIcon();
-    }
 
     delayApplyFontSettings = FALSE;
 }
@@ -1121,6 +1138,14 @@ int main(int argc, char **argv)
     app->netRequestPort = FS3ENet_Start(app->settings.cachePath);
     if (!app->netRequestPort)
         printf("FriendSh3ep: network process failed - continuing without\n");
+
+    /* --- Thumbnail process ------------------------------------------------ */
+    app->thumbReplyPort = CreateMsgPort();
+    if (!app->thumbReplyPort) cleanexit("Can't create thumbnail reply port");
+
+    app->thumbRequestPort = FS3EThumb_Start();
+    if (!app->thumbRequestPort)
+        printf("FriendSh3ep: thumbnail process failed - continuing without\n");
 
     /* Try to load saved credentials; timeline fetch fires later in setViewMode */
     FS3EApp_LoadAccount();
@@ -1409,6 +1434,7 @@ int main(int argc, char **argv)
             waitedSignals = winsignal | loginSig | tootSig | themeSig | settingsSig |
                 (1L << app->app_port->mp_SigBit) |
                 (app->netReplyPort ? (1L << app->netReplyPort->mp_SigBit) : 0) |
+                (app->thumbReplyPort ? (1L << app->thumbReplyPort->mp_SigBit) : 0) |
                 SIGBREAKF_CTRL_C |
                 SIGBREAKF_CTRL_F;
 
@@ -1442,8 +1468,9 @@ int main(int argc, char **argv)
                     case WMHI_ICONIFY:
                         FS3EMenu_Close(&app->menu, CurrentMainWindow);
                         closeExternalViews();
-                        if (app->avatarImages)
-                            AvatarImages_Unload(app->avatarImages);
+                        /* Avatar bitmaps are plain Fast-RAM RGB pixel arrays now
+                         * (see rgbimage.h) -- no screen-bound resource to free
+                         * across an iconify/uniconify cycle. */
                         FS3EMain_Close(&app->mainwindow, app->window_obj, TRUE);
                         break;
 
@@ -1451,11 +1478,8 @@ int main(int argc, char **argv)
                         FS3EMain_Show(&app->mainwindow, app->window_obj);
                         if (!CurrentMainWindow) cleanexit("can't re-open window");
                         FS3EMenu_Create(&app->menu, CurrentMainScreen, CurrentMainWindow);
-                        if (app->avatarImages && CurrentMainScreen) {
-                            AvatarImages_Reload(app->avatarImages, CurrentMainScreen,
-                                                (UWORD)app->style.avatarSize);
+                        if (app->avatarImages)
                             FS3EApp_UpdateUserIcon();
-                        }
                         break;
 
                     case WMHI_RAWKEY:
@@ -1555,6 +1579,17 @@ int main(int argc, char **argv)
                     FS3EApp_HandleNetReply(netMsg);
                     FreeVec(netMsg->fs3em_Data);
                     FreeVec(netMsg);
+                }
+            }
+
+            /* Drain async thumbnail-process replies */
+            if (app->thumbReplyPort &&
+                (currentSignals & (1L << app->thumbReplyPort->mp_SigBit)))
+            {
+                FS3EThumbMessage *thumbMsg;
+                while ((thumbMsg = (FS3EThumbMessage *)GetMsg(app->thumbReplyPort)) != NULL) {
+                    FS3EApp_HandleThumbReply(thumbMsg);
+                    FreeVec(thumbMsg);
                 }
             }
 
@@ -1910,6 +1945,28 @@ void exitclose(void)
             }
             DeleteMsgPort(app->netReplyPort);
             app->netReplyPort = NULL;
+        }
+
+        if (app->thumbRequestPort)
+        {
+            /* Stop the thumbnail process using our persistent reply port if
+             * available, otherwise create a temporary one. */
+            struct MsgPort *stopReplyPort = app->thumbReplyPort
+                ? app->thumbReplyPort : CreateMsgPort();
+            if (stopReplyPort) {
+                FS3EThumb_Stop(app->thumbRequestPort, stopReplyPort);
+                if (stopReplyPort != app->thumbReplyPort)
+                    DeleteMsgPort(stopReplyPort);
+            }
+        }
+        /* Drain and free any remaining async replies */
+        if (app->thumbReplyPort) {
+            FS3EThumbMessage *thumbMsg;
+            while ((thumbMsg = (FS3EThumbMessage *)GetMsg(app->thumbReplyPort)) != NULL) {
+                FreeVec(thumbMsg);
+            }
+            DeleteMsgPort(app->thumbReplyPort);
+            app->thumbReplyPort = NULL;
         }
 
         FS3EApp_FreeLoginState();

@@ -389,22 +389,39 @@ void ttl_render_tile(TTLData *inst, TTLTile *tile)
         /* drawY = Y within tile of the post top (may be negative) */
         WORD drawY = (WORD)(postTop - tileBaseY);
 
-        /* ---- Avatar: blit from cache if available, else draw placeholder ---- */
+        /* ---- Avatar: draw from cache if available, else placeholder ---- */
         {
             WORD ay = (WORD)(drawY + TTL_POST_PAD_TOP);
             WORD ax = padLeft;
             WORD as = avatarW;
-            BmImage *avBm = inst->avatarImages
+            RgbImage *avImg = inst->avatarImages
                             ? AvatarImages_Get(inst->avatarImages, post->acct)
                             : NULL;
 
-            if (avBm && avBm->bitmap) {
-                /* Centre the (possibly narrower/shorter) scaled bitmap in the box */
-                WORD bx = (WORD)(ax + (as - (WORD)avBm->width)  / 2);
-                WORD by = (WORD)(ay + (as - (WORD)avBm->height) / 2);
-                BltBitMapRastPort(avBm->bitmap, 0, 0, rp,
-                                  bx, by, (ULONG)avBm->width, (ULONG)avBm->height,
-                                  0xC0);
+            if (avImg) {
+                /* The cached image is already box-fit to a fixed size (see
+                 * fs3ethumb.h) and may not be square -- aspect-fit it into
+                 * the as x as avatar box (same rule bmimage.c's box-fit
+                 * uses) and centre it, then let RgbImage_DrawScaled do the
+                 * actual scale+draw at whatever the live avatarSize is. */
+                ULONG dw, dh;
+                WORD  bx, by;
+
+                if (avImg->width >= avImg->height) {
+                    dw = as;
+                    dh = ((ULONG)avImg->height * (ULONG)as) / avImg->width;
+                } else {
+                    dh = as;
+                    dw = ((ULONG)avImg->width * (ULONG)as) / avImg->height;
+                }
+                if (dw < 1) dw = 1;
+                if (dh < 1) dh = 1;
+
+                bx = (WORD)(ax + (as - (WORD)dw) / 2);
+                by = (WORD)(ay + (as - (WORD)dh) / 2);
+
+                RgbImage_DrawScaled(avImg, rp, inst->screen, inst->style->dcNormal,
+                                     bx, by, (UWORD)dw, (UWORD)dh);
             } else {
                 /* Placeholder: filled rectangle with cross */
                 SetAPen(rp, (LONG)FS3E_PEN(inst->style, FS3E_COLOR_ACCENT));

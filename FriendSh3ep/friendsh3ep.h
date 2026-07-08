@@ -101,6 +101,12 @@ struct App {
     struct MsgPort *netRequestPort;
     struct MsgPort *netReplyPort;
 
+    /* fs3ethumb ports: same shape as the fs3enet ports above, but talking
+     * to the thumbnail process (see fs3ethumb.h) instead of the network
+     * process. */
+    struct MsgPort *thumbRequestPort;
+    struct MsgPort *thumbReplyPort;
+
     /* Login two-phase state machine (FS3ELoginPhase) */
     ULONG  loginPhase;
     char  *loginApiBaseUrl;    /* saved between LOGIN_START reply and LOGIN_FINISH send */

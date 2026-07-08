@@ -54,7 +54,7 @@ _LVORemove     EQU   -252
    LABEL ClassLib_SIZEOF
 
 ; important must be the same...
-VERSION		EQU	4
+VERSION		EQU	5
 REVISION	EQU	3
 
 CALL	MACRO
@@ -90,6 +90,7 @@ CALL	MACRO
 
 	XREF _URPDC_SetDrawScreen
 	XREF _URPDC_UpdateColorMap
+	XREF _URPDC_RemapRGB24ToPen8
 
 	XREF _CLibInit
 	XREF _CLibClose
@@ -171,6 +172,7 @@ LibFuncTable:
 
 	DC.L	_URPDC_SetDrawScreen
 	DC.L	_URPDC_UpdateColorMap
+	DC.L	_URPDC_RemapRGB24ToPen8
 
 	DC.L	-1 ; end marker
 

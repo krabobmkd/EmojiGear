@@ -100,4 +100,8 @@ typedef ULONG _sfdc_vararg;
       LP2NR(0x90, URPDC_UpdateColorMap , struct URPDrawContext *, ___dc, a0, struct Screen *, ___screen, a1,\
       , UTF8RASTPORT_BASE_NAME)
 
+#define URPDC_RemapRGB24ToPen8(___dc, ___srcRGB, ___dstPen, ___pixelCount) \
+      LP4(0x96, ULONG, URPDC_RemapRGB24ToPen8 , struct URPDrawContext *, ___dc, a0, CONST UBYTE *, ___srcRGB, a1, UBYTE *, ___dstPen, a2, ULONG, ___pixelCount, d0,\
+      , UTF8RASTPORT_BASE_NAME)
+
 #endif /* !_INLINE_UTF8RASTPORT_H */
