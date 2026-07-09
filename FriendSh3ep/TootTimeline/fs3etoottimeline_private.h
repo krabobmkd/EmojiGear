@@ -89,6 +89,34 @@ extern WORD windowResizeLastTargetH;  /* last height sent to SizeWindow */
  * stored in FS3EStyle.postPadLeft / FS3EStyle.avatarGap, computed from the
  * current font size by FS3EStyle_SetFontSize / FS3EStyle_InitDefaults. */
 
+/* Media preview rectangle: fixed base size, scaled by the same
+ * avatarSize/TTL_AVATAR_BASE_SIZE ratio FS3EStyle uses to grow the avatar
+ * with font size (see compute_layout() in fs3estyle.c: avatarSize ==
+ * TTL_AVATAR_BASE_SIZE at the default 12pt font). */
+#define TTL_PREVIEW_BASE_W      200
+#define TTL_PREVIEW_BASE_H      150
+#define TTL_AVATAR_BASE_SIZE     35
+
+/* Gap in pixels between action-bar buttons (Reply / Boost / Fave) */
+#define TTL_ACTION_GAP            8
+
+/* Prev/next arrow hit-zone width within a multi-image preview rect (see
+ * TTL_HOT_MEDIA_PREV/NEXT) -- a fraction of the rect's own width, clamped
+ * to a sane range so it's neither a sliver on a tiny rect nor absurdly
+ * wide on a large one. One shared formula so ttl_post_build_hotspots
+ * (fs3etoottimeline_posts.c) and the arrow-glyph draw in
+ * fs3etoottimeline_tiles.c can never disagree on where the zone is. */
+#define TTL_MEDIA_ARROW_MIN_W     8
+#define TTL_MEDIA_ARROW_MAX_W    24
+
+INLINE WORD ttl_media_arrow_width(WORD previewW)
+{
+    WORD w = (WORD)(previewW / 4);
+    if (w > TTL_MEDIA_ARROW_MAX_W) w = TTL_MEDIA_ARROW_MAX_W;
+    if (w < TTL_MEDIA_ARROW_MIN_W) w = TTL_MEDIA_ARROW_MIN_W;
+    return w;
+}
+
 /* Forward declaration — full type in ../avatarimages.h, included by
  * files that actually call AvatarImages_Get(). */
 struct AvatarImages;
@@ -105,13 +133,36 @@ typedef struct {
 
 /* ------------------------------------------------------------------ */
 /* TTLHotSpot — clickable region within a post                          */
+/*                                                                      */
+/* A toot's body can carry a few dozen @mention/#hashtag/URL tokens, so */
+/* hot-spots are NOT individually AllocVec'd: every TTLData owns a      */
+/* fixed pool (hotSpotPool[TTL_HOTSPOT_POOL_TOOTS][TTL_HOTSPOT_MAX_PER_ */
+/* TOOT]) and each post that's actually drawn into a tile is lent one   */
+/* bucket (TTLPost.hotSpots points into the pool) -- see                */
+/* ttl_post_ensure_hotspots() in fs3etoottimeline_posts.c. Buckets are  */
+/* handed out round-robin, so only posts overlapping *currently         */
+/* rendered* tiles are guaranteed to have hot-spots at any given        */
+/* moment; that's fine since nothing off-screen can be clicked.         */
+/*                                                                      */
+/* `data`/`dataLen` are a *borrowed* pointer + byte length into text    */
+/* that's already owned elsewhere (post->acct/boostBy, or a             */
+/* TTLTextSpan's utf8 buffer for body tokens) -- not NUL-terminated,    */
+/* not AllocVec'd here, no truncation. This is safe because hot-spots   */
+/* are only ever read right after ttl_post_ensure_hotspots() has just   */
+/* rebuilt them from the post's *current* strings/spans (see            */
+/* hotSpotsDirty): whatever they point into is guaranteed alive at that */
+/* moment, and a relayout that would free/replace it also marks         */
+/* hotSpotsDirty so a stale pointer never gets read in between.         */
 /* ------------------------------------------------------------------ */
 
+#define TTL_HOTSPOT_MAX_PER_TOOT   32
+#define TTL_HOTSPOT_POOL_TOOTS      8   /* 8 * 32 == 256 total pool slots */
+
 struct TTLHotSpot {
-    struct MinNode node;
-    WORD   x, y, w, h;   /* pixel rect relative to post->timelineY */
-    UBYTE  type;          /* TTL_HOT_* */
-    char  *data;          /* AllocVec'd string (URL / hashtag / handle) */
+    WORD        x, y, w, h;  /* pixel rect; x/w absolute gadget X, y/h relative to post->timelineY */
+    UBYTE       type;        /* TTL_HOT_* (see fs3etoottimeline.h) */
+    const char *data;        /* borrowed, not NUL-terminated; NULL if not applicable (Reply/Boost/Fave/media) */
+    ULONG       dataLen;     /* byte length of data */
 };
 
 /* ------------------------------------------------------------------ */
@@ -124,11 +175,8 @@ struct TTLHotSpot {
 #define TTL_SPAN_TIMESTAMP 3
 #define TTL_SPAN_BOOSTBY   4
 
-/* Hot-spot types */
-#define TTL_HOT_AVATAR     0
-#define TTL_HOT_REPLY      1
-#define TTL_HOT_BOOST      2
-#define TTL_HOT_FAVORITE   3
+/* Hot-spot types (TTL_HOT_*) now live only in fs3etoottimeline.h -- see
+ * that header for why having two definitions here was a footgun. */
 
 typedef struct {
     struct MinNode  node;
@@ -138,10 +186,21 @@ typedef struct {
     WORD   height;        /* line height */
     WORD   ascent;        /* pixels from span top to text baseline */
     UBYTE  spanType;      /* TTL_SPAN_* */
-    char  *utf8;          /* AllocVec'd text */
+    char  *utf8;          /* AllocVec'd text (this row's own copy, used for drawing/measuring) */
     ULONG  byteLen;
     LONG  *charXOffsets;  /* AllocVec'd array of (charCount+1) LONG values */
     ULONG  charCount;
+
+    /* TTL_SPAN_BODY only: pointer into the post's own persistent
+     * post->body at the byte offset this row started at (NULL for other
+     * span types). Byte-for-byte identical content to `utf8` for this
+     * row, but -- unlike utf8 -- it keeps going past this row's own
+     * byteLen into whatever text originally followed in post->body, since
+     * post->body is one contiguous, unwrapped buffer that outlives any
+     * individual relayout. Used to recover a token's full length when
+     * word-wrap happened to cut it mid-word across two rows -- see
+     * ttl_scan_span_tokens(). */
+    const char *bodySrc;
 } TTLTextSpan;
 
 /* ------------------------------------------------------------------ */
@@ -162,10 +221,29 @@ typedef struct TTLPost {
     char  *timestamp;
     char  *boostBy;    /* booster display name, NULL for original posts */
     char  *avatarURL;  /* CDN URL; used to trigger deferred download */
+    char  *postId;     /* Mastodon status id, NULL if unknown; see TTLPostSetup.postId */
 
-    /* Per-post spatial index lists */
-    struct MinList  hotSpots;     /* list of TTLHotSpot   (for click events) */
-    struct MinList  textSpans;    /* list of TTLTextSpan  (for text selection) */
+    /* Media attachment preview URLs (AllocVec'd copies), NULL past
+     * mediaCount. mediaCurrentIndex is which one is currently shown in
+     * the single preview rect below -- browsed via TTL_HOT_MEDIA_PREV/
+     * NEXT, not separate rects per image. */
+    char  *mediaUrls[TTL_POST_MAX_MEDIA];
+    ULONG  mediaCount;
+    ULONG  mediaCurrentIndex;
+
+    /* Media preview rect, in the same post-relative coordinates as
+     * TTLTextSpan.postRelY; computed by ttl_post_layout. previewW==0 means
+     * "no preview to draw" (mediaCount==0, or it didn't fit). */
+    WORD   previewX, previewY, previewW, previewH;
+
+    struct MinList  textSpans;    /* list of TTLTextSpan (wrapped body lines, for hit-testing/selection) */
+
+    /* Hot-spots: NOT owned here -- see the TTLHotSpot comment above.
+     * hotSpots is NULL, or a pointer into inst->hotSpotPool[hotSpotBucket]. */
+    TTLHotSpot *hotSpots;
+    UBYTE       hotSpotCount;
+    WORD        hotSpotBucket;   /* -1 if no bucket currently assigned */
+    BOOL        hotSpotsDirty;   /* TRUE = layout changed, must rebuild before use */
 } TTLPost;
 
 /* ------------------------------------------------------------------ */
@@ -224,6 +302,24 @@ typedef struct {
      * see ttl_active() below. ---- */
     TTLChannel channels[TTIMELINE_NUM_VIEWMODES];
 
+    /* ---- Hot-spot pool (see the TTLHotSpot comment in this header) ---- */
+    TTLHotSpot  hotSpotPool[TTL_HOTSPOT_POOL_TOOTS][TTL_HOTSPOT_MAX_PER_TOOT];
+    TTLPost    *hotSpotBucketOwner[TTL_HOTSPOT_POOL_TOOTS];  /* NULL = free */
+    ULONG       hotSpotNextBucket;                           /* round-robin cursor */
+
+    /* ---- Last hot-spot activation (see TTIMELINE_LastHotSpotString/
+     * PostId and ttl_notify_hotspot() in fs3etoottimeline_tiles.c) ----
+     * Owned copies, not just cached pointers: hs->data may point into a
+     * TTLTextSpan's row buffer, which gets freed on the next relayout
+     * (see the TTLHotSpot comment above); a post's own postId outlives
+     * that, but not the post itself scrolling away and being freed. Since
+     * "last activated" is meant to stay readable via GetAttr until the
+     * *next* activation regardless of what happens to the post it came
+     * from, ttl_notify_hotspot() copies both into these fixed buffers up
+     * front rather than handing out pointers into someone else's memory. */
+    char   lastHotSpotStr[512];
+    char   lastHotSpotPostId[64];
+
     /* ---- Text selection state ---- */
     TTLPost     *selPost;
     TTLTextSpan *selSpanA;
@@ -234,6 +330,7 @@ typedef struct {
 
     /* ---- Drag / scroll input (written in HandleInput, consumed in Render) ---- */
     BOOL   dragActive;
+    WORD   dragStartGadX;    /* gadget-relative X at button-down */
     WORD   dragStartGadY;    /* gadget-relative Y at button-down */
     LONG   dragStartScrollY;
 
@@ -344,12 +441,13 @@ ULONG TTL_OnGoInactive (Class *cl, Object *o, struct gpGoInactive *msg);
 
 /* fs3etoottimeline_posts.c */
 TTLPost *ttl_post_alloc        (const TTLPostSetup *setup);
-void     ttl_post_free         (TTLPost *post);
+void     ttl_post_free         (TTLData *inst, TTLPost *post);
 void     ttl_post_layout       (TTLData *inst, TTLPost *post);
 void     ttl_layout_all_posts  (TTLData *inst);
 void     ttl_clear_channel     (TTLData *inst, ULONG ch);
 void     ttl_clear_posts       (TTLData *inst);
 void     ttl_rebuild_ypositions(TTLData *inst, ULONG ch);
+void     ttl_post_ensure_hotspots(TTLData *inst, TTLPost *post);
 
 /* fs3etoottimeline_tiles.c */
 BOOL     ttl_tiles_alloc  (TTLData *inst, struct RastPort *rp);
@@ -363,6 +461,15 @@ void     ttl_tile_evict_out_of_range(TTLData *inst, LONG keepTopY, LONG keepBotY
 void     ttl_render_tile  (TTLData *inst, TTLTile *tile);
 void     ttl_notify       (Class *cl, Object *o, struct GadgetInfo *gi,
                            ULONG tag, ULONG value);
+/* Richer variant for hot-spot activation: copies data/postId into the
+ * gadget's owned lastHotSpotStr/lastHotSpotPostId buffers (see the
+ * TTLData comment), then sends one OM_UPDATE carrying
+ * TTIMELINE_HotSpotNotify=type plus both buffer pointers as additional
+ * tags. data/dataLen may be NULL/0 (hot-spot types with no string);
+ * postId may be NULL ("" or unknown status id). */
+void     ttl_notify_hotspot(Class *cl, Object *o, struct GadgetInfo *gi,
+                             UBYTE type, const char *data, ULONG dataLen,
+                             const char *postId);
 /* only process have right to send render, ask with notify ProcessREfresh
  * void     ttl_render_self  (Class *cl, Object *o, struct GadgetInfo *gi);
 */

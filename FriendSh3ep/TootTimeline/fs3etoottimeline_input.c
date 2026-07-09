@@ -3,15 +3,22 @@
  *
  * Scroll interaction
  * ------------------
- * Button press   → GoActive: record dragStartGadY and dragStartScrollY.
- * Mouse move     → HandleInput: compute dy, set pendingScrollY, call
- *                  ttl_render_self() to blit at the new position.
+ * Button press   → GoActive: record dragStart{GadX,GadY,ScrollY}.
+ * Mouse move     → HandleInput: compute dy, set pendingScrollY, notify
+ *                  TTIMELINE_ProcessRefresh to get blitted at the new
+ *                  position.
  * Button release → HandleInput: end drag, return GMR_NOREUSE.
  *
- * Click detection (future)
- * -------------------------
- * On a click without drag, hit-test against post hot-spots and text
- * spans.  For now only the scroll path is implemented.
+ * Click vs. scroll
+ * ----------------
+ * There's no separate "drag mode": every button-down starts a live
+ * scroll (mouse-move already updates pendingScrollY while the button is
+ * held). On button-up we decide, after the fact, whether that was
+ * actually a click: total movement on both axes must stay under
+ * TTL_CLICK_SLOP pixels, AND the down-point and up-point must resolve to
+ * the exact same hot-spot (same post, same hot-spot index) -- e.g. a tiny
+ * jitter that starts on a link but ends just outside it is still treated
+ * as a (no-op) scroll, not a click. See ttl_hit_hotspot / ttl_activate_hotspot.
  *
  * Scroll-wheel (future)
  * ----------------------
@@ -27,6 +34,11 @@
 #include <devices/inputevent.h>
 
 #include "fs3etoottimeline_private.h"
+#include "../bdbprintf.h"
+
+/* Max total movement (either axis) between button-down and button-up for
+ * the gesture to still count as a click rather than a scroll. */
+#define TTL_CLICK_SLOP 8
 
 /* ------------------------------------------------------------------ */
 /* Scroll helper: clamp and store pending scroll                        */
@@ -61,6 +73,95 @@ static TTLPost *ttl_hit_post(TTLData *inst, LONG timelineY)
             return post;
     }
     return NULL;
+}
+
+/* Resolve a gadget-relative (gadX, gadY) point to the hot-spot under it,
+ * if any. Hot-spots are pool-backed and lazily built (see
+ * ttl_post_ensure_hotspots) -- gadX/gadY only ever come from a point the
+ * user just clicked, which is on screen, so this is a cheap freshness
+ * check rather than a real rebuild in practice. */
+static BOOL ttl_hit_hotspot(TTLData *inst, WORD gadX, WORD gadY,
+                             TTLPost **outPost, UBYTE *outIndex)
+{
+    LONG     timelineY = ttl_active(inst)->scrollY + gadY;
+    TTLPost *post       = ttl_hit_post(inst, timelineY);
+    WORD     relY, relX;
+    UBYTE    i;
+
+    if (!post) return FALSE;
+
+    ttl_post_ensure_hotspots(inst, post);
+
+    relY = (WORD)(timelineY - post->timelineY);
+    relX = gadX;
+
+    /* Reverse order: TTL_HOT_MEDIA_PREV/NEXT are added after (and drawn on
+     * top of) TTL_HOT_IMAGE, nested inside its rect as small arrow zones --
+     * scanning forward would always match the enclosing image hotspot
+     * first and the arrows would never be reachable. Last-added wins,
+     * matching draw order (topmost hit-tests first). */
+    for (i = post->hotSpotCount; i > 0; i--) {
+        TTLHotSpot *hs = &post->hotSpots[i - 1];
+        if (relX >= hs->x && relX < hs->x + hs->w &&
+            relY >= hs->y && relY < hs->y + hs->h)
+        {
+            *outPost  = post;
+            *outIndex = i - 1;
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+/* The link-click action. Every activation is forwarded to external code
+ * via ttl_notify_hotspot() -- TTIMELINE_HotSpotNotify (value=hs->type)
+ * plus the hot-spot's string data and the owning post's Mastodon status
+ * id, both as persistent gadget-owned buffers external code can read off
+ * the same notify's tag list (or via TTIMELINE_LastHotSpotString/PostId
+ * GetAttr afterwards). Also still bdbprintf's for local debugging --
+ * HandleInput can run from a device/interrupt-like context (see
+ * bdbprintf.h), so bdbprintf() is the only safe way to print here, plain
+ * printf() can crash.
+ *
+ * TTL_HOT_MEDIA_PREV/NEXT additionally have a real local effect: browse
+ * to the prev/next attachment within the post's single preview rect and
+ * ask for a redraw.
+ *
+ * hs->data is a borrowed, non-NUL-terminated (pointer, byteLen) pair (see
+ * the TTLHotSpot comment in fs3etoottimeline_private.h) -- "%.*s" prints
+ * exactly hs->dataLen bytes from it rather than reading until a NUL that
+ * may be far past the token. */
+static void ttl_activate_hotspot(TTLData *inst, Class *cl, Object *o,
+                                  struct GadgetInfo *gi,
+                                  TTLPost *post, TTLHotSpot *hs)
+{
+/*
+    bdbprintf("TootTimeline: hot-spot clicked, type=%u data=\"%.*s\"\n",
+              (unsigned)hs->type, (int)hs->dataLen,
+              hs->data ? hs->data : "");
+*/
+    ttl_notify_hotspot(cl, o, gi, hs->type, hs->data, hs->dataLen, post->postId);
+
+    if ((hs->type == TTL_HOT_MEDIA_PREV || hs->type == TTL_HOT_MEDIA_NEXT) &&
+        post->mediaCount > 1)
+    {
+
+        if (hs->type == TTL_HOT_MEDIA_PREV)
+            post->mediaCurrentIndex = (post->mediaCurrentIndex == 0)
+                                     ? post->mediaCount - 1
+                                     : post->mediaCurrentIndex - 1;
+        else
+            post->mediaCurrentIndex = (post->mediaCurrentIndex + 1) % post->mediaCount;
+
+        /* The TTL_HOT_IMAGE hot-spot's data (and the drawn thumbnail)
+         * follow mediaCurrentIndex, so both must refresh -- hotSpotsDirty
+         * makes the next ttl_post_ensure_hotspots() rebuild pick up the
+         * new index; tile invalidation + notify make that "next" happen
+         * now instead of whenever this post's tile next redraws anyway. */
+        post->hotSpotsDirty = TRUE;
+        ttl_tiles_invalidate_range(inst, post->timelineY, post->timelineY + post->height);
+        ttl_notify(cl, o, gi, TTIMELINE_ProcessRefresh, TRUE);
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -119,6 +220,7 @@ ULONG TTL_OnGoActive(Class *cl, Object *o, struct gpInput *msg)
         (msg->gpi_IEvent->ie_Code & ~IECODE_UP_PREFIX) == IECODE_LBUTTON)
     {
         inst->dragActive      = TRUE;
+        inst->dragStartGadX   = msg->gpi_Mouse.X;
         inst->dragStartGadY   = msg->gpi_Mouse.Y;
         inst->dragStartScrollY = ttl_active(inst)->scrollY;
         return GMR_MEACTIVE;
@@ -144,33 +246,31 @@ ULONG TTL_OnHandleInput(Class *cl, Object *o, struct gpInput *msg)
         UWORD code = ie->ie_Code & ~IECODE_UP_PREFIX;
 
         if (code == IECODE_LBUTTON && (ie->ie_Code & IECODE_UP_PREFIX)) {
-            /* Button released – end drag.  If displacement was tiny it's a click. */
+            /* Button released -- end the live scroll. If total movement
+             * stayed small AND the down-point and up-point land on the
+             * exact same hot-spot, treat it as a click instead. */
+            WORD dx = (WORD)(msg->gpi_Mouse.X - inst->dragStartGadX);
             WORD dy = (WORD)(msg->gpi_Mouse.Y - inst->dragStartGadY);
+            if (dx < 0) dx = -dx;
             if (dy < 0) dy = -dy;
 
             inst->dragActive = FALSE;
 
-            if (dy < 4) {
-                /* Click: hit-test for hot-spot */
-                LONG timelineY = ttl_active(inst)->scrollY + msg->gpi_Mouse.Y;
-                TTLPost *post = ttl_hit_post(inst, timelineY);
-                if (post) {
-                    /* Check hot-spots */
-                    TTLHotSpot *hs;
-                    WORD        relY = (WORD)(timelineY - post->timelineY);
-                    WORD        relX = msg->gpi_Mouse.X;
-                    for (hs = (TTLHotSpot *)post->hotSpots.mlh_Head;
-                         hs->node.mln_Succ;
-                         hs = (TTLHotSpot *)hs->node.mln_Succ)
-                    {
-                        if (relX >= hs->x && relX < hs->x + hs->w &&
-                            relY >= hs->y && relY < hs->y + hs->h)
-                        {
-                            ttl_notify(cl, o, msg->gpi_GInfo,
-                                       TTIMELINE_HotSpotActivated, (ULONG)hs);
-                            break;
-                        }
-                    }
+            if (dx < TTL_CLICK_SLOP && dy < TTL_CLICK_SLOP) {
+                TTLPost *downPost, *upPost;
+                UBYTE    downIdx,  upIdx;
+
+                BOOL downHit = ttl_hit_hotspot(inst, inst->dragStartGadX,
+                                                inst->dragStartGadY,
+                                                &downPost, &downIdx);
+                BOOL upHit   = ttl_hit_hotspot(inst, msg->gpi_Mouse.X,
+                                                msg->gpi_Mouse.Y,
+                                                &upPost, &upIdx);
+
+                if (downHit && upHit && downPost == upPost && downIdx == upIdx) {
+                    TTLHotSpot *hs = &upPost->hotSpots[upIdx];
+
+                    ttl_activate_hotspot(inst, cl, o, msg->gpi_GInfo, upPost, hs);
                 }
             }
             return GMR_NOREUSE;

@@ -36,6 +36,8 @@
 #define TT_USERDATAPATH   "USERDATAPATH"   /* user data directory path            */
 #define TT_MAXCACHESIZE   "MAXCACHESIZEMB" /* max cache size, megabytes           */
 #define TT_CHECKINTERVAL  "CHECKINTERVALSEC" /* server poll interval, seconds     */
+#define TT_KEEPBIGUSERICONS   "KEEPBIGUSERICONS"   /* "1" or "0"                  */
+#define TT_KEEPBIGTHUMBNAILS  "KEEPBIGTHUMBNAILS"  /* "1" or "0"                  */
 
 /* -------------------------------------------------------------------------- */
 
@@ -147,6 +149,15 @@ void FS3ESettings_Load(FS3ESettings *s)
         if (secs >= 5 && secs <= 3600) s->tootCheckIntervalSec = secs;
     }
 
+    /* Keep big originals on disk (default off -- see fs3esettings.h) */
+    s->keepBigUserIcons = FALSE;
+    val = ToolTypePrefs_Get(TT_KEEPBIGUSERICONS);
+    if (val) s->keepBigUserIcons = (val[0] != '0');
+
+    s->keepBigThumbnails = FALSE;
+    val = ToolTypePrefs_Get(TT_KEEPBIGTHUMBNAILS);
+    if (val) s->keepBigThumbnails = (val[0] != '0');
+
     /* Main window position - written directly into app->mainwindow */
     if (app) {
         val = ToolTypePrefs_Get(TT_WINDOW);
@@ -241,6 +252,9 @@ void FS3ESettings_Save(FS3ESettings *s)
 
     snprintf(buf, sizeof(buf), "%d", s->tootCheckIntervalSec);
     ToolTypePrefs_Set(TT_CHECKINTERVAL, buf);
+
+    ToolTypePrefs_Set(TT_KEEPBIGUSERICONS,  s->keepBigUserIcons  ? "1" : "0");
+    ToolTypePrefs_Set(TT_KEEPBIGTHUMBNAILS, s->keepBigThumbnails ? "1" : "0");
 
     /* Main window position */
     if (app && app->window_obj) {

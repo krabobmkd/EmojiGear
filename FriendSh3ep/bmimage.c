@@ -363,7 +363,8 @@ static BOOL bmimage_write_bmp(const char *path, const UBYTE *rgbBuf, ULONG w, UL
     return ok;
 }
 
-BOOL BmImage_GenerateScaledBmp(const char *srcPath, UWORD targetWidth, UWORD targetHeight,
+BOOL BmImage_GenerateScaledBmp(const char *srcPath, const char *cacheKeyPath,
+                                UWORD targetWidth, UWORD targetHeight,
                                 char *outThumbPath, ULONG outPathSize, BmImageError *outError)
 {
     BmImage tmp;
@@ -371,6 +372,7 @@ BOOL BmImage_GenerateScaledBmp(const char *srcPath, UWORD targetWidth, UWORD tar
     UBYTE  *dstBuf = NULL;
     ULONG   origW, origH, dstW, dstH;
     BPTR    probe;
+    const char *keyPath = (cacheKeyPath && cacheKeyPath[0]) ? cacheKeyPath : srcPath;
 
     if (outError) *outError = BMIMAGE_OK;
 
@@ -389,11 +391,13 @@ BOOL BmImage_GenerateScaledBmp(const char *srcPath, UWORD targetWidth, UWORD tar
         return FALSE;
     }
 
-    /* Thumbnail is a sibling BMP file keyed off the *requested* box size --
-     * deterministic without decoding the source first. Cache hit: skip the
-     * whole decode/scale/write dance. */
+    /* Thumbnail is a sibling BMP file keyed off keyPath (usually srcPath
+     * itself; see the cacheKeyPath doc comment in bmimage.h for when it
+     * isn't) and the *requested* box size -- deterministic without
+     * decoding the source first. Cache hit: skip the whole decode/scale/
+     * write dance, srcPath doesn't even need to still exist. */
     snprintf(outThumbPath, outPathSize, "%s.%ldx%ld.bmp",
-             srcPath, (long)targetWidth, (long)targetHeight);
+             keyPath, (long)targetWidth, (long)targetHeight);
 
     probe = Open((STRPTR)outThumbPath, MODE_OLDFILE);
     if (probe) {
@@ -471,7 +475,7 @@ BOOL BmImage_LoadScaled(BmImage *img, struct Screen *screen,
 
     BmImage_Unload(img);
 
-    if (!BmImage_GenerateScaledBmp(img->filePath, targetWidth, targetHeight,
+    if (!BmImage_GenerateScaledBmp(img->filePath, NULL, targetWidth, targetHeight,
                                     thumbPath, sizeof(thumbPath), &genErr)) {
         img->error = genErr;
         return FALSE;

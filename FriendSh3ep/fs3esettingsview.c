@@ -33,6 +33,9 @@
 #include <proto/integer.h>
 #include <gadgets/integer.h>
 
+#include <proto/checkbox.h>
+#include <gadgets/checkbox.h>
+
 #include <dos/dos.h>
 
 #include "friendsh3ep.h"
@@ -101,6 +104,8 @@ BOOL FS3ESettingsView_Create(FS3ESettingsView *sv, const char *title)
     Object *userDataPathLabel;
     Object *maxCacheSizeLabel;
     Object *checkIntervalLabel;
+    Object *keepBigUserIconsLabel;
+    Object *keepBigThumbnailsLabel;
 
     {
         LONG sl = sv->left, st = sv->top, sw = sv->width, sh = sv->height;
@@ -146,6 +151,26 @@ BOOL FS3ESettingsView_Create(FS3ESettingsView *sv, const char *title)
     maxCacheSizeLabel = NewObject(LABEL_GetClass(), NULL,
         LABEL_Text, (ULONG)LOC(MSG_SETTINGSV_MAX_CACHE_SIZE), TAG_END);
 
+    sv->keepBigUserIconsCheck = NewObject(CHECKBOX_GetClass(), NULL,
+        GA_ID,        GID_SETTINGSV_KEEP_BIG_USERICONS,
+        GA_RelVerify, TRUE,
+        GA_Selected,  (ULONG)app->settings.keepBigUserIcons,
+        TAG_END);
+    if (!sv->keepBigUserIconsCheck) return FALSE;
+
+    keepBigUserIconsLabel = NewObject(LABEL_GetClass(), NULL,
+        LABEL_Text, (ULONG)LOC(MSG_SETTINGSV_KEEP_BIG_USERICONS), TAG_END);
+
+    sv->keepBigThumbnailsCheck = NewObject(CHECKBOX_GetClass(), NULL,
+        GA_ID,        GID_SETTINGSV_KEEP_BIG_THUMBNAILS,
+        GA_RelVerify, TRUE,
+        GA_Selected,  (ULONG)app->settings.keepBigThumbnails,
+        TAG_END);
+    if (!sv->keepBigThumbnailsCheck) return FALSE;
+
+    keepBigThumbnailsLabel = NewObject(LABEL_GetClass(), NULL,
+        LABEL_Text, (ULONG)LOC(MSG_SETTINGSV_KEEP_BIG_THUMBNAILS), TAG_END);
+
     sv->flushCacheBtn = NewObject(BUTTON_GetClass(), NULL,
         GA_ID,        GID_SETTINGSV_FLUSH_CACHE,
         GA_RelVerify, TRUE,
@@ -163,6 +188,14 @@ BOOL FS3ESettingsView_Create(FS3ESettingsView *sv, const char *title)
         LAYOUT_AddChild,      (ULONG)sv->maxCacheSizeInt,
         CHILD_WeightedHeight, 0,
         CHILD_Label,          (ULONG)maxCacheSizeLabel,
+        LAYOUT_AddChild,      (ULONG)sv->keepBigUserIconsCheck,
+        CHILD_WeightedWidth,  1,
+        CHILD_WeightedHeight, 0,
+        CHILD_Label,          (ULONG)keepBigUserIconsLabel,
+        LAYOUT_AddChild,      (ULONG)sv->keepBigThumbnailsCheck,
+        CHILD_WeightedWidth,  1,
+        CHILD_WeightedHeight, 0,
+        CHILD_Label,          (ULONG)keepBigThumbnailsLabel,
         LAYOUT_AddChild,      (ULONG)sv->flushCacheBtn,
         CHILD_WeightedHeight, 0,
         TAG_END);
@@ -332,6 +365,16 @@ BOOL FS3ESettingsView_HandleInput(FS3ESettingsView *sv)
                     if ((LONG)val < 5)    val = 5;
                     if ((LONG)val > 3600) val = 3600;
                     app->settings.tootCheckIntervalSec = (int)val;
+
+                } else if (gadId == GID_SETTINGSV_KEEP_BIG_USERICONS) {
+                    ULONG checked = 0;
+                    GetAttr(GA_Selected, sv->keepBigUserIconsCheck, &checked);
+                    app->settings.keepBigUserIcons = checked ? TRUE : FALSE;
+
+                } else if (gadId == GID_SETTINGSV_KEEP_BIG_THUMBNAILS) {
+                    ULONG checked = 0;
+                    GetAttr(GA_Selected, sv->keepBigThumbnailsCheck, &checked);
+                    app->settings.keepBigThumbnails = checked ? TRUE : FALSE;
 
                 } else if (gadId == GID_SETTINGSV_FLUSH_CACHE) {
                     if (app->netRequestPort) {

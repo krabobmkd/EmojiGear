@@ -224,6 +224,27 @@ void ttl_tile_evict_out_of_range(TTLData *inst, LONG keepTopY, LONG keepBotY)
 }
 
 /* ------------------------------------------------------------------ */
+/* Action-bar button labels/types — the single shared copy.             */
+/*                                                                      */
+/* Both drawing (below) and hot-spot rect computation                  */
+/* (ttl_post_build_hotspots in fs3etoottimeline_posts.c) measure/draw   */
+/* from this exact array, so a click always lines up with what's on     */
+/* screen -- previously each file kept its own hand-typed copy of these */
+/* strings and they'd quietly drifted apart (different Boost/Fave       */
+/* glyphs), which threw off the hot-spot rects vs the drawn glyphs.     */
+/* ------------------------------------------------------------------ */
+
+const char * const ttl_actionLabels[3] = {
+    "\xe2\x86\xa9 Reply",       /* ↩ Reply */
+    "\xF0\x9F\x94\x81 Boost",   /* 🔁 Boost */
+    "\xF0\x9F\x92\xAB Fave"     /* 💫 Fave */
+};
+
+const UBYTE ttl_actionTypes[3] = {
+    TTL_HOT_REPLY, TTL_HOT_BOOST, TTL_HOT_FAVORITE
+};
+
+/* ------------------------------------------------------------------ */
 /* Post drawing helpers                                                  */
 /* ------------------------------------------------------------------ */
 
@@ -243,94 +264,19 @@ static void tile_draw_text(TTLData *inst, struct RastPort *rp,
     URPDrawTextUTF8(rp, dc, &pos, utf8, -1);
 }
 
-/* Draw body text with naive word-wrap into (x, startY, maxW) column.
- * Returns the Y after the last line. */
-static WORD tile_draw_body(TTLData *inst, struct RastPort *rp,
-                           const char *body, WORD x, WORD startY, WORD maxW,
-                           struct URPDrawContext *dc)
+/* Same as tile_draw_text, but for a byte-bounded, non-NUL-terminated run
+ * (TTLHotSpot.data is a borrowed pointer/length into another string's
+ * buffer -- see the TTLHotSpot comment in fs3etoottimeline_private.h). */
+static void tile_draw_text_n(struct RastPort *rp, WORD x, WORD y,
+                              const char *utf8, ULONG byteLen,
+                              struct URPDrawContext *dc)
 {
-//bdbprintf("tile_draw_body\n");
-    /* Simple wrap: measure total advance, emit virtual line breaks. */
-    const char *p     = body;
-    const char *lineStart = body;
-    WORD        curY  = startY;
-    LONG        lineW = 0;
-
-    if (!dc || !body || !body[0]) return startY;
-
-    /* Walk codepoints; break at spaces when lineW > maxW */
-    while (*p) {
-        const char *wordStart = p;
-        LONG        wordW     = 0;
-
-        /* Advance past a word (non-space bytes) */
-        while (*p && (unsigned char)*p > 0x20) {
-            unsigned char c = (unsigned char)*p;
-            LONG adv = 0;
-            /* Skip multi-byte sequence */
-            if      (c < 0x80) p += 1;
-            else if (c < 0xE0) p += 2;
-            else if (c < 0xF0) p += 3;
-            else               p += 4;
-            (void)adv; /* advance measured below via TextSizeUTF8 */
-        }
-        {
-            LONG wchars = utf8_codepoints_range(wordStart, p);
-            if (wchars > 0) {
-                struct URPTextMetric m;
-                URPDC_TextSizeUTF8(dc, wordStart, wchars, &m);
-                wordW = m.width;
-            }
-        }
-
-        if (lineW + wordW > (LONG)maxW && lineW > 0) {
-            /* emit current line up to wordStart */
-            {
-                struct URPTextPos pos;
-                pos.x = x;
-                pos.y = (WORD)(curY + inst->lineAscent);
-                URPDrawTextUTF8(rp, dc, &pos,
-                                lineStart, (ULONG)utf8_codepoints_range(lineStart, wordStart));
-            }
-            curY     += inst->lineHeight;
-            lineStart = wordStart;
-            lineW     = 0;
-        }
-        lineW += wordW;
-
-        /* Skip whitespace between words */
-        while (*p == ' ' || *p == '\t') {
-            struct URPTextMetric m;
-            char sp[2] = { *p, 0 };
-            URPDC_TextSizeUTF8(dc, sp, 1, &m);
-            lineW += m.width;
-            p++;
-        }
-        /* Handle newlines */
-        if (*p == '\n') {
-            {
-                struct URPTextPos pos;
-                pos.x = x;
-                pos.y = (WORD)(curY + inst->lineAscent);
-                URPDrawTextUTF8(rp, dc, &pos,
-                                lineStart, (ULONG)utf8_codepoints_range(lineStart, p));
-            }
-            curY     += inst->lineHeight;
-            p++;
-            lineStart = p;
-            lineW     = 0;
-        }
-    }
-    /* Trailing line */
-    if (p > lineStart) {
-        struct URPTextPos pos;
-        pos.x = x;
-        pos.y = (WORD)(curY + inst->lineAscent);
-        URPDrawTextUTF8(rp, dc, &pos,
-                        lineStart, (ULONG)utf8_codepoints_range(lineStart, p));
-        curY += inst->lineHeight;
-    }
-    return curY;
+    struct URPTextPos pos;
+    if (!dc || !utf8 || byteLen == 0) return;
+    pos.x = x;
+    pos.y = y;
+    URPDrawTextUTF8(rp, dc, &pos, utf8,
+                     (ULONG)utf8_codepoints_range(utf8, utf8 + byteLen));
 }
 
 /* ------------------------------------------------------------------ */
@@ -344,7 +290,7 @@ void ttl_render_tile(TTLData *inst, TTLTile *tile)
     struct RastPort *rp;
     LONG             tileBaseY = tile->tileBaseY;
     WORD             avatarW, padLeft, avatarGap;
-    WORD             textX, textW;
+    WORD             textX;
     TTLPost         *post;
     LONG bgpen;
 //bdbprintf("ttl_render_tile\n");
@@ -370,8 +316,6 @@ void ttl_render_tile(TTLData *inst, TTLTile *tile)
         avatarGap = 6;
     }
     textX = (WORD)(padLeft + avatarW + avatarGap);
-    textW = (WORD)(inst->gadWidth - textX - TTL_POST_PAD_RIGHT);
-    if (textW < 16) textW = 16;
 
     /* Walk the active channel's posts; they are sorted newest-first but
      * their Y values are consecutive, so we can stop as soon as
@@ -388,6 +332,11 @@ void ttl_render_tile(TTLData *inst, TTLTile *tile)
 
         /* drawY = Y within tile of the post top (may be negative) */
         WORD drawY = (WORD)(postTop - tileBaseY);
+
+        /* Pool-backed hot-spots (avatar/profile/@mention/#hashtag/URL/
+         * media/Reply/Boost/Fave) -- cheap no-op if already fresh. Must
+         * run before anything below reads post->hotSpots. */
+        ttl_post_ensure_hotspots(inst, post);
 
         /* ---- Avatar: draw from cache if available, else placeholder ---- */
         {
@@ -493,44 +442,145 @@ void ttl_render_tile(TTLData *inst, TTLTile *tile)
                 if (curY < minY) curY = minY;
             }
 
-            /* Body text (dcNormal) */
+            /* Body text: draw the pre-wrapped TTL_SPAN_BODY spans built by
+             * ttl_post_layout (via fs3etextwrap) -- this is what makes
+             * drawn pixels match the height layout reserved; there is no
+             * re-wrapping at draw time anymore. */
             URPDC_SetDrawColorFromPen(dcBody, inst->screen, txtPen, bgPen);
             {
-                WORD bodyEndY = curY;
-                if (post->body && post->body[0])
-                    bodyEndY = tile_draw_body(inst, rp, post->body,
-                                              textX, curY, textW, dcBody);
+                TTLTextSpan *sp;
+                UBYTE hi;
 
-                /* Action bar: ↩ Reply  ↺ Boost  ★ Fave — right-aligned, normal font */
+                for (sp = (TTLTextSpan *)post->textSpans.mlh_Head;
+                     sp->node.mln_Succ;
+                     sp = (TTLTextSpan *)sp->node.mln_Succ)
                 {
-                    static const char * const aLabels[3] = {
-                        "\xe2\x86\xa9 Reply",
-                        //"\xe2\x86\xba Boost",
-                         "\xF0\x9F\x94\x81 Boost",
-                        //"\xe2\x98\x85 Fave",
-                        "💫 Fave"
-                    };
+                    WORD lineY, baseline;
+                    if (sp->spanType != TTL_SPAN_BODY) continue;
+                    lineY    = (WORD)(drawY + sp->postRelY);
+                    baseline = (WORD)(lineY + sp->ascent);
+                    tile_draw_text(inst, rp, sp->x, baseline, sp->utf8, dcBody);
+                }
 
+                /* Recolor @mention / #hashtag / URL tokens with the link
+                 * pen: same glyphs, same spot, redrawn on top in a
+                 * different draw colour (see ttl_post_ensure_hotspots for
+                 * where these rects/strings come from). */
+                {
+                    LONG linkPen = (LONG)FS3E_PEN(inst->style, FS3E_COLOR_HASHTAG);
+                    URPDC_SetDrawColorFromPen(dcBody, inst->screen, linkPen, bgPen);
+                    for (hi = 0; hi < post->hotSpotCount; hi++) {
+                        TTLHotSpot *hs = &post->hotSpots[hi];
+                        if (hs->type != TTL_HOT_MENTION &&
+                            hs->type != TTL_HOT_HASHTAG &&
+                            hs->type != TTL_HOT_URL) continue;
+                        tile_draw_text_n(rp, hs->x,
+                                         (WORD)(drawY + hs->y + inst->lineAscent),
+                                         hs->data, hs->dataLen, dcBody);
+                    }
+                }
 
+                /* Media preview: the actual thumbnail once its RgbImage is
+                 * loaded (AvatarImages_GetMedia -- same fetch/thumbnail/
+                 * cache pipeline as avatars, a separate pool keyed by
+                 * URL), else the placeholder rectangle as before. */
+                for (hi = 0; hi < post->hotSpotCount; hi++) {
+                    TTLHotSpot *hs = &post->hotSpots[hi];
+                    WORD rx, ry;
+                    RgbImage *thumb;
+                    if (hs->type != TTL_HOT_IMAGE) continue;
+                    rx = hs->x;
+                    ry = (WORD)(drawY + hs->y);
 
+                    thumb = (inst->avatarImages && hs->data)
+                          ? AvatarImages_GetMedia(inst->avatarImages, hs->data)
+                          : NULL;
+
+                    if (thumb && RgbImage_IsLoaded(thumb)) {
+                        /* Box-fit thumb into hs->w x hs->h (not
+                         * necessarily square, unlike the avatar box) --
+                         * whichever axis is the tighter constraint wins;
+                         * see rgbimage.h's box-fit rule. */
+                        ULONG dw, dh;
+                        WORD  bx, by;
+
+                        if ((ULONG)hs->w * thumb->height <= (ULONG)hs->h * thumb->width) {
+                            dw = hs->w;
+                            dh = ((ULONG)thumb->height * (ULONG)hs->w) / thumb->width;
+                        } else {
+                            dh = hs->h;
+                            dw = ((ULONG)thumb->width * (ULONG)hs->h) / thumb->height;
+                        }
+                        if (dw < 1) dw = 1;
+                        if (dh < 1) dh = 1;
+
+                        bx = (WORD)(rx + (hs->w - (WORD)dw) / 2);
+                        by = (WORD)(ry + (hs->h - (WORD)dh) / 2);
+
+                        RgbImage_DrawScaled(thumb, rp, inst->screen, inst->style->dcNormal,
+                                             bx, by, (UWORD)dw, (UWORD)dh);
+                    } else {
+                        SetAPen(rp, (LONG)FS3E_PEN(inst->style, FS3E_COLOR_ACCENT));
+                        RectFill(rp, rx, ry, (WORD)(rx + hs->w - 1), (WORD)(ry + hs->h - 1));
+                    }
+                }
+
+                /* Prev/next arrows, overlaid on the image, at the exact
+                 * zones ttl_post_build_hotspots computed -- only present
+                 * (TTL_HOT_MEDIA_PREV/NEXT hot-spots exist) when the post
+                 * has more than one image. */
+                {
+                    LONG arrowPen = (LONG)FS3E_PEN(inst->style, FS3E_COLOR_ACTION_TEXT);
+                    URPDC_SetDrawColorFromPen(dcBody, inst->screen, arrowPen, bgPen);
+                    for (hi = 0; hi < post->hotSpotCount; hi++) {
+                        TTLHotSpot *hs = &post->hotSpots[hi];
+                        const char *glyph;
+                        struct URPTextMetric m;
+                        struct URPTextPos pos;
+                        LONG nc;
+
+                        if      (hs->type == TTL_HOT_MEDIA_PREV) glyph = "\xE2\x97\x80"; /* ◀ */
+                        else if (hs->type == TTL_HOT_MEDIA_NEXT) glyph = "\xE2\x96\xB6"; /* ▶ */
+                        else continue;
+
+                        nc = utf8_codepoints_range(glyph, glyph + strlen(glyph));
+                        URPDC_TextSizeUTF8(dcBody, glyph, nc, &m);
+                        pos.x = (WORD)(hs->x + (hs->w - m.width) / 2);
+                        pos.y = (WORD)(drawY + hs->y + (hs->h - inst->lineHeight) / 2 + inst->lineAscent);
+                        URPDrawTextUTF8(rp, dcBody, &pos, glyph, (ULONG)nc);
+                    }
+                }
+
+                /* Action bar: ↩ Reply  🔁 Boost  💫 Fave — right-aligned, normal
+                 * font. Same row Y formula, and the same ttl_actionLabels[]/
+                 * ttl_actionTypes[], that the hot-spot rects in
+                 * ttl_post_build_hotspots are measured from -- rather than
+                 * re-deriving "where does the content end" from the body
+                 * spans here (which used to ignore the media preview rect
+                 * entirely when it was taller than the text, or stacked
+                 * below it), this reads post->height, which
+                 * ttl_post_layout already computed correctly accounting
+                 * for whichever of the two is taller. */
+                {
                     LONG actionPen = (LONG)FS3E_PEN(inst->style, FS3E_COLOR_ACTION_TEXT);
-                    WORD barBaselineY = (WORD)(bodyEndY + 2 + inst->lineAscent);
+                    WORD barTopY = (WORD)(drawY + post->height - 1
+                                           - TTL_POST_PAD_BOT - inst->lineHeight);
+                    WORD barBaselineY = (WORD)(barTopY + inst->lineAscent);
                     WORD xRight = (WORD)(inst->gadWidth - TTL_POST_PAD_RIGHT);
-                    WORD gap    = 8;
                     int  a;
                     URPDC_SetDrawColorFromPen(dcBody, inst->screen, actionPen, bgPen);
                     for (a = 2; a >= 0; a--) {
                         struct URPTextMetric m;
                         struct URPTextPos pos;
                         WORD itemX;
-                        LONG nc = utf8_codepoints_range(aLabels[a],
-                                     aLabels[a] + strlen(aLabels[a]));
-                        URPDC_TextSizeUTF8(dcBody, aLabels[a], nc, &m);
+                        LONG nc = utf8_codepoints_range(ttl_actionLabels[a],
+                                     ttl_actionLabels[a] + strlen(ttl_actionLabels[a]));
+                        URPDC_TextSizeUTF8(dcBody, ttl_actionLabels[a], nc, &m);
                         itemX = (WORD)(xRight - m.width);
                         pos.x = itemX;
                         pos.y = barBaselineY;
-                        URPDrawTextUTF8(rp, dcBody, &pos, aLabels[a], (ULONG)nc);
-                        xRight = (WORD)(itemX - gap);  /* use saved itemX, not pos.x */
+                        URPDrawTextUTF8(rp, dcBody, &pos, ttl_actionLabels[a], (ULONG)nc);
+                        xRight = (WORD)(itemX - TTL_ACTION_GAP);
                     }
                 }
             }
@@ -573,6 +623,54 @@ void ttl_notify(Class *cl, Object *o, struct GadgetInfo *gi,
     nmsg.opu_Flags    = 0;
     DoMethodA(inst->target,(Msg)&nmsg);
 
+}
+
+void ttl_notify_hotspot(Class *cl, Object *o, struct GadgetInfo *gi,
+                         UBYTE type, const char *data, ULONG dataLen,
+                         const char *postId)
+{
+    TTLData         *inst = TTL_DATA(cl, o);
+    struct TagItem  tags[5];
+    struct opUpdate nmsg;
+
+    /* Copy into the gadget-owned buffers first -- see the TTLData comment
+     * on lastHotSpotStr/lastHotSpotPostId for why these can't just be
+     * pointed at directly. */
+    if (data && dataLen > 0) {
+        ULONG n = dataLen;
+        if (n >= sizeof(inst->lastHotSpotStr)) n = sizeof(inst->lastHotSpotStr) - 1;
+        CopyMem((APTR)data, inst->lastHotSpotStr, n);
+        inst->lastHotSpotStr[n] = '\0';
+    } else {
+        inst->lastHotSpotStr[0] = '\0';
+    }
+
+    if (postId && postId[0]) {
+        ULONG n = (ULONG)strlen(postId);
+        if (n >= sizeof(inst->lastHotSpotPostId)) n = sizeof(inst->lastHotSpotPostId) - 1;
+        CopyMem((APTR)postId, inst->lastHotSpotPostId, n);
+        inst->lastHotSpotPostId[n] = '\0';
+    } else {
+        inst->lastHotSpotPostId[0] = '\0';
+    }
+
+    if (!inst->target) return;
+
+    tags[0].ti_Tag  = GA_ID;
+    tags[0].ti_Data = inst->ga_id;
+    tags[1].ti_Tag  = TTIMELINE_HotSpotNotify;
+    tags[1].ti_Data = (ULONG)type;
+    tags[2].ti_Tag  = TTIMELINE_LastHotSpotString;
+    tags[2].ti_Data = inst->lastHotSpotStr[0]     ? (ULONG)inst->lastHotSpotStr     : 0;
+    tags[3].ti_Tag  = TTIMELINE_LastHotSpotPostId;
+    tags[3].ti_Data = inst->lastHotSpotPostId[0]  ? (ULONG)inst->lastHotSpotPostId  : 0;
+    tags[4].ti_Tag  = TAG_DONE;
+
+    nmsg.MethodID     = OM_UPDATE;
+    nmsg.opu_AttrList = (struct TagItem *)tags;
+    nmsg.opu_GInfo    = gi;
+    nmsg.opu_Flags    = 0;
+    DoMethodA(inst->target, (Msg)&nmsg);
 }
 
 

@@ -98,16 +98,28 @@ BOOL BmImage_LoadScaled(BmImage *img, struct Screen *screen,
  * Screen-less half of the BmImage_LoadScaled pipeline: decode srcPath,
  * box-fit scale it to targetWidth x targetHeight (same pyramid-halve +
  * fixed-point nearest-neighbor pass, same aspect-fit rule), and write the
- * result to the "<srcPath>.<targetWidth>x<targetHeight>.bmp" disk cache --
- * without the final reload-into-a-screen-bitmap step, so it never touches
- * Intuition. Safe to call from a screen-less background task (see
- * fs3ethumb.h's thumbnail process), which is the only reason this is
- * exposed separately from BmImage_LoadScaled (which now calls this
- * internally, then opens the result to a screen itself).
+ * result to "<cacheKeyPath ? cacheKeyPath : srcPath>.<targetWidth>x
+ * <targetHeight>.bmp" -- without the final reload-into-a-screen-bitmap
+ * step, so it never touches Intuition. Safe to call from a screen-less
+ * background task (see fs3ethumb.h's thumbnail process), which is the
+ * only reason this is exposed separately from BmImage_LoadScaled (which
+ * now calls this internally, passing cacheKeyPath=NULL, then opens the
+ * result to a screen itself).
+ *
+ * cacheKeyPath decouples "where the thumbnail's deterministic name comes
+ * from" from "where the source pixels are actually read from": pass NULL
+ * to derive the sibling name from srcPath itself (the original, common
+ * case -- source and thumbnail live side by side). Pass a non-NULL path
+ * when srcPath is itself transient (e.g. a RAM:T download that gets
+ * deleted right after this call) but the thumbnail still needs a stable
+ * name persistent across runs -- see FS3EThumbMessage.fs3etm_CacheKeyPath.
+ * Either way this is purely a naming/cache-hit-check input, never opened
+ * or read as a file itself.
  *
  * On a cache hit (thumbnail already on disk from a previous call with the
- * same srcPath/targetWidth/targetHeight), returns TRUE immediately without
- * decoding anything. outThumbPath is filled either way. Returns FALSE (with
+ * same cacheKeyPath/targetWidth/targetHeight), returns TRUE immediately
+ * without decoding anything -- srcPath doesn't even need to still exist
+ * in that case. outThumbPath is filled either way. Returns FALSE (with
  * outThumbPath untouched) on decode/scale/I-O failure; if outError is
  * non-NULL, it receives the BmImageError describing why.
  *
@@ -115,7 +127,8 @@ BOOL BmImage_LoadScaled(BmImage *img, struct Screen *screen,
  * image -- true for the thumbnail process since it shares the GUI
  * executable's global data (see fs3ethumb.c).
  */
-BOOL BmImage_GenerateScaledBmp(const char *srcPath, UWORD targetWidth, UWORD targetHeight,
+BOOL BmImage_GenerateScaledBmp(const char *srcPath, const char *cacheKeyPath,
+                                UWORD targetWidth, UWORD targetHeight,
                                 char *outThumbPath, ULONG outPathSize, BmImageError *outError);
 
 /*

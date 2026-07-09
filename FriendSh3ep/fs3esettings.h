@@ -54,6 +54,16 @@ typedef struct FS3ESettings {
     /* Seconds between polling the server for new toots; default 60. */
     int   tootCheckIntervalSec;
 
+    /* FALSE (default) = discard the full-size original after generating
+     * its small thumbnail (downloaded to RAM:T and deleted right after
+     * use instead of the persistent cache dir) -- saves a lot of disk
+     * space, at the cost of needing a fresh network fetch + RAM round
+     * trip if that thumbnail is ever regenerated (e.g. cache flushed).
+     * TRUE = keep the original on disk too, like before this option
+     * existed. See FS3ENetFetchImageReq.fs3enf_KeepOriginal. */
+    short keepBigUserIcons;
+    short keepBigThumbnails;
+
 } FS3ESettings;
 
 /*

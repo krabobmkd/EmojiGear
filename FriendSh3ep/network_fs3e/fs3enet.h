@@ -173,17 +173,33 @@ typedef struct FS3ENetVerifyAccountReply
 typedef struct FS3ENetFetchImageReq
 {
     char *fs3enf_Url;
-    char *fs3enf_Key;  /* caller key echoed in reply; for avatars: @acct string */
+    char *fs3enf_Key;     /* caller key echoed in reply; @acct for avatars, the URL itself for media */
+    char *fs3enf_Subdir;  /* FS3ECache_Lookup/Store subdir, e.g. "usericons"/"thumbnails"; "" = cache root */
+    BOOL  fs3enf_KeepOriginal; /* FALSE = download to FS3ECACHE_RAM_TEMP_DIR instead of the
+                                * persistent cache dir (see "Keep big user icons/thumbnails" in
+                                * Settings) -- ignored on a cache hit against an already-persisted
+                                * original from an earlier TRUE request. */
 } FS3ENetFetchImageReq;
 
 /* Allocates a flat request block for FETCH_IMAGE. FreeVec() when done.
  * key is echoed back in the reply so the caller knows which entry to update. */
-FS3ENetFetchImageReq *FS3ENetFetchImageReq_Alloc(const char *url, const char *key);
+FS3ENetFetchImageReq *FS3ENetFetchImageReq_Alloc(const char *url, const char *key,
+                                                   const char *subdir, BOOL keepOriginal);
 
 typedef struct FS3ENetFetchImageReply
 {
-    char *fs3enf_LocalPath;  /* e.g. "PROGDIR:.cache/1a2b3c4d" */
+    char *fs3enf_LocalPath;  /* e.g. "PROGDIR:.cache/usericons/1a2b3c4d" or "RAM:T/1a2b3c4d" */
     char *fs3enf_Key;        /* echoed from request */
+    char *fs3enf_Subdir;     /* echoed from request -- lets the GUI dispatch avatar vs media handling */
+    BOOL  fs3enf_IsTemp;     /* TRUE = fs3enf_LocalPath is a RAM:T download the caller must
+                               * delete once it's done with it (see FS3EThumb_Request's
+                               * deleteSrcAfter) -- FALSE if it's already permanently cached. */
+    char *fs3enf_CachePath;  /* deterministic path this URL would live at under fs3enf_Subdir
+                               * if kept, computed regardless of fs3enf_IsTemp (see
+                               * FS3ECache_ComputePath) -- pass as FS3EThumb_Request's
+                               * cacheKeyPath so the resized thumbnail always gets a name
+                               * stable across runs, even when fs3enf_LocalPath itself is
+                               * a transient RAM:T path. */
 } FS3ENetFetchImageReply;
 
 /*
@@ -231,6 +247,10 @@ FS3ENetTimelineReq *FS3ENetTimelineReq_Alloc(ULONG viewModeBit,
     const char *apiBaseUrl, const char *accessToken,
     const char *timeline, const char *maxId);
 
+/* Max media_attachments entries kept per status (Mastodon itself caps
+ * normal posts at 4 attachments, so this never truncates in practice). */
+#define FS3ENET_MAX_MEDIA 4
+
 /* Single status entry inside a FS3ENetTimelineReply.
  * All char * fields point into the same flat block — one FreeVec() on
  * the enclosing FS3ENetTimelineReply frees everything. */
@@ -242,6 +262,12 @@ typedef struct FS3ENetStatus {
     char *fmas_AvatarURL;    /* original author CDN avatar URL */
     char *fmas_Id;           /* status id string (for pagination) */
     char *fmas_BoostBy;      /* booster display_name, "" if not a reblog */
+
+    /* media_attachments[].preview_url (falling back to .url if no
+     * preview_url) for up to FS3ENET_MAX_MEDIA attachments; entries
+     * [fmas_MediaCount..FS3ENET_MAX_MEDIA) are NULL. */
+    char *fmas_MediaUrls[FS3ENET_MAX_MEDIA];
+    ULONG fmas_MediaCount;
 } FS3ENetStatus;
 
 /* Header of the flat timeline reply block.

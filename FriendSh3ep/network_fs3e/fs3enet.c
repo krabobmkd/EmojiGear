@@ -149,19 +149,23 @@ FS3ENetPostStatusReq *FS3ENetPostStatusReq_Alloc(
     return req;
 }
 
-FS3ENetFetchImageReq *FS3ENetFetchImageReq_Alloc(const char *url, const char *key)
+FS3ENetFetchImageReq *FS3ENetFetchImageReq_Alloc(const char *url, const char *key,
+                                                   const char *subdir, BOOL keepOriginal)
 {
     ULONG total = sizeof(FS3ENetFetchImageReq)
                 + FS3ENet_PackLen(url)
-                + FS3ENet_PackLen(key);
+                + FS3ENet_PackLen(key)
+                + FS3ENet_PackLen(subdir);
     FS3ENetFetchImageReq *req =
         (FS3ENetFetchImageReq *)AllocVec(total, MEMF_ANY);
     char *p;
 
     if (!req) return NULL;
     p = (char *)req + sizeof(*req);
-    FS3ENet_PackStr(&req->fs3enf_Url, &p, url);
-    FS3ENet_PackStr(&req->fs3enf_Key, &p, key ? key : "");
+    FS3ENet_PackStr(&req->fs3enf_Url,    &p, url);
+    FS3ENet_PackStr(&req->fs3enf_Key,    &p, key ? key : "");
+    FS3ENet_PackStr(&req->fs3enf_Subdir, &p, subdir ? subdir : "");
+    req->fs3enf_KeepOriginal = keepOriginal;
     return req;
 }
 
@@ -185,6 +189,24 @@ struct FS3ENetStartup
  * never runs concurrently with itself (single network process), and the
  * child reads g_FS3ENetStartup before FS3ENet_Start() could be called again. */
 static struct FS3ENetStartup *g_FS3ENetStartup;
+
+/* Set once by FS3ENet_ProcEntry right after CreateMsgPort() succeeds, so
+ * FS3ENet_Stop() can Signal() the process directly -- see g_FS3ENetStopSigBit
+ * and the "stopping" fast-path in FS3ENet_ProcEntry's loop below. */
+static struct Task *g_FS3ENetTask = NULL;
+
+/* Private signal bit for the shutdown fast-path, AllocSignal()'d by
+ * FS3ENet_ProcEntry at startup -- deliberately NOT SIGBREAKF_CTRL_C.
+ * bsdsocket.library aborts any blocking socket call with EINTR whenever
+ * CTRL_C is pending on the calling task (its default break mask), and
+ * libnix's own chkabort() polls/consumes CTRL_C to implement user-visible
+ * Ctrl-C abort -- reusing that bit for our own signaling raced with both of
+ * those and caused intermittent bogus HTTP failures and abandoned requests
+ * during ordinary (non-shutdown) operation. -1 means AllocSignal() failed;
+ * the mask is then 0 and the fast-path silently never triggers, degrading
+ * to a plain full-backlog-drain shutdown rather than risking a crash. */
+static LONG g_FS3ENetStopSigBit = -1;
+#define FS3ENET_STOP_SIGMASK  ((g_FS3ENetStopSigBit >= 0) ? (1UL << g_FS3ENetStopSigBit) : 0UL)
 
 static void FS3ENet_ProcEntry(void);
 static void FS3ENet_Dispatch(FS3ENetMessage *fs3em);
@@ -232,11 +254,25 @@ void FS3ENet_Stop(struct MsgPort *requestPort, struct MsgPort *replyPort)
     if (!requestPort)
         return;
 
+    /* Signal first, before the shutdown message even goes in the queue:
+     * lets the process abandon (each with an immediate error reply, not
+     * silently) whatever's still queued behind whatever single request
+     * it's currently mid-dispatch on, instead of working through the
+     * entire backlog in strict FIFO order before it even looks at the
+     * shutdown message sitting at the back -- see the "stopping"
+     * fast-path in FS3ENet_ProcEntry. */
+    if (g_FS3ENetTask && FS3ENET_STOP_SIGMASK) Signal(g_FS3ENetTask, FS3ENET_STOP_SIGMASK);
+
+    /* Zero first -- mn_Node.ln_Pri (and any other Message/Node fields we
+     * don't set explicitly) would otherwise be whatever garbage was on the
+     * stack, and PutMsg()/Enqueue() sorts by ln_Pri: a stray negative value
+     * could in principle land this behind FS3ENETQ_FETCH_IMAGE's priority
+     * -5 (see FS3EApp_NetSend), though the stopping fast-path still drains
+     * down to it either way. */
+    memset(&msg, 0, sizeof(msg));
     msg.fs3em_Msg.mn_ReplyPort = replyPort;
     msg.fs3em_Msg.mn_Length    = sizeof(msg);
     msg.fs3em_Type             = FS3ENETQ_SHUTDOWN;
-    msg.fs3em_Data             = NULL;
-    msg.fs3em_DataLen          = 0;
 
     PutMsg(requestPort, (struct Message *)&msg);
 
@@ -251,11 +287,10 @@ BOOL FS3ENet_FlushCache(struct MsgPort *requestPort, struct MsgPort *replyPort)
     if (!requestPort)
         return FALSE;
 
+    memset(&msg, 0, sizeof(msg));
     msg.fs3em_Msg.mn_ReplyPort = replyPort;
     msg.fs3em_Msg.mn_Length    = sizeof(msg);
     msg.fs3em_Type             = FS3ENETQ_FLUSH_CACHE;
-    msg.fs3em_Data             = NULL;
-    msg.fs3em_DataLen          = 0;
 
     PutMsg(requestPort, (struct Message *)&msg);
 
@@ -270,9 +305,13 @@ static void FS3ENet_ProcEntry(void)
 {
     struct FS3ENetStartup *startup = g_FS3ENetStartup;
     struct MsgPort       *requestPort;
-    BOOL                  running = TRUE;
+    FS3ENetMessage        *shutdownMsg = NULL;
+    BOOL                  running  = TRUE;
+    BOOL                  stopping = FALSE;
 
     requestPort = CreateMsgPort();
+    g_FS3ENetTask = FindTask(NULL);
+    g_FS3ENetStopSigBit = AllocSignal(-1);
 
     /* AmiSSL/bsdsocket must be opened from the task that uses them; if this
      * fails, give up and report failure (NULL request port) to
@@ -300,16 +339,49 @@ static void FS3ENet_ProcEntry(void)
         FS3ENetMessage *fs3em;
 
         WaitPort(requestPort);
+
+        /* FS3ENet_Stop() Signal()s this before the shutdown message even
+         * reaches the queue -- once noticed, every message still queued
+         * behind whatever's currently dispatching gets an immediate error
+         * reply instead of actually being worked (real HTTP fetches), so
+         * shutdown doesn't have to wait out the entire backlog in FIFO
+         * order. The one thing this can't shorten is a request already
+         * mid-dispatch when the signal arrives (e.g. a slow HTTP GET already
+         * under way) -- that one still runs to completion. */
+        if (!stopping && FS3ENET_STOP_SIGMASK &&
+            (SetSignal(0, FS3ENET_STOP_SIGMASK) & FS3ENET_STOP_SIGMASK))
+            stopping = TRUE;
+
         while ((fs3em = (FS3ENetMessage *)GetMsg(requestPort)) != NULL)
         {
             if (fs3em->fs3em_Type == FS3ENETQ_SHUTDOWN)
             {
+                /* Hold this one instead of replying immediately: ReplyMsg()
+                 * wakes FS3ENet_Stop() in the main process right away, and
+                 * from that instant on the main process is free to race
+                 * ahead toward tearing down the whole executable image --
+                 * but this task and the main task share that one loaded
+                 * image (no separate address space), so any cleanup code
+                 * still left to run here (closing AmiSSL/bsdsocket below,
+                 * which does real work) would then be racing its own
+                 * unmapping. Replying only after that cleanup closes the
+                 * window down to (at most) this task's own tiny process-exit
+                 * glue, instead of however long FS3EHttp_Cleanup() takes. */
                 running = FALSE;
                 fs3em->fs3em_Result = FS3ENETR_OK;
+                shutdownMsg = fs3em;
+                continue;
+            }
+            else if (stopping)
+            {
+                fs3em->fs3em_Result = FS3ENETR_NETWORK_ERROR;
             }
             else
             {
                 FS3ENet_Dispatch(fs3em);
+                if (!stopping && FS3ENET_STOP_SIGMASK &&
+                    (SetSignal(0, FS3ENET_STOP_SIGMASK) & FS3ENET_STOP_SIGMASK))
+                    stopping = TRUE;
             }
 
             ReplyMsg((struct Message *)fs3em);
@@ -319,6 +391,11 @@ static void FS3ENet_ProcEntry(void)
     FS3ECache_Cleanup();
     FS3EHttp_Cleanup();
     DeleteMsgPort(requestPort);
+    if (g_FS3ENetStopSigBit >= 0) { FreeSignal(g_FS3ENetStopSigBit); g_FS3ENetStopSigBit = -1; }
+    g_FS3ENetTask = NULL;
+
+    if (shutdownMsg)
+        ReplyMsg((struct Message *)shutdownMsg);
 }
 
 /* FS3ENETQ_LOGIN_START - register the app and build the authorize URL. */
@@ -516,6 +593,8 @@ static void FS3ENet_HandleFetchImage(FS3ENetMessage *fs3em)
     FS3ENetFetchImageReq   *req = (FS3ENetFetchImageReq *)fs3em->fs3em_Data;
     FS3ENetFetchImageReply *reply;
     char localPath[FS3ECACHE_PATH_SIZE];
+    char cachePath[FS3ECACHE_PATH_SIZE];
+    BOOL isTemp = FALSE;
     ULONG total;
     char *p;
 
@@ -525,7 +604,18 @@ static void FS3ENet_HandleFetchImage(FS3ENetMessage *fs3em)
         return;
     }
 
-    if (!FS3ECache_Lookup(req->fs3enf_Url, localPath, sizeof(localPath)))
+    /* Deterministic path this URL would live at if kept -- computed
+     * regardless of fs3enf_KeepOriginal so the caller always has a stable
+     * name to derive the resized thumbnail's sibling filename from, even
+     * on a run where the original itself only ever touches RAM:T. Ensure
+     * the subdir exists too: when KeepOriginal is FALSE, FS3ECache_Store
+     * (the thing that normally creates it) never runs, but the thumbnail
+     * process still needs to write the resized sibling under this same
+     * subdir a moment from now. */
+    FS3ECache_ComputePath(req->fs3enf_Url, req->fs3enf_Subdir, cachePath, sizeof(cachePath));
+    FS3ECache_EnsureSubdir(req->fs3enf_Subdir);
+
+    if (!FS3ECache_Lookup(req->fs3enf_Url, req->fs3enf_Subdir, localPath, sizeof(localPath)))
     {
         FS3EHttpResponse resp;
 
@@ -535,20 +625,41 @@ static void FS3ENet_HandleFetchImage(FS3ENetMessage *fs3em)
             return;
         }
 
-        if (!FS3ECache_Store(req->fs3enf_Url, resp.fhr_Body, resp.fhr_BodyLen,
-                             localPath, sizeof(localPath)))
+        if (req->fs3enf_KeepOriginal)
         {
-            FS3EHttp_FreeResponse(&resp);
-            fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
-            return;
+            if (!FS3ECache_Store(req->fs3enf_Url, req->fs3enf_Subdir,
+                                 resp.fhr_Body, resp.fhr_BodyLen,
+                                 localPath, sizeof(localPath)))
+            {
+                FS3EHttp_FreeResponse(&resp);
+                fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
+                return;
+            }
+        }
+        else
+        {
+            if (!FS3ECache_StoreRAM(req->fs3enf_Url, resp.fhr_Body, resp.fhr_BodyLen,
+                                    localPath, sizeof(localPath)))
+            {
+                FS3EHttp_FreeResponse(&resp);
+                fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
+                return;
+            }
+            isTemp = TRUE;
         }
 
         FS3EHttp_FreeResponse(&resp);
     }
+    /* else: found on disk already -- necessarily under the persistent
+     * cache (RAM:T downloads are deleted right after use, never looked
+     * up), so isTemp stays FALSE regardless of this request's
+     * KeepOriginal value. */
 
     total = sizeof(FS3ENetFetchImageReply)
           + FS3ENet_PackLen(localPath)
-          + FS3ENet_PackLen(req->fs3enf_Key);
+          + FS3ENet_PackLen(req->fs3enf_Key)
+          + FS3ENet_PackLen(req->fs3enf_Subdir)
+          + FS3ENet_PackLen(cachePath);
     reply = (FS3ENetFetchImageReply *)AllocVec(total, MEMF_ANY);
     if (!reply)
     {
@@ -556,9 +667,13 @@ static void FS3ENet_HandleFetchImage(FS3ENetMessage *fs3em)
         return;
     }
 
+    reply->fs3enf_IsTemp = isTemp;
+
     p = (char *)reply + sizeof(*reply);
     FS3ENet_PackStr(&reply->fs3enf_LocalPath, &p, localPath);
-    FS3ENet_PackStr(&reply->fs3enf_Key,       &p, req->fs3enf_Key ? req->fs3enf_Key : "");
+    FS3ENet_PackStr(&reply->fs3enf_Key,       &p, req->fs3enf_Key    ? req->fs3enf_Key    : "");
+    FS3ENet_PackStr(&reply->fs3enf_Subdir,    &p, req->fs3enf_Subdir ? req->fs3enf_Subdir : "");
+    FS3ENet_PackStr(&reply->fs3enf_CachePath, &p, cachePath);
 
     FreeVec(fs3em->fs3em_Data);
     fs3em->fs3em_Data    = reply;
@@ -747,6 +862,23 @@ static void FS3ENet_HandleTimeline(FS3ENetMessage *fs3em)
             total += 1; /* empty string */
         }
 
+        /* media_attachments belongs to the actual content (src, i.e. the
+         * reblogged status for boosts), same as "content" above. */
+        v = cJSON_GetObjectItemCaseSensitive(src, "media_attachments");
+        {
+            int mCount = (v && cJSON_IsArray(v)) ? cJSON_GetArraySize(v) : 0;
+            int mi;
+            if (mCount > FS3ENET_MAX_MEDIA) mCount = FS3ENET_MAX_MEDIA;
+            for (mi = 0; mi < mCount; mi++) {
+                const cJSON *att  = cJSON_GetArrayItem(v, mi);
+                const cJSON *purl = att ? cJSON_GetObjectItemCaseSensitive(att, "preview_url") : NULL;
+                if (!purl || !cJSON_IsString(purl) || !purl->valuestring)
+                    purl = att ? cJSON_GetObjectItemCaseSensitive(att, "url") : NULL;
+                total += (purl && cJSON_IsString(purl) && purl->valuestring)
+                       ? strlen(purl->valuestring) + 1 : 1;
+            }
+        }
+
         count++;
     }
 
@@ -807,6 +939,25 @@ static void FS3ENet_HandleTimeline(FS3ENetMessage *fs3em)
                 str = "";
             }
             FS3ENet_PackStr(&statuses[i].fmas_BoostBy, &p, str);
+
+            /* media_attachments -- see the matching block in pass 1. */
+            v = cJSON_GetObjectItemCaseSensitive(src, "media_attachments");
+            {
+                int mCount = (v && cJSON_IsArray(v)) ? cJSON_GetArraySize(v) : 0;
+                int mi;
+                if (mCount > FS3ENET_MAX_MEDIA) mCount = FS3ENET_MAX_MEDIA;
+                for (mi = 0; mi < mCount; mi++) {
+                    const cJSON *att  = cJSON_GetArrayItem(v, mi);
+                    const cJSON *purl = att ? cJSON_GetObjectItemCaseSensitive(att, "preview_url") : NULL;
+                    if (!purl || !cJSON_IsString(purl) || !purl->valuestring)
+                        purl = att ? cJSON_GetObjectItemCaseSensitive(att, "url") : NULL;
+                    str = (purl && cJSON_IsString(purl)) ? purl->valuestring : "";
+                    FS3ENet_PackStr(&statuses[i].fmas_MediaUrls[mi], &p, str);
+                }
+                for (; mi < FS3ENET_MAX_MEDIA; mi++)
+                    statuses[i].fmas_MediaUrls[mi] = NULL;
+                statuses[i].fmas_MediaCount = (ULONG)mCount;
+            }
 
             i++;
         }

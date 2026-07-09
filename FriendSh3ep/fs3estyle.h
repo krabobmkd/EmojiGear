@@ -74,7 +74,7 @@ typedef enum {
     FS3E_COLOR_BUTTON_SELECTED_BG,  /* pressed / active button background */
     FS3E_COLOR_TIMELINE_BG,         /* TootTimeline empty background */
     FS3E_COLOR_USERNAME,            /* display name of the poster */
-    FS3E_COLOR_HASHTAG,             /* hashtag highlight in post body */
+    FS3E_COLOR_HASHTAG,             /* clickable-link highlight in post body: hashtags, mentions, URLs */
     FS3E_COLOR_ACCENT,              /* separators, borders, avatar placeholder, resize grip */
     FS3E_COLOR_TEXT,                /* main body text */
     FS3E_COLOR_TEXT_DIM,            /* secondary text: @acct, timestamps */

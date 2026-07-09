@@ -21,9 +21,25 @@
  * Row 2 (height = max(dpiH, avatarSize + 2×avatarGap)):
  *   user-icon at far-left, sized (iconSz × iconSz) with TBLAYOUT_Style's
  *   avatarGap as padding on the left, top and bottom (falls back to
- *   TBLAYOUT_ICON_MARGIN with no style).  Will become a real 32 px bitmap;
- *   "[U]" for now.  Remaining width split evenly between the two count
- *   labels.
+ *   TBLAYOUT_ICON_MARGIN with no style); settings/accounts/toot+ buttons
+ *   packed at far-right.
+ *
+ *   The user icon is NOT a child gadget -- it used to be a button.gadget
+ *   wrapping an images/bitmap.image (BITMAP_BitMap/BITMAP_MaskPlane
+ *   captured by value at NewObject() time), which needed a fresh wrapper
+ *   object rebuilt and swapped in every time the underlying avatar bitmap
+ *   changed (new download, font/DPI rescale, ...) -- consistently buggy
+ *   (see git history) and just an unnecessary layer of BOOPSI object
+ *   lifecycle on top of what TootTimeline already does directly. Instead,
+ *   TitleBarLayout_OnRender() draws the avatar straight into the RastPort
+ *   with RgbImage_DrawScaled(), reading fresh from TBLAYOUT_AvatarImages/
+ *   TBLAYOUT_AccountAcct on every render -- same mechanism, same avatar
+ *   cache, as toot avatars in TootTimeline. GM_LAYOUT still computes and
+ *   stores the icon's rect (avatarRectX/Y/Size) exactly where the button
+ *   used to sit, for GM_RENDER to draw into. It's not click-targetable --
+ *   same as the button it replaces, which had no GA_ID/click handling
+ *   wired up either -- clicks there now just start a window drag like the
+ *   rest of the empty title bar strip (see TitleBarLayout_OnHitTest).
  *
  * Total minimum/maximum height = row1Height + row2Height (fixed — no
  * vertical stretch). Caller must DoMethod(window_obj, WM_RETHINK) after
@@ -46,12 +62,14 @@
 #include <intuition/gadgetclass.h>
 #include <gadgets/layout.h>
 #include <proto/layout.h>
+#include <string.h>
 
 #include "../compilers.h"
 #include "fs3etitlebar.h"
 
 #include "../bdbprintf.h"
 #include "../patch9.h"
+#include "../avatarimages.h"
 
 /* Drag state owned by the main loop — set here during GM_GOACTIVE so that
  * WMHI_MOUSEMOVE events in the same WM_HANDLEINPUT drain already see the flag. */
@@ -106,8 +124,30 @@ typedef struct {
     UWORD      childCount;
     UWORD      dpiHeight;
     FS3EStyle *style;
+
+    /* Row-2 user icon: not a child gadget -- drawn directly in
+     * TitleBarLayout_OnRender() (see the file header comment). Rect
+     * computed in GM_LAYOUT; avatarImages/accountAcct set via
+     * TBLAYOUT_AvatarImages/TBLAYOUT_AccountAcct. */
+    struct AvatarImages *avatarImages;   /* not owned */
+    char                 *accountAcct;   /* AllocVec'd copy; NULL = no account */
+    WORD                  avatarX, avatarY, avatarSize;
 //    struct Task *allowedProcess;
 } TitleBarLayoutData;
+
+/* AllocVec'd copy of s, or NULL for NULL/"" (matches dup_str() elsewhere
+ * in this codebase, kept local since this file doesn't share a header
+ * with TootTimeline's copy). */
+static char *tbl_dup_str(const char *s)
+{
+    ULONG len;
+    char *copy;
+    if (!s || !s[0]) return NULL;
+    len  = (ULONG)strlen(s);
+    copy = (char *)AllocVec(len + 1, MEMF_ANY);
+    if (copy) CopyMem((APTR)s, copy, len + 1);
+    return copy;
+}
 
 ULONG ASM SAVEDS TitleBarLayout_Dispatch(
     REG(a0, Class  *cl),
@@ -137,16 +177,24 @@ static ULONG TitleBarLayout_OnNew(Class *cl, Object *o, struct opSet *msg)
     newObj = (Object *)DoSuperMethodA(cl, o, (APTR)msg);
     if (!newObj) return 0;
 
-    inst             = (TitleBarLayoutData *)INST_DATA(cl, newObj);
-    inst->childCount = 0;
-    inst->dpiHeight  = 14;
-    inst->style      = NULL;
+    inst               = (TitleBarLayoutData *)INST_DATA(cl, newObj);
+    inst->childCount   = 0;
+    inst->dpiHeight    = 14;
+    inst->style        = NULL;
+    inst->avatarImages = NULL;
+    inst->accountAcct  = NULL;
 
     tag = FindTagItem(TBLAYOUT_DpiHeight, msg->ops_AttrList);
     if (tag) inst->dpiHeight = (UWORD)tag->ti_Data;
 
     tag = FindTagItem(TBLAYOUT_Style, msg->ops_AttrList);
     if (tag) inst->style = (FS3EStyle *)tag->ti_Data;
+
+    tag = FindTagItem(TBLAYOUT_AvatarImages, msg->ops_AttrList);
+    if (tag) inst->avatarImages = (struct AvatarImages *)tag->ti_Data;
+
+    tag = FindTagItem(TBLAYOUT_AccountAcct, msg->ops_AttrList);
+    if (tag) inst->accountAcct = tbl_dup_str((const char *)tag->ti_Data);
 
     state = msg->ops_AttrList;
     while ((tag = NextTagItem(&state)) != NULL) {
@@ -163,11 +211,39 @@ static ULONG TitleBarLayout_OnNew(Class *cl, Object *o, struct opSet *msg)
 }
 
 /* ------------------------------------------------------------------ */
+/* OM_SET                                                               */
+/* ------------------------------------------------------------------ */
+
+static ULONG TitleBarLayout_OnSet(Class *cl, Object *o, struct opSet *msg)
+{
+    TitleBarLayoutData *inst = (TitleBarLayoutData *)INST_DATA(cl, o);
+    struct TagItem *tstate = msg->ops_AttrList;
+    struct TagItem *tag;
+
+    while ((tag = NextTagItem(&tstate)) != NULL) {
+        switch (tag->ti_Tag) {
+            case TBLAYOUT_AvatarImages:
+                inst->avatarImages = (struct AvatarImages *)tag->ti_Data;
+                break;
+            case TBLAYOUT_AccountAcct:
+                if (inst->accountAcct) { FreeVec(inst->accountAcct); inst->accountAcct = NULL; }
+                inst->accountAcct = tbl_dup_str((const char *)tag->ti_Data);
+                break;
+            default:
+                break;
+        }
+    }
+    return DoSuperMethodA(cl, o, (APTR)msg);
+}
+
+/* ------------------------------------------------------------------ */
 /* OM_DISPOSE                                                           */
 /* ------------------------------------------------------------------ */
 
 static ULONG TitleBarLayout_OnDispose(Class *cl, Object *o, Msg msg)
 {
+    TitleBarLayoutData *inst = (TitleBarLayoutData *)INST_DATA(cl, o);
+    if (inst->accountAcct) { FreeVec(inst->accountAcct); inst->accountAcct = NULL; }
     return DoSuperMethodA(cl, o, (APTR)msg);
 }
 
@@ -265,31 +341,31 @@ static ULONG TitleBarLayout_OnLayout(Class *cl, Object *o, struct gpLayout *msg)
         setBounds(inst->children[1], left + w - btnW*3 - gap*2,           y1, btnW, btnH);
 
     /* Row 2 -------------------------------------------------------- */
-    /* children[4] = user icon: iconSz × iconSz, avatarGap padding on the
-     * left and top (see tbl_row2_height for the matching bottom margin). */
-    if (inst->childCount > 4)
-        setBounds(inst->children[4],
-                  left + avGap,
-                  y2   + avGap,
-                  iconSz, iconSz);
+    /* User icon: iconSz × iconSz, avatarGap padding on the left and top
+     * (see tbl_row2_height for the matching bottom margin). Not a child
+     * gadget -- just remember where TitleBarLayout_OnRender should draw
+     * it (see the file header comment). */
+    inst->avatarX    = left + avGap;
+    inst->avatarY    = y2   + avGap;
+    inst->avatarSize = iconSz;
 
     /* settings and account buttons */
-    if (inst->childCount > 7)
+    if (inst->childCount > 6)
     {
 
-        struct Gadget *gsettingsbt = (struct Gadget *) inst->children[5];
-        struct Gadget *gaccbt = (struct Gadget *) inst->children[6];
-        struct Gadget *gnewtbt = (struct Gadget *) inst->children[7];
+        struct Gadget *gsettingsbt = (struct Gadget *) inst->children[4];
+        struct Gadget *gaccbt = (struct Gadget *) inst->children[5];
+        struct Gadget *gnewtbt = (struct Gadget *) inst->children[6];
         struct gpDomain dmsettingsBt,dmAccountBt,dmntbt;
 
         prepDomain(&dmsettingsBt,msg->gpl_GInfo);
-        DoMethodA(inst->children[5], (Msg)&dmsettingsBt);
+        DoMethodA(inst->children[4], (Msg)&dmsettingsBt);
 
         prepDomain(&dmAccountBt,msg->gpl_GInfo);
-        DoMethodA(inst->children[6], (Msg)&dmAccountBt);
+        DoMethodA(inst->children[5], (Msg)&dmAccountBt);
 
         prepDomain(&dmntbt,msg->gpl_GInfo);
-        DoMethodA(inst->children[7], (Msg)&dmntbt);
+        DoMethodA(inst->children[6], (Msg)&dmntbt);
         // gsettingsbt->Width = dmAccountBt.gpd_Domain.Width;
         // gsettingsbt->Height = dmAccountBt.gpd_Domain.Height;
         // gsettingsbt->TopEdge = G(o)->TopEdge + G(o)->Height - gsettingsbt->Height - inst->style->avatarGap;
@@ -314,18 +390,6 @@ static ULONG TitleBarLayout_OnLayout(Class *cl, Object *o, struct gpLayout *msg)
         gsettingsbt->LeftEdge =
             gaccbt->LeftEdge - gsettingsbt->Width - inst->style->avatarGap;
 
-        // if (dm.gpd_Domain.Width  > maxW) maxW = dm.gpd_Domain.Width;
-        // if (dm.gpd_Domain.Height > maxH) maxH = dm.gpd_Domain.Height;
-
-    // gad->LeftEdge = l;
-    // gad->TopEdge  = t;
-    // gad->Width    = (w > 0) ? w : 1;
-    // gad->Height   = (h > 0) ? h : 1;
-//gsettingsbt->Width
-        // setBounds(inst->children[5],
-        //           left + avGap,
-        //           y2   + avGap,
-        //           iconSz, iconSz);
     }
 
     /* Recurse into each child so nested layout.gadgets re-layout too */
@@ -418,6 +482,46 @@ static ULONG TitleBarLayout_OnRender(Class *cl, Object *o, struct gpRender *msg)
 
     if (rp && w > 0 && h > 0)
         EraseRect(rp, left, top, left + w - 1, top + h - 1);
+
+    /* Row-2 user icon: drawn directly, not a child gadget (see the file
+     * header comment) -- same cache, same box-fit-and-centre rule, same
+     * RgbImage_DrawScaled() call TootTimeline uses for toot avatars, read
+     * fresh every render so there's no stale-image lifecycle to manage. */
+    if (rp && inst->accountAcct && inst->avatarSize > 0) {
+        struct Screen *screen = msg->gpr_GInfo ? msg->gpr_GInfo->gi_Screen : NULL;
+        RgbImage *avImg = inst->avatarImages
+                         ? AvatarImages_Get(inst->avatarImages, inst->accountAcct)
+                         : NULL;
+        WORD ax = inst->avatarX, ay = inst->avatarY, as = inst->avatarSize;
+
+        if (avImg && screen && inst->style) {
+            ULONG dw, dh;
+            WORD  bx, by;
+
+            if (avImg->width >= avImg->height) {
+                dw = as;
+                dh = ((ULONG)avImg->height * (ULONG)as) / avImg->width;
+            } else {
+                dh = as;
+                dw = ((ULONG)avImg->width * (ULONG)as) / avImg->height;
+            }
+            if (dw < 1) dw = 1;
+            if (dh < 1) dh = 1;
+
+            bx = (WORD)(ax + (as - (WORD)dw) / 2);
+            by = (WORD)(ay + (as - (WORD)dh) / 2);
+
+            RgbImage_DrawScaled(avImg, rp, screen, inst->style->dcNormal,
+                                 bx, by, (UWORD)dw, (UWORD)dh);
+        } else if (inst->style) {
+            /* Not loaded yet -- plain placeholder box. Title bar
+             * background is a tiled image (see tbBgHook), not a flat
+             * pen, so there's no "bg" colour to draw a contrasting cross
+             * against the way TootTimeline's avatar placeholder does. */
+            SetAPen(rp, (LONG)FS3E_PEN(inst->style, FS3E_COLOR_ACCENT));
+            RectFill(rp, ax, ay, ax + as - 1, ay + as - 1);
+        }
+    }
 
     /* Title bar title/logo image (titlebar.title in style.txt), masked on
      * color 0 -- drawn once here, before children, so it never overlaps a
@@ -514,6 +618,8 @@ ULONG ASM SAVEDS TitleBarLayout_Dispatch(
     switch (msg->MethodID) {
         case OM_NEW:
             return TitleBarLayout_OnNew(cl, o, (struct opSet *)msg);
+        case OM_SET:
+            return TitleBarLayout_OnSet(cl, o, (struct opSet *)msg);
         case OM_DISPOSE:
             return TitleBarLayout_OnDispose(cl, o, msg);
         case GM_DOMAIN:

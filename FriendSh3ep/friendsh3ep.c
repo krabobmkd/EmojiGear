@@ -100,11 +100,18 @@
 
 const char *pVersion = "$VER: FriendSh3ep " FRIENDSH3EP_VERSION;
 
+/* FS3ECache subdirectories (see fs3enet_cache.h) -- user avatars and toot
+ * media thumbnails are fetched through the identical pipeline but kept in
+ * their own cache subdirectory rather than one flat pile of hash-named
+ * files, since they're conceptually distinct sets. */
+#define FS3E_CACHE_SUBDIR_USERICONS  "usericons"
+#define FS3E_CACHE_SUBDIR_THUMBNAILS "thumbnails"
+
 struct Task *myTask = NULL;
 
 void wait2sec() {
 int i;
-    for(i=0;i<25;i++) WaitTOF();
+ //re   for(i=0;i<75;i++) WaitTOF();
 }
 
 /* Window drag state — written by TitleBarLayout GM_HITTEST (inside
@@ -227,7 +234,15 @@ static char *NetStrDup(const char *s)
 }
 
 /* Send a pre-allocated request block to the network process asynchronously.
- * On failure, frees data and returns FALSE. */
+ * On failure, frees data and returns FALSE.
+ *
+ * PutMsg() enqueues via Exec's Enqueue(), which is priority-ordered (FIFO
+ * within equal priority) -- so a bulk FETCH_IMAGE backlog (one avatar plus
+ * up to TTL_POST_MAX_MEDIA thumbnails per status, times a whole timeline
+ * page) doesn't make an interactive request like switching timelines wait
+ * behind dozens of queued downloads: FETCH_IMAGE goes in at a lower
+ * priority than everything else, so a fresh TIMELINE/LOGIN/POST_STATUS
+ * request cuts to the front of that backlog instead of queuing after it. */
 static BOOL FS3EApp_NetSend(ULONG type, APTR data, ULONG dataLen)
 {
     FS3ENetMessage *msg;
@@ -239,6 +254,7 @@ static BOOL FS3EApp_NetSend(ULONG type, APTR data, ULONG dataLen)
     if (!msg) { FreeVec(data); return FALSE; }
     msg->fs3em_Msg.mn_Length   = sizeof(*msg);
     msg->fs3em_Msg.mn_ReplyPort = app->netReplyPort;
+    msg->fs3em_Msg.mn_Node.ln_Pri = (type == FS3ENETQ_FETCH_IMAGE) ? -5 : 0;
 
     msg->fs3em_Type    = type;
     msg->fs3em_Data    = data;
@@ -280,29 +296,43 @@ static void FS3EApp_SetAccount(const char *apiBaseUrl, const char *accessToken,
     app->accountAvatarURL   = NetStrDup(avatarURL);
     app->accountId          = NetStrDup(accountId);
 
-    /* DISABLED: titlebar_userIcon consistently showed trashed/garbage
-     * image data after a font-size change + relayout, across several fix
-     * attempts (dispose/attach ordering, deferred vs immediate rebuild),
-     * and may be tangled up with an intermittent whole-system freeze on
-     * quit. Disabling the whole feature (this fetch trigger, and
-     * FS3EApp_UpdateUserIcon() below) until it can be root-caused with
-     * real debugging tools (Enforcer/MuForce) rather than guesswork.
-     * titlebar_userIcon itself still exists as an empty gadget slot.
-     *
-     * Fetch our own avatar the same way timeline posts do (see
+    /* Tell the title bar which account to draw the row-2 icon for -- see
+     * TBLAYOUT_AccountAcct. Safe to call before titleBarLayout exists
+     * (SetAttrs on a NULL object is a no-op) -- FS3EApp_LoadAccount()
+     * runs before window creation, which passes app->accountAcct again
+     * as an initial NewObject tag at that point (see main()). A redraw
+     * right away shows the (likely blank/placeholder) icon promptly on a
+     * fresh login or re-login rather than waiting for some unrelated
+     * event to repaint the title bar; FS3EApp_UpdateUserIcon() covers the
+     * separate "the avatar bitmap itself just finished loading" redraw. */
+    if (app->titleBarLayout) {
+        SetAttrs(app->titleBarLayout, TBLAYOUT_AccountAcct,
+                 (ULONG)app->accountAcct, TAG_DONE);
+        if (CurrentMainWindow)
+            RefreshGList((struct Gadget *)app->titleBarLayout, CurrentMainWindow, NULL, 1);
+    }
+
+    /* Fetch our own avatar the same way timeline posts do (see
      * FS3ENETQ_FETCH_IMAGE handling in FS3EApp_HandleNetReply) --
      * AvatarImages is keyed by acct, so this reuses the exact same cache
      * entry/scale pipeline; FS3EApp_UpdateUserIcon() picks up the result
-     * once the reply arrives.
+     * once the reply arrives. (Previously disabled: the trashed/garbage
+     * image data this used to show was the titlebar_userIcon
+     * button.gadget's images/bitmap.image wrapper going stale, not this
+     * fetch -- see TitleBarLayout_OnRender, which now draws the avatar
+     * directly instead.) */
     if (app->avatarImages && app->accountAcct &&
         app->accountAvatarURL && app->accountAvatarURL[0] &&
         !AvatarImages_IsRequested(app->avatarImages, app->accountAcct))
     {
         ULONG reqSize = sizeof(FS3ENetFetchImageReq)
                       + strlen(app->accountAvatarURL) + 1
-                      + strlen(app->accountAcct) + 1;
+                      + strlen(app->accountAcct) + 1
+                      + strlen(FS3E_CACHE_SUBDIR_USERICONS) + 1;
         FS3ENetFetchImageReq *req =
-            FS3ENetFetchImageReq_Alloc(app->accountAvatarURL, app->accountAcct);
+            FS3ENetFetchImageReq_Alloc(app->accountAvatarURL, app->accountAcct,
+                                       FS3E_CACHE_SUBDIR_USERICONS,
+                                       (BOOL)app->settings.keepBigUserIcons);
         if (req) {
             if (FS3EApp_NetSend(FS3ENETQ_FETCH_IMAGE, req, reqSize))
                 AvatarImages_MarkRequested(app->avatarImages, app->accountAcct);
@@ -310,50 +340,17 @@ static void FS3EApp_SetAccount(const char *apiBaseUrl, const char *accessToken,
                 FreeVec(req);
         }
     }
-    */
 }
 
-/* DISABLED (see the matching note in FS3EApp_SetAccount()): this
- * consistently left titlebar_userIcon showing trashed/garbage image data
- * after a font-size change + relayout, across several fix attempts, and
- * may be tied to an intermittent whole-system freeze on quit. No-op until
- * it can be root-caused with real debugging tools rather than guesswork.
- * Original body kept below, commented out, for whoever picks this back up.
- *
+/* The connected account's avatar (row 2 of the title bar) just became
+ * available or changed -- TitleBarLayout_OnRender reads it fresh from
+ * AvatarImages_Get() on every render (no cached bitmap/wrapper object of
+ * its own to go stale), so all that's needed here is asking for a
+ * redraw. */
 static void FS3EApp_UpdateUserIcon(void)
 {
-    BmImage *bm;
-    Object  *newImg;
-    Object  *oldImg;
-
-    if (!BitMapBase || !app->titlebar_userIcon || !app->accountAcct) return;
-
-    bm = AvatarImages_Get(app->avatarImages, app->accountAcct);
-    if (!bm || !BmImage_IsLoaded(bm)) return;
-
-    newImg = (Object *)NewObject(BITMAP_GetClass(), NULL,
-        BITMAP_BitMap,      (ULONG)bm->bitmap,
-        BITMAP_Width,       bm->width,
-        BITMAP_Height,      bm->height,
-        BITMAP_MaskPlane,   (ULONG)bm->mask,
-        BITMAP_Masking,     bm->mask ? TRUE : FALSE,
-        BITMAP_Transparent, bm->mask ? TRUE : FALSE,
-        TAG_DONE);
-    if (!newImg) return;
-
-    SetGdAttrs(app->titlebar_userIcon, GA_Image, (ULONG)newImg, TAG_DONE);
-
-    oldImg = app->titlebarUserIconImage;
-    app->titlebarUserIconImage = newImg;
-    if (oldImg) DisposeObject(oldImg);
-
-    if (CurrentMainWindow)
-        RefreshGList((struct Gadget *)app->titlebar_userIcon, CurrentMainWindow, NULL, 1);
-}
-*/
-static void FS3EApp_UpdateUserIcon(void)
-{
-    /* no-op -- see comment above */
+    if (CurrentMainWindow && app->titleBarLayout)
+        RefreshGList((struct Gadget *)app->titleBarLayout, CurrentMainWindow, NULL, 1);
 }
 
 /* -------------------------------------------------------------------------
@@ -515,17 +512,17 @@ static BOOL ViewModeTimeline(ULONG viewMode, char *buf, ULONG bufSize)
 {
     switch (viewMode) {
         case VIEWMODE_Home:
-            snprintf(buf, bufSize, "timelines/home?limit=20");
+            snprintf(buf, bufSize, "timelines/home?limit=35");
             return TRUE;
         case VIEWMODE_Local:
-            snprintf(buf, bufSize, "timelines/public?local=true&limit=20");
+            snprintf(buf, bufSize, "timelines/public?local=true&limit=5");
             return TRUE;
         case VIEWMODE_Fed:
-            snprintf(buf, bufSize, "timelines/public?limit=20");
+            snprintf(buf, bufSize, "timelines/public?limit=5");
             return TRUE;
         case VIEWMODE_User:
             if (!app->accountId || !app->accountId[0]) return FALSE;
-            snprintf(buf, bufSize, "accounts/%s/statuses?limit=20", app->accountId);
+            snprintf(buf, bufSize, "accounts/%s/statuses?limit=5", app->accountId);
             return TRUE;
         default:
             return FALSE;
@@ -741,6 +738,7 @@ static void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
              * so the newest ends up at top of the TootTimeline channel). */
             for (i = reply->fs3et_Count; i-- > 0; ) {
                 TTLPostSetup post;
+                memset(&post, 0, sizeof(post));
                 post.username    = statuses[i].fmas_DisplayName[0]
                                    ? statuses[i].fmas_DisplayName
                                    : statuses[i].fmas_Acct;
@@ -749,6 +747,13 @@ static void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                 post.timestamp   = statuses[i].fmas_CreatedAt;
                 post.boostBy     = statuses[i].fmas_BoostBy;
                 post.avatarURL   = statuses[i].fmas_AvatarURL;
+                post.postId      = statuses[i].fmas_Id;
+                {
+                    ULONG mi;
+                    for (mi = 0; mi < statuses[i].fmas_MediaCount && mi < TTL_POST_MAX_MEDIA; mi++)
+                        post.mediaUrls[mi] = statuses[i].fmas_MediaUrls[mi];
+                    post.mediaCount = statuses[i].fmas_MediaCount;
+                }
 
                 /* Trigger avatar download for this user if not already requested. */
                 if (app->avatarImages &&
@@ -760,16 +765,49 @@ static void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                 {
                     ULONG reqSize = sizeof(FS3ENetFetchImageReq)
                                   + strlen(statuses[i].fmas_AvatarURL) + 1
-                                  + strlen(statuses[i].fmas_Acct) + 1;
+                                  + strlen(statuses[i].fmas_Acct) + 1
+                                  + strlen(FS3E_CACHE_SUBDIR_USERICONS) + 1;
                     FS3ENetFetchImageReq *req =
                         FS3ENetFetchImageReq_Alloc(statuses[i].fmas_AvatarURL,
-                                                   statuses[i].fmas_Acct);
+                                                   statuses[i].fmas_Acct,
+                                                   FS3E_CACHE_SUBDIR_USERICONS,
+                                                   (BOOL)app->settings.keepBigUserIcons);
                     if (req) {
                         if (FS3EApp_NetSend(FS3ENETQ_FETCH_IMAGE, req, reqSize))
                             AvatarImages_MarkRequested(app->avatarImages,
                                                        statuses[i].fmas_Acct);
                         else
                             FreeVec(req);
+                    }
+                }
+
+                /* Trigger a thumbnail download for each attachment not
+                 * already requested -- same pipeline as avatars above,
+                 * just a different cache subdir/pool (see
+                 * AvatarImages_IsMediaRequested and the file header
+                 * comment in avatarimages.h). */
+                if (app->avatarImages) {
+                    ULONG mi;
+                    for (mi = 0; mi < statuses[i].fmas_MediaCount && mi < TTL_POST_MAX_MEDIA; mi++) {
+                        const char *url = statuses[i].fmas_MediaUrls[mi];
+                        if (!url || !url[0]) continue;
+                        if (AvatarImages_IsMediaRequested(app->avatarImages, url)) continue;
+                        {
+                            ULONG reqSize = sizeof(FS3ENetFetchImageReq)
+                                          + strlen(url) + 1
+                                          + strlen(url) + 1
+                                          + strlen(FS3E_CACHE_SUBDIR_THUMBNAILS) + 1;
+                            FS3ENetFetchImageReq *req =
+                                FS3ENetFetchImageReq_Alloc(url, url,
+                                                           FS3E_CACHE_SUBDIR_THUMBNAILS,
+                                                           (BOOL)app->settings.keepBigThumbnails);
+                            if (req) {
+                                if (FS3EApp_NetSend(FS3ENETQ_FETCH_IMAGE, req, reqSize))
+                                    AvatarImages_MarkMediaRequested(app->avatarImages, url);
+                                else
+                                    FreeVec(req);
+                            }
+                        }
                     }
                 }
                 post.viewModeBits = (1UL << reply->fs3et_ViewModeBit);
@@ -794,18 +832,36 @@ static void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
     case FS3ENETQ_FETCH_IMAGE:
         if (msg->fs3em_Result == FS3ENETR_OK && app->avatarImages) {
             FS3ENetFetchImageReply *reply = (FS3ENetFetchImageReply *)msg->fs3em_Data;
+            BOOL isMedia = reply && reply->fs3enf_Subdir &&
+                           strcmp(reply->fs3enf_Subdir, FS3E_CACHE_SUBDIR_THUMBNAILS) == 0;
+
             if (reply && reply->fs3enf_Key && reply->fs3enf_LocalPath &&
-                app->thumbRequestPort && app->thumbReplyPort &&
-                !AvatarImages_IsThumbRequested(app->avatarImages, reply->fs3enf_Key))
+                app->thumbRequestPort && app->thumbReplyPort)
             {
                 /* Hand the (possibly large, original-size) downloaded file
                  * to the thumbnail process instead of decoding/scaling it
                  * here -- see fs3ethumb.h. Its reply lands in
-                 * FS3EApp_HandleThumbReply(). */
-                if (FS3EThumb_Request(app->thumbRequestPort, app->thumbReplyPort,
-                        reply->fs3enf_LocalPath, reply->fs3enf_Key,
-                        FS3ETHUMB_AVATAR_SIZE, FS3ETHUMB_AVATAR_SIZE))
-                    AvatarImages_MarkThumbRequested(app->avatarImages, reply->fs3enf_Key);
+                 * FS3EApp_HandleThumbReply(), which uses fs3etm_Kind to
+                 * tell the two apart again. fs3enf_CachePath/IsTemp (see
+                 * their doc comments in fs3enet.h) make sure the resized
+                 * thumbnail always lands under a name stable across runs
+                 * and that a RAM:T download gets cleaned up afterwards,
+                 * regardless of whether the original itself was kept. */
+                if (isMedia) {
+                    if (!AvatarImages_IsMediaThumbRequested(app->avatarImages, reply->fs3enf_Key) &&
+                        FS3EThumb_Request(app->thumbRequestPort, app->thumbReplyPort,
+                            reply->fs3enf_LocalPath, reply->fs3enf_Key, FS3ETHUMB_KIND_MEDIA,
+                            reply->fs3enf_CachePath, reply->fs3enf_IsTemp,
+                            FS3ETHUMB_MEDIA_WIDTH, FS3ETHUMB_MEDIA_HEIGHT_CAP))
+                        AvatarImages_MarkMediaThumbRequested(app->avatarImages, reply->fs3enf_Key);
+                } else {
+                    if (!AvatarImages_IsThumbRequested(app->avatarImages, reply->fs3enf_Key) &&
+                        FS3EThumb_Request(app->thumbRequestPort, app->thumbReplyPort,
+                            reply->fs3enf_LocalPath, reply->fs3enf_Key, FS3ETHUMB_KIND_AVATAR,
+                            reply->fs3enf_CachePath, reply->fs3enf_IsTemp,
+                            FS3ETHUMB_AVATAR_SIZE, FS3ETHUMB_AVATAR_SIZE))
+                        AvatarImages_MarkThumbRequested(app->avatarImages, reply->fs3enf_Key);
+                }
             }
         }
         break;
@@ -827,19 +883,33 @@ static void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
 }
 
 /* FS3ETHUMBQ_MAKE reply -- the thumbnail process has finished decoding and
- * box-fit-scaling one avatar's original download down to a small BMP (see
- * fs3ethumb.h). All that remains on the GUI task is a cheap direct read of
- * that already-small file's pixels; scaling to the live avatarSize happens
- * at draw time (RgbImage_DrawScaled), not here. */
+ * box-fit-scaling one avatar's or media attachment's original download
+ * down to a small BMP (see fs3ethumb.h); fs3etm_Kind says which. All that
+ * remains on the GUI task is a cheap direct read of that already-small
+ * file's pixels; scaling to the live display size happens at draw time
+ * (RgbImage_DrawScaled), not here. */
 static void FS3EApp_HandleThumbReply(FS3EThumbMessage *msg)
 {
     if (msg->fs3etm_Result == FS3ETHUMBR_OK && app->avatarImages &&
         msg->fs3etm_Key[0] && msg->fs3etm_ThumbPath[0])
     {
-        AvatarImages_ThumbReady(app->avatarImages, msg->fs3etm_Key,
-                                 msg->fs3etm_ThumbPath);
-        if (app->accountAcct && strcmp(msg->fs3etm_Key, app->accountAcct) == 0)
-            FS3EApp_UpdateUserIcon();
+        if (msg->fs3etm_Kind == FS3ETHUMB_KIND_MEDIA) {
+            AvatarImages_MediaThumbReady(app->avatarImages, msg->fs3etm_Key,
+                                          msg->fs3etm_ThumbPath);
+        } else {
+            AvatarImages_ThumbReady(app->avatarImages, msg->fs3etm_Key,
+                                     msg->fs3etm_ThumbPath);
+            if (app->accountAcct && strcmp(msg->fs3etm_Key, app->accountAcct) == 0)
+                FS3EApp_UpdateUserIcon();
+        }
+        if (app->tootTimeline) {
+            /* This image just became available in the cache -- one-shot
+             * event, not a poll: tell the timeline to invalidate its
+             * currently rendered tiles so whichever of them drew a
+             * placeholder for this avatar/thumbnail get redrawn with the
+             * real image on the next render (see TTIMELINE_InvalidateImages). */
+            SetAttrs(app->tootTimeline, TTIMELINE_InvalidateImages, TRUE, TAG_DONE);
+        }
         if (CurrentMainWindow)
             RefreshGList((struct Gadget *)app->tootTimeline,
                          CurrentMainWindow, NULL, 1);
@@ -1201,12 +1271,6 @@ int main(int argc, char **argv)
         //GA_Text, "^",
         GA_RelVerify, TRUE,
          TAG_DONE);
-    app->titlebar_userIcon   = (Object *)NewObject(BUTTON_GetClass(), NULL,
-      //TODO  ICA_TARGET, (ULONG)TargetInstance,
-        GA_Width,  app->style.avatarSize,
-        GA_Height, app->style.avatarSize,
-        GA_RelVerify, TRUE,
-        TAG_DONE);
  //printf("p9bm:%08x\n",(int)app->style.bt1Patch9.img.bitmap);
     app->titlebar_settingsBtn = (Object *)NewObject(UniButtonP9Class, NULL,
         ICA_TARGET, (ULONG)TargetInstance,
@@ -1238,8 +1302,7 @@ int main(int argc, char **argv)
     */
 
     if (!app->titlebar_closeBtn   || !app->titlebar_iconifyBtn ||
-        !app->titlebar_altposBtn  || !app->titlebar_depthBtn   ||
-        !app->titlebar_userIcon)
+        !app->titlebar_altposBtn  || !app->titlebar_depthBtn)
         cleanexit("Can't create title bar gadgets");
 
     app->titleBarLayout = (Object *)NewObject(TitleBarLayoutClass, NULL,
@@ -1254,12 +1317,18 @@ int main(int argc, char **argv)
         LAYOUT_BackFill,    (ULONG)&app->style.tbBgHook,
         TBLAYOUT_DpiHeight, (ULONG)dpiH,
         TBLAYOUT_Style,     (ULONG)&app->style,
+        /* Row-2 user icon -- drawn directly by TitleBarLayout_OnRender(),
+         * not a child gadget (see fs3etitlebar.c). accountAcct may
+         * already be non-NULL here (FS3EApp_LoadAccount() ran earlier in
+         * main() and calls FS3EApp_SetAccount(), which also SetAttrs's
+         * this same tag -- but titleBarLayout didn't exist yet then). */
+        TBLAYOUT_AvatarImages, (ULONG)app->avatarImages,
+        TBLAYOUT_AccountAcct,  (ULONG)app->accountAcct,
         /* children in required order (see fs3etitlebar.h) */
         LAYOUT_AddChild, (ULONG)app->titlebar_closeBtn,
         LAYOUT_AddChild, (ULONG)app->titlebar_iconifyBtn,
         LAYOUT_AddChild, (ULONG)app->titlebar_altposBtn,
         LAYOUT_AddChild, (ULONG)app->titlebar_depthBtn,
-        LAYOUT_AddChild, (ULONG)app->titlebar_userIcon,
 
         LAYOUT_AddChild, (ULONG)app->titlebar_settingsBtn,
         LAYOUT_AddChild, (ULONG)app->titlebar_accountBtn,
@@ -1823,6 +1892,44 @@ int main(int argc, char **argv)
 
                         case GID_TTIMELINE:
                             refreshFlags |= reflags_tootTimeLine;
+                            {
+                                ptag = FindTagItem(TTIMELINE_HotSpotNotify, msg);
+                                if (ptag)
+                                {   /* a hot spot in a toot were clicked: */
+                                    ULONG hotSpotType = ptag->ti_Data;
+                                    const char *hotSpotString =NULL,*hotSpotId=NULL;
+
+                                    ptag = FindTagItem(TTIMELINE_LastHotSpotString, msg);
+                                    if(ptag) hotSpotString  =(const char *)ptag->ti_Data;
+
+                                    ptag = FindTagItem(TTIMELINE_LastHotSpotPostId, msg);
+                                    if(ptag) hotSpotId  =(const char *)ptag->ti_Data;
+
+                                 printf("Main process TTL_HotSpotNotify type:%lu str=%s id=%s\n",
+                                        hotSpotType,
+                                        hotSpotString ? hotSpotString : "(null)",
+                                        hotSpotId     ? hotSpotId     : "(null)");
+
+                                    switch (hotSpotType)
+                                    {
+                                        case TTL_HOT_MEDIA_PREV:
+                                        case TTL_HOT_MEDIA_NEXT:
+                                            /* The gadget already advanced
+                                             * mediaCurrentIndex, invalidated
+                                             * the tile, and asked itself for
+                                             * a redraw before sending this
+                                             * notification -- nothing left
+                                             * for the main loop to do. */
+                                            break;
+
+                                        default:
+                                            break;
+                                    }
+                                }
+
+
+                            }
+
                             break;
 
                         default:
@@ -1853,9 +1960,6 @@ int main(int argc, char **argv)
 
             if(delayApplyFontSettings)
             {
-                /* Rebuilds the titlebar user-icon wrapper itself (see its
-                 * call inside here) -- must happen before RETHINK, not
-                 * after; see FS3EApp_UpdateUserIcon()'s comment. */
                 FS3EApp_ApplyFontSettings_Delayed();
                 /* Recompute minimum gadget sizes and relayout the whole window */
                 DoMethod(app->window_obj, WM_RETHINK);
@@ -1878,8 +1982,7 @@ void exitclose(void)
         FS3ETootView_Dispose(&app->tootView);
         FS3EThemeView_Dispose(&app->themeView);
         FS3ESettingsView_Dispose(&app->settingsView);
-//  printf("exitclose2\n");
-// wait2sec();
+ printf("exitclose2\n");
         if (app->window_obj)
         {
             FS3EMenu_Close(&app->menu, CurrentMainWindow);
@@ -1889,54 +1992,65 @@ void exitclose(void)
              * → all UniButtonP9 children. */
             DisposeObject(app->window_obj);
         }
-//  printf("exitclose3\n");
-// wait2sec();
+ printf("exitclose3\n");
         /* Free private classes AFTER all objects using them are disposed. */
         TootTimeline_Exit();
         NavBarLayout_Exit();
         TitleBarLayout_Exit();
         UniButtonP9_Exit();
         UniButtonBGBM_Exit();
-//  printf("exitclose4\n");
-// wait2sec();
+ printf("exitclose4\n");
         /* Release shared DCs after all gadgets using them are disposed. */
         if (app->buttonDC) { URPDC_Release(app->buttonDC); app->buttonDC = NULL; }
-
-        /* window_obj (and its titlebar_userIcon gadget) is already disposed
-         * above -- just free the wrapper Image object itself before the
-         * BmImage/BitMap it points at goes away with avatarImages. */
-        if (app->titlebarUserIconImage) {
-            DisposeObject(app->titlebarUserIconImage);
-            app->titlebarUserIconImage = NULL;
-        }
 
         if (app->avatarImages) {
             AvatarImages_Dispose(app->avatarImages);
             app->avatarImages = NULL;
         }
 
-//  printf("exitclose5\n");
-// wait2sec();
+ printf("exitclose5\n");
         FS3EStyle_ReleaseDrawContexts(&app->style);
         FS3EStyle_FreeThemeImages(&app->style);
-//  printf("exitclose6\n");
-// wait2sec();
+ printf("exitclose6\n");
+wait2sec();
         if (BevelBase)  { CloseLibrary(BevelBase);  BevelBase  = NULL; }
         if (BitMapBase) { CloseLibrary(BitMapBase); BitMapBase = NULL; }
 
+ printf("exitclose: about to FS3ENet_Stop, netRequestPort=%08lx\n", (unsigned long)app->netRequestPort);
+wait2sec();
         if (app->netRequestPort)
         {
-            /* Stop the network process using our persistent reply port if
-             * available, otherwise create a temporary one. */
-            struct MsgPort *stopReplyPort = app->netReplyPort
-                ? app->netReplyPort : CreateMsgPort();
+            /* Always a fresh, dedicated port for the shutdown handshake --
+             * never app->netReplyPort. That port can still have ordinary
+             * async replies (e.g. FETCH_IMAGE) queued ahead of the
+             * shutdown ack (now routine: real RAM:T downloads + rescales
+             * take real time, unlike the near-instant failures before
+             * that bug fix), and FS3ENet_Stop's WaitPort/GetMsg blindly
+             * takes whatever's at the head of the queue. Grabbing the
+             * wrong message here means: (a) that reply leaks (never
+             * freed), and (b) we wrongly believe the process has stopped
+             * and tear down netReplyPort while the still-running process
+             * later tries to ReplyMsg() the real shutdown message back to
+             * a port that no longer exists -- the crash. A port only this
+             * handshake ever touches makes the ambiguity impossible. */
+            struct MsgPort *stopReplyPort = CreateMsgPort();
             if (stopReplyPort) {
+ printf("exitclose: calling FS3ENet_Stop (blocks until net process replies shutdown)...\n");
+wait2sec();
                 FS3ENet_Stop(app->netRequestPort, stopReplyPort);
-                if (stopReplyPort != app->netReplyPort)
-                    DeleteMsgPort(stopReplyPort);
+ printf("exitclose: FS3ENet_Stop returned\n");
+wait2sec();
+                DeleteMsgPort(stopReplyPort);
             }
         }
-        /* Drain and free any remaining async replies */
+ printf("exitclose: draining netReplyPort...\n");
+wait2sec();
+        /* Drain and free any remaining async replies -- safe now: the
+         * network process only replies to the dedicated port above once
+         * every earlier request already sitting in its queue has been
+         * fully processed and replied to netReplyPort (it handles
+         * messages strictly in arrival order), so nothing further can
+         * land here after this point. */
         if (app->netReplyPort) {
             FS3ENetMessage *netMsg;
             while ((netMsg = (FS3ENetMessage *)GetMsg(app->netReplyPort)) != NULL) {
@@ -1946,19 +2060,24 @@ void exitclose(void)
             DeleteMsgPort(app->netReplyPort);
             app->netReplyPort = NULL;
         }
-
+ printf("exitclose: net side done, about to FS3EThumb_Stop, thumbRequestPort=%08lx\n",
+        (unsigned long)app->thumbRequestPort);
+wait2sec();
         if (app->thumbRequestPort)
         {
-            /* Stop the thumbnail process using our persistent reply port if
-             * available, otherwise create a temporary one. */
-            struct MsgPort *stopReplyPort = app->thumbReplyPort
-                ? app->thumbReplyPort : CreateMsgPort();
+            /* Same dedicated-port reasoning as netRequestPort above. */
+            struct MsgPort *stopReplyPort = CreateMsgPort();
             if (stopReplyPort) {
+ printf("exitclose: calling FS3EThumb_Stop (blocks until thumb process replies shutdown)...\n");
+wait2sec();
                 FS3EThumb_Stop(app->thumbRequestPort, stopReplyPort);
-                if (stopReplyPort != app->thumbReplyPort)
-                    DeleteMsgPort(stopReplyPort);
+ printf("exitclose: FS3EThumb_Stop returned\n");
+wait2sec();
+                DeleteMsgPort(stopReplyPort);
             }
         }
+ printf("exitclose: draining thumbReplyPort...\n");
+wait2sec();
         /* Drain and free any remaining async replies */
         if (app->thumbReplyPort) {
             FS3EThumbMessage *thumbMsg;
@@ -1968,14 +2087,16 @@ void exitclose(void)
             DeleteMsgPort(app->thumbReplyPort);
             app->thumbReplyPort = NULL;
         }
-
+ printf("exitclose: thumb side done\n");
+wait2sec();
         FS3EApp_FreeLoginState();
         FS3EApp_FreeAccount();
 
-//  printf("exitclose7\n");
-// wait2sec();
+ printf("exitclose7\n");
+wait2sec();
         FS3EMsg_Close();
-
+ printf("exitclose8: FS3EMsg_Close returned\n");
+wait2sec();
         if (app->app_port)
             DeleteMsgPort(app->app_port);
 
@@ -1983,7 +2104,8 @@ void exitclose(void)
         FreeVec(app);
         app = NULL;
     }
-
+ printf("exitclose9: leaving the if(app) block\n");
+wait2sec();
     FS3ELocale_Close();
     if (LocaleBase) {
         CloseLibrary((struct Library *)LocaleBase);

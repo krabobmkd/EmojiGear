@@ -235,6 +235,16 @@ static BOOL FS3EHttp_DoRequest(const char *url, const FS3EHttpHeader *extraHeade
         ok = FS3EHttp_ReadBody(resp, out);
         BIO_free(resp);
     }
+    else
+    {
+        /* OSSL_HTTP_transfer() gives no reason code -- dump the OpenSSL/
+         * AmiSSL error queue (DNS failure, connection refused, TLS
+         * handshake failure, etc.) so a bare "GET failed" printf isn't the
+         * only clue when this happens. */
+        printf("net: HTTP transfer failed for %s://%s:%s%s\n",
+               useSSL ? "https" : "http", host ? host : "?", port, pathBuf);
+        FS3EHttp_PrintErrors();
+    }
 
     sk_CONF_VALUE_pop_free(headers, FS3EHttp_FreeConfValue);
 

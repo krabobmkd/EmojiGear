@@ -14,6 +14,8 @@
  *     User data directory: [drawer path........]
  *   Cache group (vertical):
  *     Max cache size (MB): [integer]
+ *     [x] Keep big user icons
+ *     [x] Keep big thumbnails
  *     [Flush cache]
  *   Server group (vertical):
  *     Check interval (seconds): [integer]
@@ -46,6 +48,8 @@ typedef struct FS3ESettingsView {
     /* Cache group */
     Object *maxCacheSizeInt;
     Object *flushCacheBtn;
+    Object *keepBigUserIconsCheck;
+    Object *keepBigThumbnailsCheck;
 
     /* Server group */
     Object *checkIntervalInt;

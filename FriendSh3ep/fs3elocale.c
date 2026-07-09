@@ -139,6 +139,10 @@ static const char *defaultStrings[MSG_COUNT] = {
     "Server",
     /* MSG_SETTINGSV_CHECK_INTERVAL */
     "Check interval (seconds)",
+    /* MSG_SETTINGSV_KEEP_BIG_USERICONS */
+    "Keep big user icons",
+    /* MSG_SETTINGSV_KEEP_BIG_THUMBNAILS */
+    "Keep big thumbnails",
 };
 
 /* LocaleBase declared in friendsh3ep.c */

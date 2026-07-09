@@ -5,7 +5,7 @@ set(CMAKE_C_STANDARD 11)
 
 # Assembler output for debug; picked up by the network subdirectory via scope.
 list(APPEND AMIGA_COMPILER_OPTIONS -save-temps -Wall)
-list(APPEND AMIGA_COMPILER_OPTIONS -mcpu=68020 -Os)
+list(APPEND AMIGA_COMPILER_OPTIONS -mcpu=68020 -O2)
 
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../sdk/include)
 
@@ -22,6 +22,7 @@ set(FRIENDSH3EP_SOURCES
 	bdbprintf.c
     avatarimages.c
     bmimage.c
+    fs3etextwrap.c
     fs3ethumb.c
     rgbscale.c
     rgbimage.c
@@ -65,6 +66,7 @@ set(FRIENDSH3EP_SOURCES
 # Listed so IDEs (Qt Creator, etc.) show them in the project tree.
 set(FRIENDSH3EP_HEADERS
     bmimage.h
+    fs3etextwrap.h
     clipboard.h
     patch9.h
     stylefile.h

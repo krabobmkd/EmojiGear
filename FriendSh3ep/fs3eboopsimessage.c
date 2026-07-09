@@ -66,8 +66,11 @@ static ULONG delayedAttribs[] = {
 
     TTIMELINE_ScrollDomainChanged,
     TTIMELINE_PostClicked,
-    TTIMELINE_HotSpotActivated,
+   //TTIMELINE_HotSpotActivated,
     TTIMELINE_ProcessRefresh,
+    TTIMELINE_LastHotSpotPostId,
+    TTIMELINE_LastHotSpotString,
+    TTIMELINE_HotSpotNotify,
 
 
 };

@@ -186,6 +186,15 @@ ULONG ttl_apply_tags(Class *cl, Object *o, struct opSet *msg, int couldRefreshDr
                 used = 1;
                 break;
 
+            case TTIMELINE_InvalidateImages:
+                /* No layout/height change -- just redraw the currently
+                 * active tiles so they pick up whatever image just
+                 * finished loading into the cache. */
+                ttl_tiles_invalidate_all(inst);
+                redraw = TRUE;
+                used = 1;
+                break;
+
             case ICA_TARGET:
                 inst->target = (Object *)tag->ti_Data;
                 used = 1;
@@ -250,6 +259,14 @@ ULONG TTL_OnNew(Class *cl, Object *o, struct opSet *msg)
     for (ch = 0; ch < TTIMELINE_NUM_VIEWMODES; ch++)
         NewList((struct List *)&inst->channels[ch].posts);
 
+    /* Hot-spot pool: all buckets start free (see the TTLHotSpot comment
+     * in fs3etoottimeline_private.h). INST_DATA is zeroed by the class
+     * system, but that's relied on implicitly enough elsewhere that it's
+     * worth being explicit about the invariant here too. */
+    for (ch = 0; ch < TTL_HOTSPOT_POOL_TOOTS; ch++)
+        inst->hotSpotBucketOwner[ch] = NULL;
+    inst->hotSpotNextBucket = 0;
+
     ttl_apply_tags(cl,newObj, msg,FALSE);
 
     return (ULONG)newObj;
@@ -309,6 +326,12 @@ ULONG TTL_OnGet(Class *cl, Object *o, struct opGet *msg)
             return 1;
         case TTIMELINE_WaitText:
             *msg->opg_Storage = (ULONG)inst->waitText;
+            return 1;
+        case TTIMELINE_LastHotSpotString:
+            *msg->opg_Storage = inst->lastHotSpotStr[0] ? (ULONG)inst->lastHotSpotStr : 0;
+            return 1;
+        case TTIMELINE_LastHotSpotPostId:
+            *msg->opg_Storage = inst->lastHotSpotPostId[0] ? (ULONG)inst->lastHotSpotPostId : 0;
             return 1;
         default:
             return DoSuperMethodA(cl, o, (APTR)msg);

@@ -69,13 +69,9 @@ struct App {
     Object *titlebar_iconifyBtn;     /* GID_TITLEBAR_ICONIFY */
     Object *titlebar_altposBtn;      /* GID_TITLEBAR_ALTPOS  */
     Object *titlebar_depthBtn;       /* GID_TITLEBAR_DEPTH   */
-    Object *titlebar_userIcon;       /* BUTTON.gadget showing the connected user's avatar */
-    Object *titlebarUserIconImage;   /* images/bitmap.image wrapper set as its GA_Image;
-                                       * rebuilt (see FS3EApp_UpdateUserIcon) whenever the
-                                       * underlying AvatarImages entry's BmImage reloads --
-                                       * BITMAP_BitMap/BITMAP_MaskPlane are captured by value
-                                       * at NewObject() time, so a stale wrapper would point
-                                       * at a freed struct BitMap. NULL when no avatar loaded. */
+    /* Row-2 user icon is drawn directly by TitleBarLayout_OnRender() from
+     * TBLAYOUT_AvatarImages/TBLAYOUT_AccountAcct -- no gadget/image object
+     * of its own anymore (see fs3etitlebar.c's file header comment). */
     Object *titlebar_settingsBtn;       /*  */
     Object *titlebar_accountBtn;       /*  */
     Object *titlebar_newtootBtn;       /*  */

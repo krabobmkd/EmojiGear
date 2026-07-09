@@ -1,29 +1,48 @@
 /*
- * avatarimages.h - GUI-side avatar bitmap cache for FriendSh3ep.
+ * avatarimages.h - GUI-side image cache for FriendSh3ep.
  *
- * Maintains one fixed-size RgbImage per unique @user@instance (see
- * rgbimage.h). Unlike the old BmImage-based cache, this buffer is a plain
- * Fast-RAM RGB pixel array with no screen-bound resource and no per-DPI
- * variant: AvatarImages_Get()'s result is box-fit-scaled to the live
- * avatarSize at *draw* time (RgbImage_DrawScaled), so a font/DPI change or
- * an iconify/uniconify cycle needs no reload, unload, or rescale here at
- * all -- see PlanToReworkThumbnails.txt steps 2-3.
+ * One AvatarImages instance manages TWO pools sharing the same underlying
+ * mechanism and download/thumbnail pipeline, but tuned differently since
+ * their keys have very different cardinality:
+ *
+ *   - Avatars: one RgbImage per unique @user@instance seen, keyed by acct.
+ *     Bounded (AVATAR_CACHE_MAX), no eviction -- unique users in a session
+ *     realistically never gets close to the cap.
+ *   - Media thumbnails: one RgbImage per unique attachment preview URL,
+ *     keyed by that URL. Far more numerous over a long scroll session (a
+ *     handful of distinct users vs. potentially hundreds of distinct
+ *     images), so THUMBNAIL_CACHE_MAX is smaller and round-robin evicted
+ *     (see AvatarImages_MarkMediaRequested/find_or_create_media in the
+ *     .c) -- fine, since a post scrolled far enough away to need its
+ *     thumbnail re-fetched has also had its TootTimeline tile/hot-spot
+ *     state recycled by then anyway.
+ *
+ * Both pools are plain Fast-RAM RGB pixel arrays (see rgbimage.h) with no
+ * screen-bound resource and no per-DPI variant: *_Get()'s result is
+ * box-fit-scaled to whatever size the caller needs at *draw* time
+ * (RgbImage_DrawScaled), so a font/DPI change or an iconify/uniconify
+ * cycle needs no reload, unload, or rescale here at all -- see
+ * PlanToReworkThumbnails.txt steps 2-3.
  *
  * Download flow (see fs3ethumb.h for the thumbnail process this relies on
- * to keep the GUI task from freezing on a large avatar upload):
- *   1. Timeline arrives → for each post whose acct is not yet requested,
- *      send FS3ENETQ_FETCH_IMAGE(url, key=acct) to the network process.
+ * to keep the GUI task from freezing on a large image decode), avatars
+ * shown, media thumbnails in parentheses where they differ:
+ *   1. Timeline arrives → for each post whose acct (media URL) is not yet
+ *      requested, send FS3ENETQ_FETCH_IMAGE(url, key=acct, subdir=
+ *      "usericons" ("thumbnails")) to the network process.
  *   2. Network process checks disk cache, downloads on miss, replies with
  *      the local (possibly large, original-size) file path.
- *   3. GUI marks the acct thumb-requested (AvatarImages_MarkThumbRequested)
- *      and sends FS3EThumb_Request(path, acct, 64, 64) to the thumbnail
- *      process -- the expensive decode+scale happens off the GUI task.
+ *   3. GUI marks the acct/URL thumb-requested (AvatarImages_
+ *      MarkThumbRequested/MarkMediaThumbRequested) and sends
+ *      FS3EThumb_Request(path, key, kind, 64,64 (200,600)) to the
+ *      thumbnail process -- the expensive decode+scale happens off the
+ *      GUI task.
  *   4. Thumbnail process replies with a small, already-scaled BMP path.
- *      GUI calls AvatarImages_ThumbReady(acct, thumbPath): a cheap direct
- *      read of that small file's pixels (RgbImage_LoadBmp), no datatype
- *      decode and no scaling.
- *   5. Tile renderer calls AvatarImages_Get(acct) and draws it with
- *      RgbImage_DrawScaled() at whatever size the tile needs.
+ *      GUI calls AvatarImages_ThumbReady/MediaThumbReady(key, thumbPath):
+ *      a cheap direct read of that small file's pixels (RgbImage_
+ *      LoadBmp), no datatype decode and no scaling.
+ *   5. Tile renderer calls AvatarImages_Get/GetMedia(key) and draws it
+ *      with RgbImage_DrawScaled() at whatever size the tile needs.
  */
 
 #ifndef AVATARIMAGES_H
@@ -36,6 +55,12 @@
 #define AVATAR_CACHE_MAX  128   /* max unique users kept in memory */
 #define AVATAR_ACCT_SIZE  128   /* max @user@instance length + NUL */
 
+/* Media URLs run much longer than accts (signed CDN query params) and the
+ * pool is round-robin evicted rather than ever-growing, so it doesn't need
+ * anywhere near AVATAR_CACHE_MAX slots -- see the file header comment. */
+#define THUMBNAIL_CACHE_MAX  32
+#define THUMBNAIL_URL_SIZE   384
+
 typedef struct {
     char     acct[AVATAR_ACCT_SIZE]; /* key: @user@instance */
     RgbImage img;                    /* fixed-size RGB pixel buffer */
@@ -43,15 +68,26 @@ typedef struct {
     BOOL     thumbRequested;         /* FS3ETHUMBQ_MAKE sent, reply pending */
 } AvatarEntry;
 
+typedef struct {
+    char     url[THUMBNAIL_URL_SIZE]; /* key: attachment preview/URL */
+    RgbImage img;
+    BOOL     requested;
+    BOOL     thumbRequested;
+} ThumbnailEntry;
+
 typedef struct AvatarImages {
     AvatarEntry entries[AVATAR_CACHE_MAX];
     ULONG       count;
+
+    ThumbnailEntry thumbs[THUMBNAIL_CACHE_MAX];
+    ULONG          thumbCount;       /* populated slots, <=THUMBNAIL_CACHE_MAX */
+    ULONG          thumbNextEvict;   /* round-robin cursor once full */
 } AvatarImages;
 
 /* Allocate the cache.  Returns NULL on memory failure. */
 AvatarImages *AvatarImages_Create(void);
 
-/* Frees all pixel buffers and the cache struct. */
+/* Frees all pixel buffers (both pools) and the cache struct. */
 void          AvatarImages_Dispose(AvatarImages *ai);
 
 /* Return the loaded RgbImage for acct, or NULL if not loaded yet. */
@@ -74,5 +110,19 @@ void          AvatarImages_MarkThumbRequested(AvatarImages *ai, const char *acct
  * on failure. */
 RgbImage     *AvatarImages_ThumbReady(AvatarImages *ai, const char *acct,
                                        const char *thumbPath);
+
+/* ---- Media thumbnail pool: same shape as the avatar functions above,
+ * keyed by attachment URL instead of acct -- see the file header comment
+ * for why this pool is smaller and round-robin evicted. A lookup/mark
+ * call can silently recycle another URL's slot; that's fine, it will just
+ * be re-requested next time it's drawn. ---- */
+
+RgbImage     *AvatarImages_GetMedia(AvatarImages *ai, const char *url);
+BOOL          AvatarImages_IsMediaRequested(AvatarImages *ai, const char *url);
+void          AvatarImages_MarkMediaRequested(AvatarImages *ai, const char *url);
+BOOL          AvatarImages_IsMediaThumbRequested(AvatarImages *ai, const char *url);
+void          AvatarImages_MarkMediaThumbRequested(AvatarImages *ai, const char *url);
+RgbImage     *AvatarImages_MediaThumbReady(AvatarImages *ai, const char *url,
+                                            const char *thumbPath);
 
 #endif /* AVATARIMAGES_H */
