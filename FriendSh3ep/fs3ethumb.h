@@ -122,6 +122,14 @@ typedef struct FS3EThumbMessage
      * back anyway to keep the reply self-contained. Empty on
      * FS3ETHUMBR_ERROR. */
     char  fs3etm_ThumbPath[FS3ETHUMB_PATH_SIZE];
+
+    /* FS3ETHUMBQ_MAKE reply field, filled by the thumbnail process only on
+     * FS3ETHUMBR_ERROR (BMFMT_UNKNOWN/meaningless on success): the sniffed
+     * format (enum BmImageFormat, see bmimage.h) of fs3etm_SrcPath, so the
+     * GUI can tell "unsupported format" (e.g. WebP with no webp.datatype
+     * installed) apart from a corrupt download or a non-picture file --
+     * see BmImage_SniffFormat(). */
+    ULONG fs3etm_DetectedFormat;
 } FS3EThumbMessage;
 
 /* Start the thumbnail process. Returns the request MsgPort, or NULL on failure. */

@@ -34,6 +34,17 @@ typedef enum {
     BMIMAGE_ERR_WRITE_FAILED    /* couldn't write the scaled BMP thumbnail to disk */
 } BmImageError;
 
+/* Magic-byte-identified image format, independent of what datatypes
+ * happen to be installed -- see BmImage_SniffFormat(). */
+typedef enum {
+    BMFMT_UNKNOWN = 0,
+    BMFMT_PNG,
+    BMFMT_JPEG,
+    BMFMT_GIF,
+    BMFMT_WEBP,
+    BMFMT_BMP
+} BmImageFormat;
+
 typedef struct BmImage {
     char           *filePath;   /* AllocVec'd; survives Load/Unload cycles */
     Object         *dtObject;   /* picture.datatype object; NULL when unloaded */
@@ -130,6 +141,20 @@ BOOL BmImage_LoadScaled(BmImage *img, struct Screen *screen,
 BOOL BmImage_GenerateScaledBmp(const char *srcPath, const char *cacheKeyPath,
                                 UWORD targetWidth, UWORD targetHeight,
                                 char *outThumbPath, ULONG outPathSize, BmImageError *outError);
+
+/*
+ * Read up to the first 16 bytes of path and identify its format from
+ * magic bytes/signatures alone, independent of what datatypes happen to
+ * be installed. Call this ONLY on a freshly downloaded source file that
+ * NewDTObject already failed to open (BMIMAGE_ERR_OPEN_FAILED) -- e.g. to
+ * tell a WebP image with no webp.datatype installed apart from a
+ * corrupt/truncated download or a non-picture file. Never call this on
+ * the app's own generated thumbnail BMPs -- RgbImage_LoadBmp doesn't go
+ * through datatypes.library at all, so there's nothing to disambiguate
+ * there. Returns BMFMT_UNKNOWN if the file can't be opened or matches no
+ * known signature.
+ */
+BmImageFormat BmImage_SniffFormat(const char *path);
 
 /*
  * Dispose the datatype object and clear bitmap/dimensions.

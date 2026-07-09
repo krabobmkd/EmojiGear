@@ -223,33 +223,64 @@ void FS3ENet_Stop(struct MsgPort *requestPort, struct MsgPort *replyPort);
  */
 BOOL FS3ENet_FlushCache(struct MsgPort *requestPort, struct MsgPort *replyPort);
 
+/* Which direction a FS3ENETQ_TIMELINE request pages in -- echoed back into
+ * FS3ENetTimelineReply so the GUI knows how to splice the results into its
+ * post list (prepend at the top vs. append at the bottom) and which
+ * in-flight guard to clear, without having to remember what it asked for. */
+enum FS3ENetPageDirection
+{
+    FS3ENETPAGE_INITIAL = 0,  /* first page for this channel; fs3et_MaxId/MinId both "" */
+    FS3ENETPAGE_OLDER,        /* fs3et_MaxId set: statuses strictly older than it */
+    FS3ENETPAGE_NEWER         /* fs3et_MinId set: statuses strictly newer than it */
+};
+
 /*
- * FS3ENETQ_TIMELINE — fetch the newest page of statuses for a timeline.
+ * FS3ENETQ_TIMELINE — fetch one page of statuses for a timeline.
  *
  * fs3et_ViewModeBit identifies the UI channel (VIEWMODE_* value from
  * friendsh3ep.h); it is echoed unchanged into FS3ENetTimelineReply so the
  * GUI can route replies back to the right TootTimeline channel.
  * fs3et_AccessToken may be "" for public timelines.
- * fs3et_MaxId may be NULL/empty to request the newest page.
+ * fs3et_MaxId/fs3et_MinId may be NULL/empty; at most one should be set (see
+ * fs3et_PageDirection) -- fs3et_MaxId asks for statuses strictly older than
+ * that status id (contiguous with what the GUI already has at the bottom
+ * of its list), fs3et_MinId strictly newer (contiguous at the top). Both
+ * empty means "the newest page" (FS3ENETPAGE_INITIAL).
  *
  * On FS3ENETR_OK, fs3em_Data is replaced with a flat FS3ENetTimelineReply
  * block; fs3em_Data on error still points at the original request block.
  */
 typedef struct FS3ENetTimelineReq {
-    ULONG  fs3et_ViewModeBit;   /* echoed in reply */
+    ULONG  fs3et_ViewModeBit;    /* echoed in reply */
+    ULONG  fs3et_PageDirection;  /* FS3ENetPageDirection; echoed in reply */
     char  *fs3et_ApiBaseUrl;
-    char  *fs3et_AccessToken;   /* "" = no auth (public timelines) */
-    char  *fs3et_Timeline;      /* "home", "public", "public?local=true", … */
-    char  *fs3et_MaxId;         /* "" = newest page */
+    char  *fs3et_AccessToken;    /* "" = no auth (public timelines) */
+    char  *fs3et_Timeline;       /* "home", "public", "public?local=true", … */
+    char  *fs3et_MaxId;          /* "" = no lower bound */
+    char  *fs3et_MinId;          /* "" = no upper bound */
 } FS3ENetTimelineReq;
 
 FS3ENetTimelineReq *FS3ENetTimelineReq_Alloc(ULONG viewModeBit,
-    const char *apiBaseUrl, const char *accessToken,
-    const char *timeline, const char *maxId);
+    ULONG pageDirection, const char *apiBaseUrl, const char *accessToken,
+    const char *timeline, const char *maxId, const char *minId);
 
 /* Max media_attachments entries kept per status (Mastodon itself caps
  * normal posts at 4 attachments, so this never truncates in practice). */
 #define FS3ENET_MAX_MEDIA 4
+
+/* Mastodon media_attachments[].type, mapped from the JSON string. Lets
+ * the GUI tell an audio attachment apart from an image *before* ever
+ * downloading anything for it -- audio has no thumbnail to fetch, and
+ * routing its (fallback) full-file URL into the image decoder is exactly
+ * what used to make MP3s show up as failed image loads. */
+enum FS3ENetMediaKind
+{
+    FS3ENET_MEDIAKIND_IMAGE = 0,
+    FS3ENET_MEDIAKIND_VIDEO,
+    FS3ENET_MEDIAKIND_GIFV,
+    FS3ENET_MEDIAKIND_AUDIO,
+    FS3ENET_MEDIAKIND_UNKNOWN
+};
 
 /* Single status entry inside a FS3ENetTimelineReply.
  * All char * fields point into the same flat block — one FreeVec() on
@@ -266,14 +297,17 @@ typedef struct FS3ENetStatus {
     /* media_attachments[].preview_url (falling back to .url if no
      * preview_url) for up to FS3ENET_MAX_MEDIA attachments; entries
      * [fmas_MediaCount..FS3ENET_MAX_MEDIA) are NULL. */
-    char *fmas_MediaUrls[FS3ENET_MAX_MEDIA];
-    ULONG fmas_MediaCount;
+    char  *fmas_MediaUrls[FS3ENET_MAX_MEDIA];
+    /* media_attachments[].type for the same slots -- enum FS3ENetMediaKind. */
+    ULONG  fmas_MediaKind[FS3ENET_MAX_MEDIA];
+    ULONG  fmas_MediaCount;
 } FS3ENetStatus;
 
 /* Header of the flat timeline reply block.
  * Statuses follow immediately: (FS3ENetStatus *)(reply + 1)[i] */
 typedef struct FS3ENetTimelineReply {
-    ULONG fs3et_ViewModeBit; /* echoed from request */
+    ULONG fs3et_ViewModeBit;    /* echoed from request */
+    ULONG fs3et_PageDirection; /* echoed from request, see FS3ENetPageDirection */
     ULONG fs3et_Count;
     /* FS3ENetStatus[fs3et_Count] follows immediately in memory */
 } FS3ENetTimelineReply;

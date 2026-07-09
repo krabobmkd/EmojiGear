@@ -450,6 +450,35 @@ BOOL BmImage_GenerateScaledBmp(const char *srcPath, const char *cacheKeyPath,
     return TRUE;
 }
 
+BmImageFormat BmImage_SniffFormat(const char *path)
+{
+    BPTR  fh;
+    UBYTE buf[16];
+    LONG  n;
+    BmImageFormat fmt = BMFMT_UNKNOWN;
+
+    if (!path || !path[0]) return BMFMT_UNKNOWN;
+
+    fh = Open((STRPTR)path, MODE_OLDFILE);
+    if (!fh) return BMFMT_UNKNOWN;
+    n = Read(fh, buf, sizeof(buf));
+    Close(fh);
+    if (n < 4) return BMFMT_UNKNOWN;
+
+    if (n >= 8 && memcmp(buf, "\x89PNG\r\n\x1a\n", 8) == 0)
+        fmt = BMFMT_PNG;
+    else if (buf[0] == 0xFF && buf[1] == 0xD8 && buf[2] == 0xFF)
+        fmt = BMFMT_JPEG;
+    else if (n >= 6 && (memcmp(buf, "GIF87a", 6) == 0 || memcmp(buf, "GIF89a", 6) == 0))
+        fmt = BMFMT_GIF;
+    else if (n >= 12 && memcmp(buf, "RIFF", 4) == 0 && memcmp(buf + 8, "WEBP", 4) == 0)
+        fmt = BMFMT_WEBP;
+    else if (n >= 2 && buf[0] == 'B' && buf[1] == 'M')
+        fmt = BMFMT_BMP;
+
+    return fmt;
+}
+
 BOOL BmImage_LoadScaled(BmImage *img, struct Screen *screen,
                          UWORD targetWidth, UWORD targetHeight)
 {

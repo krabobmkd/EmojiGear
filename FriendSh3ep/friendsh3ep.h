@@ -129,6 +129,14 @@ struct App {
     /* FS3ENetResult of the last timeline fetch that failed (for message text). */
     ULONG  lastTimelineResult;
 
+    /* Bitmasks of channels with an older/newer pagination page currently
+     * in flight (see FS3EApp_FetchTimelinePage) -- separate from
+     * timelineFetchedMask, which only ever guards the one initial fetch
+     * per channel. Bit i set → do not start another page fetch in that
+     * direction for channel i until the current one replies. */
+    ULONG  olderPageInFlightMask;
+    ULONG  newerPageInFlightMask;
+
     /* Avatar bitmap cache — one scaled BmImage per @user@instance */
     struct AvatarImages *avatarImages;
 

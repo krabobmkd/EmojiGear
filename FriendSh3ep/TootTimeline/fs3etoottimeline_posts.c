@@ -220,9 +220,10 @@ TTLPost *ttl_post_alloc(const TTLPostSetup *setup)
     if (!post) return NULL;
 
     NewList((struct List *)&post->textSpans);
-    post->dirty         = TRUE;
-    post->hotSpotBucket = -1;
-    post->hotSpotsDirty = TRUE;
+    post->cls            = &TTLToot_Class;
+    post->dirty          = TRUE;
+    post->hotSpotBucket  = -1;
+    post->hotSpotsDirty  = TRUE;
 
     if (setup) {
         ULONG mi;
@@ -236,10 +237,39 @@ TTLPost *ttl_post_alloc(const TTLPostSetup *setup)
 
         post->mediaCount = setup->mediaCount;
         if (post->mediaCount > TTL_POST_MAX_MEDIA) post->mediaCount = TTL_POST_MAX_MEDIA;
-        for (mi = 0; mi < post->mediaCount; mi++)
+        for (mi = 0; mi < post->mediaCount; mi++) {
             post->mediaUrls[mi] = (setup->mediaUrls[mi] && setup->mediaUrls[mi][0])
                                  ? dup_str(setup->mediaUrls[mi]) : NULL;
+            post->mediaKinds[mi] = setup->mediaKinds[mi];
+        }
     }
+
+    return post;
+}
+
+/* ------------------------------------------------------------------ */
+/* ttl_pseudo_post_alloc                                                */
+/*                                                                      */
+/* A TTLPost-shaped node for a non-toot pinned row (see                */
+/* TTLLoadNewer_Class/TTLLoadOlder_Class) -- reuses the exact same node */
+/* shape, list/tile/hit-testing machinery as a toot, just via a         */
+/* different class and none of TTLPostSetup's fields. `label` is a      */
+/* borrowed static string literal, not copied: these classes' .dispose  */
+/* is NULL (nothing to free), so it must outlive the post, which a      */
+/* literal owned by the class definition itself always does.           */
+/* ------------------------------------------------------------------ */
+
+TTLPost *ttl_pseudo_post_alloc(const TTLItemClass *cls, const char *label)
+{
+    TTLPost *post = (TTLPost *)AllocVec(sizeof(TTLPost), MEMF_ANY | MEMF_CLEAR);
+    if (!post) return NULL;
+
+    NewList((struct List *)&post->textSpans);
+    post->cls            = cls;
+    post->dirty          = TRUE;
+    post->hotSpotBucket  = -1;
+    post->hotSpotsDirty  = TRUE;
+    post->body           = (char *)label;
 
     return post;
 }
@@ -247,6 +277,26 @@ TTLPost *ttl_post_alloc(const TTLPostSetup *setup)
 /* ------------------------------------------------------------------ */
 /* ttl_post_free                                                        */
 /* ------------------------------------------------------------------ */
+
+/* Toot-specific teardown: TTLItemClass.dispose for TTLToot_Class. Frees
+ * everything ttl_post_alloc's setup-driven copies own beyond the bare
+ * node/textSpans, which ttl_post_free (the generic caller) already
+ * handles for every item kind alike. */
+static void ttl_toot_dispose(TTLPost *post)
+{
+    if (post->username)  FreeVec(post->username);
+    if (post->acct)      FreeVec(post->acct);
+    if (post->body)      FreeVec(post->body);
+    if (post->timestamp) FreeVec(post->timestamp);
+    if (post->boostBy)   FreeVec(post->boostBy);
+    if (post->avatarURL) FreeVec(post->avatarURL);
+    if (post->postId)    FreeVec(post->postId);
+    {
+        ULONG mi;
+        for (mi = 0; mi < post->mediaCount; mi++)
+            if (post->mediaUrls[mi]) FreeVec(post->mediaUrls[mi]);
+    }
+}
 
 void ttl_post_free(TTLData *inst, TTLPost *post)
 {
@@ -261,29 +311,19 @@ void ttl_post_free(TTLData *inst, TTLPost *post)
         inst->hotSpotBucketOwner[post->hotSpotBucket] = NULL;
 
     ttl_clear_textspans(post);
-    if (post->username)  FreeVec(post->username);
-    if (post->acct)      FreeVec(post->acct);
-    if (post->body)      FreeVec(post->body);
-    if (post->timestamp) FreeVec(post->timestamp);
-    if (post->boostBy)   FreeVec(post->boostBy);
-    if (post->avatarURL) FreeVec(post->avatarURL);
-    if (post->postId)    FreeVec(post->postId);
-    {
-        ULONG mi;
-        for (mi = 0; mi < post->mediaCount; mi++)
-            if (post->mediaUrls[mi]) FreeVec(post->mediaUrls[mi]);
-    }
+    if (post->cls && post->cls->dispose)
+        post->cls->dispose(post);
     FreeVec(post);
 }
 
 /* ------------------------------------------------------------------ */
-/* ttl_post_layout                                                      */
+/* ttl_toot_layout -- TTLItemClass.layout for TTLToot_Class             */
 /*                                                                      */
 /* Compute post->height and rebuild the textSpans list.                 */
 /* Called whenever the gadget width or font changes.                    */
 /* ------------------------------------------------------------------ */
 
-void ttl_post_layout(TTLData *inst, TTLPost *post)
+static void ttl_toot_layout(TTLData *inst, TTLPost *post)
 {
     WORD  avatarW, padLeft, avatarGap, textX, textW;
     LONG  curRelY;
@@ -502,10 +542,10 @@ static void ttl_scan_span_tokens(TTLPost *post, TTLTextSpan *sp)
     }
 }
 
-/* (Re)build post->hotSpots[0..hotSpotCount) in place. Caller
- * (ttl_post_ensure_hotspots) has already pointed post->hotSpots at a pool
- * bucket. */
-static void ttl_post_build_hotspots(TTLData *inst, TTLPost *post)
+/* (Re)build post->hotSpots[0..hotSpotCount) in place -- TTLItemClass.
+ * buildHotspots for TTLToot_Class. Caller (ttl_post_ensure_hotspots) has
+ * already pointed post->hotSpots at a pool bucket. */
+static void ttl_toot_build_hotspots(TTLData *inst, TTLPost *post)
 {
     TTLTextSpan *sp;
     WORD avatarW, padLeft;
@@ -549,7 +589,11 @@ static void ttl_post_build_hotspots(TTLData *inst, TTLPost *post)
     if (post->mediaCount > 0 && post->previewW > 0) {
         const char *curUrl = (post->mediaCurrentIndex < post->mediaCount)
                             ? post->mediaUrls[post->mediaCurrentIndex] : NULL;
-        ttl_hs_add(post, TTL_HOT_IMAGE, post->previewX, post->previewY,
+        ULONG curKind = (post->mediaCurrentIndex < post->mediaCount)
+                       ? post->mediaKinds[post->mediaCurrentIndex] : TTL_MEDIA_KIND_UNKNOWN;
+        UBYTE hotType = (curKind == TTL_MEDIA_KIND_AUDIO) ? TTL_HOT_PLAY_AUDIO : TTL_HOT_IMAGE;
+
+        ttl_hs_add(post, hotType, post->previewX, post->previewY,
                    post->previewW, post->previewH,
                    curUrl, curUrl ? (ULONG)strlen(curUrl) : 0);
 
@@ -620,7 +664,8 @@ void ttl_post_ensure_hotspots(TTLData *inst, TTLPost *post)
         post->hotSpots       = inst->hotSpotPool[bucket];
     }
 
-    ttl_post_build_hotspots(inst, post);
+    if (post->cls && post->cls->buildHotspots)
+        post->cls->buildHotspots(inst, post);
     post->hotSpotsDirty = FALSE;
 }
 
@@ -646,7 +691,8 @@ void ttl_layout_all_posts(TTLData *inst)
              post->node.mln_Succ;
              post = (TTLPost *)post->node.mln_Succ)
         {
-            ttl_post_layout(inst, post);
+            if (post->cls && post->cls->layout)
+                post->cls->layout(inst, post);
         }
 
         /* Recompute Y positions: head is newest, sits at contentTopY */
@@ -688,10 +734,11 @@ void ttl_clear_channel(TTLData *inst, ULONG ch)
     struct Node *node;
     while ((node = RemHead((struct List *)&channel->posts)) != NULL)
         ttl_post_free(inst, (TTLPost *)node);
-    channel->postCount      = 0;
-    channel->contentTopY    = 0;
-    channel->contentBottomY = 0;
-    channel->scrollY        = 0;
+    channel->postCount         = 0;
+    channel->contentTopY       = 0;
+    channel->contentBottomY    = 0;
+    channel->scrollY           = 0;
+    channel->olderLoadTriggered = FALSE;
     inst->layoutToDo = TRUE;
     ttl_tiles_invalidate_all(inst);
 }
@@ -700,4 +747,167 @@ void ttl_clear_channel(TTLData *inst, ULONG ch)
 void ttl_clear_posts(TTLData *inst)
 {
     ttl_clear_channel(inst, inst->viewMode);
+}
+
+/* ------------------------------------------------------------------ */
+/* TTLToot_Class -- the original (and still only) TTLItemClass, kept    */
+/* here since this file already owns toot construction/teardown         */
+/* (ttl_post_alloc/ttl_post_free). .render and .activate are defined    */
+/* in fs3etoottimeline_tiles.c / fs3etoottimeline_input.c respectively  */
+/* -- see the extern prototypes in fs3etoottimeline_private.h.          */
+/* ------------------------------------------------------------------ */
+
+const TTLItemClass TTLToot_Class = {
+    ttl_toot_layout,
+    ttl_toot_render,
+    ttl_toot_build_hotspots,
+    ttl_toot_activate,
+    ttl_toot_dispose
+};
+
+/* ------------------------------------------------------------------ */
+/* Boundary-aware insertion (TTIMELINE_AddPost/AppendPost)              */
+/*                                                                      */
+/* Both assume the channel's post list is already non-empty -- the      */
+/* very-first-post bootstrap (contentTopY/BottomY = 0, plain AddHead)   */
+/* is handled by the caller before the list has anything in it to check */
+/* the head/tail class of; see ttl_channel_add_boundaries below, called */
+/* right after that bootstrap so the two pinned rows are only ever      */
+/* inserted once real content already exists.                          */
+/* ------------------------------------------------------------------ */
+
+void ttl_channel_insert_top(TTLData *inst, TTLChannel *channel, TTLPost *post)
+{
+    TTLPost *head = (TTLPost *)channel->posts.mlh_Head;
+
+    if (head->cls == &TTLLoadNewer_Class) {
+        /* Real content currently starts right where the pinned "load
+         * newer" row ends; the new (newest) post takes that spot, and the
+         * boundary row shifts up by the same amount to stay glued to the
+         * top of real content -- everything else's timelineY is
+         * untouched, same as the no-boundary case below. */
+        LONG oldHeadY = head->timelineY;
+        post->timelineY = head->timelineY + head->height - post->height;
+        head->timelineY -= post->height;
+        channel->contentTopY -= post->height;
+        Insert((struct List *)&channel->posts,
+               (struct Node *)&post->node, (struct Node *)&head->node);
+        /* The boundary's own tile(s) must be redrawn at both its old and
+         * new position -- ttl_tiles_invalidate_range for the new post
+         * itself is still the caller's job (see TTIMELINE_AddPost), same
+         * as before this row existed. */
+        if (channel == ttl_active(inst))
+            ttl_tiles_invalidate_range(inst, head->timelineY, oldHeadY + head->height);
+    } else {
+        channel->contentTopY -= post->height;
+        post->timelineY        = channel->contentTopY;
+        AddHead((struct List *)&channel->posts, (struct Node *)&post->node);
+    }
+}
+
+void ttl_channel_insert_bottom(TTLData *inst, TTLChannel *channel, TTLPost *post)
+{
+    TTLPost *tail = (TTLPost *)channel->posts.mlh_TailPred;
+
+    if (tail->cls == &TTLLoadOlder_Class) {
+        /* Mirror of ttl_channel_insert_top: real content currently ends
+         * right where the pinned "load older" row begins; the new
+         * (oldest) post takes that spot, and the boundary row shifts down
+         * by the same amount to stay glued below real content. */
+        TTLPost *head = (TTLPost *)channel->posts.mlh_Head;
+        LONG oldTailY = tail->timelineY;
+        post->timelineY           = tail->timelineY;
+        tail->timelineY          += post->height;
+        channel->contentBottomY  += post->height;
+        if (tail == head)
+            AddHead((struct List *)&channel->posts, (struct Node *)&post->node);
+        else
+            Insert((struct List *)&channel->posts, (struct Node *)&post->node,
+                   (struct Node *)tail->node.mln_Pred);
+        if (channel == ttl_active(inst))
+            ttl_tiles_invalidate_range(inst, oldTailY, tail->timelineY + tail->height);
+    } else {
+        post->timelineY          = channel->contentBottomY;
+        channel->contentBottomY += post->height;
+        AddTail((struct List *)&channel->posts, (struct Node *)&post->node);
+    }
+
+    /* New content actually landed at the bottom -- let the proximity
+     * trigger in TTL_OnRender fire again once the user scrolls back down
+     * to (the new) bottom. */
+    channel->olderLoadTriggered = FALSE;
+}
+
+/* ------------------------------------------------------------------ */
+/* TTLLoadNewer_Class / TTLLoadOlder_Class -- pinned boundary rows      */
+/*                                                                      */
+/* Both share ttl_boundary_render (fs3etoottimeline_tiles.c) and a      */
+/* fixed one-line height; only TTLLoadNewer_Class has a hot-spot (the   */
+/* "load older" row is proximity-triggered from TTL_OnRender instead -- */
+/* see the TTLItemClass comment in fs3etoottimeline_private.h).         */
+/* ------------------------------------------------------------------ */
+
+static void ttl_boundary_layout(TTLData *inst, TTLPost *post)
+{
+    WORD lineH = inst->lineHeight > 0 ? inst->lineHeight : 14;
+    post->height = lineH + 2 * TTL_POST_PAD_TOP;
+    post->dirty  = TRUE;
+    post->hotSpotsDirty = TRUE;
+}
+
+static void ttl_load_newer_build_hotspots(TTLData *inst, TTLPost *post)
+{
+    post->hotSpotCount = 0;
+    if (post->hotSpotCount < TTL_HOTSPOT_MAX_PER_TOOT) {
+        TTLHotSpot *hs = &post->hotSpots[post->hotSpotCount++];
+        hs->type    = TTL_HOT_LOAD_NEWER;
+        hs->x = 0; hs->y = 0;
+        hs->w = (WORD)inst->gadWidth;
+        hs->h = (WORD)post->height;
+        hs->data = NULL; hs->dataLen = 0;
+    }
+}
+
+const TTLItemClass TTLLoadNewer_Class = {
+    ttl_boundary_layout,
+    ttl_boundary_render,
+    ttl_load_newer_build_hotspots,
+    NULL,  /* activate: the generic ttl_notify_hotspot(TTL_HOT_LOAD_NEWER) already fired */
+    NULL   /* dispose: post->body is a borrowed static literal, nothing to free */
+};
+
+const TTLItemClass TTLLoadOlder_Class = {
+    ttl_boundary_layout,
+    ttl_boundary_render,
+    NULL,  /* buildHotspots: no click target -- see TTL_OnRender's proximity check */
+    NULL,
+    NULL
+};
+
+/* ------------------------------------------------------------------ */
+/* ttl_channel_add_boundaries                                           */
+/*                                                                      */
+/* Pin a "look for something new" row above and a "load more…" row      */
+/* below a channel's real content, right after its first-ever real post */
+/* has already been added (so both land via the same non-empty-list     */
+/* insertion path every later post/append uses -- see                  */
+/* ttl_channel_insert_top/bottom above). Safe to call only once per     */
+/* channel lifetime (see the TTIMELINE_AddPost/AppendPost postCount==0  */
+/* bootstrap branch); allocation failure just leaves that side unpinned */
+/* rather than failing the whole post insertion.                        */
+/* ------------------------------------------------------------------ */
+
+void ttl_channel_add_boundaries(TTLData *inst, TTLChannel *channel)
+{
+    TTLPost *top = ttl_pseudo_post_alloc(&TTLLoadNewer_Class, "Look for something new");
+    TTLPost *bot = ttl_pseudo_post_alloc(&TTLLoadOlder_Class, "Load more\xE2\x80\xA6" /* "Load more…" */);
+
+    if (top) {
+        top->cls->layout(inst, top);
+        ttl_channel_insert_top(inst, channel, top);
+    }
+    if (bot) {
+        bot->cls->layout(inst, bot);
+        ttl_channel_insert_bottom(inst, channel, bot);
+    }
 }

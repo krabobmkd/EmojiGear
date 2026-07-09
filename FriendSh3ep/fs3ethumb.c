@@ -160,6 +160,8 @@ static void FS3EThumb_HandleMake(FS3EThumbMessage *msg)
     BmImageError err = BMIMAGE_OK;
     const char *keyPath = msg->fs3etm_CacheKeyPath[0] ? msg->fs3etm_CacheKeyPath : NULL;
 
+    msg->fs3etm_DetectedFormat = (ULONG)BMFMT_UNKNOWN;
+
     if (BmImage_GenerateScaledBmp(msg->fs3etm_SrcPath, keyPath,
             msg->fs3etm_TargetW, msg->fs3etm_TargetH,
             msg->fs3etm_ThumbPath, sizeof(msg->fs3etm_ThumbPath), &err))
@@ -170,6 +172,11 @@ static void FS3EThumb_HandleMake(FS3EThumbMessage *msg)
     {
         printf("thumb: MAKE failed for %s (err=%d)\n",
                msg->fs3etm_SrcPath, (int)err);
+        /* Only NewDTObject-couldn't-even-open-it is a "what format is
+         * this really" question -- NO_MEMORY/NO_BITMAP/WRITE_FAILED are
+         * different failure classes, sniffing wouldn't explain those. */
+        if (err == BMIMAGE_ERR_OPEN_FAILED)
+            msg->fs3etm_DetectedFormat = (ULONG)BmImage_SniffFormat(msg->fs3etm_SrcPath);
         msg->fs3etm_ThumbPath[0] = '\0';
         msg->fs3etm_Result = FS3ETHUMBR_ERROR;
     }

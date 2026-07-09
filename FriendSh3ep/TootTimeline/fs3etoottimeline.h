@@ -29,7 +29,10 @@
 #define TTIMELINE_ContentBottomY (TTIMELINE_Base + 3)
 /* [IS] struct Screen*: screen for AllocBitMap and colour map */
 /* took from drawinfo #define TTIMELINE_Screen         (TTIMELINE_Base + 5)*/
-/* [S]  TTLPostSetup*: prepend a new post at the top of the timeline */
+/* [S]  TTLPostSetup*: prepend a new post at the top of the timeline,
+ * landing just below the pinned "Look for something new" row if the
+ * channel already has one (see TTLLoadNewer_Class) -- real content never
+ * ends up above it. */
 #define TTIMELINE_AddPost        (TTIMELINE_Base + 6)
 /* [S]  any: remove all posts and free resources */
 #define TTIMELINE_ClearPosts     (TTIMELINE_Base + 7)
@@ -74,6 +77,31 @@
  * had none. Same buffer/pointer as the accompanying
  * TTIMELINE_HotSpotNotify notification's TTIMELINE_LastHotSpotPostId tag. */
 #define TTIMELINE_LastHotSpotPostId  (TTIMELINE_Base + 14)
+/* [G] STRPTR: Mastodon status id (see TTLPostSetup.postId) of the active
+ * channel's newest real post -- skips any non-toot pinned boundary row
+ * (e.g. a "look for something new" item, which has no postId; see
+ * TTLItemClass in fs3etoottimeline_private.h). NULL if the channel has no
+ * post with a known id yet. Read this right before paginating newer
+ * (min_id=this value) so the request is contiguous with what's already
+ * loaded. */
+#define TTIMELINE_NewestPostId       (TTIMELINE_Base + 15)
+/* [G] STRPTR: same, but the active channel's oldest real post (skips a
+ * "load more" pinned row at the bottom). Read this right before
+ * paginating older (max_id=this value). */
+#define TTIMELINE_OldestPostId       (TTIMELINE_Base + 16)
+/* [S] TTLPostSetup*: append a new post at the bottom of the timeline
+ * (mirrors TTIMELINE_AddPost's prepend-at-top), landing just above the
+ * pinned "Load more…" row if the channel already has one -- used for
+ * older-page pagination results, which are contiguous with (i.e. arrive
+ * immediately below) whatever the channel already has at its bottom. */
+#define TTIMELINE_AppendPost         (TTIMELINE_Base + 17)
+/* [S] any: jump the active channel's scroll position to its newest post
+ * (scrollY = contentTopY) -- for opening a channel already showing the
+ * most recent content instead of whatever it was last scrolled to.
+ * Pagination (AddPost/AppendPost past the very first post) never moves
+ * scrollY on its own, so callers should only send this right after a
+ * channel's first-ever page of posts lands. */
+#define TTIMELINE_ScrollToNewest     (TTIMELINE_Base + 18)
 
 /* ------------------------------------------------------------------ */
 /* Notification tags  (sent to ICA_TARGET via OM_NOTIFY)               */
@@ -110,6 +138,20 @@
  * time within a single preview rect -- see TTL_HOT_MEDIA_PREV/NEXT. */
 #define TTL_POST_MAX_MEDIA 4
 
+/* Parallels network_fs3e/fs3enet.h's enum FS3ENetMediaKind, but kept as
+ * its own small set of defines rather than a shared header: TootTimeline
+ * is a self-contained BOOPSI class that doesn't include fs3enet.h.
+ * friendsh3ep.c sits at the boundary and maps one to the other when
+ * building a TTLPostSetup from an FS3ENetStatus, same as it already does
+ * for every other field. TTL_MEDIA_KIND_AUDIO gets a "play" hot-spot
+ * (TTL_HOT_PLAY_AUDIO) in the preview rect instead of a fetched thumbnail
+ * -- see ttl_toot_build_hotspots. */
+#define TTL_MEDIA_KIND_IMAGE   0
+#define TTL_MEDIA_KIND_VIDEO   1
+#define TTL_MEDIA_KIND_GIFV    2
+#define TTL_MEDIA_KIND_AUDIO   3
+#define TTL_MEDIA_KIND_UNKNOWN 4
+
 typedef struct TTLPostSetup {
     const char *username;    /* original author display name (UTF-8) */
     const char *acct;        /* original author @user@instance (UTF-8) */
@@ -126,6 +168,8 @@ typedef struct TTLPostSetup {
                                * string and drives its own fetch/thumbnail/
                                * draw pipeline the same way it does for
                                * avatars -- see AvatarImages_GetMedia. */
+    ULONG       mediaKinds[TTL_POST_MAX_MEDIA]; /* TTL_MEDIA_KIND_* per slot,
+                               * same indexing as mediaUrls. */
     ULONG       mediaCount;   /* 0..TTL_POST_MAX_MEDIA; 0 = no preview rect */
     ULONG       viewModeBits; /* bit i set = also prepend to channel i (see
                                 * TTIMELINE_NUM_VIEWMODES); a post can be
@@ -152,6 +196,11 @@ typedef struct TTLPostSetup {
 #define TTL_HOT_FAVORITE    7
 #define TTL_HOT_MEDIA_PREV  8  /* left-arrow zone inside the preview rect; only present when mediaCount>1 */
 #define TTL_HOT_MEDIA_NEXT  9  /* right-arrow zone inside the preview rect; only present when mediaCount>1 */
+#define TTL_HOT_LOAD_NEWER  10 /* pinned "Look for something new" row was clicked; data/postId are NULL */
+#define TTL_HOT_LOAD_OLDER  11 /* pinned "Load more…" row reached the bottom of the viewport (or was
+                                 * clicked, if it ever grows a hot-spot later); data/postId are NULL */
+#define TTL_HOT_PLAY_AUDIO  12 /* preview rect for an audio attachment (TTL_MEDIA_KIND_AUDIO) -- no
+                                 * thumbnail is ever fetched for these; data = the attachment URL */
 
 /* Opaque handle; cast to TTLHotSpot* from private header if needed */
 typedef struct TTLHotSpot TTLHotSpot;

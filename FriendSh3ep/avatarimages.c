@@ -90,6 +90,22 @@ RgbImage *AvatarImages_ThumbReady(AvatarImages *ai, const char *acct,
     return &e->img;
 }
 
+void AvatarImages_MarkFailed(AvatarImages *ai, const char *acct, UBYTE detectedFormat)
+{
+    AvatarEntry *e = find_or_create(ai, acct);
+    if (!e) return;
+    e->failed         = TRUE;
+    e->detectedFormat = detectedFormat;
+}
+
+BOOL AvatarImages_Failed(AvatarImages *ai, const char *acct, UBYTE *outFormat)
+{
+    AvatarEntry *e = find_entry(ai, acct);
+    if (!e || !e->failed) return FALSE;
+    if (outFormat) *outFormat = e->detectedFormat;
+    return TRUE;
+}
+
 /* ------------------------------------------------------------------ */
 /* Media thumbnail pool -- see the file header comment for why this one  */
 /* is smaller and round-robin evicted instead of ever-growing like the  */
@@ -116,23 +132,25 @@ static ThumbnailEntry *find_or_create_media(AvatarImages *ai, const char *url)
         e = &ai->thumbs[ai->thumbCount++];
     } else {
         /* Round-robin eviction, but never a slot with a fetch/thumbnail
-         * still outstanding (requested but not yet RgbImage_IsLoaded) --
-         * evicting one of those would reset its .requested/.thumbRequested
-         * flags while the network/thumbnail process is still mid-flight on
-         * the RAM:T file that entry's url maps to, letting a later
-         * timeline refresh re-request the same url and start a *second*,
-         * independent fetch/thumbnail chain that ends up racing the first
-         * one over that same file. Search up to a full lap for a slot
-         * that's actually idle (never requested, or already loaded);
-         * if every slot is genuinely in flight (all 32 at once), decline
-         * to track this url this round rather than evict something live --
-         * it'll just get tried again on the next pass. */
+         * still outstanding (requested but not yet RgbImage_IsLoaded and
+         * not failed) -- evicting one of those would reset its
+         * .requested/.thumbRequested flags while the network/thumbnail
+         * process is still mid-flight on the RAM:T file that entry's url
+         * maps to, letting a later timeline refresh re-request the same
+         * url and start a *second*, independent fetch/thumbnail chain
+         * that ends up racing the first one over that same file. A
+         * failed entry has nothing in flight for it anymore, so it's
+         * just as evictable as a loaded one. Search up to a full lap for
+         * a slot that's actually idle; if every slot is genuinely in
+         * flight (all 32 at once), decline to track this url this round
+         * rather than evict something live -- it'll just get tried again
+         * on the next pass. */
         ULONG tries;
         ThumbnailEntry *victim = NULL;
         for (tries = 0; tries < THUMBNAIL_CACHE_MAX; tries++) {
             ULONG idx = (ai->thumbNextEvict + tries) % THUMBNAIL_CACHE_MAX;
             ThumbnailEntry *cand = &ai->thumbs[idx];
-            if (!cand->requested || RgbImage_IsLoaded(&cand->img)) {
+            if (!cand->requested || RgbImage_IsLoaded(&cand->img) || cand->failed) {
                 victim = cand;
                 ai->thumbNextEvict = (idx + 1) % THUMBNAIL_CACHE_MAX;
                 break;
@@ -191,4 +209,20 @@ RgbImage *AvatarImages_MediaThumbReady(AvatarImages *ai, const char *url,
     if (!RgbImage_LoadBmp(&e->img, thumbPath)) return NULL;
 
     return &e->img;
+}
+
+void AvatarImages_MarkMediaFailed(AvatarImages *ai, const char *url, UBYTE detectedFormat)
+{
+    ThumbnailEntry *e = find_or_create_media(ai, url);
+    if (!e) return;
+    e->failed         = TRUE;
+    e->detectedFormat = detectedFormat;
+}
+
+BOOL AvatarImages_MediaFailed(AvatarImages *ai, const char *url, UBYTE *outFormat)
+{
+    ThumbnailEntry *e = find_media_entry(ai, url);
+    if (!e || !e->failed) return FALSE;
+    if (outFormat) *outFormat = e->detectedFormat;
+    return TRUE;
 }

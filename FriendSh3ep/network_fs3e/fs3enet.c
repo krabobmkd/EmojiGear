@@ -15,6 +15,7 @@
 #include <proto/exec.h>
 #include <proto/dos.h>
 
+#include <stdio.h>
 #include <string.h>
 
 #define FS3ENET_STACK_SIZE 16384
@@ -103,25 +104,28 @@ FS3ENetVerifyAccountReq *FS3ENetVerifyAccountReq_Alloc(const char *apiBaseUrl,
 }
 
 FS3ENetTimelineReq *FS3ENetTimelineReq_Alloc(ULONG viewModeBit,
-    const char *apiBaseUrl, const char *accessToken,
-    const char *timeline, const char *maxId)
+    ULONG pageDirection, const char *apiBaseUrl, const char *accessToken,
+    const char *timeline, const char *maxId, const char *minId)
 {
     ULONG total = sizeof(FS3ENetTimelineReq)
                 + FS3ENet_PackLen(apiBaseUrl)
                 + FS3ENet_PackLen(accessToken)
                 + FS3ENet_PackLen(timeline)
-                + FS3ENet_PackLen(maxId);
+                + FS3ENet_PackLen(maxId)
+                + FS3ENet_PackLen(minId);
     FS3ENetTimelineReq *req =
         (FS3ENetTimelineReq *)AllocVec(total, MEMF_ANY);
     char *p;
 
     if (!req) return NULL;
-    req->fs3et_ViewModeBit = viewModeBit;
+    req->fs3et_ViewModeBit   = viewModeBit;
+    req->fs3et_PageDirection = pageDirection;
     p = (char *)req + sizeof(*req);
     FS3ENet_PackStr(&req->fs3et_ApiBaseUrl,   &p, apiBaseUrl);
     FS3ENet_PackStr(&req->fs3et_AccessToken,  &p, accessToken);
     FS3ENet_PackStr(&req->fs3et_Timeline,     &p, timeline);
     FS3ENet_PackStr(&req->fs3et_MaxId,        &p, maxId);
+    FS3ENet_PackStr(&req->fs3et_MinId,        &p, minId);
     return req;
 }
 
@@ -809,16 +813,38 @@ static void FS3ENet_HandleTimeline(FS3ENetMessage *fs3em)
         return;
     }
 
-    printf("net: TIMELINE viewMode=%lu timeline=%s\n",
+    printf("net: TIMELINE viewMode=%lu timeline=%s maxId=%s minId=%s\n",
            req->fs3et_ViewModeBit,
-           req->fs3et_Timeline ? req->fs3et_Timeline : "NULL");
+           req->fs3et_Timeline ? req->fs3et_Timeline : "NULL",
+           (req->fs3et_MaxId && req->fs3et_MaxId[0]) ? req->fs3et_MaxId : "(none)",
+           (req->fs3et_MinId && req->fs3et_MinId[0]) ? req->fs3et_MinId : "(none)");
 
-    if (!FS3EMastodon_GetTimeline(req->fs3et_ApiBaseUrl,
-            req->fs3et_AccessToken,
-            req->fs3et_Timeline, &json)) {
-        printf("net: TIMELINE GetTimeline failed\n");
-        fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
-        return;
+    /* Fold max_id/min_id onto the already-built timeline query string (see
+     * ViewModeTimeline() in friendsh3ep.c, which already does the same for
+     * limit=/local=) -- at most one of the two is ever set (see
+     * FS3ENetPageDirection), so this never produces both. */
+    {
+        char timelineWithPage[300];
+        const char *timeline = req->fs3et_Timeline ? req->fs3et_Timeline : "";
+
+        if (req->fs3et_MaxId && req->fs3et_MaxId[0])
+            snprintf(timelineWithPage, sizeof(timelineWithPage), "%s&max_id=%s",
+                     timeline, req->fs3et_MaxId);
+        else if (req->fs3et_MinId && req->fs3et_MinId[0])
+            snprintf(timelineWithPage, sizeof(timelineWithPage), "%s&min_id=%s",
+                     timeline, req->fs3et_MinId);
+        else {
+            strncpy(timelineWithPage, timeline, sizeof(timelineWithPage) - 1);
+            timelineWithPage[sizeof(timelineWithPage) - 1] = '\0';
+        }
+
+        if (!FS3EMastodon_GetTimeline(req->fs3et_ApiBaseUrl,
+                req->fs3et_AccessToken,
+                timelineWithPage, &json)) {
+            printf("net: TIMELINE GetTimeline failed\n");
+            fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
+            return;
+        }
     }
 
     /* Pass 1: count statuses and compute flat-block size. */
@@ -888,8 +914,9 @@ static void FS3ENet_HandleTimeline(FS3ENetMessage *fs3em)
         fs3em->fs3em_Result = FS3ENETR_NETWORK_ERROR;
         return;
     }
-    reply->fs3et_ViewModeBit = req->fs3et_ViewModeBit;
-    reply->fs3et_Count       = count;
+    reply->fs3et_ViewModeBit   = req->fs3et_ViewModeBit;
+    reply->fs3et_PageDirection = req->fs3et_PageDirection;
+    reply->fs3et_Count         = count;
 
     /* Pass 2: pack strings into the block. */
     {
@@ -949,13 +976,29 @@ static void FS3ENet_HandleTimeline(FS3ENetMessage *fs3em)
                 for (mi = 0; mi < mCount; mi++) {
                     const cJSON *att  = cJSON_GetArrayItem(v, mi);
                     const cJSON *purl = att ? cJSON_GetObjectItemCaseSensitive(att, "preview_url") : NULL;
+                    const cJSON *typeV;
+                    const char  *typeStr;
                     if (!purl || !cJSON_IsString(purl) || !purl->valuestring)
                         purl = att ? cJSON_GetObjectItemCaseSensitive(att, "url") : NULL;
                     str = (purl && cJSON_IsString(purl)) ? purl->valuestring : "";
                     FS3ENet_PackStr(&statuses[i].fmas_MediaUrls[mi], &p, str);
+
+                    /* "image"/"video"/"gifv"/"audio"/"unknown" -- lets the
+                     * GUI skip fetching a thumbnail for audio entirely
+                     * instead of routing its (fallback, no-preview) full
+                     * file URL into the image decoder. */
+                    typeV   = att ? cJSON_GetObjectItemCaseSensitive(att, "type") : NULL;
+                    typeStr = (typeV && cJSON_IsString(typeV)) ? typeV->valuestring : "";
+                    if      (strcmp(typeStr, "image") == 0) statuses[i].fmas_MediaKind[mi] = FS3ENET_MEDIAKIND_IMAGE;
+                    else if (strcmp(typeStr, "video") == 0) statuses[i].fmas_MediaKind[mi] = FS3ENET_MEDIAKIND_VIDEO;
+                    else if (strcmp(typeStr, "gifv")  == 0) statuses[i].fmas_MediaKind[mi] = FS3ENET_MEDIAKIND_GIFV;
+                    else if (strcmp(typeStr, "audio") == 0) statuses[i].fmas_MediaKind[mi] = FS3ENET_MEDIAKIND_AUDIO;
+                    else                                     statuses[i].fmas_MediaKind[mi] = FS3ENET_MEDIAKIND_UNKNOWN;
                 }
-                for (; mi < FS3ENET_MAX_MEDIA; mi++)
+                for (; mi < FS3ENET_MAX_MEDIA; mi++) {
                     statuses[i].fmas_MediaUrls[mi] = NULL;
+                    statuses[i].fmas_MediaKind[mi] = FS3ENET_MEDIAKIND_UNKNOWN;
+                }
                 statuses[i].fmas_MediaCount = (ULONG)mCount;
             }
 

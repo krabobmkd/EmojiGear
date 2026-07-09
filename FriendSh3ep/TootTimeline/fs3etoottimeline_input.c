@@ -118,30 +118,29 @@ static BOOL ttl_hit_hotspot(TTLData *inst, WORD gadX, WORD gadY,
  * plus the hot-spot's string data and the owning post's Mastodon status
  * id, both as persistent gadget-owned buffers external code can read off
  * the same notify's tag list (or via TTIMELINE_LastHotSpotString/PostId
- * GetAttr afterwards). Also still bdbprintf's for local debugging --
- * HandleInput can run from a device/interrupt-like context (see
- * bdbprintf.h), so bdbprintf() is the only safe way to print here, plain
- * printf() can crash.
- *
- * TTL_HOT_MEDIA_PREV/NEXT additionally have a real local effect: browse
- * to the prev/next attachment within the post's single preview rect and
- * ask for a redraw.
- *
- * hs->data is a borrowed, non-NUL-terminated (pointer, byteLen) pair (see
- * the TTLHotSpot comment in fs3etoottimeline_private.h) -- "%.*s" prints
- * exactly hs->dataLen bytes from it rather than reading until a NUL that
- * may be far past the token. */
+ * GetAttr afterwards) -- generic across every item kind, so it happens
+ * here rather than in a per-class hook. Whatever the clicked item's own
+ * class wants to do locally beyond that (see TTL_HOT_MEDIA_PREV/NEXT
+ * below) is item->cls->activate's job -- see the TTLItemClass comment in
+ * fs3etoottimeline_private.h. */
 static void ttl_activate_hotspot(TTLData *inst, Class *cl, Object *o,
                                   struct GadgetInfo *gi,
                                   TTLPost *post, TTLHotSpot *hs)
 {
-/*
-    bdbprintf("TootTimeline: hot-spot clicked, type=%u data=\"%.*s\"\n",
-              (unsigned)hs->type, (int)hs->dataLen,
-              hs->data ? hs->data : "");
-*/
     ttl_notify_hotspot(cl, o, gi, hs->type, hs->data, hs->dataLen, post->postId);
 
+    if (post->cls && post->cls->activate)
+        post->cls->activate(inst, cl, o, gi, post, hs);
+}
+
+/* TTLItemClass.activate for TTLToot_Class: TTL_HOT_MEDIA_PREV/NEXT browse
+ * to the prev/next attachment within the post's single preview rect and
+ * ask for a redraw. Every other hot-spot type has no local reaction --
+ * the generic notify above (ttl_notify_hotspot) is already everything
+ * external code needs. */
+void ttl_toot_activate(TTLData *inst, Class *cl, Object *o,
+                        struct GadgetInfo *gi, TTLPost *post, TTLHotSpot *hs)
+{
     if ((hs->type == TTL_HOT_MEDIA_PREV || hs->type == TTL_HOT_MEDIA_NEXT) &&
         post->mediaCount > 1)
     {
@@ -259,19 +258,30 @@ ULONG TTL_OnHandleInput(Class *cl, Object *o, struct gpInput *msg)
             if (dx < TTL_CLICK_SLOP && dy < TTL_CLICK_SLOP) {
                 TTLPost *downPost, *upPost;
                 UBYTE    downIdx,  upIdx;
+                BOOL     downHit, upHit;
 
-                BOOL downHit = ttl_hit_hotspot(inst, inst->dragStartGadX,
-                                                inst->dragStartGadY,
-                                                &downPost, &downIdx);
-                BOOL upHit   = ttl_hit_hotspot(inst, msg->gpi_Mouse.X,
-                                                msg->gpi_Mouse.Y,
-                                                &upPost, &upIdx);
+                /* GM_HANDLEINPUT can run on a different task than
+                 * GM_RENDER/TTIMELINE_AddPost -- see the listSem comment
+                 * in fs3etoottimeline_private.h. Held across both hit
+                 * tests and the activation itself so a post can't be
+                 * spliced/removed out from under downPost/upPost between
+                 * the two hits or before dereferencing them. */
+                ObtainSemaphore(&inst->listSem);
+
+                downHit = ttl_hit_hotspot(inst, inst->dragStartGadX,
+                                           inst->dragStartGadY,
+                                           &downPost, &downIdx);
+                upHit   = ttl_hit_hotspot(inst, msg->gpi_Mouse.X,
+                                           msg->gpi_Mouse.Y,
+                                           &upPost, &upIdx);
 
                 if (downHit && upHit && downPost == upPost && downIdx == upIdx) {
                     TTLHotSpot *hs = &upPost->hotSpots[upIdx];
 
                     ttl_activate_hotspot(inst, cl, o, msg->gpi_GInfo, upPost, hs);
                 }
+
+                ReleaseSemaphore(&inst->listSem);
             }
             return GMR_NOREUSE;
         }

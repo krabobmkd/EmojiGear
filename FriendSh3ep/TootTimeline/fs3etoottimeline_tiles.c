@@ -37,6 +37,7 @@
 
 #include "fs3etoottimeline_private.h"
 #include "../avatarimages.h"
+#include "../bmimage.h"
 #include "../bdbprintf.h"
 
 /* ------------------------------------------------------------------ */
@@ -280,31 +281,21 @@ static void tile_draw_text_n(struct RastPort *rp, WORD x, WORD y,
 }
 
 /* ------------------------------------------------------------------ */
-/* ttl_render_tile                                                      */
+/* ttl_toot_render -- TTLItemClass.render for TTLToot_Class             */
 /*                                                                      */
-/* Draw all posts that overlap this tile into its bitmap.               */
+/* Draw one toot into rp at (post->timelineY - tileBaseY). Caller       */
+/* (ttl_render_tile) has already ensured post->hotSpots is fresh, filled */
+/* the tile background, and draws the post-bottom separator itself      */
+/* after this returns -- both are generic across every item kind.       */
 /* ------------------------------------------------------------------ */
 
-void ttl_render_tile(TTLData *inst, TTLTile *tile)
+void ttl_toot_render(TTLData *inst, struct RastPort *rp, TTLPost *post, LONG tileBaseY)
 {
-    struct RastPort *rp;
-    LONG             tileBaseY = tile->tileBaseY;
-    WORD             avatarW, padLeft, avatarGap;
-    WORD             textX;
-    TTLPost         *post;
-    LONG bgpen;
-//bdbprintf("ttl_render_tile\n");
-    if (!inst->tileLayer) return;
-
-    bgpen = (LONG)FS3E_PEN(inst->style, FS3E_COLOR_TIMELINE_BG);
-// bdbprintf("ttl bgpen:%d\n",bgpen);
-    /* Swap this tile's bitmap into the shared Layer's RastPort */
-    inst->tileLayer->rp->BitMap = tile->bm;
-    rp = inst->tileLayer->rp;
-
-    /* Background fill */
-    SetAPen(rp, bgpen);
-    RectFill(rp, 0, 0, inst->gadWidth - 1, TTL_TILE_HEIGHT - 1);
+    WORD  avatarW, padLeft, avatarGap;
+    WORD  textX;
+    LONG  bgpen = (LONG)FS3E_PEN(inst->style, FS3E_COLOR_TIMELINE_BG);
+    /* drawY = Y within tile of the post top (may be negative) */
+    WORD  drawY = (WORD)(post->timelineY - tileBaseY);
 
     if (inst->style && inst->style->avatarSize > 0) {
         avatarW  = inst->style->avatarSize;
@@ -317,30 +308,9 @@ void ttl_render_tile(TTLData *inst, TTLTile *tile)
     }
     textX = (WORD)(padLeft + avatarW + avatarGap);
 
-    /* Walk the active channel's posts; they are sorted newest-first but
-     * their Y values are consecutive, so we can stop as soon as
-     * post->timelineY >= tileBaseY+TILE_H */
-    for (post = (TTLPost *)ttl_active(inst)->posts.mlh_Head;
-         post->node.mln_Succ;
-         post = (TTLPost *)post->node.mln_Succ)
+    /* ---- Avatar: draw from cache if available, else placeholder ---- */
     {
-        LONG postTop = post->timelineY;
-        LONG postBot = postTop + post->height;
-
-        if (postBot  <= tileBaseY)                  continue;
-        if (postTop  >= tileBaseY + TTL_TILE_HEIGHT) break;
-
-        /* drawY = Y within tile of the post top (may be negative) */
-        WORD drawY = (WORD)(postTop - tileBaseY);
-
-        /* Pool-backed hot-spots (avatar/profile/@mention/#hashtag/URL/
-         * media/Reply/Boost/Fave) -- cheap no-op if already fresh. Must
-         * run before anything below reads post->hotSpots. */
-        ttl_post_ensure_hotspots(inst, post);
-
-        /* ---- Avatar: draw from cache if available, else placeholder ---- */
-        {
-            WORD ay = (WORD)(drawY + TTL_POST_PAD_TOP);
+        WORD ay = (WORD)(drawY + TTL_POST_PAD_TOP);
             WORD ax = padLeft;
             WORD as = avatarW;
             RgbImage *avImg = inst->avatarImages
@@ -488,6 +458,32 @@ void ttl_render_tile(TTLData *inst, TTLTile *tile)
                     TTLHotSpot *hs = &post->hotSpots[hi];
                     WORD rx, ry;
                     RgbImage *thumb;
+
+                    /* Audio attachment: no thumbnail was ever fetched for
+                     * this slot (see friendsh3ep.c's FETCH_IMAGE loop) --
+                     * just a filled rect with a centered play glyph,
+                     * same pattern as the prev/next arrows below. */
+                    if (hs->type == TTL_HOT_PLAY_AUDIO) {
+                        const char *glyph = "\xE2\x96\xB6"; /* ▶ */
+                        struct URPTextMetric m;
+                        struct URPTextPos    pos;
+                        LONG nc;
+
+                        rx = hs->x;
+                        ry = (WORD)(drawY + hs->y);
+                        SetAPen(rp, (LONG)FS3E_PEN(inst->style, FS3E_COLOR_ACCENT));
+                        RectFill(rp, rx, ry, (WORD)(rx + hs->w - 1), (WORD)(ry + hs->h - 1));
+
+                        nc = utf8_codepoints_range(glyph, glyph + strlen(glyph));
+                        URPDC_SetDrawColorFromPen(dcBody, inst->screen,
+                            (LONG)FS3E_PEN(inst->style, FS3E_COLOR_ACTION_TEXT), bgPen);
+                        URPDC_TextSizeUTF8(dcBody, glyph, nc, &m);
+                        pos.x = (WORD)(rx + (hs->w - m.width) / 2);
+                        pos.y = (WORD)(ry + (hs->h - inst->lineHeight) / 2 + inst->lineAscent);
+                        URPDrawTextUTF8(rp, dcBody, &pos, glyph, (ULONG)nc);
+                        continue;
+                    }
+
                     if (hs->type != TTL_HOT_IMAGE) continue;
                     rx = hs->x;
                     ry = (WORD)(drawY + hs->y);
@@ -520,8 +516,29 @@ void ttl_render_tile(TTLData *inst, TTLTile *tile)
                         RgbImage_DrawScaled(thumb, rp, inst->screen, inst->style->dcNormal,
                                              bx, by, (UWORD)dw, (UWORD)dh);
                     } else {
+                        UBYTE fmt = BMFMT_UNKNOWN;
+                        BOOL  failed = (inst->avatarImages && hs->data)
+                                     && AvatarImages_MediaFailed(inst->avatarImages, hs->data, &fmt);
+
                         SetAPen(rp, (LONG)FS3E_PEN(inst->style, FS3E_COLOR_ACCENT));
                         RectFill(rp, rx, ry, (WORD)(rx + hs->w - 1), (WORD)(ry + hs->h - 1));
+
+                        /* Decode failed and the source sniffed as WebP
+                         * (see BmImage_SniffFormat) -- say so instead of
+                         * leaving a bare box with no explanation. */
+                        if (failed && fmt == BMFMT_WEBP) {
+                            const char *label = "webp";
+                            struct URPTextMetric m;
+                            struct URPTextPos    pos;
+                            LONG nc = utf8_codepoints_range(label, label + strlen(label));
+
+                            URPDC_SetDrawColorFromPen(dcBody, inst->screen,
+                                (LONG)FS3E_PEN(inst->style, FS3E_COLOR_ACTION_TEXT), bgPen);
+                            URPDC_TextSizeUTF8(dcBody, label, nc, &m);
+                            pos.x = (WORD)(rx + (hs->w - m.width) / 2);
+                            pos.y = (WORD)(ry + (hs->h - inst->lineHeight) / 2 + inst->lineAscent);
+                            URPDrawTextUTF8(rp, dcBody, &pos, label, (ULONG)nc);
+                        }
                     }
                 }
 
@@ -549,6 +566,41 @@ void ttl_render_tile(TTLData *inst, TTLTile *tile)
                         pos.y = (WORD)(drawY + hs->y + (hs->h - inst->lineHeight) / 2 + inst->lineAscent);
                         URPDrawTextUTF8(rp, dcBody, &pos, glyph, (ULONG)nc);
                     }
+                }
+
+                /* Attachment counter ("1/2"), pinned to the bottom-right
+                 * corner of the preview rect whenever there's more than
+                 * one to browse between (same condition as the prev/next
+                 * arrows above) -- background-filled so it stays legible
+                 * over any image content, not just plain-colored ones. */
+                if (post->mediaCount > 1) {
+                    char  counter[16];
+                    struct URPTextMetric m;
+                    struct URPTextPos    pos;
+                    LONG  nc;
+                    WORD  padX = 3, padY = 1;
+                    WORD  boxW, boxH, boxX, boxY;
+
+                    snprintf(counter, sizeof(counter), "%lu/%lu",
+                             (unsigned long)(post->mediaCurrentIndex + 1),
+                             (unsigned long)post->mediaCount);
+                    nc = utf8_codepoints_range(counter, counter + strlen(counter));
+                    URPDC_TextSizeUTF8(dcBody, counter, nc, &m);
+
+                    boxW = (WORD)(m.width + padX * 2);
+                    boxH = (WORD)(inst->lineHeight + padY * 2);
+                    boxX = (WORD)(post->previewX + post->previewW - boxW);
+                    boxY = (WORD)(drawY + post->previewY + post->previewH - boxH);
+
+                    SetAPen(rp, (LONG)FS3E_PEN(inst->style, FS3E_COLOR_ACCENT));
+                    RectFill(rp, boxX, boxY, (WORD)(boxX + boxW - 1), (WORD)(boxY + boxH - 1));
+
+                    URPDC_SetDrawColorFromPen(dcBody, inst->screen,
+                        (LONG)FS3E_PEN(inst->style, FS3E_COLOR_ACTION_TEXT),
+                        (LONG)FS3E_PEN(inst->style, FS3E_COLOR_ACCENT));
+                    pos.x = (WORD)(boxX + padX);
+                    pos.y = (WORD)(boxY + padY + inst->lineAscent);
+                    URPDrawTextUTF8(rp, dcBody, &pos, counter, (ULONG)nc);
                 }
 
                 /* Action bar: ↩ Reply  🔁 Boost  💫 Fave — right-aligned, normal
@@ -585,8 +637,86 @@ void ttl_render_tile(TTLData *inst, TTLTile *tile)
                 }
             }
         }
+}
 
-        /* ---- Separator line at post bottom ---- */
+/* ------------------------------------------------------------------ */
+/* ttl_boundary_render -- TTLItemClass.render for TTLLoadNewer_Class /  */
+/* TTLLoadOlder_Class: a single centered line drawn from post->body.    */
+/* ------------------------------------------------------------------ */
+
+void ttl_boundary_render(TTLData *inst, struct RastPort *rp, TTLPost *post, LONG tileBaseY)
+{
+    WORD  drawY = (WORD)(post->timelineY - tileBaseY);
+    LONG  bgPen  = (LONG)FS3E_PEN(inst->style, FS3E_COLOR_TIMELINE_BG);
+    LONG  txtPen = (LONG)FS3E_PEN(inst->style, FS3E_COLOR_ACCENT);
+    struct URPDrawContext *dc = inst->style ? inst->style->dcNormal : NULL;
+
+    if (!dc || !post->body || !post->body[0]) return;
+
+    {
+        struct URPTextMetric m;
+        struct URPTextPos    pos;
+        LONG nc = utf8_codepoints_range(post->body, post->body + strlen(post->body));
+
+        URPDC_SetDrawColorFromPen(dc, inst->screen, txtPen, bgPen);
+        URPDC_TextSizeUTF8(dc, post->body, nc, &m);
+
+        pos.x = (WORD)((inst->gadWidth - m.width) / 2);
+        pos.y = (WORD)(drawY + (post->height - inst->lineHeight) / 2 + inst->lineAscent);
+        URPDrawTextUTF8(rp, dc, &pos, post->body, (ULONG)nc);
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* ttl_render_tile                                                      */
+/*                                                                      */
+/* Draw every item that overlaps this tile into its bitmap, dispatching */
+/* per-item drawing through item->cls->render -- see the TTLItemClass   */
+/* comment in fs3etoottimeline_private.h. The tile background fill and  */
+/* the post-bottom separator line are the same for every item kind, so  */
+/* they stay here rather than being duplicated per class.               */
+/* ------------------------------------------------------------------ */
+
+void ttl_render_tile(TTLData *inst, TTLTile *tile)
+{
+    struct RastPort *rp;
+    LONG             tileBaseY = tile->tileBaseY;
+    TTLPost         *post;
+    LONG bgpen;
+//bdbprintf("ttl_render_tile\n");
+    if (!inst->tileLayer) return;
+
+    bgpen = (LONG)FS3E_PEN(inst->style, FS3E_COLOR_TIMELINE_BG);
+// bdbprintf("ttl bgpen:%d\n",bgpen);
+    /* Swap this tile's bitmap into the shared Layer's RastPort */
+    inst->tileLayer->rp->BitMap = tile->bm;
+    rp = inst->tileLayer->rp;
+
+    /* Background fill */
+    SetAPen(rp, bgpen);
+    RectFill(rp, 0, 0, inst->gadWidth - 1, TTL_TILE_HEIGHT - 1);
+
+    /* Walk the active channel's items; they are sorted newest-first but
+     * their Y values are consecutive, so we can stop as soon as
+     * item->timelineY >= tileBaseY+TILE_H */
+    for (post = (TTLPost *)ttl_active(inst)->posts.mlh_Head;
+         post->node.mln_Succ;
+         post = (TTLPost *)post->node.mln_Succ)
+    {
+        LONG postTop = post->timelineY;
+        LONG postBot = postTop + post->height;
+
+        if (postBot  <= tileBaseY)                  continue;
+        if (postTop  >= tileBaseY + TTL_TILE_HEIGHT) break;
+
+        /* Pool-backed hot-spots -- cheap no-op if already fresh. Must run
+         * before item->cls->render, which may read post->hotSpots. */
+        ttl_post_ensure_hotspots(inst, post);
+
+        if (post->cls && post->cls->render)
+            post->cls->render(inst, rp, post, tileBaseY);
+
+        /* ---- Separator line at post bottom (every item kind) ---- */
         {
             WORD sepY = (WORD)(postBot - 1 - tileBaseY);
             SetAPen(rp, (LONG)FS3E_PEN(inst->style, FS3E_COLOR_ACCENT));

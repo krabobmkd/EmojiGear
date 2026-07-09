@@ -37,6 +37,7 @@
 #include <exec/types.h>
 #include <exec/lists.h>
 #include <exec/memory.h>
+#include <exec/semaphores.h>
 #include <graphics/rastport.h>
 #include <graphics/gfx.h>
 #include <graphics/layers.h>
@@ -204,11 +205,61 @@ typedef struct {
 } TTLTextSpan;
 
 /* ------------------------------------------------------------------ */
-/* TTLPost — one post entry in the timeline                             */
+/* TTLItemClass — vtable that makes a TTLPost node "one of several kinds */
+/* of list row" instead of always being a toot. A toot is the first and */
+/* still the richest implementation (TTLToot_Class, defined in           */
+/* fs3etoottimeline_posts.c); non-toot rows (load-more/load-newer        */
+/* boundary items, later notifications/news) reuse the exact same        */
+/* TTLPost node shape, tile/scroll/hit-testing machinery, and hot-spot   */
+/* pool, just via a different class pointer. Every TTLPost sets its      */
+/* ->cls exactly once, at allocation.                                    */
+/* ------------------------------------------------------------------ */
+
+struct TTLPost;
+typedef struct TTLData TTLData;
+
+typedef struct TTLItemClass {
+    /* Compute item->height and (if it has any) rebuild item->textSpans.
+     * Called whenever the item is added, or the gadget width/font
+     * changes (see ttl_layout_all_posts). */
+    void (*layout)(TTLData *inst, struct TTLPost *item);
+
+    /* Draw the item into rp at (item->timelineY - tileBaseY). Called once
+     * per visible item per tile (re)render, right after
+     * ttl_post_ensure_hotspots -- see ttl_render_tile. The tile
+     * background fill and the post-bottom separator line are drawn by
+     * the generic caller, not here. */
+    void (*render)(TTLData *inst, struct RastPort *rp,
+                    struct TTLPost *item, LONG tileBaseY);
+
+    /* (Re)build item->hotSpots[0..hotSpotCount) in place -- caller
+     * (ttl_post_ensure_hotspots) has already pointed item->hotSpots at a
+     * pool bucket. May leave hotSpotCount at 0 (e.g. a proximity-
+     * triggered item with no click target). */
+    void (*buildHotspots)(TTLData *inst, struct TTLPost *item);
+
+    /* React to one of this item's own hot-spots being clicked, after the
+     * generic ttl_notify_hotspot() (TTIMELINE_HotSpotNotify) has already
+     * fired for every item kind alike. NULL if the class has nothing
+     * kind-specific to do locally (the notify alone is enough). */
+    void (*activate)(TTLData *inst, Class *cl, Object *o,
+                      struct GadgetInfo *gi, struct TTLPost *item,
+                      TTLHotSpot *hs);
+
+    /* Free whatever content the item owns beyond the bare TTLPost node
+     * (strings, media URLs, ...). NULL if there's nothing beyond that. */
+    void (*dispose)(struct TTLPost *item);
+} TTLItemClass;
+
+/* ------------------------------------------------------------------ */
+/* TTLPost — one row entry in the timeline (a toot, or another item     */
+/* kind -- see TTLItemClass above)                                      */
 /* ------------------------------------------------------------------ */
 
 typedef struct TTLPost {
     struct MinNode  node;         /* doubly-linked in one TTLChannel.posts, newest=head */
+
+    const TTLItemClass *cls;      /* set once at allocation; never NULL */
 
     LONG   timelineY;             /* Y of post top in timeline coordinates */
     LONG   height;                /* computed pixel height of this post */
@@ -226,8 +277,12 @@ typedef struct TTLPost {
     /* Media attachment preview URLs (AllocVec'd copies), NULL past
      * mediaCount. mediaCurrentIndex is which one is currently shown in
      * the single preview rect below -- browsed via TTL_HOT_MEDIA_PREV/
-     * NEXT, not separate rects per image. */
+     * NEXT, not separate rects per image. mediaKinds is TTL_MEDIA_KIND_*
+     * per slot, same indexing -- TTL_MEDIA_KIND_AUDIO gets a
+     * TTL_HOT_PLAY_AUDIO hot-spot instead of a fetched thumbnail, see
+     * ttl_toot_build_hotspots/ttl_toot_render. */
     char  *mediaUrls[TTL_POST_MAX_MEDIA];
+    ULONG  mediaKinds[TTL_POST_MAX_MEDIA];
     ULONG  mediaCount;
     ULONG  mediaCurrentIndex;
 
@@ -257,17 +312,45 @@ typedef struct {
     LONG    scrollY;              /* timeline Y at gadget top */
     LONG    contentTopY;          /* Y of topmost post's top edge */
     LONG    contentBottomY;       /* Y one pixel past the last post's bottom edge */
+
+    /* TRUE once the pinned "load older" row (TTLLoadOlder_Class, see
+     * ttl_channel_add_boundaries) has already fired its proximity-
+     * triggered TTL_HOT_LOAD_OLDER notify for the current bottom-of-list
+     * position -- latches so GM_RENDER doesn't refire it every redraw
+     * while the user stays scrolled to the bottom waiting for a reply.
+     * Reset to FALSE whenever new older content actually lands (see
+     * ttl_channel_insert_bottom), so the next arrival at the (new)
+     * bottom can trigger again. */
+    BOOL    olderLoadTriggered;
 } TTLChannel;
 
 /* ------------------------------------------------------------------ */
 /* TTLData — per-instance INST_DATA block                               */
 /* ------------------------------------------------------------------ */
 
-typedef struct {
+typedef struct TTLData {
     /* Screen for AllocBitMap and colour mapping */
     struct Screen *screen;
     /* layout and draw are only allowed on the process that own the gadget */
     struct Task         *callerTask;
+
+    /* BOOPSI gadget methods are not all guaranteed to run on the same
+     * task: GM_HANDLEINPUT for an active gadget can be dispatched from
+     * input.device's own task chain (see the comment at the top of
+     * fs3etoottimeline_input.c), while TTIMELINE_AddPost/AppendPost and
+     * GM_RENDER normally run on callerTask -- so a click's hit-test walk
+     * can run concurrently, on a different task, with a post being
+     * spliced into the very same channels[].posts list. Every place that
+     * walks or mutates a channel's post list (insert/remove, tile
+     * render's post loop, GM_LAYOUT's relayout, hit-testing, the
+     * OldestPostId/NewestPostId GetAttr walks) must hold this for the
+     * duration -- see ttl_apply_tags/TTL_OnGet/TTL_OnRender/
+     * TTL_OnHandleInput. AmigaOS SignalSemaphores nest safely for the
+     * same task re-obtaining, but locked sections here still release
+     * before making any synchronous nested BOOPSI call (e.g. the
+     * GM_RENDER kicked off at the end of ttl_apply_tags) to keep that
+     * invariant simple rather than relying on it. */
+    struct SignalSemaphore listSem;
 
     /* Font metrics derived from style->dc* (updated when TTIMELINE_Style is set).
      * Cached here so post-layout code doesn't call GetFontLineMetrics every time. */
@@ -441,13 +524,49 @@ ULONG TTL_OnGoInactive (Class *cl, Object *o, struct gpGoInactive *msg);
 
 /* fs3etoottimeline_posts.c */
 TTLPost *ttl_post_alloc        (const TTLPostSetup *setup);
+TTLPost *ttl_pseudo_post_alloc (const TTLItemClass *cls, const char *label);
 void     ttl_post_free         (TTLData *inst, TTLPost *post);
-void     ttl_post_layout       (TTLData *inst, TTLPost *post);
 void     ttl_layout_all_posts  (TTLData *inst);
 void     ttl_clear_channel     (TTLData *inst, ULONG ch);
 void     ttl_clear_posts       (TTLData *inst);
 void     ttl_rebuild_ypositions(TTLData *inst, ULONG ch);
 void     ttl_post_ensure_hotspots(TTLData *inst, TTLPost *post);
+
+/* Boundary-aware insertion, used by both TTIMELINE_AddPost (top) and
+ * TTIMELINE_AppendPost (bottom) -- lands real content between a channel's
+ * pinned TTLLoadNewer_Class/TTLLoadOlder_Class rows and the rest, instead
+ * of ever ending up above/below them. Caller must guarantee the channel's
+ * post list is already non-empty (i.e. not the very-first-post bootstrap
+ * case, which anchors at Y=0 itself -- see TTIMELINE_AddPost). */
+void     ttl_channel_insert_top   (TTLData *inst, TTLChannel *channel, TTLPost *post);
+void     ttl_channel_insert_bottom(TTLData *inst, TTLChannel *channel, TTLPost *post);
+/* Pin the "look for something new" / "load more" rows around a channel's
+ * first-ever real post, right after it's been added. No-op fields left at
+ * zero/NULL are fine to skip on allocation failure -- see the .c file. */
+void     ttl_channel_add_boundaries(TTLData *inst, TTLChannel *channel);
+
+/* TTLToot_Class member functions that live outside posts.c (the file that
+ * defines the TTLToot_Class table itself) -- see the TTLItemClass comment
+ * above for what each does. */
+extern const TTLItemClass TTLToot_Class;
+void     ttl_toot_render  (TTLData *inst, struct RastPort *rp,
+                           TTLPost *item, LONG tileBaseY);          /* fs3etoottimeline_tiles.c */
+void     ttl_toot_activate(TTLData *inst, Class *cl, Object *o,
+                           struct GadgetInfo *gi, TTLPost *item,
+                           TTLHotSpot *hs);                         /* fs3etoottimeline_input.c */
+
+/* Pinned boundary-row classes (see ttl_channel_add_boundaries). Both share
+ * ttl_toot_render's sibling ttl_boundary_render (fs3etoottimeline_tiles.c)
+ * -- a centered single-line label drawn from post->body. Neither needs
+ * .activate: TTLLoadNewer_Class's one hot-spot (TTL_HOT_LOAD_NEWER) is
+ * enough on its own via the generic ttl_notify_hotspot() every hot-spot
+ * click already fires; TTLLoadOlder_Class has no hot-spot at all -- it is
+ * triggered by scroll proximity in TTL_OnRender instead (see
+ * fs3etoottimeline_render.c), which calls ttl_notify_hotspot() directly. */
+extern const TTLItemClass TTLLoadNewer_Class;
+extern const TTLItemClass TTLLoadOlder_Class;
+void     ttl_boundary_render(TTLData *inst, struct RastPort *rp,
+                              TTLPost *item, LONG tileBaseY);       /* fs3etoottimeline_tiles.c */
 
 /* fs3etoottimeline_tiles.c */
 BOOL     ttl_tiles_alloc  (TTLData *inst, struct RastPort *rp);

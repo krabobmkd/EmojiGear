@@ -27,6 +27,14 @@ ULONG ttl_apply_tags(Class *cl, Object *o, struct opSet *msg, int couldRefreshDr
     int redraw = FALSE;
     int used = 0;
 
+    /* AddPost/AppendPost/ClearPosts (and everything else here) touch
+     * channel post lists / scroll state that GM_RENDER and GM_HANDLEINPUT
+     * also touch, possibly from a different task -- see the listSem
+     * comment in fs3etoottimeline_private.h. Released before the
+     * nested GM_RENDER call below so that call re-acquires independently
+     * rather than relying on same-task semaphore nesting. */
+    ObtainSemaphore(&inst->listSem);
+
     while ((tag = NextTagItem(&tstate))) {
         switch (tag->ti_Tag) {
             case TTIMELINE_DpiHeight:
@@ -114,22 +122,31 @@ ULONG ttl_apply_tags(Class *cl, Object *o, struct opSet *msg, int couldRefreshDr
                         if (!post) continue;
 
                         channel = &inst->channels[ch];
-                        ttl_post_layout(inst, post);
+                        if (post->cls && post->cls->layout)
+                            post->cls->layout(inst, post);
 
                         if (channel->postCount == 0) {
-                            /* Very first post in this channel: anchor at Y=0 */
+                            /* Very first real post in this channel: anchor
+                             * at Y=0 -- the list is still empty here, so a
+                             * bare AddHead is safe (ttl_channel_insert_top
+                             * assumes a non-empty list, see its comment). */
                             channel->contentTopY    = 0;
                             channel->contentBottomY = post->height;
                             post->timelineY         = 0;
+                            AddHead((struct List *)&channel->posts, (struct Node *)&post->node);
+                            channel->postCount++;
+                            /* Now that there's real content, pin the
+                             * "look for something new" / "load more…" rows
+                             * around it. */
+                            ttl_channel_add_boundaries(inst, channel);
                         } else {
-                            /* Prepend: new post goes above the current top.
-                             * scrollY stays fixed so the user sees the same view. */
-                            channel->contentTopY -= post->height;
-                            post->timelineY        = channel->contentTopY;
+                            /* Prepend: new post goes above the current top
+                             * (below a pinned "load newer" row, if any).
+                             * scrollY stays fixed so the user sees the same
+                             * view. */
+                            ttl_channel_insert_top(inst, channel, post);
+                            channel->postCount++;
                         }
-
-                        AddHead((struct List *)&channel->posts, (struct Node *)&post->node);
-                        channel->postCount++;
 
                         /* Tiles only ever reflect the active channel. */
                         if (ch == inst->viewMode)
@@ -141,6 +158,76 @@ ULONG ttl_apply_tags(Class *cl, Object *o, struct opSet *msg, int couldRefreshDr
                         used = 1;
                     }
                 }
+                break;
+            }
+
+            case TTIMELINE_AppendPost: {
+                const TTLPostSetup *setup = (const TTLPostSetup *)tag->ti_Data;
+                if (setup) {
+                    ULONG ch;
+                    for (ch = 0; ch < TTIMELINE_NUM_VIEWMODES; ch++) {
+                        TTLChannel *channel;
+                        TTLPost    *post;
+
+                        if (!(setup->viewModeBits & (1UL << ch))) continue;
+
+                        post = ttl_post_alloc(setup);
+                        if (!post) continue;
+
+                        channel = &inst->channels[ch];
+                        if (post->cls && post->cls->layout)
+                            post->cls->layout(inst, post);
+
+                        if (channel->postCount == 0) {
+                            /* Shouldn't normally happen (an older-page
+                             * reply implies there was already something to
+                             * paginate from), but stay safe/consistent with
+                             * AddPost's own bootstrap rather than touching
+                             * an empty list's head/tail as real nodes. */
+                            channel->contentTopY    = 0;
+                            channel->contentBottomY = post->height;
+                            post->timelineY         = 0;
+                            AddHead((struct List *)&channel->posts, (struct Node *)&post->node);
+                            channel->postCount++;
+                            ttl_channel_add_boundaries(inst, channel);
+                        } else {
+                            /* Append: new post goes below the current
+                             * bottom (above a pinned "load older" row, if
+                             * any). */
+                            ttl_channel_insert_bottom(inst, channel, post);
+                            channel->postCount++;
+                        }
+
+                        if (ch == inst->viewMode)
+                            ttl_tiles_invalidate_range(inst,
+                                post->timelineY,
+                                post->timelineY + post->height);
+
+                        redraw = TRUE;
+                        used = 1;
+                    }
+                }
+                break;
+            }
+
+            case TTIMELINE_ScrollToNewest: {
+                TTLChannel *active = ttl_active(inst);
+                TTLPost    *head   = (TTLPost *)active->posts.mlh_Head;
+                LONG        targetY = active->contentTopY;
+
+                /* Land on the newest real post, not the pinned "look for
+                 * something new" row above it (which now sits at
+                 * contentTopY once a channel has one -- see
+                 * ttl_channel_add_boundaries). */
+                if (head->node.mln_Succ && head->cls == &TTLLoadNewer_Class) {
+                    TTLPost *next = (TTLPost *)head->node.mln_Succ;
+                    if (next->node.mln_Succ) targetY = next->timelineY;
+                }
+
+                active->scrollY = targetY;
+                inst->pendingScroll  = FALSE; /* an explicit jump wins over any queued drag-scroll */
+                redraw = TRUE;
+                used = 1;
                 break;
             }
 
@@ -209,6 +296,8 @@ ULONG ttl_apply_tags(Class *cl, Object *o, struct opSet *msg, int couldRefreshDr
         }
     }
 
+    ReleaseSemaphore(&inst->listSem);
+
     if(couldRefreshDraw && msg->ops_GInfo && redraw)
     {
         struct RastPort *rp = ObtainGIRPort(msg->ops_GInfo);
@@ -255,6 +344,8 @@ ULONG TTL_OnNew(Class *cl, Object *o, struct opSet *msg)
     inst->viewMode = 0;
 
     inst->callerTask = FindTask(NULL);
+
+    InitSemaphore(&inst->listSem);
 
     for (ch = 0; ch < TTIMELINE_NUM_VIEWMODES; ch++)
         NewList((struct List *)&inst->channels[ch].posts);
@@ -333,6 +424,39 @@ ULONG TTL_OnGet(Class *cl, Object *o, struct opGet *msg)
         case TTIMELINE_LastHotSpotPostId:
             *msg->opg_Storage = inst->lastHotSpotPostId[0] ? (ULONG)inst->lastHotSpotPostId : 0;
             return 1;
+        case TTIMELINE_NewestPostId: {
+            /* Head-to-tail: first post with a known id is the newest one --
+             * skips any non-toot pinned row (postId NULL), see the tag's
+             * doc comment in fs3etoottimeline.h. Locked: this walk can run
+             * concurrently with a GM_HANDLEINPUT hit-test on a different
+             * task -- see the listSem comment in the private header. */
+            TTLPost *p;
+            const char *found = NULL;
+            ObtainSemaphore(&inst->listSem);
+            for (p = (TTLPost *)ttl_active(inst)->posts.mlh_Head;
+                 p->node.mln_Succ; p = (TTLPost *)p->node.mln_Succ)
+            {
+                if (p->postId && p->postId[0]) { found = p->postId; break; }
+            }
+            ReleaseSemaphore(&inst->listSem);
+            *msg->opg_Storage = (ULONG)found;
+            return 1;
+        }
+        case TTIMELINE_OldestPostId: {
+            /* Head-to-tail, keeping the last match: the oldest post with a
+             * known id -- skips a pinned "load more" row at the tail. */
+            TTLPost    *p;
+            const char *found = NULL;
+            ObtainSemaphore(&inst->listSem);
+            for (p = (TTLPost *)ttl_active(inst)->posts.mlh_Head;
+                 p->node.mln_Succ; p = (TTLPost *)p->node.mln_Succ)
+            {
+                if (p->postId && p->postId[0]) found = p->postId;
+            }
+            ReleaseSemaphore(&inst->listSem);
+            *msg->opg_Storage = (ULONG)found;
+            return 1;
+        }
         default:
             return DoSuperMethodA(cl, o, (APTR)msg);
     }

@@ -510,19 +510,25 @@ static void FS3EApp_BackfillAccountId(void)
  * (unknown view mode, or VIEWMODE_User before accountId is known). */
 static BOOL ViewModeTimeline(ULONG viewMode, char *buf, ULONG bufSize)
 {
+    /* Initial page is kept small on purpose: a big first page (Home used to
+     * ask for 35) enqueues one low-priority FETCH_IMAGE request per avatar/
+     * thumbnail, and since the network process is single-threaded/serialized
+     * (see FS3ENet_ProcEntry), that backlog is what actually stalls switching
+     * to another view right after startup -- not the timeline fetch itself.
+     * Scrolling triggers incremental older/newer pages on top of this. */
     switch (viewMode) {
         case VIEWMODE_Home:
-            snprintf(buf, bufSize, "timelines/home?limit=35");
+            snprintf(buf, bufSize, "timelines/home?limit=4");
             return TRUE;
         case VIEWMODE_Local:
-            snprintf(buf, bufSize, "timelines/public?local=true&limit=5");
+            snprintf(buf, bufSize, "timelines/public?local=true&limit=4");
             return TRUE;
         case VIEWMODE_Fed:
-            snprintf(buf, bufSize, "timelines/public?limit=5");
+            snprintf(buf, bufSize, "timelines/public?limit=4");
             return TRUE;
         case VIEWMODE_User:
             if (!app->accountId || !app->accountId[0]) return FALSE;
-            snprintf(buf, bufSize, "accounts/%s/statuses?limit=5", app->accountId);
+            snprintf(buf, bufSize, "accounts/%s/statuses?limit=4", app->accountId);
             return TRUE;
         default:
             return FALSE;
@@ -614,9 +620,9 @@ static void FS3EApp_FetchTimeline(ULONG viewMode)
 
     printf("FS3EApp_FetchTimeline: viewMode=%u timeline=%s\n", (unsigned)viewMode, tl);
 
-    req = FS3ENetTimelineReq_Alloc(viewMode,
+    req = FS3ENetTimelineReq_Alloc(viewMode, FS3ENETPAGE_INITIAL,
               app->accountApiBaseUrl, app->accountAccessToken,
-              tl, NULL);
+              tl, NULL, NULL);
     if (!req) return;
 
     if (FS3EApp_NetSend(FS3ENETQ_TIMELINE, req,
@@ -625,6 +631,50 @@ static void FS3EApp_FetchTimeline(ULONG viewMode)
         app->timelineErrorMask   &= ~bit; /* clear any previous error for this channel */
         FS3EApp_CheckConnectionState();
     }
+}
+
+/* Send an async TIMELINE request for viewMode paginating in `direction`
+ * (FS3ENETPAGE_OLDER/NEWER) from whatever status id the gadget currently
+ * has at that end of its list (TTIMELINE_OldestPostId/NewestPostId) --
+ * no-op if a page in that direction is already in flight for this
+ * channel, or there's no known id to paginate from yet. Separate from
+ * FS3EApp_FetchTimeline's one-shot-per-session initial fetch: this fires
+ * repeatedly, driven by scroll position/clicks on the pinned boundary
+ * rows -- see the TTL_HOT_LOAD_OLDER/NEWER handling in
+ * FS3EApp_HandleNetReply's GID_TTIMELINE case. */
+static void FS3EApp_FetchTimelinePage(ULONG viewMode, ULONG direction)
+{
+    char tl[128];
+    FS3ENetTimelineReq *req;
+    ULONG  bit = (1UL << viewMode);
+    ULONG *inFlightMask = (direction == FS3ENETPAGE_OLDER)
+                         ? &app->olderPageInFlightMask
+                         : &app->newerPageInFlightMask;
+    ULONG  attrTag = (direction == FS3ENETPAGE_OLDER)
+                    ? TTIMELINE_OldestPostId : TTIMELINE_NewestPostId;
+    ULONG  fromIdVal = 0;
+    const char *fromId;
+
+    if (!app->accountApiBaseUrl || !app->accountAccessToken) return;
+    if (*inFlightMask & bit) return;
+    if (!app->tootTimeline) return;
+    if (!ViewModeTimeline(viewMode, tl, sizeof(tl))) return;
+
+    GetAttr(attrTag, app->tootTimeline, &fromIdVal);
+    fromId = (const char *)fromIdVal;
+    if (!fromId || !fromId[0]) return; /* nothing loaded yet to paginate from */
+
+    printf("FS3EApp_FetchTimelinePage: viewMode=%u dir=%u from=%s\n",
+           (unsigned)viewMode, (unsigned)direction, fromId);
+
+    req = FS3ENetTimelineReq_Alloc(viewMode, direction,
+              app->accountApiBaseUrl, app->accountAccessToken, tl,
+              (direction == FS3ENETPAGE_OLDER) ? fromId : NULL,
+              (direction == FS3ENETPAGE_NEWER) ? fromId : NULL);
+    if (!req) return;
+
+    if (FS3EApp_NetSend(FS3ENETQ_TIMELINE, req, sizeof(FS3ENetTimelineReq)))
+        *inFlightMask |= bit;
 }
 
 /* Visibility index (from FS3ETootView) → Mastodon API string. */
@@ -728,54 +778,85 @@ static void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
         if (msg->fs3em_Result == FS3ENETR_OK && app->tootTimeline) {
             FS3ENetTimelineReply *reply = (FS3ENetTimelineReply *)msg->fs3em_Data;
             FS3ENetStatus *statuses = (FS3ENetStatus *)(reply + 1);
+            BOOL  older = (reply->fs3et_PageDirection == FS3ENETPAGE_OLDER);
+            ULONG addAttr = older ? TTIMELINE_AppendPost : TTIMELINE_AddPost;
             ULONG i;
-            printf("timeline reply: viewMode=%u count=%u\n",
-                   (unsigned)reply->fs3et_ViewModeBit, (unsigned)reply->fs3et_Count);
-            /* Fetch is complete — clear the in-flight bit so CheckConnectionState
-             * can show the "connected" idle message instead of "Updating…". */
-            app->timelineFetchedMask &= ~(1UL << reply->fs3et_ViewModeBit);
-            /* Add newest-first (Mastodon returns newest first; prepend oldest first
-             * so the newest ends up at top of the TootTimeline channel). */
-            for (i = reply->fs3et_Count; i-- > 0; ) {
+            printf("timeline reply: viewMode=%u dir=%u count=%u\n",
+                   (unsigned)reply->fs3et_ViewModeBit,
+                   (unsigned)reply->fs3et_PageDirection, (unsigned)reply->fs3et_Count);
+
+            switch (reply->fs3et_PageDirection) {
+                case FS3ENETPAGE_OLDER:
+                    app->olderPageInFlightMask &= ~(1UL << reply->fs3et_ViewModeBit);
+                    break;
+                case FS3ENETPAGE_NEWER:
+                    app->newerPageInFlightMask &= ~(1UL << reply->fs3et_ViewModeBit);
+                    break;
+                default:
+                    /* Fetch is complete — clear the in-flight bit so
+                     * CheckConnectionState can show the "connected" idle
+                     * message instead of "Updating…". */
+                    app->timelineFetchedMask &= ~(1UL << reply->fs3et_ViewModeBit);
+                    break;
+            }
+
+            /* Mastodon always returns each page newest-first. An older
+             * page (max_id) is appended below existing content, so it
+             * must walk forward (newest-of-page lands right below what's
+             * already there, oldest-of-page ends up at the very bottom).
+             * An initial/newer page is prepended above existing content,
+             * so it walks in reverse (oldest-of-page first, so the
+             * overall newest -- index 0 -- ends up prepended last, at the
+             * very top) -- see TTIMELINE_AddPost/AppendPost. */
+            for (i = 0; i < reply->fs3et_Count; i++) {
+                ULONG idx = older ? i : (reply->fs3et_Count - 1 - i);
                 TTLPostSetup post;
                 memset(&post, 0, sizeof(post));
-                post.username    = statuses[i].fmas_DisplayName[0]
-                                   ? statuses[i].fmas_DisplayName
-                                   : statuses[i].fmas_Acct;
-                post.acct        = statuses[i].fmas_Acct;
-                post.body        = statuses[i].fmas_Content;
-                post.timestamp   = statuses[i].fmas_CreatedAt;
-                post.boostBy     = statuses[i].fmas_BoostBy;
-                post.avatarURL   = statuses[i].fmas_AvatarURL;
-                post.postId      = statuses[i].fmas_Id;
+                post.username    = statuses[idx].fmas_DisplayName[0]
+                                   ? statuses[idx].fmas_DisplayName
+                                   : statuses[idx].fmas_Acct;
+                post.acct        = statuses[idx].fmas_Acct;
+                post.body        = statuses[idx].fmas_Content;
+                post.timestamp   = statuses[idx].fmas_CreatedAt;
+                post.boostBy     = statuses[idx].fmas_BoostBy;
+                post.avatarURL   = statuses[idx].fmas_AvatarURL;
+                post.postId      = statuses[idx].fmas_Id;
                 {
                     ULONG mi;
-                    for (mi = 0; mi < statuses[i].fmas_MediaCount && mi < TTL_POST_MAX_MEDIA; mi++)
-                        post.mediaUrls[mi] = statuses[i].fmas_MediaUrls[mi];
-                    post.mediaCount = statuses[i].fmas_MediaCount;
+                    for (mi = 0; mi < statuses[idx].fmas_MediaCount && mi < TTL_POST_MAX_MEDIA; mi++) {
+                        post.mediaUrls[mi] = statuses[idx].fmas_MediaUrls[mi];
+                        switch (statuses[idx].fmas_MediaKind[mi]) {
+                            case FS3ENET_MEDIAKIND_IMAGE: post.mediaKinds[mi] = TTL_MEDIA_KIND_IMAGE; break;
+                            case FS3ENET_MEDIAKIND_VIDEO: post.mediaKinds[mi] = TTL_MEDIA_KIND_VIDEO; break;
+                            case FS3ENET_MEDIAKIND_GIFV:  post.mediaKinds[mi] = TTL_MEDIA_KIND_GIFV;  break;
+                            case FS3ENET_MEDIAKIND_AUDIO: post.mediaKinds[mi] = TTL_MEDIA_KIND_AUDIO; break;
+                            default:                       post.mediaKinds[mi] = TTL_MEDIA_KIND_UNKNOWN; break;
+                        }
+                    }
+                    post.mediaCount = statuses[idx].fmas_MediaCount;
                 }
 
                 /* Trigger avatar download for this user if not already requested. */
                 if (app->avatarImages &&
-                    statuses[i].fmas_AvatarURL &&
-                    statuses[i].fmas_AvatarURL[0] &&
-                    statuses[i].fmas_Acct &&
+                    statuses[idx].fmas_AvatarURL &&
+                    statuses[idx].fmas_AvatarURL[0] &&
+                    statuses[idx].fmas_Acct &&
                     !AvatarImages_IsRequested(app->avatarImages,
-                                              statuses[i].fmas_Acct))
+                                              statuses[idx].fmas_Acct))
                 {
                     ULONG reqSize = sizeof(FS3ENetFetchImageReq)
-                                  + strlen(statuses[i].fmas_AvatarURL) + 1
-                                  + strlen(statuses[i].fmas_Acct) + 1
+                                  + strlen(statuses[idx].fmas_AvatarURL) + 1
+                                  + strlen(statuses[idx].fmas_Acct) + 1
                                   + strlen(FS3E_CACHE_SUBDIR_USERICONS) + 1;
                     FS3ENetFetchImageReq *req =
-                        FS3ENetFetchImageReq_Alloc(statuses[i].fmas_AvatarURL,
-                                                   statuses[i].fmas_Acct,
+                        FS3ENetFetchImageReq_Alloc(statuses[idx].fmas_AvatarURL,
+                                                   statuses[idx].fmas_Acct,
                                                    FS3E_CACHE_SUBDIR_USERICONS,
                                                    (BOOL)app->settings.keepBigUserIcons);
                     if (req) {
                         if (FS3EApp_NetSend(FS3ENETQ_FETCH_IMAGE, req, reqSize))
                             AvatarImages_MarkRequested(app->avatarImages,
-                                                       statuses[i].fmas_Acct);
+                                                       statuses[idx].fmas_Acct);
                         else
                             FreeVec(req);
                     }
@@ -788,9 +869,15 @@ static void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                  * comment in avatarimages.h). */
                 if (app->avatarImages) {
                     ULONG mi;
-                    for (mi = 0; mi < statuses[i].fmas_MediaCount && mi < TTL_POST_MAX_MEDIA; mi++) {
-                        const char *url = statuses[i].fmas_MediaUrls[mi];
+                    for (mi = 0; mi < statuses[idx].fmas_MediaCount && mi < TTL_POST_MAX_MEDIA; mi++) {
+                        const char *url = statuses[idx].fmas_MediaUrls[mi];
                         if (!url || !url[0]) continue;
+                        /* Audio has no thumbnail to fetch -- TootTimeline
+                         * draws a play button for it instead (see
+                         * TTL_HOT_PLAY_AUDIO); its (fallback, no-preview)
+                         * URL here is the actual media file, not a
+                         * picture. */
+                        if (statuses[idx].fmas_MediaKind[mi] == FS3ENET_MEDIAKIND_AUDIO) continue;
                         if (AvatarImages_IsMediaRequested(app->avatarImages, url)) continue;
                         {
                             ULONG reqSize = sizeof(FS3ENetFetchImageReq)
@@ -811,20 +898,34 @@ static void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                     }
                 }
                 post.viewModeBits = (1UL << reply->fs3et_ViewModeBit);
-                SetAttrs(app->tootTimeline,
-                         TTIMELINE_AddPost, (ULONG)&post, TAG_DONE);
+                SetAttrs(app->tootTimeline, addAttr, (ULONG)&post, TAG_DONE);
             }
+
+            /* Open a channel scrolled to its newest post, not wherever it
+             * happened to be after AddHead's "scrollY stays fixed"
+             * behavior -- only for the very first page, pagination must
+             * never move the user's scroll position. */
+            if (reply->fs3et_PageDirection == FS3ENETPAGE_INITIAL)
+                SetAttrs(app->tootTimeline, TTIMELINE_ScrollToNewest, TRUE, TAG_DONE);
+
             if (CurrentMainWindow)
                 RefreshGList((struct Gadget *)app->tootTimeline,
                              CurrentMainWindow, NULL, 1);
         } else if (msg->fs3em_Result != FS3ENETR_OK) {
             FS3ENetTimelineReq *req = (FS3ENetTimelineReq *)msg->fs3em_Data;
             ULONG bit = req ? (1UL << req->fs3et_ViewModeBit) : 0;
-            app->timelineErrorMask   |= bit;
-            app->timelineFetchedMask &= ~bit; /* allow retry on next view switch */
-            app->lastTimelineResult   = msg->fs3em_Result;
-            printf("timeline reply: FAILED viewMode=%u result=%u\n",
+            if (req && req->fs3et_PageDirection == FS3ENETPAGE_OLDER) {
+                app->olderPageInFlightMask &= ~bit; /* allow retry next time the user hits bottom */
+            } else if (req && req->fs3et_PageDirection == FS3ENETPAGE_NEWER) {
+                app->newerPageInFlightMask &= ~bit; /* allow retry on next click */
+            } else {
+                app->timelineErrorMask   |= bit;
+                app->timelineFetchedMask &= ~bit; /* allow retry on next view switch */
+                app->lastTimelineResult   = msg->fs3em_Result;
+            }
+            printf("timeline reply: FAILED viewMode=%u dir=%u result=%u\n",
                    req ? (unsigned)req->fs3et_ViewModeBit : 0,
+                   req ? (unsigned)req->fs3et_PageDirection : 0,
                    (unsigned)msg->fs3em_Result);
         }
         break;
@@ -910,6 +1011,28 @@ static void FS3EApp_HandleThumbReply(FS3EThumbMessage *msg)
              * real image on the next render (see TTIMELINE_InvalidateImages). */
             SetAttrs(app->tootTimeline, TTIMELINE_InvalidateImages, TRUE, TAG_DONE);
         }
+        if (CurrentMainWindow)
+            RefreshGList((struct Gadget *)app->tootTimeline,
+                         CurrentMainWindow, NULL, 1);
+    }
+    else if (msg->fs3etm_Result == FS3ETHUMBR_ERROR && app->avatarImages &&
+             msg->fs3etm_Key[0])
+    {
+        /* Previously silently dropped: a failed decode left the entry's
+         * .requested flag latched forever with no distinction from
+         * "still pending", so AvatarImages_Get(Media)() returned NULL
+         * forever and the placeholder redrew with nothing to explain why.
+         * Latch it explicitly instead, with the sniffed format (see
+         * FS3EThumb_HandleMake/BmImage_SniffFormat) so the tile renderer
+         * can show e.g. "webp" instead of a bare box. */
+        UBYTE fmt = (UBYTE)msg->fs3etm_DetectedFormat;
+        if (msg->fs3etm_Kind == FS3ETHUMB_KIND_MEDIA)
+            AvatarImages_MarkMediaFailed(app->avatarImages, msg->fs3etm_Key, fmt);
+        else
+            AvatarImages_MarkFailed(app->avatarImages, msg->fs3etm_Key, fmt);
+
+        if (app->tootTimeline)
+            SetAttrs(app->tootTimeline, TTIMELINE_InvalidateImages, TRUE, TAG_DONE);
         if (CurrentMainWindow)
             RefreshGList((struct Gadget *)app->tootTimeline,
                          CurrentMainWindow, NULL, 1);
@@ -1920,6 +2043,32 @@ int main(int argc, char **argv)
                                              * a redraw before sending this
                                              * notification -- nothing left
                                              * for the main loop to do. */
+                                            break;
+
+                                        case TTL_HOT_LOAD_NEWER:
+                                            /* Pinned "Look for something
+                                             * new" row clicked. */
+                                            FS3EApp_FetchTimelinePage(app->viewMode, FS3ENETPAGE_NEWER);
+                                            break;
+
+                                        case TTL_HOT_LOAD_OLDER:
+                                            /* Pinned "Load more…" row
+                                             * reached the bottom of the
+                                             * viewport (see TTL_OnRender's
+                                             * proximity check). */
+                                            FS3EApp_FetchTimelinePage(app->viewMode, FS3ENETPAGE_OLDER);
+                                            break;
+
+                                        case TTL_HOT_PLAY_AUDIO:
+                                            /* TODO: actual MP3 playback
+                                             * (deliberately not via
+                                             * datatypes.library) is a
+                                             * separate follow-up; for now
+                                             * just surface the click.
+                                             * hotSpotString carries the
+                                             * attachment URL. */
+                                            printf("Play audio requested: %s\n",
+                                                   hotSpotString ? hotSpotString : "(null)");
                                             break;
 
                                         default:

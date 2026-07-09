@@ -211,6 +211,13 @@ ULONG TTL_OnRender(Class *cl, Object *o, struct gpRender *msg)
         }
     }
 //    bdbprintf("dr2\n");
+    /* From here on we're touching channel post lists / scroll extents
+     * that GM_HANDLEINPUT's hit-testing can also touch from a different
+     * task -- see the listSem comment in fs3etoottimeline_private.h.
+     * Held across ttl_do_layout too, since a width change relayouts and
+     * rebuilds Y positions for every channel, not just the active one. */
+    ObtainSemaphore(&inst->listSem);
+
     /* do layout from correct proces if not done*/
     if(inst->LastLayoutedWidth != g->Width ||
         inst->LastLayoutedHeight != g->Height)
@@ -249,9 +256,10 @@ ULONG TTL_OnRender(Class *cl, Object *o, struct gpRender *msg)
     }
 
     if (inst->tileCount == 0) {
-        /* Pool not ready – paint solid background */       
+        /* Pool not ready – paint solid background */
         SetAPen(rp, (LONG)FS3E_PEN(inst->style, FS3E_COLOR_TIMELINE_BG));
         RectFill(rp, gadLeft, gadTop, gadLeft+gadW-1, gadTop+gadH-1);
+        ReleaseSemaphore(&inst->listSem);
         return 0;
     }
 
@@ -319,9 +327,31 @@ ULONG TTL_OnRender(Class *cl, Object *o, struct gpRender *msg)
         }
     }
 
+    /* Auto-trigger "load older" once the pinned bottom row (TTLLoadOlder_
+     * Class, see ttl_channel_add_boundaries) is at or near the bottom of
+     * the visible viewport -- mobile-app style, no click needed (unlike
+     * the "look for something new" row at the top, which does have a
+     * hot-spot -- see the TTLItemClass comment). Fires the exact same
+     * generic notify a click would; olderLoadTriggered latches it so this
+     * only fires once per arrival at the bottom (reset when new older
+     * content actually lands, see ttl_channel_insert_bottom). postCount>0
+     * guards mlh_TailPred, which is only a real node once the channel has
+     * at least one real post (see the boundary-insertion comment). */
+    if (active->postCount > 0 && !active->olderLoadTriggered) {
+        TTLPost *tail = (TTLPost *)active->posts.mlh_TailPred;
+        if (tail->cls == &TTLLoadOlder_Class &&
+            active->scrollY + gadH >= active->contentBottomY)
+        {
+            active->olderLoadTriggered = TRUE;
+            ttl_notify_hotspot(cl, o, msg->gpr_GInfo, TTL_HOT_LOAD_OLDER, NULL, 0, NULL);
+        }
+    }
+
     } /* end active-channel scope */
 
     } /* end else of wait mode, fallback to grip display  */
+
+    ReleaseSemaphore(&inst->listSem);
 
     /* TODO: text-selection COMPLEMENT overlay (future: walk selSpanA..selSpanB) */
 

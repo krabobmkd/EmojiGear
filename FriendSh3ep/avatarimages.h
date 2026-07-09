@@ -66,6 +66,12 @@ typedef struct {
     RgbImage img;                    /* fixed-size RGB pixel buffer */
     BOOL     requested;              /* FETCH_IMAGE sent, reply pending */
     BOOL     thumbRequested;         /* FS3ETHUMBQ_MAKE sent, reply pending */
+    BOOL     failed;                 /* thumbnail process replied FS3ETHUMBR_ERROR --
+                                       * distinct from "still pending" (requested==TRUE,
+                                       * failed==FALSE, img not loaded); see
+                                       * AvatarImages_MarkFailed. */
+    UBYTE    detectedFormat;         /* enum BmImageFormat (bmimage.h), meaningful only
+                                       * when failed==TRUE; BMFMT_UNKNOWN otherwise. */
 } AvatarEntry;
 
 typedef struct {
@@ -73,6 +79,8 @@ typedef struct {
     RgbImage img;
     BOOL     requested;
     BOOL     thumbRequested;
+    BOOL     failed;
+    UBYTE    detectedFormat;
 } ThumbnailEntry;
 
 typedef struct AvatarImages {
@@ -111,6 +119,20 @@ void          AvatarImages_MarkThumbRequested(AvatarImages *ai, const char *acct
 RgbImage     *AvatarImages_ThumbReady(AvatarImages *ai, const char *acct,
                                        const char *thumbPath);
 
+/* Called when the thumbnail process replies FS3ETHUMBR_ERROR instead --
+ * latches failed distinctly from "still pending" (see the AvatarEntry
+ * field comments) so it's never mistaken for in-flight and never redrawn
+ * as a bare "still loading" placeholder forever. detectedFormat is
+ * BmImage_SniffFormat()'s result (BMFMT_UNKNOWN if not determined). */
+void          AvatarImages_MarkFailed(AvatarImages *ai, const char *acct,
+                                       UBYTE detectedFormat);
+
+/* TRUE if acct's fetch/decode failed (see AvatarImages_MarkFailed);
+ * *outFormat receives the detected format when non-NULL. FALSE (and
+ * *outFormat left untouched) if there's no entry or it didn't fail. */
+BOOL          AvatarImages_Failed(AvatarImages *ai, const char *acct,
+                                   UBYTE *outFormat);
+
 /* ---- Media thumbnail pool: same shape as the avatar functions above,
  * keyed by attachment URL instead of acct -- see the file header comment
  * for why this pool is smaller and round-robin evicted. A lookup/mark
@@ -124,5 +146,9 @@ BOOL          AvatarImages_IsMediaThumbRequested(AvatarImages *ai, const char *u
 void          AvatarImages_MarkMediaThumbRequested(AvatarImages *ai, const char *url);
 RgbImage     *AvatarImages_MediaThumbReady(AvatarImages *ai, const char *url,
                                             const char *thumbPath);
+void          AvatarImages_MarkMediaFailed(AvatarImages *ai, const char *url,
+                                            UBYTE detectedFormat);
+BOOL          AvatarImages_MediaFailed(AvatarImages *ai, const char *url,
+                                        UBYTE *outFormat);
 
 #endif /* AVATARIMAGES_H */
