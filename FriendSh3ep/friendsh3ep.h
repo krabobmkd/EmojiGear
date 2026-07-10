@@ -44,6 +44,17 @@ typedef enum {
     VIEWMODE_NumberOf
 } fs3eViewMode;
 
+/* What the Search channel (VIEWMODE_Search) is currently showing --
+ * TootTimeline itself only knows "does this channel have a profile
+ * header" (see TTLChannel.headerPost); this is the app-level policy of
+ * *why*, driving which requests to fire when Search is (re-)entered.
+ * Only FS3ESEARCH_USER_PROFILE exists so far -- word search and user
+ * search (see todo.txt) are future sub-modes of this same channel. */
+typedef enum {
+    FS3ESEARCH_NONE = 0,
+    FS3ESEARCH_USER_PROFILE
+} FS3ESearchMode;
+
 
 /* Application struct: holds every persistent BOOPSI object and IPC handle. */
 struct App {
@@ -145,6 +156,20 @@ struct App {
 
     /* enum fs3eViewMode */
     ULONG     viewMode;
+
+    /* Search channel (VIEWMODE_Search) profile-view state -- see
+     * FS3ESearchMode and FS3EApp_OpenProfile(). searchProfileAcct is set
+     * the moment a profile is requested (before the account id is even
+     * known) so an FS3ENETQ_ACCOUNT_LOOKUP/RELATIONSHIP/FOLLOW reply can
+     * be checked against it and discarded if stale (the user opened a
+     * different profile before this one's reply arrived).
+     * searchProfileAccountId is only set once the lookup reply lands;
+     * ViewModeTimeline's VIEWMODE_Search case needs it for the profile's
+     * own accounts/{id}/statuses fetch, same as accountId above does for
+     * VIEWMODE_User. */
+    ULONG  searchMode;            /* FS3ESearchMode */
+    char  *searchProfileAcct;
+    char  *searchProfileAccountId;
 };
 
 extern struct App *app;

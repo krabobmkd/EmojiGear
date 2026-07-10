@@ -57,6 +57,7 @@ static const ULONG defaultColors[FS3E_COLOR_COUNT] = {
     0x00303034,   /* FS3E_COLOR_BUTTON_BG          dark panel */
     0x00563ACC,   /* FS3E_COLOR_BUTTON_SELECTED_BG  Mastodon purple */
     0x00191B22,   /* FS3E_COLOR_TIMELINE_BG         near-black */
+    0x00232840,   /* FS3E_COLOR_PROFILE_HEADER_BG   near-black with a subtle blue/purple tint */
     0x00FFFFFF,   /* FS3E_COLOR_USERNAME            white */
     0x0078BFFF,   /* FS3E_COLOR_HASHTAG             teal-blue */
     0x00444466,   /* FS3E_COLOR_ACCENT              muted purple (separators, borders) */
@@ -77,6 +78,7 @@ static const char *colorStyleKeys[FS3E_COLOR_COUNT] = {
     "timeline.color.buttonbg",
     "timeline.color.button_selectedbg",
     "timeline.color.timelinebg",
+    "timeline.color.profileheaderbg",
     "timeline.color.username",
     "timeline.color.hashtag",
     "timeline.color.accent",

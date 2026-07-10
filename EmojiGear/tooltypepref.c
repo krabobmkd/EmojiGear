@@ -265,7 +265,7 @@ void ToolTypePrefs_Save()
     previousValues = AppDiskObject->do_ToolTypes;
         AppDiskObject->do_ToolTypes = CToolType;
         AppDiskObject->do_Type = WBTOOL;
-        AppDiskObject->do_StackSize = 32768;
+        AppDiskObject->do_StackSize = 65536;
         //  dobj->do_DefaultTool = olddeftool;
          PutDiskObject(s_exename, AppDiskObject);
     AppDiskObject->do_ToolTypes = previousValues; // so it is freed by FreeDiskObject()

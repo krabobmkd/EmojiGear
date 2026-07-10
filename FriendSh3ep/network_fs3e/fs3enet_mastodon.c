@@ -87,6 +87,7 @@ void FS3EMastodonAccount_Free(FS3EMastodonAccount *acc)
     if (acc->fma_Acct)        { FreeVec(acc->fma_Acct);        acc->fma_Acct        = NULL; }
     if (acc->fma_DisplayName) { FreeVec(acc->fma_DisplayName); acc->fma_DisplayName = NULL; }
     if (acc->fma_AvatarURL)   { FreeVec(acc->fma_AvatarURL);   acc->fma_AvatarURL   = NULL; }
+    if (acc->fma_Note)        { FreeVec(acc->fma_Note);        acc->fma_Note        = NULL; }
 }
 
 static void FS3EMastodon_BuildAuthHeader(char *dst, ULONG dstSize, const char *accessToken)
@@ -347,6 +348,187 @@ BOOL FS3EMastodon_PostStatus(const char *apiBaseUrl, const char *accessToken,
     }
 
     cJSON_free(reqBody);
+
+    return ok;
+}
+
+BOOL FS3EMastodon_Favourite(const char *apiBaseUrl, const char *accessToken,
+                           const char *statusId, BOOL favourite,
+                           BOOL *outFavourited)
+{
+    char url[300];
+    char authHeader[300];
+    FS3EHttpHeader headers[2];
+    FS3EHttpResponse resp;
+    cJSON *json;
+    BOOL ok = FALSE;
+
+    *outFavourited = FALSE;
+
+    snprintf(url, sizeof(url), "%s/api/v1/statuses/%s/%s", apiBaseUrl, statusId,
+             favourite ? "favourite" : "unfavourite");
+    FS3EMastodon_BuildAuthHeader(authHeader, sizeof(authHeader), accessToken);
+
+    headers[0].fhh_Name  = "Authorization";
+    headers[0].fhh_Value = authHeader;
+    headers[1].fhh_Name  = NULL;
+    headers[1].fhh_Value = NULL;
+
+    /* Empty body -- Mastodon's favourite/unfavourite endpoints take none,
+     * only the auth header and the :id in the URL. */
+    if (FS3EHttp_Post(url, headers, "application/json", "", 0, &resp))
+    {
+        json = cJSON_Parse((char *)resp.fhr_Body);
+        if (json)
+        {
+            const cJSON *v = cJSON_GetObjectItemCaseSensitive(json, "favourited");
+            *outFavourited = (v && cJSON_IsTrue(v)) ? TRUE : FALSE;
+
+            ok = TRUE;
+            cJSON_Delete(json);
+        }
+
+        FS3EHttp_FreeResponse(&resp);
+    }
+
+    return ok;
+}
+
+BOOL FS3EMastodon_LookupAccount(const char *apiBaseUrl, const char *accessToken,
+                                const char *acct, FS3EMastodonAccount *outAccount)
+{
+    char url[300];
+    char encAcct[160];
+    char authHeader[300];
+    FS3EHttpHeader headers[2];
+    FS3EHttpResponse resp;
+    cJSON *json;
+    BOOL ok = FALSE;
+
+    FS3EMastodon_UrlEncode(acct, encAcct, sizeof(encAcct));
+    snprintf(url, sizeof(url), "%s/api/v1/accounts/lookup?acct=%s", apiBaseUrl, encAcct);
+
+    if (accessToken && accessToken[0]) {
+        FS3EMastodon_BuildAuthHeader(authHeader, sizeof(authHeader), accessToken);
+        headers[0].fhh_Name  = "Authorization";
+        headers[0].fhh_Value = authHeader;
+        headers[1].fhh_Name  = NULL;
+        headers[1].fhh_Value = NULL;
+    } else {
+        headers[0].fhh_Name  = NULL;
+        headers[0].fhh_Value = NULL;
+    }
+
+    if (!FS3EHttp_Get(url, headers, &resp))
+        return FALSE;
+
+    json = cJSON_Parse((char *)resp.fhr_Body);
+    if (json)
+    {
+        const cJSON *v;
+
+        outAccount->fma_Id          = FS3EMastodon_DupJsonString(json, "id");
+        outAccount->fma_Username    = FS3EMastodon_DupJsonString(json, "username");
+        outAccount->fma_Acct        = FS3EMastodon_DupJsonString(json, "acct");
+        outAccount->fma_DisplayName = FS3EMastodon_DupJsonString(json, "display_name");
+        outAccount->fma_AvatarURL   = FS3EMastodon_DupJsonString(json, "avatar");
+        outAccount->fma_Note        = FS3EMastodon_DupJsonString(json, "note"); /* raw HTML, see header comment */
+
+        v = cJSON_GetObjectItemCaseSensitive(json, "followers_count");
+        outAccount->fma_FollowersCount = (v && cJSON_IsNumber(v)) ? (ULONG)v->valueint : 0;
+
+        v = cJSON_GetObjectItemCaseSensitive(json, "following_count");
+        outAccount->fma_FollowingCount = (v && cJSON_IsNumber(v)) ? (ULONG)v->valueint : 0;
+
+        ok = (outAccount->fma_Id != NULL);
+
+        cJSON_Delete(json);
+    }
+
+    FS3EHttp_FreeResponse(&resp);
+
+    return ok;
+}
+
+BOOL FS3EMastodon_GetRelationship(const char *apiBaseUrl, const char *accessToken,
+                                  const char *accountId, BOOL *outFollowing)
+{
+    char url[300];
+    char authHeader[300];
+    FS3EHttpHeader headers[2];
+    FS3EHttpResponse resp;
+    cJSON *json;
+    BOOL ok = FALSE;
+
+    *outFollowing = FALSE;
+
+    snprintf(url, sizeof(url), "%s/api/v1/accounts/relationships?id[]=%s", apiBaseUrl, accountId);
+    FS3EMastodon_BuildAuthHeader(authHeader, sizeof(authHeader), accessToken);
+
+    headers[0].fhh_Name  = "Authorization";
+    headers[0].fhh_Value = authHeader;
+    headers[1].fhh_Name  = NULL;
+    headers[1].fhh_Value = NULL;
+
+    if (!FS3EHttp_Get(url, headers, &resp))
+        return FALSE;
+
+    json = cJSON_Parse((char *)resp.fhr_Body);
+    if (json && cJSON_IsArray(json))
+    {
+        const cJSON *item = cJSON_GetArrayItem(json, 0);
+        if (item)
+        {
+            const cJSON *v = cJSON_GetObjectItemCaseSensitive(item, "following");
+            *outFollowing = (v && cJSON_IsTrue(v)) ? TRUE : FALSE;
+            ok = TRUE;
+        }
+    }
+    if (json) cJSON_Delete(json);
+
+    FS3EHttp_FreeResponse(&resp);
+
+    return ok;
+}
+
+BOOL FS3EMastodon_Follow(const char *apiBaseUrl, const char *accessToken,
+                         const char *accountId, BOOL follow,
+                         BOOL *outFollowing)
+{
+    char url[300];
+    char authHeader[300];
+    FS3EHttpHeader headers[2];
+    FS3EHttpResponse resp;
+    cJSON *json;
+    BOOL ok = FALSE;
+
+    *outFollowing = FALSE;
+
+    snprintf(url, sizeof(url), "%s/api/v1/accounts/%s/%s", apiBaseUrl, accountId,
+             follow ? "follow" : "unfollow");
+    FS3EMastodon_BuildAuthHeader(authHeader, sizeof(authHeader), accessToken);
+
+    headers[0].fhh_Name  = "Authorization";
+    headers[0].fhh_Value = authHeader;
+    headers[1].fhh_Name  = NULL;
+    headers[1].fhh_Value = NULL;
+
+    /* Empty body -- Mastodon's follow/unfollow endpoints take none, only
+     * the auth header and the :id in the URL. */
+    if (FS3EHttp_Post(url, headers, "application/json", "", 0, &resp))
+    {
+        json = cJSON_Parse((char *)resp.fhr_Body);
+        if (json)
+        {
+            const cJSON *v = cJSON_GetObjectItemCaseSensitive(json, "following");
+            *outFollowing = (v && cJSON_IsTrue(v)) ? TRUE : FALSE;
+
+            ok = TRUE;
+            cJSON_Delete(json);
+        }
+
+        FS3EHttp_FreeResponse(&resp);
+    }
 
     return ok;
 }

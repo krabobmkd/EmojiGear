@@ -135,7 +135,7 @@ BOOL FS3EThumb_Request(struct MsgPort *requestPort, struct MsgPort *replyPort,
     if (cacheKeyPath && strlen(cacheKeyPath) >= FS3ETHUMB_PATH_SIZE)
         return FALSE;
 
-    msg = (FS3EThumbMessage *)AllocVec(sizeof(FS3EThumbMessage), MEMF_CLEAR);
+    msg = (FS3EThumbMessage *)AllocVec(sizeof(FS3EThumbMessage), MEMF_CLEAR | MEMF_PUBLIC);
     if (!msg)
         return FALSE;
 

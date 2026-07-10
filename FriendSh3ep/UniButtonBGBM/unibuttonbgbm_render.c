@@ -196,7 +196,16 @@ ULONG UniButtonBGBM_OnRender(Class *cl, Object *o, struct gpRender *msg)
     if (inst->selBgPen == 3 && dri)
         inst->selBgPen = (ULONG)dri->dri_Pens[FILLPEN];
 
-    needRebuild = (!inst->cacheValid);
+    /* Only rebuild from this object's own owning task: GM_RENDER can also
+     * be reached from GM_GOACTIVE/GM_HANDLEINPUT/GM_GOINACTIVE's
+     * ubgbm_render_self() (input.device context, not necessarily
+     * callerTask) -- see the callerTask comment in unibuttonbgbm_
+     * private.h. Rebuilding calls FreeType (via URPDrawContext) and can
+     * race OM_SET's ubgbm_free_cache() on the real owning task (e.g. a
+     * live theme change); off-task, just fall back to the flat-fill path
+     * below, same as "cache not ready yet" -- a real app-task render
+     * will rebuild it properly the next time this gadget is refreshed. */
+    needRebuild = (!inst->cacheValid && FindTask(NULL) == inst->callerTask);
 
     if (needRebuild && scr)
         ubgbm_rebuild_cache(cl, o, gadW, gadH, dri, scr);

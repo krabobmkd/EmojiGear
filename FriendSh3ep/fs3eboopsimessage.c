@@ -70,6 +70,8 @@ static ULONG delayedAttribs[] = {
     TTIMELINE_ProcessRefresh,
     TTIMELINE_LastHotSpotPostId,
     TTIMELINE_LastHotSpotString,
+    TTIMELINE_LastHotSpotFavourited,
+    TTIMELINE_LastHotSpotFollowing,
     TTIMELINE_HotSpotNotify,
 
 

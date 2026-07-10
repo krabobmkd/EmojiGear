@@ -109,6 +109,12 @@ const char *pVersion = "$VER: FriendSh3ep " FRIENDSH3EP_VERSION;
 
 struct Task *myTask = NULL;
 
+/* Single-instance IPC: named public port checked/created in main() before
+ * any resources (esp. the disk cache -- see fs3enet_cache.h) are touched.
+ * See FS3E_CheckSingleInstance(). */
+#define FS3E_SIPC_PORTNAME "FRIENDSH3EP_SIPC_PORT"
+static struct MsgPort *SIPCPort = NULL;
+
 void wait2sec() {
 int i;
  //re   for(i=0;i<75;i++) WaitTOF();
@@ -202,6 +208,7 @@ static LibraryEntry libraryTable[] = {
     {"gadgets/unibutton.gadget",     4, &UniButtonBase},
     {"utf8rastport.library",         5, &URPBase},
     {"datatypes.library",           44, &DataTypesBase},
+
     {NULL, 0, NULL}
 };
 
@@ -242,15 +249,18 @@ static char *NetStrDup(const char *s)
  * page) doesn't make an interactive request like switching timelines wait
  * behind dozens of queued downloads: FETCH_IMAGE goes in at a lower
  * priority than everything else, so a fresh TIMELINE/LOGIN/POST_STATUS
- * request cuts to the front of that backlog instead of queuing after it. */
-static BOOL FS3EApp_NetSend(ULONG type, APTR data, ULONG dataLen)
+ * request cuts to the front of that backlog instead of queuing after it.
+ *
+ * Not static: fs3eaction.c's toot actions (e.g. Action_ToggleFavorite)
+ * call this directly too -- see the extern declaration there. */
+BOOL FS3EApp_NetSend(ULONG type, APTR data, ULONG dataLen)
 {
     FS3ENetMessage *msg;
     if (!app->netRequestPort || !app->netReplyPort || !data) {
         if (data) FreeVec(data);
         return FALSE;
     }
-    msg = (FS3ENetMessage *)AllocVec(sizeof(FS3ENetMessage), MEMF_CLEAR);
+    msg = (FS3ENetMessage *)AllocVec(sizeof(FS3ENetMessage), MEMF_CLEAR | MEMF_PUBLIC );
     if (!msg) { FreeVec(data); return FALSE; }
     msg->fs3em_Msg.mn_Length   = sizeof(*msg);
     msg->fs3em_Msg.mn_ReplyPort = app->netReplyPort;
@@ -528,7 +538,25 @@ static BOOL ViewModeTimeline(ULONG viewMode, char *buf, ULONG bufSize)
             return TRUE;
         case VIEWMODE_User:
             if (!app->accountId || !app->accountId[0]) return FALSE;
-            snprintf(buf, bufSize, "accounts/%s/statuses?limit=4", app->accountId);
+            /* exclude_reblogs=false is Mastodon's own documented default,
+             * but made explicit rather than left implicit -- some servers/
+             * versions could differ, and a profile that only ever boosts
+             * (never posts originally) would otherwise show as empty. */
+            snprintf(buf, bufSize, "accounts/%s/statuses?limit=4&exclude_reblogs=false", app->accountId);
+            return TRUE;
+        case VIEWMODE_Search:
+            /* Only the FS3ESEARCH_USER_PROFILE sub-mode fetches anything
+             * today (word/user search are future sub-modes of this same
+             * channel -- see FS3ESearchMode). Mirrors VIEWMODE_User
+             * above exactly, just for whichever account is currently
+             * open instead of always our own. */
+            if (app->searchMode != FS3ESEARCH_USER_PROFILE ||
+                !app->searchProfileAccountId || !app->searchProfileAccountId[0])
+                return FALSE;
+            /* exclude_reblogs=false -- see the matching comment on
+             * VIEWMODE_User above; a profile that only ever boosts is
+             * exactly the case that prompted making this explicit. */
+            snprintf(buf, bufSize, "accounts/%s/statuses?limit=4&exclude_reblogs=false", app->searchProfileAccountId);
             return TRUE;
         default:
             return FALSE;
@@ -579,7 +607,10 @@ static void FS3EApp_CheckConnectionState(void)
     }
 
     if (!text) {
-        if (!app->accountAccessToken) {
+        if (!app->netRequestPort) {
+            text = "No connection.\n"
+                   "Need internet and AmiSSLv5.";
+        } else if (!app->accountAccessToken) {
             text = "No account.\n"
                    "Open the Login window to connect.";
         } else {
@@ -613,6 +644,18 @@ static void FS3EApp_FetchTimeline(ULONG viewMode)
     char tl[128];
     FS3ENetTimelineReq *req;
     ULONG bit = (1UL << viewMode);
+
+    /* Search is never driven by this "fetch once per session the first
+     * time a channel is viewed" mechanism -- FS3EApp_OpenProfile() owns
+     * its fetch entirely (fired once per profile opened, not once per
+     * view switch), always as an FS3ENETPAGE_OLDER page so it correctly
+     * lands via TIMELINE_AppendPost below the profile header (see
+     * TTIMELINE_ShowProfile) instead of through the AddPost/prepend path
+     * this function's FS3ENETPAGE_INITIAL request below would take.
+     * Without this guard, merely switching back to an already-open
+     * profile (fs3e_setViewMode calls this unconditionally) would fire a
+     * second, wrongly-directed fetch. */
+    if (viewMode == VIEWMODE_Search) return;
 
     if (!app->accountApiBaseUrl || !app->accountAccessToken) return;
     if (app->timelineFetchedMask & bit) return;
@@ -675,6 +718,44 @@ static void FS3EApp_FetchTimelinePage(ULONG viewMode, ULONG direction)
 
     if (FS3EApp_NetSend(FS3ENETQ_TIMELINE, req, sizeof(FS3ENetTimelineReq)))
         *inFlightMask |= bit;
+}
+
+/* Opens (or re-opens) a user's profile in the Search channel -- the
+ * shared entry point for both TTL_HOT_AVATAR and TTL_HOT_MENTION clicks
+ * (a toot author's avatar, or an @mention inside any toot/bio body).
+ * acctOrHandle may or may not have a leading '@' (avatar-click data
+ * never does, mention-click data always does -- see TTL_HOT_MENTION's
+ * comment in fs3etoottimeline.h) -- stripped here so both paths converge
+ * on the same acct string /api/v1/accounts/lookup expects.
+ *
+ * Only starts the lookup; the rest of the flow (header population,
+ * avatar fetch, relationship + first toot page) continues in the
+ * FS3ENETQ_ACCOUNT_LOOKUP reply handler once the account id is known. */
+static void FS3EApp_OpenProfile(const char *acctOrHandle)
+{
+    const char *acct = acctOrHandle;
+    FS3ENetAccountLookupReq *req;
+
+    if (!acct || !acct[0]) return;
+    if (acct[0] == '@') acct++;
+    if (!acct[0]) return;
+    if (!app->accountApiBaseUrl) return;
+
+    if (app->searchProfileAcct)      { FreeVec(app->searchProfileAcct);      app->searchProfileAcct      = NULL; }
+    if (app->searchProfileAccountId) { FreeVec(app->searchProfileAccountId); app->searchProfileAccountId = NULL; }
+    app->searchProfileAcct = NetStrDup(acct);
+    app->searchMode        = FS3ESEARCH_USER_PROFILE;
+
+    fs3e_setViewMode(VIEWMODE_Search);
+
+    if (!app->searchProfileAcct) return;
+
+    req = FS3ENetAccountLookupReq_Alloc(app->accountApiBaseUrl,
+              app->accountAccessToken ? app->accountAccessToken : "",
+              app->searchProfileAcct);
+    if (!req) return;
+
+    FS3EApp_NetSend(FS3ENETQ_ACCOUNT_LOOKUP, req, sizeof(*req));
 }
 
 /* Visibility index (from FS3ETootView) → Mastodon API string. */
@@ -800,6 +881,48 @@ static void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                     break;
             }
 
+            /* A profile can be replaced (see FS3EApp_OpenProfile) while an
+             * older/newer page fetched for the PREVIOUS profile is still
+             * in flight -- this reply has no field saying "which profile"
+             * it was for beyond the statuses themselves, so for Search
+             * specifically, cross-check the first status's own OWNER
+             * against whichever profile is CURRENTLY loaded and discard
+             * the whole page if it doesn't match. accounts/{id}/statuses
+             * only ever returns that one account's own statuses, so this
+             * is a reliable check, not a heuristic -- but "own statuses"
+             * includes boosts, and fmas_Acct is always the CONTENT's
+             * author (src), not who posted it into this timeline -- for a
+             * boost those differ (fmas_Acct is the ORIGINAL author,
+             * fmas_BoostByAcct is the booster). Using fmas_Acct alone here
+             * made every reply for a boost-only profile look "stale" and
+             * get silently discarded, even on the very first, entirely
+             * legitimate page -- see fmas_BoostByAcct's own comment in
+             * fs3enet.h. This is exactly the kind of stale transient data
+             * (a pointer into a reply block for a profile the user already
+             * navigated away from) that must never be applied to whatever
+             * now-different content actually occupies the Search channel,
+             * so the check itself still needs to stay -- it just needs
+             * the right field. The in-flight bookkeeping above still runs
+             * unconditionally either way, so a stale reply doesn't leave
+             * olderPageInFlightMask/etc. permanently stuck for the new
+             * profile. */
+            if (reply->fs3et_ViewModeBit == VIEWMODE_Search) {
+                const char *statusOwnerAcct = NULL;
+                if (reply->fs3et_Count > 0) {
+                    statusOwnerAcct = (statuses[0].fmas_BoostByAcct && statuses[0].fmas_BoostByAcct[0])
+                                    ? statuses[0].fmas_BoostByAcct : statuses[0].fmas_Acct;
+                }
+                if (!app->searchProfileAcct ||
+                    (reply->fs3et_Count > 0 &&
+                     (!statusOwnerAcct || strcmp(statusOwnerAcct, app->searchProfileAcct) != 0)))
+                {
+                    printf("timeline reply: stale Search page discarded (acct=%s current=%s)\n",
+                           statusOwnerAcct ? statusOwnerAcct : "?",
+                           app->searchProfileAcct ? app->searchProfileAcct : "(none)");
+                    break;
+                }
+            }
+
             /* Mastodon always returns each page newest-first. An older
              * page (max_id) is appended below existing content, so it
              * must walk forward (newest-of-page lands right below what's
@@ -819,8 +942,14 @@ static void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                 post.body        = statuses[idx].fmas_Content;
                 post.timestamp   = statuses[idx].fmas_CreatedAt;
                 post.boostBy     = statuses[idx].fmas_BoostBy;
+                post.boostByAcct = statuses[idx].fmas_BoostByAcct;
                 post.avatarURL   = statuses[idx].fmas_AvatarURL;
                 post.postId      = statuses[idx].fmas_Id;
+                post.repliesCount    = statuses[idx].fmas_RepliesCount;
+                post.reblogsCount    = statuses[idx].fmas_ReblogsCount;
+                post.favouritesCount = statuses[idx].fmas_FavouritesCount;
+                post.favourited      = statuses[idx].fmas_Favourited;
+                post.reblogged       = statuses[idx].fmas_Reblogged;
                 {
                     ULONG mi;
                     for (mi = 0; mi < statuses[idx].fmas_MediaCount && mi < TTL_POST_MAX_MEDIA; mi++) {
@@ -834,6 +963,17 @@ static void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                         }
                     }
                     post.mediaCount = statuses[idx].fmas_MediaCount;
+                }
+                {
+                    ULONG oi;
+                    for (oi = 0; oi < statuses[idx].fmas_PollOptionCount && oi < TTL_POST_MAX_POLL_OPTIONS; oi++) {
+                        post.pollOptionTitles[oi] = statuses[idx].fmas_PollOptionTitles[oi];
+                        post.pollOptionVotes[oi]  = statuses[idx].fmas_PollOptionVotes[oi];
+                    }
+                    post.pollOptionCount = statuses[idx].fmas_PollOptionCount;
+                    post.pollVotesCount  = statuses[idx].fmas_PollVotesCount;
+                    post.pollExpired     = statuses[idx].fmas_PollExpired;
+                    post.pollMultiple    = statuses[idx].fmas_PollMultiple;
                 }
 
                 /* Trigger avatar download for this user if not already requested. */
@@ -973,6 +1113,158 @@ static void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
             FS3ETootView_Close(&app->tootView);
         } else {
             printf("post reply: POST_STATUS FAILED result=%u\n", (unsigned)msg->fs3em_Result);
+        }
+        break;
+
+    case FS3ENETQ_FAVORITE:
+        /* The toot may have scrolled out of every channel (evicted, or the
+         * user cleared/switched away) by the time this reply lands --
+         * TTIMELINE_UpdatePost is a silent no-op in that case, same as any
+         * other async reply racing a list change. */
+        if (msg->fs3em_Result == FS3ENETR_OK && app->tootTimeline) {
+            FS3ENetFavouriteReply *reply = (FS3ENetFavouriteReply *)msg->fs3em_Data;
+            TTLPostUpdate upd;
+            memset(&upd, 0, sizeof(upd));
+            upd.postId     = reply->fs3efa_StatusId;
+            upd.flags      = TTL_POSTUPD_FAVOURITED;
+            upd.favourited = reply->fs3efa_Favourited;
+            SetAttrs(app->tootTimeline, TTIMELINE_UpdatePost, (ULONG)&upd, TAG_DONE);
+            if (CurrentMainWindow)
+                RefreshGList((struct Gadget *)app->tootTimeline,
+                             CurrentMainWindow, NULL, 1);
+            printf("favorite reply: ok, statusId=%s favourited=%ld\n",
+                   upd.postId ? upd.postId : "?", (long)upd.favourited);
+        } else if (msg->fs3em_Result != FS3ENETR_OK) {
+            printf("favorite reply: FAILED result=%u\n", (unsigned)msg->fs3em_Result);
+        }
+        break;
+
+    case FS3ENETQ_ACCOUNT_LOOKUP:
+        /* Stale-reply guard: the user may have clicked a second
+         * avatar/mention before this lookup came back for the first
+         * one -- only apply it if it's still the profile we last asked
+         * for. */
+        if (msg->fs3em_Result == FS3ENETR_OK && app->tootTimeline &&
+            app->searchProfileAcct)
+        {
+            FS3ENetAccountLookupReply *reply = (FS3ENetAccountLookupReply *)msg->fs3em_Data;
+            FS3EMastodonAccount *acc = &reply->fs3eal_Account;
+
+            if (strcmp(app->searchProfileAcct, acc->fma_Acct) == 0) {
+                TTLProfileHeaderSetup setup;
+                BOOL isSelf = (app->accountId && acc->fma_Id[0] &&
+                               strcmp(app->accountId, acc->fma_Id) == 0);
+
+                if (app->searchProfileAccountId) FreeVec(app->searchProfileAccountId);
+                app->searchProfileAccountId = NetStrDup(acc->fma_Id);
+
+                memset(&setup, 0, sizeof(setup));
+                setup.accountId      = acc->fma_Id;
+                setup.username       = acc->fma_DisplayName[0] ? acc->fma_DisplayName : acc->fma_Acct;
+                setup.acct           = acc->fma_Acct;
+                setup.avatarURL      = acc->fma_AvatarURL;
+                setup.bio            = acc->fma_Note;
+                setup.followersCount = acc->fma_FollowersCount;
+                setup.followingCount = acc->fma_FollowingCount;
+                setup.following      = FALSE; /* unknown until the FS3ENETQ_RELATIONSHIP reply */
+                setup.showFollow     = !isSelf;
+
+                SetAttrs(app->tootTimeline, TTIMELINE_ShowProfile, (ULONG)&setup, TAG_DONE);
+
+                /* Avatar fetch -- same cache/pipeline as a toot's own
+                 * avatar, mirrors FS3EApp_SetAccount's own-avatar fetch
+                 * block; a transparent cache hit if this acct's avatar
+                 * was already fetched while scrolling a timeline. */
+                if (app->avatarImages && acc->fma_Acct[0] &&
+                    acc->fma_AvatarURL[0] &&
+                    !AvatarImages_IsRequested(app->avatarImages, acc->fma_Acct))
+                {
+                    ULONG reqSize = sizeof(FS3ENetFetchImageReq)
+                                  + strlen(acc->fma_AvatarURL) + 1
+                                  + strlen(acc->fma_Acct) + 1
+                                  + strlen(FS3E_CACHE_SUBDIR_USERICONS) + 1;
+                    FS3ENetFetchImageReq *imgReq =
+                        FS3ENetFetchImageReq_Alloc(acc->fma_AvatarURL, acc->fma_Acct,
+                                                   FS3E_CACHE_SUBDIR_USERICONS,
+                                                   (BOOL)app->settings.keepBigUserIcons);
+                    if (imgReq) {
+                        if (FS3EApp_NetSend(FS3ENETQ_FETCH_IMAGE, imgReq, reqSize))
+                            AvatarImages_MarkRequested(app->avatarImages, acc->fma_Acct);
+                        else
+                            FreeVec(imgReq);
+                    }
+                }
+
+                /* Relationship (skipped for a self-profile -- you can't
+                 * follow yourself) + the profile's first toot page,
+                 * always requested as an "older" page (even though it's
+                 * the first one) so it lands via TTIMELINE_AppendPost
+                 * below the header instead of the AddPost/prepend path
+                 * FS3ENETPAGE_INITIAL would take -- see
+                 * TTIMELINE_ShowProfile's comment in fs3etoottimeline.h. */
+                if (!isSelf && app->accountAccessToken && app->accountAccessToken[0]) {
+                    FS3ENetRelationshipReq *relReq = FS3ENetRelationshipReq_Alloc(
+                        app->accountApiBaseUrl, app->accountAccessToken,
+                        app->searchProfileAccountId);
+                    if (relReq)
+                        FS3EApp_NetSend(FS3ENETQ_RELATIONSHIP, relReq, sizeof(*relReq));
+                }
+                {
+                    char tl[128];
+                    if (ViewModeTimeline(VIEWMODE_Search, tl, sizeof(tl))) {
+                        FS3ENetTimelineReq *tlReq = FS3ENetTimelineReq_Alloc(
+                            VIEWMODE_Search, FS3ENETPAGE_OLDER,
+                            app->accountApiBaseUrl,
+                            app->accountAccessToken ? app->accountAccessToken : "",
+                            tl, "", "");
+                        if (tlReq)
+                            FS3EApp_NetSend(FS3ENETQ_TIMELINE, tlReq, sizeof(FS3ENetTimelineReq));
+                    }
+                }
+
+                if (CurrentMainWindow)
+                    RefreshGList((struct Gadget *)app->tootTimeline,
+                                 CurrentMainWindow, NULL, 1);
+                printf("account lookup reply: ok, id=%s acct=%s\n", acc->fma_Id, acc->fma_Acct);
+            }
+        } else if (msg->fs3em_Result != FS3ENETR_OK) {
+            printf("account lookup reply: FAILED result=%u\n", (unsigned)msg->fs3em_Result);
+        }
+        break;
+
+    case FS3ENETQ_RELATIONSHIP:
+        if (msg->fs3em_Result == FS3ENETR_OK && app->tootTimeline &&
+            app->searchProfileAccountId)
+        {
+            FS3ENetRelationshipReply *reply = (FS3ENetRelationshipReply *)msg->fs3em_Data;
+            if (strcmp(app->searchProfileAccountId, reply->fs3erl_AccountId) == 0) {
+                TTLProfileFollowUpdate upd;
+                upd.accountId = reply->fs3erl_AccountId;
+                upd.following = reply->fs3erl_Following;
+                SetAttrs(app->tootTimeline, TTIMELINE_UpdateProfileFollow, (ULONG)&upd, TAG_DONE);
+                if (CurrentMainWindow)
+                    RefreshGList((struct Gadget *)app->tootTimeline,
+                                 CurrentMainWindow, NULL, 1);
+            }
+        }
+        break;
+
+    case FS3ENETQ_FOLLOW:
+        if (msg->fs3em_Result == FS3ENETR_OK && app->tootTimeline &&
+            app->searchProfileAccountId)
+        {
+            FS3ENetFollowReply *reply = (FS3ENetFollowReply *)msg->fs3em_Data;
+            if (strcmp(app->searchProfileAccountId, reply->fs3efo_AccountId) == 0) {
+                TTLProfileFollowUpdate upd;
+                upd.accountId = reply->fs3efo_AccountId;
+                upd.following = reply->fs3efo_Following;
+                SetAttrs(app->tootTimeline, TTIMELINE_UpdateProfileFollow, (ULONG)&upd, TAG_DONE);
+                if (CurrentMainWindow)
+                    RefreshGList((struct Gadget *)app->tootTimeline,
+                                 CurrentMainWindow, NULL, 1);
+            }
+        } else if (msg->fs3em_Result != FS3ENETR_OK) {
+            printf("follow reply: FAILED result=%u\n", (unsigned)msg->fs3em_Result);
         }
         break;
 
@@ -1255,6 +1547,56 @@ static void closeExternalViews(void)
     FS3ESettingsView_Close(&app->settingsView);
 }
 
+/* If another FriendSh3ep is already running, ask it to activate itself and
+ * return FALSE (caller must quit immediately, before touching the cache).
+ * Otherwise create+register our own public port and return TRUE.
+ *
+ * Classic exec.library idiom (RKM Exec "Ports" chapter, port1.c/port2.c):
+ * FindPort() must be paired with PutMsg() inside the *same* Forbid(), since
+ * once Permit() runs the target port's owner could exit and free it out
+ * from under us -- see the comment in port2.c's SafePutToPort(). */
+static BOOL FS3E_CheckSingleInstance(void)
+{
+    struct MsgPort *existing;
+
+    Forbid();
+    existing = FindPort(FS3E_SIPC_PORTNAME);
+    if (existing)
+    {
+        struct MsgPort *replyPort = CreateMsgPort();
+        if (replyPort)
+        {
+            struct Message *msg =
+                AllocMem(sizeof(struct Message), MEMF_PUBLIC | MEMF_CLEAR);
+            if (msg)
+            {
+                msg->mn_Node.ln_Type = NT_MESSAGE;
+                msg->mn_Length       = sizeof(struct Message);
+                msg->mn_ReplyPort    = replyPort;
+                PutMsg(existing, msg);   /* still Forbid()'d -- existing can't vanish yet */
+                Permit();
+                WaitPort(replyPort);
+                GetMsg(replyPort);
+                FreeMem(msg, sizeof(struct Message));
+            }
+            else Permit();
+            DeleteMsgPort(replyPort);
+        }
+        else Permit();
+        return FALSE;
+    }
+
+    SIPCPort = CreateMsgPort();
+    if (SIPCPort)
+    {
+        SIPCPort->mp_Node.ln_Name = FS3E_SIPC_PORTNAME;
+        SIPCPort->mp_Node.ln_Pri  = 0;
+        AddPort(SIPCPort);   /* nested inside the outer Forbid() -- Forbid/Permit nest via a counter */
+    }
+    Permit();
+    return TRUE;
+}
+
 /* - - - - - - - - - - - - - - - - - - - MAIN - - - - - - - - - - - - - - - */
 
 int main(int argc, char **argv)
@@ -1268,6 +1610,12 @@ int main(int argc, char **argv)
     myTask = FindTask(NULL);
     atexit(&exitclose);
 
+    /* Only one FriendSh3ep may run at a time (shared, non-concurrency-safe
+     * disk cache -- see fs3enet_cache.h). Check/register before opening any
+     * library or touching the cache. */
+    if (!FS3E_CheckSingleInstance())
+        return 0;
+
     {
         LibraryEntry *entry;
         for (entry = libraryTable; entry->name != NULL; entry++) {
@@ -1279,6 +1627,8 @@ int main(int argc, char **argv)
             }
         }
     }
+
+
 
     /* CyberGfxBase NULL accepted */
     CyberGfxBase = OpenLibrary("cybergraphics.library", 1);
@@ -1491,6 +1841,7 @@ int main(int argc, char **argv)
         LAYOUT_BevelStyle, BVS_NONE,
         LAYOUT_SpaceOuter, FALSE,
         LAYOUT_SpaceInner, FALSE,
+        LAYOUT_BackFill,NULL,
         NBLAYOUT_DpiHeight, (ULONG)dpiH,
         /* children in required order (see fs3enavbar.h) */
         LAYOUT_AddChild, (ULONG)app->nav_btns[0],
@@ -1513,6 +1864,7 @@ int main(int argc, char **argv)
         TTIMELINE_DpiHeight, (ULONG)dpiH,
         ICA_TARGET, (ULONG)TargetInstance,
         GA_ID,      GID_TTIMELINE,
+        GA_BackFill, NULL,
         TAG_END);
  printf("end create ttl\n");
     if (!app->tootTimeline) cleanexit("Can't create toot timeline");
@@ -1627,12 +1979,41 @@ int main(int argc, char **argv)
                 (1L << app->app_port->mp_SigBit) |
                 (app->netReplyPort ? (1L << app->netReplyPort->mp_SigBit) : 0) |
                 (app->thumbReplyPort ? (1L << app->thumbReplyPort->mp_SigBit) : 0) |
+                (SIPCPort ? (1L << SIPCPort->mp_SigBit) : 0) |
                 SIGBREAKF_CTRL_C |
                 SIGBREAKF_CTRL_F;
 
             currentSignals = Wait(waitedSignals);
 
             if (currentSignals & SIGBREAKF_CTRL_C) exit(0);
+
+            /* A second FriendSh3ep launch asked us to activate -- see
+             * FS3E_CheckSingleInstance(). Re-open if iconified, otherwise
+             * just bring the window forward. */
+            if (SIPCPort && (currentSignals & (1L << SIPCPort->mp_SigBit)))
+            {
+                struct Message *sipcMsg;
+                while ((sipcMsg = GetMsg(SIPCPort)) != NULL)
+                {
+                    if (!CurrentMainWindow)
+                    {
+                        FS3EMain_Show(&app->mainwindow, app->window_obj);
+                        if (CurrentMainWindow)
+                        {
+                            FS3EMenu_Create(&app->menu, CurrentMainScreen, CurrentMainWindow);
+                            if (app->avatarImages)
+                                FS3EApp_UpdateUserIcon();
+                        }
+                    }
+                    if (CurrentMainWindow)
+                    {
+                        WindowToFront(CurrentMainWindow);
+                        ActivateWindow(CurrentMainWindow);
+                        ScreenToFront(CurrentMainWindow->WScreen);
+                    }
+                    ReplyMsg(sipcMsg);
+                }
+            }
 
             while ((result = DoMethod(app->window_obj, WM_HANDLEINPUT, NULL))
                    != WMHI_LASTMSG)
@@ -2021,12 +2402,20 @@ int main(int argc, char **argv)
                                 {   /* a hot spot in a toot were clicked: */
                                     ULONG hotSpotType = ptag->ti_Data;
                                     const char *hotSpotString =NULL,*hotSpotId=NULL;
+                                    BOOL hotSpotFavourited = FALSE;
+                                    BOOL hotSpotFollowing = FALSE;
 
                                     ptag = FindTagItem(TTIMELINE_LastHotSpotString, msg);
                                     if(ptag) hotSpotString  =(const char *)ptag->ti_Data;
 
                                     ptag = FindTagItem(TTIMELINE_LastHotSpotPostId, msg);
                                     if(ptag) hotSpotId  =(const char *)ptag->ti_Data;
+
+                                    ptag = FindTagItem(TTIMELINE_LastHotSpotFavourited, msg);
+                                    if(ptag) hotSpotFavourited = (BOOL)ptag->ti_Data;
+
+                                    ptag = FindTagItem(TTIMELINE_LastHotSpotFollowing, msg);
+                                    if(ptag) hotSpotFollowing = (BOOL)ptag->ti_Data;
 
                                  printf("Main process TTL_HotSpotNotify type:%lu str=%s id=%s\n",
                                         hotSpotType,
@@ -2035,6 +2424,33 @@ int main(int argc, char **argv)
 
                                     switch (hotSpotType)
                                     {
+                                        case TTL_HOT_AVATAR:
+                                        case TTL_HOT_MENTION:
+                                            /* Both open the same profile
+                                             * view -- an avatar click
+                                             * carries the author's bare
+                                             * acct, a mention click
+                                             * carries "@handle" as it
+                                             * appears in the text (bio or
+                                             * toot body alike, since bio
+                                             * spans get the identical
+                                             * mention scan -- see
+                                             * ttl_scan_span_tokens). */
+                                            FS3EApp_OpenProfile(hotSpotString);
+                                            break;
+
+                                        case TTL_HOT_FOLLOW:
+                                            /* Reply/count update happens
+                                             * once the server confirms --
+                                             * see the FS3ENETQ_FOLLOW
+                                             * reply handler, which sends
+                                             * TTIMELINE_UpdateProfileFollow.
+                                             * Shared with a future "User"
+                                             * menu entry, same reasoning
+                                             * as Action_ToggleFavorite. */
+                                            Action_ToggleFollow(app, app->searchProfileAccountId, hotSpotFollowing);
+                                            break;
+
                                         case TTL_HOT_MEDIA_PREV:
                                         case TTL_HOT_MEDIA_NEXT:
                                             /* The gadget already advanced
@@ -2070,6 +2486,22 @@ int main(int argc, char **argv)
                                             printf("Play audio requested: %s\n",
                                                    hotSpotString ? hotSpotString : "(null)");
                                             break;
+
+                                        case TTL_HOT_FAVORITE:
+                                            /* Reply/count update happens
+                                             * once the server confirms --
+                                             * see the FS3ENETQ_FAVORITE
+                                             * reply handler, which sends
+                                             * TTIMELINE_UpdatePost. Shared
+                                             * with the future "This Toot"
+                                             * menu entry -- see
+                                             * fs3eaction.c. */
+                                            Action_ToggleFavorite(app, hotSpotId, hotSpotFavourited);
+                                            break;
+
+                                        /* TTL_HOT_REPLY / TTL_HOT_BOOST: left
+                                         * for after toot composing/editing
+                                         * is in place (see todo.txt). */
 
                                         default:
                                             break;
@@ -2124,6 +2556,12 @@ int main(int argc, char **argv)
 void exitclose(void)
 {
  printf("exitclose\n");
+    if (SIPCPort)
+    {
+        RemPort(SIPCPort);
+        DeleteMsgPort(SIPCPort);
+        SIPCPort = NULL;
+    }
     if (app)
     {
 
@@ -2240,6 +2678,8 @@ wait2sec();
 wait2sec();
         FS3EApp_FreeLoginState();
         FS3EApp_FreeAccount();
+        if (app->searchProfileAcct)      { FreeVec(app->searchProfileAcct);      app->searchProfileAcct      = NULL; }
+        if (app->searchProfileAccountId) { FreeVec(app->searchProfileAccountId); app->searchProfileAccountId = NULL; }
 
  printf("exitclose7\n");
 wait2sec();

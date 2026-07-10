@@ -23,10 +23,12 @@
 #include "fs3ethemeview.h"
 #include "fs3esettingsview.h"
 #include "fs3esettings.h"
+#include "network_fs3e/fs3enet.h"
 
 /* Forward-declared in friendsh3ep.c */
 extern void FS3EApp_ApplyFontSettings(void);
 extern void cleanexit(const char *pmessage);
+extern BOOL FS3EApp_NetSend(ULONG type, APTR data, ULONG dataLen);
 
 #define FONTSIZE_MIN  8
 #define FONTSIZE_MAX 24
@@ -219,5 +221,45 @@ BOOL Action_FontSizePlus(struct App *ctx)
     if (ctx->settings.fontPointSize < FONTSIZE_MAX)
         ctx->settings.fontPointSize += FONTSIZE_STEP;
     FS3EApp_ApplyFontSettings();
+    return TRUE;
+}
+
+/* -------------------------------------------------------------------------
+ * Toot actions
+ * -------------------------------------------------------------------------*/
+
+BOOL Action_ToggleFavorite(struct App *ctx, const char *postId, BOOL currentlyFavourited)
+{
+    FS3ENetFavouriteReq *req;
+
+    if (!ctx || !postId || !postId[0]) return FALSE;
+    if (!ctx->accountAccessToken || !ctx->accountAccessToken[0]) return FALSE;
+
+    req = FS3ENetFavouriteReq_Alloc(ctx->accountApiBaseUrl, ctx->accountAccessToken,
+                                    postId, !currentlyFavourited);
+    if (!req) return FALSE;
+
+    if (!FS3EApp_NetSend(FS3ENETQ_FAVORITE, req, sizeof(*req))) {
+        FreeVec(req);
+        return FALSE;
+    }
+    return TRUE;
+}
+
+BOOL Action_ToggleFollow(struct App *ctx, const char *accountId, BOOL currentlyFollowing)
+{
+    FS3ENetFollowReq *req;
+
+    if (!ctx || !accountId || !accountId[0]) return FALSE;
+    if (!ctx->accountAccessToken || !ctx->accountAccessToken[0]) return FALSE;
+
+    req = FS3ENetFollowReq_Alloc(ctx->accountApiBaseUrl, ctx->accountAccessToken,
+                                 accountId, !currentlyFollowing);
+    if (!req) return FALSE;
+
+    if (!FS3EApp_NetSend(FS3ENETQ_FOLLOW, req, sizeof(*req))) {
+        FreeVec(req);
+        return FALSE;
+    }
     return TRUE;
 }

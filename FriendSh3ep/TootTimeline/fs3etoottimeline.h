@@ -18,6 +18,12 @@
  * one post can appear in more than one channel. Must match fs3eViewMode's
  * VIEWMODE_NumberOf. */
 #define TTIMELINE_NUM_VIEWMODES 8
+/* Channel index TTIMELINE_ShowProfile/TTIMELINE_UpdateProfileFollow
+ * always target -- must match fs3eViewMode's VIEWMODE_Search (see
+ * friendsh3ep.h), same "must match" convention as TTIMELINE_NUM_VIEWMODES
+ * above. TootTimeline stays self-contained (no friendsh3ep.h include),
+ * so this is a documented numeric coupling, not a shared symbol. */
+#define TTL_SEARCH_CHANNEL 4
 
 /* [IS] UWORD: row-height DPI factor (default 14) */
 #define TTIMELINE_DpiHeight      (TTIMELINE_Base + 0)
@@ -102,6 +108,33 @@
  * scrollY on its own, so callers should only send this right after a
  * channel's first-ever page of posts lands. */
 #define TTIMELINE_ScrollToNewest     (TTIMELINE_Base + 18)
+/* [S] TTLPostUpdate*: a status just changed on the server (Fave/Boost
+ * toggle reply, or any future live update) -- every channel's copy of the
+ * post with a matching postId (TTLPostUpdate.postId) is updated, and its
+ * tile is invalidated for redraw if the channel holding it is currently
+ * active. Silently a no-op if no channel currently has that postId (the
+ * post scrolled out and got evicted, the reply raced a ClearPosts, ...).
+ * See TTLPostUpdate/TTL_POSTUPD_* below. */
+#define TTIMELINE_UpdatePost         (TTIMELINE_Base + 19)
+/* [S] TTLProfileHeaderSetup*: show a user profile in the Search channel --
+ * clears the Search channel and seeds it with a pinned header (avatar,
+ * display name, bio, follower/following counts, Follow/Unfollow button)
+ * followed by that user's own toots as a normal paginated list. Always
+ * targets the Search channel specifically (fs3eViewMode's VIEWMODE_Search)
+ * -- unlike TTLPostSetup.viewModeBits, there is no multi-channel option,
+ * since a profile view is inherently single-channel. The header is NOT a
+ * member of the channel's post list (so it can never be displaced by
+ * pagination/insert logic shared with every other channel) -- see
+ * TTLChannel.headerPost in fs3etoottimeline_private.h. */
+#define TTIMELINE_ShowProfile        (TTIMELINE_Base + 26)
+/* [S] TTLProfileFollowUpdate*: the Search channel's current profile
+ * header's following state (and, on a real transition, its
+ * followersCount by a local +1/-1 delta -- same reasoning as
+ * TTL_POSTUPD_FAVOURITED) just changed on the server (a Relationship
+ * fetch or a Follow/Unfollow reply). Silent no-op if the Search channel
+ * has no header right now, or its header is for a different account id
+ * than accountId (a stale reply racing a new profile being opened). */
+#define TTIMELINE_UpdateProfileFollow (TTIMELINE_Base + 27)
 
 /* ------------------------------------------------------------------ */
 /* Notification tags  (sent to ICA_TARGET via OM_NOTIFY)               */
@@ -123,6 +156,21 @@
  * separate GetAttr call. See ttl_notify_hotspot() in
  * fs3etoottimeline_tiles.c. */
 #define TTIMELINE_HotSpotNotify       (TTIMELINE_Base + 24)
+/* [G] BOOL: same OM_NOTIFY tag list as TTIMELINE_HotSpotNotify above --
+ * TRUE if the post the just-activated hot-spot belongs to is currently
+ * favourited by the connected user. Meaningless (FALSE) for hot-spot
+ * types with no owning post (TTL_HOT_LOAD_NEWER/OLDER) or that aren't
+ * about a favourite state at all -- lets a TTL_HOT_FAVORITE handler
+ * decide POST .../favourite vs .../unfavourite without a separate
+ * lookup back into the post list. */
+#define TTIMELINE_LastHotSpotFavourited (TTIMELINE_Base + 25)
+/* [G] BOOL: same OM_NOTIFY tag list as TTIMELINE_HotSpotNotify -- TRUE if
+ * the *profile header's* own account is currently followed by the
+ * connected user, at the moment its TTL_HOT_FOLLOW hot-spot was clicked.
+ * Meaningless (FALSE) for every other hot-spot type/owning post -- lets a
+ * TTL_HOT_FOLLOW handler decide POST .../follow vs .../unfollow without a
+ * separate lookup, same reasoning as TTIMELINE_LastHotSpotFavourited. */
+#define TTIMELINE_LastHotSpotFollowing  (TTIMELINE_Base + 28)
 /* Ask full redraw from correct process */
 #define TTIMELINE_ProcessRefresh        (TTIMELINE_Base + 23)
 
@@ -152,12 +200,25 @@
 #define TTL_MEDIA_KIND_AUDIO   3
 #define TTL_MEDIA_KIND_UNKNOWN 4
 
+/* Max poll ("survey") options a post carries (matches
+ * FS3ENET_MAX_POLL_OPTIONS / Mastodon's own cap). pollOptionCount==0
+ * means the post has no poll. Mastodon disallows a status having both
+ * a poll and media_attachments, so mediaCount/pollOptionCount are
+ * mutually exclusive in practice -- the layout treats them as
+ * alternatives, never both. Only CLOSED/result rendering is
+ * implemented for now (bars + percentages); voting on an open poll
+ * is a later session's work, no TTL_HOT_ type exists for it yet. */
+#define TTL_POST_MAX_POLL_OPTIONS 8
+
 typedef struct TTLPostSetup {
     const char *username;    /* original author display name (UTF-8) */
     const char *acct;        /* original author @user@instance (UTF-8) */
     const char *body;        /* post body text (UTF-8) */
     const char *timestamp;   /* short age string, e.g. "3h" (UTF-8) */
     const char *boostBy;     /* booster display name, NULL/"" for originals */
+    const char *boostByAcct; /* booster @user@instance, NULL/"" for originals -- what
+                               * clicking the "X boosted" line actually opens (see
+                               * TTL_HOT_AVATAR on TTL_SPAN_BOOSTBY) */
     const char *avatarURL;   /* CDN URL of original author's avatar */
     const char *postId;      /* Mastodon status id string, for hot-spot activation
                                * notifications (TTL_HOT_REPLY/BOOST/FAVORITE need to
@@ -175,7 +236,86 @@ typedef struct TTLPostSetup {
                                 * TTIMELINE_NUM_VIEWMODES); a post can be
                                 * added to more than one channel at once,
                                 * as an independent copy per channel. */
+
+    /* Action-bar counts/state, shown next to the Reply/Boost/Fave buttons
+     * and (favourited) toggling the Fave glyph between empty/full star --
+     * see ttl_build_action_labels() in fs3etoottimeline_tiles.c. */
+    ULONG       repliesCount;
+    ULONG       reblogsCount;
+    ULONG       favouritesCount;
+    BOOL        favourited;
+    BOOL        reblogged;
+
+    /* Poll ("survey"), closed/result rendering only -- see
+     * TTL_POST_MAX_POLL_OPTIONS above. pollOptionCount==0 = no poll. */
+    const char *pollOptionTitles[TTL_POST_MAX_POLL_OPTIONS];
+    ULONG       pollOptionVotes[TTL_POST_MAX_POLL_OPTIONS];
+    ULONG       pollOptionCount;
+    ULONG       pollVotesCount;
+    BOOL        pollExpired;
+    BOOL        pollMultiple;
 } TTLPostSetup;
+
+/* ------------------------------------------------------------------ */
+/* Post state update descriptor (passed via TTIMELINE_UpdatePost)      */
+/* The gadget does not copy/own postId -- it's only read for the       */
+/* duration of the SetAttrs call, same lifetime rule as TTLPostSetup's */
+/* strings.                                                            */
+/*                                                                      */
+/* flags says which of favourited/reblogged this update actually       */
+/* carries -- a caller only ever knows for certain the ONE state its    */
+/* own action's endpoint just confirmed (e.g. a favourite/unfavourite   */
+/* reply confirms favourited, nothing about reblogged), and must not    */
+/* blindly touch the other. The corresponding count (favouritesCount/   */
+/* reblogsCount) is NOT part of this struct: the gadget derives it      */
+/* itself as a +1/-1 delta on the post's own current count when the     */
+/* boolean actually flips, rather than trusting a server-echoed number  */
+/* that (see FS3EMastodon_Favourite's comment) isn't reliably present   */
+/* on every instance's response -- copying it verbatim once silently    */
+/* zeroed this toot's OTHER counts on every favourite toggle. */
+/* ------------------------------------------------------------------ */
+
+#define TTL_POSTUPD_FAVOURITED (1UL << 0) /* apply favourited + delta favouritesCount by ±1 */
+#define TTL_POSTUPD_REBLOGGED  (1UL << 1) /* apply reblogged  + delta reblogsCount  by ±1 */
+
+typedef struct TTLPostUpdate {
+    const char *postId;      /* which post (every channel's copy is updated) */
+    ULONG       flags;       /* TTL_POSTUPD_* -- which fields below to apply */
+    BOOL        favourited;  /* new state; used iff flags & TTL_POSTUPD_FAVOURITED */
+    BOOL        reblogged;   /* new state; used iff flags & TTL_POSTUPD_REBLOGGED */
+} TTLPostUpdate;
+
+/* ------------------------------------------------------------------ */
+/* Profile header descriptor (passed via TTIMELINE_ShowProfile)        */
+/* The gadget copies every string; the caller owns the struct, same    */
+/* lifetime rule as TTLPostSetup.                                      */
+/* ------------------------------------------------------------------ */
+
+typedef struct TTLProfileHeaderSetup {
+    const char *accountId;    /* Mastodon account id -- see TTIMELINE_UpdateProfileFollow */
+    const char *username;     /* display name (UTF-8) */
+    const char *acct;         /* "@user@instance" (UTF-8) */
+    const char *avatarURL;    /* CDN URL, same fetch/cache pipeline as a toot's avatar */
+    const char *bio;          /* HTML-already-stripped bio text (UTF-8), word-wrapped and
+                                * scanned for @mention/#hashtag/URL hot-spots exactly like
+                                * a toot body */
+    ULONG       followersCount;
+    ULONG       followingCount;
+    BOOL        following;    /* connected user already follows this account */
+    BOOL        showFollow;   /* FALSE hides the Follow/Unfollow hot-spot entirely --
+                                * for viewing your own profile, where following yourself
+                                * makes no sense */
+} TTLProfileHeaderSetup;
+
+/* ------------------------------------------------------------------ */
+/* Profile-header follow-state update (passed via                      */
+/* TTIMELINE_UpdateProfileFollow) -- see that tag's comment.            */
+/* ------------------------------------------------------------------ */
+
+typedef struct TTLProfileFollowUpdate {
+    const char *accountId;   /* must match the current header's account, else no-op */
+    BOOL        following;   /* new state */
+} TTLProfileFollowUpdate;
 
 /* ------------------------------------------------------------------ */
 /* Hot-spot types  (forwarded in TTLHotSpotActivated notification)     */
@@ -201,6 +341,8 @@ typedef struct TTLPostSetup {
                                  * clicked, if it ever grows a hot-spot later); data/postId are NULL */
 #define TTL_HOT_PLAY_AUDIO  12 /* preview rect for an audio attachment (TTL_MEDIA_KIND_AUDIO) -- no
                                  * thumbnail is ever fetched for these; data = the attachment URL */
+#define TTL_HOT_FOLLOW      13 /* profile header's Follow/Unfollow label; data/postId are NULL --
+                                 * see TTIMELINE_LastHotSpotFollowing for the account's current state */
 
 /* Opaque handle; cast to TTLHotSpot* from private header if needed */
 typedef struct TTLHotSpot TTLHotSpot;

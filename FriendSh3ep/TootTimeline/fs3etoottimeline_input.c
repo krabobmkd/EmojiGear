@@ -47,10 +47,11 @@
 static void ttl_set_scroll(TTLData *inst, LONG newScrollY)
 {
     TTLChannel *active = ttl_active(inst);
+    LONG minScroll = ttl_channel_min_scroll(active);
     LONG maxScroll = active->contentBottomY - inst->gadHeight;
-    if (maxScroll < active->contentTopY) maxScroll = active->contentTopY;
-    if (newScrollY < active->contentTopY) newScrollY = active->contentTopY;
-    if (newScrollY > maxScroll)           newScrollY = maxScroll;
+    if (maxScroll < minScroll) maxScroll = minScroll;
+    if (newScrollY < minScroll) newScrollY = minScroll;
+    if (newScrollY > maxScroll) newScrollY = maxScroll;
     inst->pendingScroll  = TRUE;
     inst->pendingScrollY = newScrollY;
 }
@@ -60,11 +61,21 @@ static void ttl_set_scroll(TTLData *inst, LONG newScrollY)
 /* ------------------------------------------------------------------ */
 
 /* Find the post whose Y range contains timelineY, or NULL, in the
- * currently active channel. */
+ * currently active channel. A profile header (see TTLChannel.headerPost)
+ * is deliberately not a member of the channel's post list, so it needs
+ * its own check here first -- guarded, and always NULL/no-op for every
+ * channel except Search with a profile loaded. */
 static TTLPost *ttl_hit_post(TTLData *inst, LONG timelineY)
 {
     TTLPost *post;
-    for (post = (TTLPost *)ttl_active(inst)->posts.mlh_Head;
+    TTLChannel *active = ttl_active(inst);
+
+    if (active->headerPost &&
+        timelineY >= active->headerPost->timelineY &&
+        timelineY <  active->headerPost->timelineY + active->headerPost->height)
+        return active->headerPost;
+
+    for (post = (TTLPost *)active->posts.mlh_Head;
          post->node.mln_Succ;
          post = (TTLPost *)post->node.mln_Succ)
     {
@@ -127,7 +138,8 @@ static void ttl_activate_hotspot(TTLData *inst, Class *cl, Object *o,
                                   struct GadgetInfo *gi,
                                   TTLPost *post, TTLHotSpot *hs)
 {
-    ttl_notify_hotspot(cl, o, gi, hs->type, hs->data, hs->dataLen, post->postId);
+    ttl_notify_hotspot(cl, o, gi, hs->type, hs->data, hs->dataLen, post->postId,
+                        post->favourited, post->following);
 
     if (post->cls && post->cls->activate)
         post->cls->activate(inst, cl, o, gi, post, hs);
@@ -186,13 +198,22 @@ ULONG TTL_OnHitTest(Class *cl, Object *o, struct gpHitTest *msg)
         relY >= gadH - TTL_RESIZE_HANDLE &&
         gi && gi->gi_Window && gi->gi_Screen)
     {
-        windowResizeActive      = TRUE;
+        /* GM_HITTEST can run on a different task than the main loop that
+         * reads these globals on WMHI_MOUSEMOVE (see the listSem comment
+         * in fs3etoottimeline_private.h for the general cross-task
+         * hazard) -- windowResizeActive is set LAST, after every companion
+         * field, so the main loop never observes Active==TRUE alongside a
+         * stale/partial group of the other fields below. A single CPU
+         * with no store reordering guarantees writes complete in this
+         * program order, so that ordering alone (no semaphore needed for
+         * a plain "publish this flag last" pattern) is enough here. */
         windowResizeStartSX     = gi->gi_Screen->MouseX;
         windowResizeStartSY     = gi->gi_Screen->MouseY;
         windowResizeStartW      = gi->gi_Window->Width;
         windowResizeStartH      = gi->gi_Window->Height;
         windowResizeLastTargetW = gi->gi_Window->Width;
         windowResizeLastTargetH = gi->gi_Window->Height;
+        windowResizeActive      = TRUE;
         return 0;   /* don't activate — let IDCMP see the mouse events */
     }
 
@@ -287,9 +308,18 @@ ULONG TTL_OnHandleInput(Class *cl, Object *o, struct gpInput *msg)
         }
 
         if (inst->dragActive && ie->ie_Code == IECODE_NOBUTTON) {
-            /* Mouse move while dragging: scroll */
+            /* Mouse move while dragging: scroll. ttl_set_scroll reads
+             * active->contentTopY/contentBottomY, which a relayout on the
+             * render/main-task side can be rewriting concurrently under
+             * listSem -- this branch previously wasn't locked at all
+             * (only the click-resolution branch below was), the same
+             * class of cross-task race the list-corruption fix addressed;
+             * see the listSem comment in fs3etoottimeline_private.h. */
             WORD dy = (WORD)(msg->gpi_Mouse.Y - inst->dragStartGadY);
+
+            ObtainSemaphore(&inst->listSem);
             ttl_set_scroll(inst, inst->dragStartScrollY - dy);
+            ReleaseSemaphore(&inst->listSem);
 
             ttl_notify(cl,o,msg->gpi_GInfo, TTIMELINE_ProcessRefresh,TRUE);
             //ttl_render_self(cl, o, msg->gpi_GInfo);

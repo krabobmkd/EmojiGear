@@ -421,10 +421,15 @@ static ULONG TitleBarLayout_OnHitTest(Class *cl, Object *o, struct gpHitTest *ms
     }
     /* Click on empty drag strip: prime main-loop drag state NOW (still inside
      * WM_HANDLEINPUT), then refuse activation so MoveWindow() is never blocked
-     * by an active gadget. */
-    windowDragActive      = TRUE;
+     * by an active gadget. GM_HITTEST can run on a different task than the
+     * main loop that reads these globals on WMHI_MOUSEMOVE, so
+     * windowDragActive is set LAST, after both companion fields, so the
+     * main loop never observes Active==TRUE alongside a stale
+     * LastScreenX/Y pair (same reasoning as TootTimeline's
+     * windowResizeActive -- see fs3etoottimeline_input.c). */
     windowDragLastScreenX = gi->gi_Screen->MouseX;
     windowDragLastScreenY = gi->gi_Screen->MouseY;
+    windowDragActive      = TRUE;
     return 0;
 }
 
@@ -530,14 +535,16 @@ static ULONG TitleBarLayout_OnRender(Class *cl, Object *o, struct gpRender *msg)
         BmImage *timg = &inst->style->titlebarTitle;
         WORD     dstX = left + inst->style->titlebarTitleX;
         WORD     dstY = top  + inst->style->titlebarTitleY;
+        WORD blitheight = timg->height;
+        if((dstY+blitheight)>(top+h)) blitheight =(top+h)-(dstY);
 
         if (timg->mask) {
             BltMaskBitMapRastPort(timg->bitmap, 0, 0, rp, dstX, dstY,
-                                  (LONG)timg->width, (LONG)timg->height,
+                                  (LONG)timg->width, (LONG)blitheight,
                                   PATCH9_MASK_MINTERM, timg->mask);
         } else {
             BltBitMapRastPort(timg->bitmap, 0, 0, rp, dstX, dstY,
-                              (LONG)timg->width, (LONG)timg->height, 0xC0);
+                              (LONG)timg->width, (LONG)blitheight, 0xC0);
         }
     }
 

@@ -43,6 +43,13 @@ typedef struct FS3EMastodonAccount
     char *fma_Acct;
     char *fma_DisplayName;
     char *fma_AvatarURL;
+
+    /* Profile-view fields -- unset ("" / 0) by FS3EMastodon_VerifyCredentials,
+     * which has no reason to fetch them; only FS3EMastodon_LookupAccount
+     * fills these in. */
+    char  *fma_Note;            /* bio, HTML-stripped */
+    ULONG  fma_FollowersCount;
+    ULONG  fma_FollowingCount;
 } FS3EMastodonAccount;
 
 /* Frees each individually-AllocVec'd string field. Only call this on an
@@ -99,5 +106,60 @@ BOOL FS3EMastodon_GetTimeline(const char *apiBaseUrl, const char *accessToken,
 BOOL FS3EMastodon_PostStatus(const char *apiBaseUrl, const char *accessToken,
                             const char *statusText, const char *visibility,
                             char *outStatusId, ULONG outStatusIdSize);
+
+/*
+ * POST /api/v1/statuses/:id/favourite or .../unfavourite. On success fills
+ * outFavourited from the server's response and returns TRUE.
+ *
+ * Deliberately does NOT also hand back replies_count/reblogs_count/
+ * favourites_count from that same response: those are easy to assume are
+ * always present on the full Status object this endpoint returns, but
+ * aren't reliably so in practice (seen in the wild: an instance whose
+ * favourite/unfavourite response carries a trimmed-down status missing
+ * those counters) -- a caller that blindly copied them across would
+ * silently stomp this toot's OTHER counts (Reply/Boost) with zeros on
+ * every single favourite toggle. The favourited boolean is the one thing
+ * this call needs confirmed from the server (the request could be
+ * rejected, or already be in that state); the resulting favourites_count
+ * is a local +1/-1 delta the caller applies itself -- see
+ * TTIMELINE_UpdatePost/TTL_POSTUPD_FAVOURITED in fs3etoottimeline.h.
+ */
+BOOL FS3EMastodon_Favourite(const char *apiBaseUrl, const char *accessToken,
+                           const char *statusId, BOOL favourite,
+                           BOOL *outFavourited);
+
+/*
+ * GET /api/v1/accounts/lookup?acct=<acct> -- resolves an acct string
+ * ("user" or "user@instance", no leading '@') to a full account. The entry
+ * point for opening a profile view: nothing else carries an account id,
+ * only an acct string scraped off a toot's author or an @mention token.
+ * outAccount->fma_Note is the RAW (HTML) bio -- unlike VerifyCredentials,
+ * which has no caller that cares, this one's caller (fs3enet.c) strips it
+ * the same way toot content already is, via the same StripHTML() helper;
+ * doing that here would need HTML-stripping logic duplicated into this
+ * file, which is otherwise pure "talk to the Mastodon API", not text
+ * processing.
+ */
+BOOL FS3EMastodon_LookupAccount(const char *apiBaseUrl, const char *accessToken,
+                                const char *acct, FS3EMastodonAccount *outAccount);
+
+/*
+ * GET /api/v1/accounts/relationships?id[]=<accountId> -- only the
+ * connected user's own "following" state is needed (profile view's
+ * Follow/Unfollow button label); the rest of the Relationship object
+ * (followed_by, blocking, muting, ...) isn't used yet.
+ */
+BOOL FS3EMastodon_GetRelationship(const char *apiBaseUrl, const char *accessToken,
+                                  const char *accountId, BOOL *outFollowing);
+
+/*
+ * POST /api/v1/accounts/:id/follow or .../unfollow. On success fills
+ * outFollowing from the server's response (a Relationship object, which
+ * carries no follower/following counts to accidentally trust -- same
+ * "only the confirmed boolean" rule as FS3EMastodon_Favourite).
+ */
+BOOL FS3EMastodon_Follow(const char *apiBaseUrl, const char *accessToken,
+                         const char *accountId, BOOL follow,
+                         BOOL *outFollowing);
 
 #endif /* FS3ENET_MASTODON_H */

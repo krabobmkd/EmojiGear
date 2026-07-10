@@ -29,7 +29,11 @@ enum FS3ENetRequestType
     FS3ENETQ_POST_STATUS,    /* publish a new status (toot)          (Phase 2) */
     FS3ENETQ_FETCH_IMAGE,    /* fetch/return cached avatar or media   (Phase 2) */
     FS3ENETQ_FLUSH_CACHE,    /* delete every file in the disk cache               */
-    FS3ENETQ_VERIFY_ACCOUNT  /* re-verify an existing access token, backfill account fields */
+    FS3ENETQ_VERIFY_ACCOUNT, /* re-verify an existing access token, backfill account fields */
+    FS3ENETQ_FAVORITE,       /* toggle favourite/unfavourite on a status */
+    FS3ENETQ_ACCOUNT_LOOKUP, /* resolve an acct string to a full account (profile view) */
+    FS3ENETQ_RELATIONSHIP,   /* fetch following/followed-by state for an account id */
+    FS3ENETQ_FOLLOW          /* toggle follow/unfollow on an account */
 };
 
 /* Result codes returned in FS3ENetMessage.fs3em_Result on reply. */
@@ -268,6 +272,11 @@ FS3ENetTimelineReq *FS3ENetTimelineReq_Alloc(ULONG viewModeBit,
  * normal posts at 4 attachments, so this never truncates in practice). */
 #define FS3ENET_MAX_MEDIA 4
 
+/* Max poll options kept per status. Vanilla Mastodon's own default cap is
+ * 4, but some instances raise it -- 8 leaves headroom without a real cost
+ * (just a handful of extra pointer-sized slots per FS3ENetStatus). */
+#define FS3ENET_MAX_POLL_OPTIONS 8
+
 /* Mastodon media_attachments[].type, mapped from the JSON string. Lets
  * the GUI tell an audio attachment apart from an image *before* ever
  * downloading anything for it -- audio has no thumbnail to fetch, and
@@ -293,6 +302,10 @@ typedef struct FS3ENetStatus {
     char *fmas_AvatarURL;    /* original author CDN avatar URL */
     char *fmas_Id;           /* status id string (for pagination) */
     char *fmas_BoostBy;      /* booster display_name, "" if not a reblog */
+    char *fmas_BoostByAcct;  /* booster @user@instance handle, "" if not a reblog --
+                               * what a click on the "X boosted" line actually needs
+                               * to look up their profile; the display name alone
+                               * isn't a valid /api/v1/accounts/lookup query. */
 
     /* media_attachments[].preview_url (falling back to .url if no
      * preview_url) for up to FS3ENET_MAX_MEDIA attachments; entries
@@ -301,6 +314,30 @@ typedef struct FS3ENetStatus {
     /* media_attachments[].type for the same slots -- enum FS3ENetMediaKind. */
     ULONG  fmas_MediaKind[FS3ENET_MAX_MEDIA];
     ULONG  fmas_MediaCount;
+
+    /* Action-bar counts/state -- for reblogs these belong to the boosted
+     * status (Mastodon reports them there, not on the outer reblog
+     * wrapper), same as fmas_Content/fmas_MediaUrls above. */
+    ULONG  fmas_RepliesCount;
+    ULONG  fmas_ReblogsCount;
+    ULONG  fmas_FavouritesCount;
+    BOOL   fmas_Favourited;   /* connected user already favourited this status */
+    BOOL   fmas_Reblogged;    /* connected user already boosted this status */
+
+    /* Poll ("survey"). Mutually exclusive with media_attachments above --
+     * Mastodon itself disallows a status having both -- so the GUI treats
+     * them as alternatives, not something that can coexist in one post.
+     * fmas_PollOptionCount==0 means no poll on this status. An option's
+     * votes_count comes back JSON null (not present) from the server
+     * until the poll is closed or the connected user has voted -- packed
+     * as 0 either way, since there's nothing else to show yet regardless
+     * (voting isn't wired up on the GUI side either). */
+    char  *fmas_PollOptionTitles[FS3ENET_MAX_POLL_OPTIONS];
+    ULONG  fmas_PollOptionVotes[FS3ENET_MAX_POLL_OPTIONS];
+    ULONG  fmas_PollOptionCount;
+    ULONG  fmas_PollVotesCount;   /* total votes across all options -- percentage denominator */
+    BOOL   fmas_PollExpired;      /* TRUE = closed, results are final */
+    BOOL   fmas_PollMultiple;     /* TRUE = multiple-choice poll (not used yet, carried for later) */
 } FS3ENetStatus;
 
 /* Header of the flat timeline reply block.
@@ -333,5 +370,104 @@ FS3ENetPostStatusReq *FS3ENetPostStatusReq_Alloc(
 typedef struct FS3ENetPostStatusReply {
     char *fs3ep_StatusId; /* new status id string */
 } FS3ENetPostStatusReply;
+
+/*
+ * FS3ENETQ_FAVORITE — POST /api/v1/statuses/:id/favourite or .../unfavourite.
+ *
+ * fs3efa_Favourite selects which: TRUE = favourite, FALSE = unfavourite.
+ * On FS3ENETR_OK, fs3em_Data is replaced with an FS3ENetFavouriteReply
+ * carrying just the server-confirmed favourited boolean -- deliberately
+ * NOT that response's replies_count/reblogs_count/favourites_count too:
+ * those looked like a free, always-fresh echo of the whole toot's counts,
+ * but weren't reliably present on every instance's response in practice,
+ * and blindly copying them across zeroed this toot's OTHER counts
+ * (Reply/Boost) on every single favourite toggle. See
+ * FS3EMastodon_Favourite's comment. The resulting favourites_count is a
+ * local +1/-1 delta the GUI applies itself -- see
+ * TTIMELINE_UpdatePost/TTL_POSTUPD_FAVOURITED in fs3etoottimeline.h.
+ */
+typedef struct FS3ENetFavouriteReq {
+    char *fs3efa_ApiBaseUrl;
+    char *fs3efa_AccessToken;
+    char *fs3efa_StatusId;
+    BOOL  fs3efa_Favourite;   /* TRUE=favourite, FALSE=unfavourite */
+} FS3ENetFavouriteReq;
+
+FS3ENetFavouriteReq *FS3ENetFavouriteReq_Alloc(
+    const char *apiBaseUrl, const char *accessToken,
+    const char *statusId, BOOL favourite);
+
+typedef struct FS3ENetFavouriteReply {
+    char  *fs3efa_StatusId;
+    BOOL   fs3efa_Favourited;
+} FS3ENetFavouriteReply;
+
+/*
+ * FS3ENETQ_ACCOUNT_LOOKUP — GET /api/v1/accounts/lookup?acct=<acct>.
+ * The entry point for opening a profile view (see TootTimeline's
+ * TTIMELINE_ShowProfile): resolves an acct string ("user" or
+ * "user@instance", no leading '@') to a full account. fs3eal_AccessToken
+ * may be "" (unauthenticated lookup works for public accounts).
+ *
+ * On FS3ENETR_OK, fs3em_Data is replaced with an FS3ENetAccountLookupReply.
+ */
+typedef struct FS3ENetAccountLookupReq {
+    char *fs3eal_ApiBaseUrl;
+    char *fs3eal_AccessToken;
+    char *fs3eal_Acct;
+} FS3ENetAccountLookupReq;
+
+FS3ENetAccountLookupReq *FS3ENetAccountLookupReq_Alloc(
+    const char *apiBaseUrl, const char *accessToken, const char *acct);
+
+typedef struct FS3ENetAccountLookupReply {
+    FS3EMastodonAccount fs3eal_Account; /* fma_Note here is HTML-stripped, unlike FS3EMastodon_LookupAccount's raw output */
+} FS3ENetAccountLookupReply;
+
+/*
+ * FS3ENETQ_RELATIONSHIP — GET /api/v1/accounts/relationships?id[]=<id>.
+ * On FS3ENETR_OK, fs3em_Data is replaced with an FS3ENetRelationshipReply.
+ */
+typedef struct FS3ENetRelationshipReq {
+    char *fs3erl_ApiBaseUrl;
+    char *fs3erl_AccessToken;
+    char *fs3erl_AccountId;
+} FS3ENetRelationshipReq;
+
+FS3ENetRelationshipReq *FS3ENetRelationshipReq_Alloc(
+    const char *apiBaseUrl, const char *accessToken, const char *accountId);
+
+typedef struct FS3ENetRelationshipReply {
+    char *fs3erl_AccountId;
+    BOOL  fs3erl_Following;
+} FS3ENetRelationshipReply;
+
+/*
+ * FS3ENETQ_FOLLOW — POST /api/v1/accounts/:id/follow or .../unfollow.
+ *
+ * fs3efo_Follow selects which: TRUE = follow, FALSE = unfollow. On
+ * FS3ENETR_OK, fs3em_Data is replaced with an FS3ENetFollowReply carrying
+ * just the server-confirmed following boolean -- same "don't trust
+ * anything beyond the one confirmed flag" rule as FS3ENETQ_FAVORITE (see
+ * FS3ENetFavouriteReply's comment); the Relationship object this endpoint
+ * returns doesn't even carry follower/following counts, so there's
+ * nothing else to echo anyway. The resulting followers_count is a local
+ * +1/-1 delta the GUI applies itself, mirroring TTL_POSTUPD_FAVOURITED.
+ */
+typedef struct FS3ENetFollowReq {
+    char *fs3efo_ApiBaseUrl;
+    char *fs3efo_AccessToken;
+    char *fs3efo_AccountId;
+    BOOL  fs3efo_Follow;   /* TRUE=follow, FALSE=unfollow */
+} FS3ENetFollowReq;
+
+FS3ENetFollowReq *FS3ENetFollowReq_Alloc(
+    const char *apiBaseUrl, const char *accessToken,
+    const char *accountId, BOOL follow);
+
+typedef struct FS3ENetFollowReply {
+    char *fs3efo_AccountId;
+    BOOL  fs3efo_Following;
+} FS3ENetFollowReply;
 
 #endif /* FS3ENET_H */

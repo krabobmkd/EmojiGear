@@ -46,8 +46,10 @@ static char *dup_str(const char *s)
  * Coarse fallback for when no draw context is available yet (style not
  * set) -- ttl_post_layout uses the pixel-exact fs3etextwrap path whenever
  * dcNormal exists, which it always does by the time anything is actually
- * rendered (see TTL_OnRender's style==NULL early return). */
-static LONG ttl_count_wrapped_lines(TTLData *inst, const char *utf8, WORD maxW)
+ * rendered (see TTL_OnRender's style==NULL early return). Not static:
+ * fs3etoottimeline_profile.c's layout uses the same fallback for a
+ * profile header's bio. */
+LONG ttl_count_wrapped_lines(TTLData *inst, const char *utf8, WORD maxW)
 {
     const char *seg;
     LONG total = 0;
@@ -113,9 +115,11 @@ static WORD ttl_lineascent_for_span(TTLData *inst, UBYTE spanType)
     }
 }
 
-static TTLTextSpan *ttl_span_alloc(const char *utf8, UBYTE spanType,
-                                   LONG postRelY, WORD x,
-                                   TTLData *inst)
+/* Not static: fs3etoottimeline_profile.c's layout builds the profile
+ * header's name/acct/counts spans with this too. */
+TTLTextSpan *ttl_span_alloc(const char *utf8, UBYTE spanType,
+                            LONG postRelY, WORD x,
+                            TTLData *inst)
 {
     struct URPDrawContext *dc = ttl_dc_for_span(inst, spanType);
     TTLTextSpan *sp = (TTLTextSpan *)AllocVec(sizeof(TTLTextSpan),
@@ -160,9 +164,10 @@ static TTLTextSpan *ttl_span_alloc(const char *utf8, UBYTE spanType,
 /* Build a TTL_SPAN_BODY span from an already-wrapped FS3ETextRow, reusing
  * its charXOffsets (a CopyMem, not a second FreeType measurement pass --
  * fs3etextwrap.c already paid for that) instead of calling ttl_span_alloc,
- * which would recompute them from scratch. */
-static TTLTextSpan *ttl_span_from_row(const FS3ETextRow *row, WORD x,
-                                       LONG postRelY, TTLData *inst)
+ * which would recompute them from scratch. Not static: fs3etoottimeline_profile.c's
+ * layout builds a profile header's word-wrapped bio spans with this too. */
+TTLTextSpan *ttl_span_from_row(const FS3ETextRow *row, WORD x,
+                               LONG postRelY, TTLData *inst)
 {
     TTLTextSpan *sp = (TTLTextSpan *)AllocVec(sizeof(TTLTextSpan),
                                                MEMF_ANY | MEMF_CLEAR);
@@ -203,7 +208,11 @@ static void ttl_span_free(TTLTextSpan *sp)
     FreeVec(sp);
 }
 
-static void ttl_clear_textspans(TTLPost *post)
+/* Not static: fs3etoottimeline_profile.c's layout clears a profile
+ * header's stale spans before rebuilding them too (its .layout can
+ * re-run on a font/width change same as a toot's -- see
+ * ttl_layout_all_posts). */
+void ttl_clear_textspans(TTLPost *post)
 {
     struct Node *node;
     while ((node = RemHead((struct List *)&post->textSpans)) != NULL)
@@ -232,6 +241,7 @@ TTLPost *ttl_post_alloc(const TTLPostSetup *setup)
         post->body      = dup_str(setup->body);
         post->timestamp = dup_str(setup->timestamp);
         post->boostBy   = (setup->boostBy  && setup->boostBy[0])  ? dup_str(setup->boostBy)  : NULL;
+        post->boostByAcct = (setup->boostByAcct && setup->boostByAcct[0]) ? dup_str(setup->boostByAcct) : NULL;
         post->avatarURL = (setup->avatarURL && setup->avatarURL[0]) ? dup_str(setup->avatarURL) : NULL;
         post->postId    = (setup->postId && setup->postId[0]) ? dup_str(setup->postId) : NULL;
 
@@ -242,6 +252,23 @@ TTLPost *ttl_post_alloc(const TTLPostSetup *setup)
                                  ? dup_str(setup->mediaUrls[mi]) : NULL;
             post->mediaKinds[mi] = setup->mediaKinds[mi];
         }
+
+        post->repliesCount    = setup->repliesCount;
+        post->reblogsCount    = setup->reblogsCount;
+        post->favouritesCount = setup->favouritesCount;
+        post->favourited      = setup->favourited;
+        post->reblogged       = setup->reblogged;
+
+        post->pollOptionCount = setup->pollOptionCount;
+        if (post->pollOptionCount > TTL_POST_MAX_POLL_OPTIONS) post->pollOptionCount = TTL_POST_MAX_POLL_OPTIONS;
+        for (mi = 0; mi < post->pollOptionCount; mi++) {
+            post->pollOptionTitles[mi] = (setup->pollOptionTitles[mi] && setup->pollOptionTitles[mi][0])
+                                        ? dup_str(setup->pollOptionTitles[mi]) : NULL;
+            post->pollOptionVotes[mi] = setup->pollOptionVotes[mi];
+        }
+        post->pollVotesCount = setup->pollVotesCount;
+        post->pollExpired    = setup->pollExpired;
+        post->pollMultiple   = setup->pollMultiple;
     }
 
     return post;
@@ -289,12 +316,15 @@ static void ttl_toot_dispose(TTLPost *post)
     if (post->body)      FreeVec(post->body);
     if (post->timestamp) FreeVec(post->timestamp);
     if (post->boostBy)   FreeVec(post->boostBy);
+    if (post->boostByAcct) FreeVec(post->boostByAcct);
     if (post->avatarURL) FreeVec(post->avatarURL);
     if (post->postId)    FreeVec(post->postId);
     {
         ULONG mi;
         for (mi = 0; mi < post->mediaCount; mi++)
             if (post->mediaUrls[mi]) FreeVec(post->mediaUrls[mi]);
+        for (mi = 0; mi < post->pollOptionCount; mi++)
+            if (post->pollOptionTitles[mi]) FreeVec(post->pollOptionTitles[mi]);
     }
 }
 
@@ -354,7 +384,7 @@ static void ttl_toot_layout(TTLData *inst, TTLPost *post)
      * both by the caller's own >400px rule and to leave a usable text
      * column; otherwise it stacks below the text. */
     post->previewX = post->previewY = post->previewW = post->previewH = 0;
-    if (post->mediaCount > 0) {
+    if (post->mediaCount > 0 && post->pollOptionCount == 0) {
         previewW = (WORD)(((LONG)TTL_PREVIEW_BASE_W * avatarW) / TTL_AVATAR_BASE_SIZE);
         previewH = (WORD)(((LONG)TTL_PREVIEW_BASE_H * avatarW) / TTL_AVATAR_BASE_SIZE);
         if (inst->gadWidth > 400 && (textW - previewW - avatarGap) >= 32)
@@ -420,7 +450,7 @@ static void ttl_toot_layout(TTLData *inst, TTLPost *post)
             curRelY += ttl_count_wrapped_lines(inst, post->body, bodyTextW) * inst->lineHeight;
         }
 
-        if (post->mediaCount > 0 && previewW > 0 && previewH > 0) {
+        if (post->mediaCount > 0 && post->pollOptionCount == 0 && previewW > 0 && previewH > 0) {
             if (sideBySide) {
                 post->previewX = (WORD)(textX + bodyTextW + avatarGap);
                 post->previewY = (WORD)bodyTopY;
@@ -438,11 +468,33 @@ static void ttl_toot_layout(TTLData *inst, TTLPost *post)
         }
     }
 
-    /* ---- Action bar: ↩ Reply  🔁 Boost  💫 Fave ----
+    /* ---- Poll ("survey") results block -- closed/result rendering only.
+     * Skipped entirely when there's no poll; when there is, the media
+     * preview block above was already suppressed (Mastodon disallows
+     * both on one status anyway). Each option reserves one text row
+     * (title + percentage) plus a thin proportional bar underneath;
+     * pollBlockY is stored here and reused as-is by render/
+     * build_hotspots -- never re-derived, same fix as the profile
+     * Follow-button-row bug. ---- */
+    post->pollBlockY = 0;
+    if (post->pollOptionCount > 0) {
+        ULONG oi;
+        curRelY += avatarGap;
+        post->pollBlockY = (WORD)curRelY;
+        for (oi = 0; oi < post->pollOptionCount; oi++) {
+            curRelY += inst->miniLineHeight;   /* title + percentage text */
+            curRelY += TTL_POLL_BAR_H;         /* proportional result bar */
+            curRelY += TTL_POLL_ROW_GAP;       /* gap before next option */
+        }
+        curRelY += inst->miniLineHeight;       /* "N votes - Poll closed" summary line */
+    }
+
+    /* ---- Action bar: ↩ Reply N  🔁 Boost N  ⭐/💫 N ----
      * Only the row's height is needed for layout; exact button rects are
-     * (re)computed lazily in ttl_post_build_hotspots from the same shared
-     * label strings tiles.c draws (ttl_actionLabels), so the two can never
-     * drift apart the way two separately-hand-maintained copies would. */
+     * (re)computed lazily in ttl_post_build_hotspots from
+     * ttl_build_action_labels(), the same builder tiles.c draws from, so
+     * the two can never drift apart the way two separately-hand-maintained
+     * copies would. */
     curRelY += 2;                              /* gap above the action bar */
     curRelY += inst->lineHeight + TTL_POST_PAD_BOT;
 
@@ -457,15 +509,15 @@ static void ttl_toot_layout(TTLData *inst, TTLPost *post)
 /* See the TTLHotSpot comment in fs3etoottimeline_private.h.            */
 /* ------------------------------------------------------------------ */
 
-extern const char * const ttl_actionLabels[3];
 extern const UBYTE        ttl_actionTypes[3];
 
 /* data/dataLen are stored as given -- a borrowed pointer into text the
  * caller already owns (post->acct/boostBy, or a TTLTextSpan's utf8), not
  * copied. See the TTLHotSpot comment in fs3etoottimeline_private.h for
- * why that's safe. */
-static void ttl_hs_add(TTLPost *post, UBYTE type, WORD x, WORD y, WORD w, WORD h,
-                        const char *data, ULONG dataLen)
+ * why that's safe. Not static: fs3etoottimeline_profile.c's buildHotspots
+ * uses this for a profile header's avatar/Follow hot-spots too. */
+void ttl_hs_add(TTLPost *post, UBYTE type, WORD x, WORD y, WORD w, WORD h,
+                const char *data, ULONG dataLen)
 {
     TTLHotSpot *hs;
     if (post->hotSpotCount >= TTL_HOTSPOT_MAX_PER_TOOT) return;
@@ -492,8 +544,10 @@ static BOOL ttl_bytes_match(const unsigned char *p, const unsigned char *end,
  * *text* shouldn't be cut short by that, though: hs->data/dataLen are
  * re-measured from sp->bodySrc (the persistent, unwrapped post->body) by
  * just counting up to the next real separator, ignoring wherever this row
- * happened to end. */
-static void ttl_scan_span_tokens(TTLPost *post, TTLTextSpan *sp)
+ * happened to end. Not static: fs3etoottimeline_profile.c's buildHotspots
+ * calls this on a profile header's wrapped bio spans too -- fully generic
+ * over any TTL_SPAN_BODY span, no toot-specific assumptions. */
+void ttl_scan_span_tokens(TTLPost *post, TTLTextSpan *sp)
 {
     const unsigned char *p    = (const unsigned char *)sp->utf8;
     const unsigned char *end  = p + sp->byteLen;
@@ -568,19 +622,27 @@ static void ttl_toot_build_hotspots(TTLData *inst, TTLPost *post)
          sp->node.mln_Succ && post->hotSpotCount < TTL_HOTSPOT_MAX_PER_TOOT;
          sp = (TTLTextSpan *)sp->node.mln_Succ)
     {
-        if (sp->spanType == TTL_SPAN_ACCT) {
-            /* "@handle" line click == avatar click: same profile target */
+        if (sp->spanType == TTL_SPAN_ACCT || sp->spanType == TTL_SPAN_USERNAME) {
+            /* "@handle" line and the display-name line both click ==
+             * avatar click: same profile target. */
             ttl_hs_add(post, TTL_HOT_AVATAR, sp->x, (WORD)sp->postRelY,
                        sp->width, sp->height,
                        post->acct, post->acct ? (ULONG)strlen(post->acct) : 0);
         } else if (sp->spanType == TTL_SPAN_BOOSTBY) {
-            /* "↺ Name boosted" line click -> that booster's profile. Only
-             * their display name is available (the network layer doesn't
-             * carry a booster acct/handle yet), same limitation the rest
-             * of the app already has for boosts. */
-            ttl_hs_add(post, TTL_HOT_AVATAR, sp->x, (WORD)sp->postRelY,
-                       sp->width, sp->height,
-                       post->boostBy, post->boostBy ? (ULONG)strlen(post->boostBy) : 0);
+            /* "↺ Name boosted" line click -> that booster's OWN profile,
+             * not the original author's -- important because some
+             * accounts only ever boost, never post themselves, and this
+             * line is otherwise the only way to reach (and e.g. unfollow)
+             * them. Needs their acct, not just their display name (which
+             * isn't a valid /api/v1/accounts/lookup query) -- see
+             * TTLPost.boostByAcct. No hot-spot at all if the network
+             * layer didn't have it (older cached data, or a server that
+             * omits it), rather than a click that silently resolves to
+             * the wrong account. */
+            if (post->boostByAcct && post->boostByAcct[0])
+                ttl_hs_add(post, TTL_HOT_AVATAR, sp->x, (WORD)sp->postRelY,
+                           sp->width, sp->height,
+                           post->boostByAcct, (ULONG)strlen(post->boostByAcct));
         } else if (sp->spanType == TTL_SPAN_BODY) {
             ttl_scan_span_tokens(post, sp);
         }
@@ -609,20 +671,24 @@ static void ttl_toot_build_hotspots(TTLData *inst, TTLPost *post)
 
     /* Action bar buttons: same geometry rule ttl_post_layout used to
      * reserve the row (post->height - separator - PAD_BOT - barH), same
-     * labels tiles.c draws (ttl_actionLabels) -- see that array's comment. */
+     * labels tiles.c draws -- both build from ttl_build_action_labels(),
+     * see that function's comment. */
     if (post->hotSpotCount < TTL_HOTSPOT_MAX_PER_TOOT) {
         struct URPDrawContext *dcA = inst->style ? inst->style->dcNormal : NULL;
         WORD barH   = inst->lineHeight;
         WORD y      = (WORD)(post->height - 1 - TTL_POST_PAD_BOT - barH);
         WORD xRight = (WORD)(inst->gadWidth - TTL_POST_PAD_RIGHT);
+        char labels[3][TTL_ACTION_LABEL_MAX];
         int  a;
+
+        ttl_build_action_labels(post, labels);
 
         for (a = 2; a >= 0; a--) {
             WORD w = 40;
             if (dcA) {
                 struct URPTextMetric m;
                 LONG nc = 0;
-                const char *s = ttl_actionLabels[a];
+                const char *s = labels[a];
                 const unsigned char *q = (const unsigned char *)s;
                 while (*q) {
                     unsigned char c = *q;
@@ -683,8 +749,21 @@ void ttl_layout_all_posts(TTLData *inst)
 {
     ULONG ch;
     for (ch = 0; ch < TTIMELINE_NUM_VIEWMODES; ch++) {
-        TTLPost *post;
-        struct MinList *posts = &inst->channels[ch].posts;
+        TTLPost    *post;
+        TTLChannel *channel = &inst->channels[ch];
+        struct MinList *posts = &channel->posts;
+
+        /* Profile header (see TTLChannel.headerPost) is outside `posts`,
+         * so the loop below never reaches it -- relayout it first (its
+         * height can change with the new font/width same as any post's
+         * can) and resync contentTopY to match, since that's what
+         * ttl_rebuild_ypositions below uses as the list's own start Y.
+         * Guarded/no-op for every channel without a header. */
+        if (channel->headerPost) {
+            if (channel->headerPost->cls && channel->headerPost->cls->layout)
+                channel->headerPost->cls->layout(inst, channel->headerPost);
+            channel->contentTopY = channel->headerPost->height;
+        }
 
         /* Re-layout all posts (may change heights) */
         for (post = (TTLPost *)posts->mlh_Head;
@@ -732,8 +811,21 @@ void ttl_clear_channel(TTLData *inst, ULONG ch)
 {
     TTLChannel  *channel = &inst->channels[ch];
     struct Node *node;
-    while ((node = RemHead((struct List *)&channel->posts)) != NULL)
+    ULONG freedCount = 0;
+    while ((node = RemHead((struct List *)&channel->posts)) != NULL) {
         ttl_post_free(inst, (TTLPost *)node);
+        freedCount++;
+    }
+    bdbprintf_now("ttl_clear_channel: ch=%lu freed %lu list posts\n", ch, freedCount);
+    /* Profile header (see TTLChannel.headerPost) is outside `posts`, so
+     * the loop above never frees it -- guarded/no-op for every channel
+     * without one. */
+    if (channel->headerPost) {
+        bdbprintf_now("ttl_clear_channel: ch=%lu freeing headerPost=%08lx bucket=%d\n",
+                  ch, (unsigned long)channel->headerPost, (int)channel->headerPost->hotSpotBucket);
+        ttl_post_free(inst, channel->headerPost);
+        channel->headerPost = NULL;
+    }
     channel->postCount         = 0;
     channel->contentTopY       = 0;
     channel->contentBottomY    = 0;

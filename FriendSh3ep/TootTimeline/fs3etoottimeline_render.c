@@ -65,10 +65,11 @@ static void ttl_do_layout(Class *cl, Object *o, WORD newW, WORD newH, struct Ras
      * newly active channel's extents may differ from the previous one's. */
     active = ttl_active(inst);
     {
+        LONG minScroll = ttl_channel_min_scroll(active);
         LONG maxScroll = active->contentBottomY - inst->gadHeight;
-        if (maxScroll < active->contentTopY) maxScroll = active->contentTopY;
-        if (active->scrollY < active->contentTopY) active->scrollY = active->contentTopY;
-        if (active->scrollY > maxScroll)           active->scrollY = maxScroll;
+        if (maxScroll < minScroll) maxScroll = minScroll;
+        if (active->scrollY < minScroll) active->scrollY = minScroll;
+        if (active->scrollY > maxScroll) active->scrollY = maxScroll;
     }
 }
 
@@ -102,7 +103,7 @@ ULONG TTL_OnDomain(Class *cl, Object *o, struct gpDomain *msg)
     switch (msg->gpd_Which) {
         case GDOMAIN_MINIMUM:
             domain->Width  = (WORD)(asz * 4);
-            domain->Height = (WORD)(asz * 4);
+            domain->Height = 8; /* for the window layout sake */
             break;
         case GDOMAIN_MAXIMUM:
             domain->Width  = 32767;
@@ -247,11 +248,12 @@ ULONG TTL_OnRender(Class *cl, Object *o, struct gpRender *msg)
 
     /* Apply pending scroll */
     if (inst->pendingScroll) {
+        LONG minScroll = ttl_channel_min_scroll(active);
         LONG maxScroll = active->contentBottomY - gadH;
-        if (maxScroll < active->contentTopY) maxScroll = active->contentTopY;
+        if (maxScroll < minScroll) maxScroll = minScroll;
         active->scrollY = inst->pendingScrollY;
-        if (active->scrollY < active->contentTopY) active->scrollY = active->contentTopY;
-        if (active->scrollY > maxScroll)           active->scrollY = maxScroll;
+        if (active->scrollY < minScroll) active->scrollY = minScroll;
+        if (active->scrollY > maxScroll) active->scrollY = maxScroll;
         inst->pendingScroll = FALSE;
     }
 
@@ -308,9 +310,17 @@ ULONG TTL_OnRender(Class *cl, Object *o, struct gpRender *msg)
         }
     }
 
-    /* Fill the area above the first post if visible */
-    if (active->contentTopY > active->scrollY) {
-        WORD fillBot = (WORD)(gadTop + (active->contentTopY - active->scrollY));
+    /* Fill the area above the first post if visible -- topContentY is
+     * contentTopY (list start), EXCEPT with a profile header (outside
+     * the list, see TTLChannel.headerPost), where the header itself
+     * already occupies and tile-renders [0, header->height): naively
+     * using contentTopY here would paint a flat background rect right
+     * over the already-drawn header whenever it's scrolled into view.
+     * ttl_channel_min_scroll() already computes exactly this same
+     * "topmost real content Y" for the scroll clamp, so it doubles as
+     * the right value here too. */
+    if (ttl_channel_min_scroll(active) > active->scrollY) {
+        WORD fillBot = (WORD)(gadTop + (ttl_channel_min_scroll(active) - active->scrollY));
         if (fillBot > gadTop) {
             SetAPen(rp, (LONG)FS3E_PEN(inst->style, FS3E_COLOR_TIMELINE_BG));
             RectFill(rp, gadLeft, gadTop, gadLeft+gadW-1, fillBot-1);
@@ -343,7 +353,7 @@ ULONG TTL_OnRender(Class *cl, Object *o, struct gpRender *msg)
             active->scrollY + gadH >= active->contentBottomY)
         {
             active->olderLoadTriggered = TRUE;
-            ttl_notify_hotspot(cl, o, msg->gpr_GInfo, TTL_HOT_LOAD_OLDER, NULL, 0, NULL);
+            ttl_notify_hotspot(cl, o, msg->gpr_GInfo, TTL_HOT_LOAD_OLDER, NULL, 0, NULL, FALSE, FALSE);
         }
     }
 

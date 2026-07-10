@@ -8,6 +8,7 @@
 #include <string.h>
 #include <proto/dos.h>
 #include <proto/exec.h>
+#include <dos/dosextens.h>
 
 #define BDB_BUFFER_SIZE 4096
 
@@ -15,6 +16,32 @@ static char bdb_buffer[BDB_BUFFER_SIZE];
 static volatile int bdb_position = 0;
 
 extern struct Task *myTask;
+
+/* See the header comment: writes straight to myTask's own pr_COS via
+ * FPuts (an explicit-filehandle DOS call), never through Output()/Printf(),
+ * which resolve against whatever the CALLING task's own DOS process
+ * context happens to be -- not necessarily valid, and not necessarily
+ * myTask, if this is reached from a different task's BOOPSI dispatch. */
+int bdbprintf_now(const char *format, ...)
+{
+    char    buf[512];
+    va_list args;
+    int     written;
+
+    va_start(args, format);
+    written = vsnprintf(buf, sizeof(buf), format, args);
+    va_end(args);
+
+    if (myTask) {
+        BPTR fh = ((struct Process *)myTask)->pr_COS;
+        FPuts(fh, buf);
+        Flush(fh); /* FPuts only queues into the filehandle's own DOS-level
+                     * buffer -- without this, output written right before a
+                     * crash can still be lost, same problem one level down. */
+    }
+
+    return written;
+}
 
 int bdbprintf(const char *format, ...)
 {

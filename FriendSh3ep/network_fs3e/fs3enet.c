@@ -18,7 +18,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#define FS3ENET_STACK_SIZE 16384
+#define FS3ENET_STACK_SIZE 65536
 #define FS3ENET_PROC_NAME  "FriendSh3ep-net"
 
 /* App name FriendSh3ep registers itself under via FS3EMastodon_CreateApp(). */
@@ -50,13 +50,48 @@ static void FS3ENet_PackStr(char **dst, char **p, const char *s)
     *p += n;
 }
 
+/* Same as FS3ENet_PackStr, but collapses any run of \r/\n into a single
+ * space (never a leading/trailing one) instead of copying it verbatim --
+ * for display-name-like fields ONLY (never body content, which
+ * legitimately wraps across real lines: see ttl_post_layout's word-wrap).
+ * Some Mastodon accounts embed literal newlines in their display_name,
+ * which breaks TootTimeline's single-line username/boostBy rendering.
+ * Always advances *p by FS3ENet_PackLen(s)'s reserved byte count, same as
+ * FS3ENet_PackStr -- collapsing only ever shortens the string, so the
+ * pass-1-sized region is never overrun, just partly unused at the end. */
+static void FS3ENet_PackStrClean(char **dst, char **p, const char *s)
+{
+    ULONG n = s ? (ULONG)(strlen(s) + 1) : 1;
+    char *out = *p;
+    *dst = *p;
+    if (s) {
+        const char *src = s;
+        char *w = out;
+        BOOL sawBreak = FALSE;
+        while (*src) {
+            if (*src == '\n' || *src == '\r') {
+                sawBreak = TRUE;
+            } else {
+                if (sawBreak && w > out) *w++ = ' ';
+                sawBreak = FALSE;
+                *w++ = *src;
+            }
+            src++;
+        }
+        *w = '\0';
+    } else {
+        *out = '\0';
+    }
+    *p += n;
+}
+
 /* ---- Public _Alloc helpers (called by the GUI before PutMsg) ------------ */
 
 FS3ENetLoginStartReq *FS3ENetLoginStartReq_Alloc(const char *apiBaseUrl)
 {
     ULONG total = sizeof(FS3ENetLoginStartReq) + FS3ENet_PackLen(apiBaseUrl);
     FS3ENetLoginStartReq *req =
-        (FS3ENetLoginStartReq *)AllocVec(total, MEMF_ANY);
+        (FS3ENetLoginStartReq *)AllocVec(total, MEMF_ANY| MEMF_PUBLIC);
     char *p;
 
     if (!req) return NULL;
@@ -74,7 +109,7 @@ FS3ENetLoginFinishReq *FS3ENetLoginFinishReq_Alloc(const char *apiBaseUrl,
                 + FS3ENet_PackLen(clientSecret)
                 + FS3ENet_PackLen(code);
     FS3ENetLoginFinishReq *req =
-        (FS3ENetLoginFinishReq *)AllocVec(total, MEMF_ANY);
+        (FS3ENetLoginFinishReq *)AllocVec(total, MEMF_ANY | MEMF_PUBLIC);
     char *p;
 
     if (!req) return NULL;
@@ -93,7 +128,7 @@ FS3ENetVerifyAccountReq *FS3ENetVerifyAccountReq_Alloc(const char *apiBaseUrl,
                 + FS3ENet_PackLen(apiBaseUrl)
                 + FS3ENet_PackLen(accessToken);
     FS3ENetVerifyAccountReq *req =
-        (FS3ENetVerifyAccountReq *)AllocVec(total, MEMF_ANY);
+        (FS3ENetVerifyAccountReq *)AllocVec(total, MEMF_ANY| MEMF_PUBLIC);
     char *p;
 
     if (!req) return NULL;
@@ -114,7 +149,7 @@ FS3ENetTimelineReq *FS3ENetTimelineReq_Alloc(ULONG viewModeBit,
                 + FS3ENet_PackLen(maxId)
                 + FS3ENet_PackLen(minId);
     FS3ENetTimelineReq *req =
-        (FS3ENetTimelineReq *)AllocVec(total, MEMF_ANY);
+        (FS3ENetTimelineReq *)AllocVec(total, MEMF_ANY| MEMF_PUBLIC);
     char *p;
 
     if (!req) return NULL;
@@ -140,7 +175,7 @@ FS3ENetPostStatusReq *FS3ENetPostStatusReq_Alloc(
                 + FS3ENet_PackLen(visibility)
                 + FS3ENet_PackLen(spoiler);
     FS3ENetPostStatusReq *req =
-        (FS3ENetPostStatusReq *)AllocVec(total, MEMF_ANY);
+        (FS3ENetPostStatusReq *)AllocVec(total, MEMF_ANY | MEMF_PUBLIC);
     char *p;
 
     if (!req) return NULL;
@@ -153,6 +188,86 @@ FS3ENetPostStatusReq *FS3ENetPostStatusReq_Alloc(
     return req;
 }
 
+FS3ENetFavouriteReq *FS3ENetFavouriteReq_Alloc(
+    const char *apiBaseUrl, const char *accessToken,
+    const char *statusId, BOOL favourite)
+{
+    ULONG total = sizeof(FS3ENetFavouriteReq)
+                + FS3ENet_PackLen(apiBaseUrl)
+                + FS3ENet_PackLen(accessToken)
+                + FS3ENet_PackLen(statusId);
+    FS3ENetFavouriteReq *req =
+        (FS3ENetFavouriteReq *)AllocVec(total, MEMF_ANY | MEMF_PUBLIC);
+    char *p;
+
+    if (!req) return NULL;
+    p = (char *)req + sizeof(*req);
+    FS3ENet_PackStr(&req->fs3efa_ApiBaseUrl,  &p, apiBaseUrl);
+    FS3ENet_PackStr(&req->fs3efa_AccessToken, &p, accessToken);
+    FS3ENet_PackStr(&req->fs3efa_StatusId,    &p, statusId);
+    req->fs3efa_Favourite = favourite;
+    return req;
+}
+
+FS3ENetAccountLookupReq *FS3ENetAccountLookupReq_Alloc(
+    const char *apiBaseUrl, const char *accessToken, const char *acct)
+{
+    ULONG total = sizeof(FS3ENetAccountLookupReq)
+                + FS3ENet_PackLen(apiBaseUrl)
+                + FS3ENet_PackLen(accessToken)
+                + FS3ENet_PackLen(acct);
+    FS3ENetAccountLookupReq *req =
+        (FS3ENetAccountLookupReq *)AllocVec(total, MEMF_ANY | MEMF_PUBLIC);
+    char *p;
+
+    if (!req) return NULL;
+    p = (char *)req + sizeof(*req);
+    FS3ENet_PackStr(&req->fs3eal_ApiBaseUrl,  &p, apiBaseUrl);
+    FS3ENet_PackStr(&req->fs3eal_AccessToken, &p, accessToken);
+    FS3ENet_PackStr(&req->fs3eal_Acct,        &p, acct);
+    return req;
+}
+
+FS3ENetRelationshipReq *FS3ENetRelationshipReq_Alloc(
+    const char *apiBaseUrl, const char *accessToken, const char *accountId)
+{
+    ULONG total = sizeof(FS3ENetRelationshipReq)
+                + FS3ENet_PackLen(apiBaseUrl)
+                + FS3ENet_PackLen(accessToken)
+                + FS3ENet_PackLen(accountId);
+    FS3ENetRelationshipReq *req =
+        (FS3ENetRelationshipReq *)AllocVec(total, MEMF_ANY | MEMF_PUBLIC);
+    char *p;
+
+    if (!req) return NULL;
+    p = (char *)req + sizeof(*req);
+    FS3ENet_PackStr(&req->fs3erl_ApiBaseUrl,  &p, apiBaseUrl);
+    FS3ENet_PackStr(&req->fs3erl_AccessToken, &p, accessToken);
+    FS3ENet_PackStr(&req->fs3erl_AccountId,   &p, accountId);
+    return req;
+}
+
+FS3ENetFollowReq *FS3ENetFollowReq_Alloc(
+    const char *apiBaseUrl, const char *accessToken,
+    const char *accountId, BOOL follow)
+{
+    ULONG total = sizeof(FS3ENetFollowReq)
+                + FS3ENet_PackLen(apiBaseUrl)
+                + FS3ENet_PackLen(accessToken)
+                + FS3ENet_PackLen(accountId);
+    FS3ENetFollowReq *req =
+        (FS3ENetFollowReq *)AllocVec(total, MEMF_ANY | MEMF_PUBLIC);
+    char *p;
+
+    if (!req) return NULL;
+    p = (char *)req + sizeof(*req);
+    FS3ENet_PackStr(&req->fs3efo_ApiBaseUrl,  &p, apiBaseUrl);
+    FS3ENet_PackStr(&req->fs3efo_AccessToken, &p, accessToken);
+    FS3ENet_PackStr(&req->fs3efo_AccountId,   &p, accountId);
+    req->fs3efo_Follow = follow;
+    return req;
+}
+
 FS3ENetFetchImageReq *FS3ENetFetchImageReq_Alloc(const char *url, const char *key,
                                                    const char *subdir, BOOL keepOriginal)
 {
@@ -161,7 +276,7 @@ FS3ENetFetchImageReq *FS3ENetFetchImageReq_Alloc(const char *url, const char *ke
                 + FS3ENet_PackLen(key)
                 + FS3ENet_PackLen(subdir);
     FS3ENetFetchImageReq *req =
-        (FS3ENetFetchImageReq *)AllocVec(total, MEMF_ANY);
+        (FS3ENetFetchImageReq *)AllocVec(total, MEMF_ANY | MEMF_PUBLIC);
     char *p;
 
     if (!req) return NULL;
@@ -441,7 +556,7 @@ static void FS3ENet_HandleLoginStart(FS3ENetMessage *fs3em)
           + FS3ENet_PackLen(clientSecret)
           + FS3ENet_PackLen(authorizeUrl);
 
-    reply = (FS3ENetLoginStartReply *)AllocVec(total, MEMF_ANY);
+    reply = (FS3ENetLoginStartReply *)AllocVec(total, MEMF_ANY | MEMF_PUBLIC);
     if (!reply)
     {
         fs3em->fs3em_Result = FS3ENETR_NETWORK_ERROR;
@@ -507,7 +622,7 @@ static void FS3ENet_HandleLoginFinish(FS3ENetMessage *fs3em)
           + FS3ENet_PackLen(tmpAcc.fma_DisplayName)
           + FS3ENet_PackLen(tmpAcc.fma_AvatarURL);
 
-    reply = (FS3ENetLoginFinishReply *)AllocVec(total, MEMF_ANY);
+    reply = (FS3ENetLoginFinishReply *)AllocVec(total, MEMF_ANY | MEMF_PUBLIC);
     if (!reply)
     {
         FS3EMastodonAccount_Free(&tmpAcc);
@@ -520,7 +635,7 @@ static void FS3ENet_HandleLoginFinish(FS3ENetMessage *fs3em)
     FS3ENet_PackStr(&reply->fs3enl_Account.fma_Id,          &p, tmpAcc.fma_Id);
     FS3ENet_PackStr(&reply->fs3enl_Account.fma_Username,    &p, tmpAcc.fma_Username);
     FS3ENet_PackStr(&reply->fs3enl_Account.fma_Acct,        &p, tmpAcc.fma_Acct);
-    FS3ENet_PackStr(&reply->fs3enl_Account.fma_DisplayName, &p, tmpAcc.fma_DisplayName);
+    FS3ENet_PackStrClean(&reply->fs3enl_Account.fma_DisplayName, &p, tmpAcc.fma_DisplayName);
     FS3ENet_PackStr(&reply->fs3enl_Account.fma_AvatarURL,   &p, tmpAcc.fma_AvatarURL);
 
     FS3EMastodonAccount_Free(&tmpAcc);
@@ -567,7 +682,7 @@ static void FS3ENet_HandleVerifyAccount(FS3ENetMessage *fs3em)
           + FS3ENet_PackLen(tmpAcc.fma_DisplayName)
           + FS3ENet_PackLen(tmpAcc.fma_AvatarURL);
 
-    reply = (FS3ENetVerifyAccountReply *)AllocVec(total, MEMF_ANY);
+    reply = (FS3ENetVerifyAccountReply *)AllocVec(total, MEMF_ANY | MEMF_PUBLIC);
     if (!reply)
     {
         FS3EMastodonAccount_Free(&tmpAcc);
@@ -579,7 +694,7 @@ static void FS3ENet_HandleVerifyAccount(FS3ENetMessage *fs3em)
     FS3ENet_PackStr(&reply->fs3eva_Account.fma_Id,          &p, tmpAcc.fma_Id);
     FS3ENet_PackStr(&reply->fs3eva_Account.fma_Username,    &p, tmpAcc.fma_Username);
     FS3ENet_PackStr(&reply->fs3eva_Account.fma_Acct,        &p, tmpAcc.fma_Acct);
-    FS3ENet_PackStr(&reply->fs3eva_Account.fma_DisplayName, &p, tmpAcc.fma_DisplayName);
+    FS3ENet_PackStrClean(&reply->fs3eva_Account.fma_DisplayName, &p, tmpAcc.fma_DisplayName);
     FS3ENet_PackStr(&reply->fs3eva_Account.fma_AvatarURL,   &p, tmpAcc.fma_AvatarURL);
 
     FS3EMastodonAccount_Free(&tmpAcc);
@@ -664,7 +779,7 @@ static void FS3ENet_HandleFetchImage(FS3ENetMessage *fs3em)
           + FS3ENet_PackLen(req->fs3enf_Key)
           + FS3ENet_PackLen(req->fs3enf_Subdir)
           + FS3ENet_PackLen(cachePath);
-    reply = (FS3ENetFetchImageReply *)AllocVec(total, MEMF_ANY);
+    reply = (FS3ENetFetchImageReply *)AllocVec(total, MEMF_ANY | MEMF_PUBLIC);
     if (!reply)
     {
         fs3em->fs3em_Result = FS3ENETR_NETWORK_ERROR;
@@ -880,12 +995,18 @@ static void FS3ENet_HandleTimeline(FS3ENetMessage *fs3em)
         v = cJSON_GetObjectItemCaseSensitive(item, "id");
         total += (v && cJSON_IsString(v) && v->valuestring) ? strlen(v->valuestring) + 1 : 1;
 
-        /* booster display_name (empty string for non-reblogs) */
+        /* booster display_name + acct (empty strings for non-reblogs) --
+         * acct is what a TTL_HOT_AVATAR click on the "X boosted" line
+         * actually needs (see TTLPost.boostByAcct): the display name
+         * alone can't be looked up via /api/v1/accounts/lookup. */
         if (src != item) {
             v = bAcct ? cJSON_GetObjectItemCaseSensitive(bAcct, "display_name") : NULL;
             total += (v && cJSON_IsString(v) && v->valuestring) ? strlen(v->valuestring) + 1 : 1;
+
+            v = bAcct ? cJSON_GetObjectItemCaseSensitive(bAcct, "acct") : NULL;
+            total += (v && cJSON_IsString(v) && v->valuestring) ? strlen(v->valuestring) + 1 : 1;
         } else {
-            total += 1; /* empty string */
+            total += 2; /* two empty strings */
         }
 
         /* media_attachments belongs to the actual content (src, i.e. the
@@ -905,10 +1026,28 @@ static void FS3ENet_HandleTimeline(FS3ENetMessage *fs3em)
             }
         }
 
+        /* Poll -- belongs to src same as media_attachments/content above;
+         * mutually exclusive with media_attachments in practice (Mastodon
+         * disallows both on one status), but sized independently either
+         * way. */
+        v = cJSON_GetObjectItemCaseSensitive(src, "poll");
+        if (v && !cJSON_IsNull(v)) {
+            const cJSON *options = cJSON_GetObjectItemCaseSensitive(v, "options");
+            int oCount = (options && cJSON_IsArray(options)) ? cJSON_GetArraySize(options) : 0;
+            int oi;
+            if (oCount > FS3ENET_MAX_POLL_OPTIONS) oCount = FS3ENET_MAX_POLL_OPTIONS;
+            for (oi = 0; oi < oCount; oi++) {
+                const cJSON *opt   = cJSON_GetArrayItem(options, oi);
+                const cJSON *title = opt ? cJSON_GetObjectItemCaseSensitive(opt, "title") : NULL;
+                total += (title && cJSON_IsString(title) && title->valuestring)
+                       ? strlen(title->valuestring) + 1 : 1;
+            }
+        }
+
         count++;
     }
 
-    reply = (FS3ENetTimelineReply *)AllocVec(total, MEMF_ANY);
+    reply = (FS3ENetTimelineReply *)AllocVec(total, MEMF_ANY | MEMF_PUBLIC);
     if (!reply) {
         cJSON_Delete(json);
         fs3em->fs3em_Result = FS3ENETR_NETWORK_ERROR;
@@ -936,7 +1075,7 @@ static void FS3ENet_HandleTimeline(FS3ENetMessage *fs3em)
 
             v = acct ? cJSON_GetObjectItemCaseSensitive(acct, "display_name") : NULL;
             str = (v && cJSON_IsString(v)) ? v->valuestring : "";
-            FS3ENet_PackStr(&statuses[i].fmas_DisplayName, &p, str);
+            FS3ENet_PackStrClean(&statuses[i].fmas_DisplayName, &p, str);
 
             v = acct ? cJSON_GetObjectItemCaseSensitive(acct, "acct") : NULL;
             str = (v && cJSON_IsString(v)) ? v->valuestring : "";
@@ -965,7 +1104,15 @@ static void FS3ENet_HandleTimeline(FS3ENetMessage *fs3em)
             } else {
                 str = "";
             }
-            FS3ENet_PackStr(&statuses[i].fmas_BoostBy, &p, str);
+            FS3ENet_PackStrClean(&statuses[i].fmas_BoostBy, &p, str);
+
+            if (src != item) {
+                v = bAcct ? cJSON_GetObjectItemCaseSensitive(bAcct, "acct") : NULL;
+                str = (v && cJSON_IsString(v)) ? v->valuestring : "";
+            } else {
+                str = "";
+            }
+            FS3ENet_PackStr(&statuses[i].fmas_BoostByAcct, &p, str);
 
             /* media_attachments -- see the matching block in pass 1. */
             v = cJSON_GetObjectItemCaseSensitive(src, "media_attachments");
@@ -1001,6 +1148,60 @@ static void FS3ENet_HandleTimeline(FS3ENetMessage *fs3em)
                 }
                 statuses[i].fmas_MediaCount = (ULONG)mCount;
             }
+
+            /* Poll -- see the matching block in pass 1. */
+            v = cJSON_GetObjectItemCaseSensitive(src, "poll");
+            if (v && !cJSON_IsNull(v)) {
+                const cJSON *options = cJSON_GetObjectItemCaseSensitive(v, "options");
+                int oCount = (options && cJSON_IsArray(options)) ? cJSON_GetArraySize(options) : 0;
+                int oi;
+                const cJSON *ev;
+                if (oCount > FS3ENET_MAX_POLL_OPTIONS) oCount = FS3ENET_MAX_POLL_OPTIONS;
+                for (oi = 0; oi < oCount; oi++) {
+                    const cJSON *opt   = cJSON_GetArrayItem(options, oi);
+                    const cJSON *title = opt ? cJSON_GetObjectItemCaseSensitive(opt, "title") : NULL;
+                    const cJSON *votes = opt ? cJSON_GetObjectItemCaseSensitive(opt, "votes_count") : NULL;
+                    str = (title && cJSON_IsString(title)) ? title->valuestring : "";
+                    FS3ENet_PackStr(&statuses[i].fmas_PollOptionTitles[oi], &p, str);
+                    statuses[i].fmas_PollOptionVotes[oi] = (votes && cJSON_IsNumber(votes)) ? (ULONG)votes->valueint : 0;
+                }
+                for (; oi < FS3ENET_MAX_POLL_OPTIONS; oi++)
+                    statuses[i].fmas_PollOptionTitles[oi] = NULL;
+                statuses[i].fmas_PollOptionCount = (ULONG)oCount;
+
+                ev = cJSON_GetObjectItemCaseSensitive(v, "votes_count");
+                statuses[i].fmas_PollVotesCount = (ev && cJSON_IsNumber(ev)) ? (ULONG)ev->valueint : 0;
+                ev = cJSON_GetObjectItemCaseSensitive(v, "expired");
+                statuses[i].fmas_PollExpired = (ev && cJSON_IsTrue(ev)) ? TRUE : FALSE;
+                ev = cJSON_GetObjectItemCaseSensitive(v, "multiple");
+                statuses[i].fmas_PollMultiple = (ev && cJSON_IsTrue(ev)) ? TRUE : FALSE;
+            } else {
+                ULONG oi;
+                for (oi = 0; oi < FS3ENET_MAX_POLL_OPTIONS; oi++)
+                    statuses[i].fmas_PollOptionTitles[oi] = NULL;
+                statuses[i].fmas_PollOptionCount = 0;
+                statuses[i].fmas_PollVotesCount = 0;
+                statuses[i].fmas_PollExpired = FALSE;
+                statuses[i].fmas_PollMultiple = FALSE;
+            }
+
+            /* Action-bar counts/state -- read from src (see the field
+             * comment in fs3enet.h: for reblogs these live on the boosted
+             * status, not the outer reblog wrapper). */
+            v = cJSON_GetObjectItemCaseSensitive(src, "replies_count");
+            statuses[i].fmas_RepliesCount = (v && cJSON_IsNumber(v)) ? (ULONG)v->valueint : 0;
+
+            v = cJSON_GetObjectItemCaseSensitive(src, "reblogs_count");
+            statuses[i].fmas_ReblogsCount = (v && cJSON_IsNumber(v)) ? (ULONG)v->valueint : 0;
+
+            v = cJSON_GetObjectItemCaseSensitive(src, "favourites_count");
+            statuses[i].fmas_FavouritesCount = (v && cJSON_IsNumber(v)) ? (ULONG)v->valueint : 0;
+
+            v = cJSON_GetObjectItemCaseSensitive(src, "favourited");
+            statuses[i].fmas_Favourited = (v && cJSON_IsTrue(v)) ? TRUE : FALSE;
+
+            v = cJSON_GetObjectItemCaseSensitive(src, "reblogged");
+            statuses[i].fmas_Reblogged = (v && cJSON_IsTrue(v)) ? TRUE : FALSE;
 
             i++;
         }
@@ -1043,7 +1244,7 @@ static void FS3ENet_HandlePostStatus(FS3ENetMessage *fs3em)
     }
 
     total = sizeof(FS3ENetPostStatusReply) + FS3ENet_PackLen(statusId);
-    reply = (FS3ENetPostStatusReply *)AllocVec(total, MEMF_ANY);
+    reply = (FS3ENetPostStatusReply *)AllocVec(total, MEMF_ANY | MEMF_PUBLIC);
     if (!reply) { fs3em->fs3em_Result = FS3ENETR_NETWORK_ERROR; return; }
 
     p = (char *)reply + sizeof(*reply);
@@ -1054,6 +1255,200 @@ static void FS3ENet_HandlePostStatus(FS3ENetMessage *fs3em)
     fs3em->fs3em_DataLen = total;
     fs3em->fs3em_Result  = FS3ENETR_OK;
     printf("net: POST_STATUS done, statusId=%s\n", statusId);
+}
+
+/* FS3ENETQ_FAVORITE — toggle favourite/unfavourite on a status, returning
+ * the server-confirmed favourited boolean (see the field comment on
+ * FS3ENetFavouriteReply in fs3enet.h -- deliberately not that response's
+ * other counts too). */
+static void FS3ENet_HandleFavourite(FS3ENetMessage *fs3em)
+{
+    FS3ENetFavouriteReq    *req = (FS3ENetFavouriteReq *)fs3em->fs3em_Data;
+    FS3ENetFavouriteReply  *reply;
+    BOOL  favourited;
+    ULONG total;
+    char *p;
+
+    if (!req || fs3em->fs3em_DataLen < sizeof(*req)) {
+        printf("net: FAVORITE parse error\n");
+        fs3em->fs3em_Result = FS3ENETR_PARSE_ERROR;
+        return;
+    }
+
+    printf("net: FAVORITE statusId=%s favourite=%ld\n",
+           req->fs3efa_StatusId ? req->fs3efa_StatusId : "?",
+           (long)req->fs3efa_Favourite);
+
+    if (!FS3EMastodon_Favourite(req->fs3efa_ApiBaseUrl, req->fs3efa_AccessToken,
+            req->fs3efa_StatusId, req->fs3efa_Favourite, &favourited))
+    {
+        printf("net: FAVORITE Favourite failed\n");
+        fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
+        return;
+    }
+
+    total = sizeof(FS3ENetFavouriteReply) + FS3ENet_PackLen(req->fs3efa_StatusId);
+    reply = (FS3ENetFavouriteReply *)AllocVec(total, MEMF_ANY | MEMF_PUBLIC);
+    if (!reply) { fs3em->fs3em_Result = FS3ENETR_NETWORK_ERROR; return; }
+
+    p = (char *)reply + sizeof(*reply);
+    FS3ENet_PackStr(&reply->fs3efa_StatusId, &p, req->fs3efa_StatusId);
+    reply->fs3efa_Favourited = favourited;
+
+    FreeVec(fs3em->fs3em_Data);
+    fs3em->fs3em_Data    = reply;
+    fs3em->fs3em_DataLen = total;
+    fs3em->fs3em_Result  = FS3ENETR_OK;
+    printf("net: FAVORITE done, favourited=%ld\n", (long)favourited);
+}
+
+/* FS3ENETQ_ACCOUNT_LOOKUP — resolve an acct string to a full account
+ * (profile view entry point). */
+static void FS3ENet_HandleAccountLookup(FS3ENetMessage *fs3em)
+{
+    FS3ENetAccountLookupReq   *req = (FS3ENetAccountLookupReq *)fs3em->fs3em_Data;
+    FS3ENetAccountLookupReply *reply;
+    FS3EMastodonAccount        tmpAcc = {0};
+    char  stripped[2048];
+    ULONG total;
+    char *p;
+
+    if (!req || fs3em->fs3em_DataLen < sizeof(*req)) {
+        printf("net: ACCOUNT_LOOKUP parse error\n");
+        fs3em->fs3em_Result = FS3ENETR_PARSE_ERROR;
+        return;
+    }
+
+    printf("net: ACCOUNT_LOOKUP acct=%s\n", req->fs3eal_Acct ? req->fs3eal_Acct : "?");
+
+    if (!FS3EMastodon_LookupAccount(req->fs3eal_ApiBaseUrl, req->fs3eal_AccessToken,
+            req->fs3eal_Acct, &tmpAcc))
+    {
+        printf("net: ACCOUNT_LOOKUP LookupAccount failed\n");
+        FS3EMastodonAccount_Free(&tmpAcc);
+        fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
+        return;
+    }
+
+    StripHTML(tmpAcc.fma_Note ? tmpAcc.fma_Note : "", stripped, sizeof(stripped));
+
+    total = sizeof(FS3ENetAccountLookupReply)
+          + FS3ENet_PackLen(tmpAcc.fma_Id)
+          + FS3ENet_PackLen(tmpAcc.fma_Username)
+          + FS3ENet_PackLen(tmpAcc.fma_Acct)
+          + FS3ENet_PackLen(tmpAcc.fma_DisplayName)
+          + FS3ENet_PackLen(tmpAcc.fma_AvatarURL)
+          + FS3ENet_PackLen(stripped);
+
+    reply = (FS3ENetAccountLookupReply *)AllocVec(total, MEMF_ANY | MEMF_PUBLIC);
+    if (!reply) {
+        FS3EMastodonAccount_Free(&tmpAcc);
+        fs3em->fs3em_Result = FS3ENETR_NETWORK_ERROR;
+        return;
+    }
+
+    p = (char *)reply + sizeof(*reply);
+    FS3ENet_PackStr(&reply->fs3eal_Account.fma_Id,          &p, tmpAcc.fma_Id);
+    FS3ENet_PackStr(&reply->fs3eal_Account.fma_Username,    &p, tmpAcc.fma_Username);
+    FS3ENet_PackStr(&reply->fs3eal_Account.fma_Acct,        &p, tmpAcc.fma_Acct);
+    FS3ENet_PackStrClean(&reply->fs3eal_Account.fma_DisplayName, &p, tmpAcc.fma_DisplayName);
+    FS3ENet_PackStr(&reply->fs3eal_Account.fma_AvatarURL,   &p, tmpAcc.fma_AvatarURL);
+    FS3ENet_PackStr(&reply->fs3eal_Account.fma_Note,        &p, stripped);
+    reply->fs3eal_Account.fma_FollowersCount = tmpAcc.fma_FollowersCount;
+    reply->fs3eal_Account.fma_FollowingCount = tmpAcc.fma_FollowingCount;
+
+    FS3EMastodonAccount_Free(&tmpAcc);
+
+    FreeVec(fs3em->fs3em_Data);
+    fs3em->fs3em_Data    = reply;
+    fs3em->fs3em_DataLen = total;
+    fs3em->fs3em_Result  = FS3ENETR_OK;
+    printf("net: ACCOUNT_LOOKUP done, id=%s acct=%s\n",
+           reply->fs3eal_Account.fma_Id ? reply->fs3eal_Account.fma_Id : "?",
+           reply->fs3eal_Account.fma_Acct ? reply->fs3eal_Account.fma_Acct : "?");
+}
+
+/* FS3ENETQ_RELATIONSHIP — fetch following state for an account id. */
+static void FS3ENet_HandleRelationship(FS3ENetMessage *fs3em)
+{
+    FS3ENetRelationshipReq   *req = (FS3ENetRelationshipReq *)fs3em->fs3em_Data;
+    FS3ENetRelationshipReply *reply;
+    BOOL  following;
+    ULONG total;
+    char *p;
+
+    if (!req || fs3em->fs3em_DataLen < sizeof(*req)) {
+        printf("net: RELATIONSHIP parse error\n");
+        fs3em->fs3em_Result = FS3ENETR_PARSE_ERROR;
+        return;
+    }
+
+    printf("net: RELATIONSHIP accountId=%s\n", req->fs3erl_AccountId ? req->fs3erl_AccountId : "?");
+
+    if (!FS3EMastodon_GetRelationship(req->fs3erl_ApiBaseUrl, req->fs3erl_AccessToken,
+            req->fs3erl_AccountId, &following))
+    {
+        printf("net: RELATIONSHIP GetRelationship failed\n");
+        fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
+        return;
+    }
+
+    total = sizeof(FS3ENetRelationshipReply) + FS3ENet_PackLen(req->fs3erl_AccountId);
+    reply = (FS3ENetRelationshipReply *)AllocVec(total, MEMF_ANY | MEMF_PUBLIC);
+    if (!reply) { fs3em->fs3em_Result = FS3ENETR_NETWORK_ERROR; return; }
+
+    p = (char *)reply + sizeof(*reply);
+    FS3ENet_PackStr(&reply->fs3erl_AccountId, &p, req->fs3erl_AccountId);
+    reply->fs3erl_Following = following;
+
+    FreeVec(fs3em->fs3em_Data);
+    fs3em->fs3em_Data    = reply;
+    fs3em->fs3em_DataLen = total;
+    fs3em->fs3em_Result  = FS3ENETR_OK;
+    printf("net: RELATIONSHIP done, following=%ld\n", (long)following);
+}
+
+/* FS3ENETQ_FOLLOW — toggle follow/unfollow on an account, returning the
+ * server-confirmed following boolean (see FS3ENetFollowReply's comment --
+ * deliberately not any counts too). */
+static void FS3ENet_HandleFollow(FS3ENetMessage *fs3em)
+{
+    FS3ENetFollowReq    *req = (FS3ENetFollowReq *)fs3em->fs3em_Data;
+    FS3ENetFollowReply  *reply;
+    BOOL  following;
+    ULONG total;
+    char *p;
+
+    if (!req || fs3em->fs3em_DataLen < sizeof(*req)) {
+        printf("net: FOLLOW parse error\n");
+        fs3em->fs3em_Result = FS3ENETR_PARSE_ERROR;
+        return;
+    }
+
+    printf("net: FOLLOW accountId=%s follow=%ld\n",
+           req->fs3efo_AccountId ? req->fs3efo_AccountId : "?", (long)req->fs3efo_Follow);
+
+    if (!FS3EMastodon_Follow(req->fs3efo_ApiBaseUrl, req->fs3efo_AccessToken,
+            req->fs3efo_AccountId, req->fs3efo_Follow, &following))
+    {
+        printf("net: FOLLOW Follow failed\n");
+        fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
+        return;
+    }
+
+    total = sizeof(FS3ENetFollowReply) + FS3ENet_PackLen(req->fs3efo_AccountId);
+    reply = (FS3ENetFollowReply *)AllocVec(total, MEMF_ANY | MEMF_PUBLIC);
+    if (!reply) { fs3em->fs3em_Result = FS3ENETR_NETWORK_ERROR; return; }
+
+    p = (char *)reply + sizeof(*reply);
+    FS3ENet_PackStr(&reply->fs3efo_AccountId, &p, req->fs3efo_AccountId);
+    reply->fs3efo_Following = following;
+
+    FreeVec(fs3em->fs3em_Data);
+    fs3em->fs3em_Data    = reply;
+    fs3em->fs3em_DataLen = total;
+    fs3em->fs3em_Result  = FS3ENETR_OK;
+    printf("net: FOLLOW done, following=%ld\n", (long)following);
 }
 
 /* FS3ENETQ_FLUSH_CACHE — delete every file in the disk cache directory. */
@@ -1094,6 +1489,22 @@ static void FS3ENet_Dispatch(FS3ENetMessage *fs3em)
 
         case FS3ENETQ_VERIFY_ACCOUNT:
             FS3ENet_HandleVerifyAccount(fs3em);
+            break;
+
+        case FS3ENETQ_FAVORITE:
+            FS3ENet_HandleFavourite(fs3em);
+            break;
+
+        case FS3ENETQ_ACCOUNT_LOOKUP:
+            FS3ENet_HandleAccountLookup(fs3em);
+            break;
+
+        case FS3ENETQ_RELATIONSHIP:
+            FS3ENet_HandleRelationship(fs3em);
+            break;
+
+        case FS3ENETQ_FOLLOW:
+            FS3ENet_HandleFollow(fs3em);
             break;
 
         default:

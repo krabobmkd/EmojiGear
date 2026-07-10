@@ -85,4 +85,30 @@ BOOL Action_SettingsGeneral(struct App *ctx);
 BOOL Action_FontSizeMinus(struct App *ctx);
 BOOL Action_FontSizePlus(struct App *ctx);
 
+/* -------------------------------------------------------------------------
+ * Toot actions -- one specific toot is always involved, so these take
+ * extra parameters and don't fit FS3EActionFunc/s_actions[]. Called
+ * directly from wherever the target toot is already known: today that's
+ * TootTimeline's TTL_HOT_FAVORITE click (friendsh3ep.c); once a "This
+ * Toot" context menu exists (see todo.txt) it calls the very same
+ * function for its Fave entry, so the two can never drift apart.
+ * -------------------------------------------------------------------------*/
+
+/* Toggles favourite state on postId (POSTs .../favourite if
+ * !currentlyFavourited, else .../unfavourite) and sends the request to the
+ * network process. Returns FALSE immediately on a local problem (no
+ * account, alloc failure, send failure); the actual server-side result
+ * arrives later as an FS3ENETQ_FAVORITE reply, handled in friendsh3ep.c by
+ * updating TootTimeline via TTIMELINE_UpdatePost. */
+BOOL Action_ToggleFavorite(struct App *ctx, const char *postId, BOOL currentlyFavourited);
+
+/* Same shape as Action_ToggleFavorite, one specific account instead of one
+ * specific toot: toggles follow state on accountId (POSTs .../follow if
+ * !currentlyFollowing, else .../unfollow). The server-side result arrives
+ * later as an FS3ENETQ_FOLLOW reply, handled in friendsh3ep.c by updating
+ * TootTimeline's profile header via TTIMELINE_UpdateProfileFollow. Called
+ * from TootTimeline's TTL_HOT_FOLLOW click today; a future "User" context
+ * menu (see todo.txt) would call the same function for its Follow entry. */
+BOOL Action_ToggleFollow(struct App *ctx, const char *accountId, BOOL currentlyFollowing);
+
 #endif /* FS3EACTION_H */

@@ -50,6 +50,7 @@
 
 #include "fs3etoottimeline.h"
 #include "../compilers.h"
+#include "../fs3etextwrap.h"
 
 /* ------------------------------------------------------------------ */
 /* Tile pool constants                                                   */
@@ -98,8 +99,21 @@ extern WORD windowResizeLastTargetH;  /* last height sent to SizeWindow */
 #define TTL_PREVIEW_BASE_H      150
 #define TTL_AVATAR_BASE_SIZE     35
 
+/* Poll ("survey") results block: fixed pixel height for each option's
+ * proportional result bar (drawn below its title/percentage text row)
+ * and the gap before the next option -- not font-dependent, same
+ * treatment as the padding constants above. */
+#define TTL_POLL_BAR_H      6
+#define TTL_POLL_ROW_GAP    3
+
 /* Gap in pixels between action-bar buttons (Reply / Boost / Fave) */
 #define TTL_ACTION_GAP            8
+
+/* Max bytes (incl. NUL) of one action-bar label built by
+ * ttl_build_action_labels() -- glyph + word + " " + a ULONG's worth of
+ * digits comfortably fits (worst case "\xF0\x9F\x94\x81 Boost 4294967295"
+ * is 24 bytes). */
+#define TTL_ACTION_LABEL_MAX      32
 
 /* Prev/next arrow hit-zone width within a multi-image preview rect (see
  * TTL_HOT_MEDIA_PREV/NEXT) -- a fraction of the rect's own width, clamped
@@ -271,6 +285,7 @@ typedef struct TTLPost {
     char  *body;
     char  *timestamp;
     char  *boostBy;    /* booster display name, NULL for original posts */
+    char  *boostByAcct; /* booster @user@instance, NULL for original posts -- see TTLPostSetup.boostByAcct */
     char  *avatarURL;  /* CDN URL; used to trigger deferred download */
     char  *postId;     /* Mastodon status id, NULL if unknown; see TTLPostSetup.postId */
 
@@ -286,10 +301,43 @@ typedef struct TTLPost {
     ULONG  mediaCount;
     ULONG  mediaCurrentIndex;
 
+    /* Action-bar counts/state -- see the matching TTLPostSetup fields. */
+    ULONG  repliesCount;
+    ULONG  reblogsCount;
+    ULONG  favouritesCount;
+    BOOL   favourited;
+    BOOL   reblogged;
+
+    /* TTLProfileHeader_Class only: follower/following counts and the
+     * connected user's own following state (see TTLProfileHeaderSetup).
+     * Unused (FALSE/0) on a toot. postId doubles as this row's Mastodon
+     * *account* id for the header -- a different ID namespace than a
+     * toot's status id, but the same "identifying string for this row"
+     * role, and nothing that searches posts by postId (TTLPostUpdate) ever
+     * walks a profile header, so there's no ambiguity in practice. */
+    ULONG  followersCount;
+    ULONG  followingCount;
+    BOOL   following;
+
     /* Media preview rect, in the same post-relative coordinates as
      * TTLTextSpan.postRelY; computed by ttl_post_layout. previewW==0 means
      * "no preview to draw" (mediaCount==0, or it didn't fit). */
     WORD   previewX, previewY, previewW, previewH;
+
+    /* Poll ("survey"), closed/result rendering only -- see
+     * TTLPostSetup.pollOptionTitles. pollOptionCount==0 means no poll on
+     * this post; mutually exclusive with mediaCount>0 in practice (see
+     * TTL_POST_MAX_POLL_OPTIONS comment). pollBlockY is the post-relative
+     * Y of the poll block's top, computed once by ttl_toot_layout and
+     * reused as-is by render/build_hotspots -- never re-derived, same
+     * fix as the profile Follow-button-row bug. */
+    char  *pollOptionTitles[TTL_POST_MAX_POLL_OPTIONS];
+    ULONG  pollOptionVotes[TTL_POST_MAX_POLL_OPTIONS];
+    ULONG  pollOptionCount;
+    ULONG  pollVotesCount;
+    BOOL   pollExpired;
+    BOOL   pollMultiple;
+    WORD   pollBlockY;
 
     struct MinList  textSpans;    /* list of TTLTextSpan (wrapped body lines, for hit-testing/selection) */
 
@@ -322,6 +370,15 @@ typedef struct {
      * ttl_channel_insert_bottom), so the next arrival at the (new)
      * bottom can trigger again. */
     BOOL    olderLoadTriggered;
+
+    /* TTLProfileHeader_Class instance pinned above this channel's post
+     * list, or NULL. Deliberately NOT a member of `posts` (see
+     * TTIMELINE_ShowProfile's comment in fs3etoottimeline.h) -- this is a
+     * bare, separately-tracked pointer purely so the follow/unfollow
+     * update path (TTIMELINE_UpdateProfileFollow) has O(1) access without
+     * a list search. Every channel except Search leaves this NULL
+     * forever; set by TTIMELINE_ShowProfile, cleared by ttl_clear_channel. */
+    TTLPost *headerPost;
 } TTLChannel;
 
 /* ------------------------------------------------------------------ */
@@ -402,6 +459,20 @@ typedef struct TTLData {
      * front rather than handing out pointers into someone else's memory. */
     char   lastHotSpotStr[512];
     char   lastHotSpotPostId[64];
+
+    /* ---- TTIMELINE_OldestPostId/NewestPostId (see TTL_OnGet) ----
+     * Same "owned copy, not a borrowed pointer" reasoning as
+     * lastHotSpotPostId just above: the old code found the post while
+     * holding listSem, then released it and handed the CALLER a raw
+     * pointer straight into that post's own postId field -- valid at the
+     * moment of the copy, but with no guarantee it still is by the time
+     * the caller actually reads through it (any other task's BOOPSI call
+     * on this same gadget, e.g. another TTIMELINE_ShowProfile clearing
+     * and freeing that very post, can run in between). Copying into a
+     * gadget-owned buffer while still holding the semaphore closes that
+     * window the same way ttl_notify_hotspot() already does. */
+    char   lastOldestPostId[64];
+    char   lastNewestPostId[64];
 
     /* ---- Text selection state ---- */
     TTLPost     *selPost;
@@ -491,10 +562,27 @@ INLINE TTLChannel *ttl_active(TTLData *inst)
 }
 
 /* TRUE if the timeline should show the waiting screen instead of the
- * scrollable post list: the active channel's post list is empty. */
+ * scrollable post list: the active channel's post list is empty. A
+ * profile header (see TTLChannel.headerPost) counts as content -- the
+ * TTIMELINE_ShowProfile handler seeds postCount=1 as soon as it's
+ * inserted specifically so this is FALSE from that moment on, showing
+ * the header immediately rather than a "waiting" placeholder while the
+ * profile's own toots are still loading. */
 INLINE BOOL ttl_is_waiting(TTLData *inst)
 {
     return (BOOL)(ttl_active(inst)->postCount == 0);
+}
+
+/* Lowest scrollY a channel may be clamped to. contentTopY is where the
+ * *list*'s own content starts (see ttl_rebuild_ypositions) -- with a
+ * profile header (outside the list, see TTLChannel.headerPost) that's
+ * header->height, not 0, so the true scrollable top is header->height
+ * further up, letting the header itself scroll into view. Guarded/no-op
+ * (returns contentTopY unchanged) for every channel without a header.
+ * Shared by every scrollY clamp site so they can't drift apart. */
+INLINE LONG ttl_channel_min_scroll(const TTLChannel *channel)
+{
+    return channel->contentTopY - (channel->headerPost ? channel->headerPost->height : 0);
 }
 
 /* ------------------------------------------------------------------ */
@@ -532,6 +620,20 @@ void     ttl_clear_posts       (TTLData *inst);
 void     ttl_rebuild_ypositions(TTLData *inst, ULONG ch);
 void     ttl_post_ensure_hotspots(TTLData *inst, TTLPost *post);
 
+/* Layout/hot-spot helpers shared with fs3etoottimeline_profile.c's
+ * profile header (name/acct/counts spans, word-wrapped bio, hot-spot
+ * registration, and the @mention/#hashtag/URL scanner toot bodies
+ * already use) -- see each function's own comment in fs3etoottimeline_posts.c. */
+void         ttl_clear_textspans    (TTLPost *post);
+LONG         ttl_count_wrapped_lines(TTLData *inst, const char *utf8, WORD maxW);
+TTLTextSpan *ttl_span_alloc         (const char *utf8, UBYTE spanType,
+                                      LONG postRelY, WORD x, TTLData *inst);
+TTLTextSpan *ttl_span_from_row      (const FS3ETextRow *row, WORD x,
+                                      LONG postRelY, TTLData *inst);
+void         ttl_hs_add             (TTLPost *post, UBYTE type, WORD x, WORD y, WORD w, WORD h,
+                                      const char *data, ULONG dataLen);
+void         ttl_scan_span_tokens   (TTLPost *post, TTLTextSpan *sp);
+
 /* Boundary-aware insertion, used by both TTIMELINE_AddPost (top) and
  * TTIMELINE_AppendPost (bottom) -- lands real content between a channel's
  * pinned TTLLoadNewer_Class/TTLLoadOlder_Class rows and the rest, instead
@@ -555,6 +657,15 @@ void     ttl_toot_activate(TTLData *inst, Class *cl, Object *o,
                            struct GadgetInfo *gi, TTLPost *item,
                            TTLHotSpot *hs);                         /* fs3etoottimeline_input.c */
 
+/* Builds this post's 3 action-bar label strings (Reply/Boost/Fave, each
+ * with its count; Fave's glyph toggles empty/full star by post->favourited)
+ * into caller-owned buffers -- the single shared source both
+ * ttl_post_build_hotspots (fs3etoottimeline_posts.c, sizes the hot-spot
+ * rects) and ttl_toot_render above (draws them) read from, so a click
+ * always lines up with what's on screen. */
+void     ttl_build_action_labels(const TTLPost *post,
+                                  char labels[3][TTL_ACTION_LABEL_MAX]); /* fs3etoottimeline_tiles.c */
+
 /* Pinned boundary-row classes (see ttl_channel_add_boundaries). Both share
  * ttl_toot_render's sibling ttl_boundary_render (fs3etoottimeline_tiles.c)
  * -- a centered single-line label drawn from post->body. Neither needs
@@ -567,6 +678,14 @@ extern const TTLItemClass TTLLoadNewer_Class;
 extern const TTLItemClass TTLLoadOlder_Class;
 void     ttl_boundary_render(TTLData *inst, struct RastPort *rp,
                               TTLPost *item, LONG tileBaseY);       /* fs3etoottimeline_tiles.c */
+
+/* Profile header row (see TTIMELINE_ShowProfile) -- deliberately NOT
+ * pinned via ttl_channel_add_boundaries/insert_top like the two classes
+ * above: it lives outside `channel->posts` entirely (TTLChannel.headerPost),
+ * seeded directly by the TTIMELINE_ShowProfile handler. Defined in the new
+ * fs3etoottimeline_profile.c. */
+extern const TTLItemClass TTLProfileHeader_Class;
+TTLPost *ttl_profile_header_alloc(const TTLProfileHeaderSetup *setup); /* fs3etoottimeline_profile.c */
 
 /* fs3etoottimeline_tiles.c */
 BOOL     ttl_tiles_alloc  (TTLData *inst, struct RastPort *rp);
@@ -585,10 +704,14 @@ void     ttl_notify       (Class *cl, Object *o, struct GadgetInfo *gi,
  * TTLData comment), then sends one OM_UPDATE carrying
  * TTIMELINE_HotSpotNotify=type plus both buffer pointers as additional
  * tags. data/dataLen may be NULL/0 (hot-spot types with no string);
- * postId may be NULL ("" or unknown status id). */
+ * postId may be NULL ("" or unknown status id). favourited is carried as
+ * TTIMELINE_LastHotSpotFavourited -- pass FALSE when postId is NULL (no
+ * owning post to have a favourited state). following is carried as
+ * TTIMELINE_LastHotSpotFollowing the same way, for TTL_HOT_FOLLOW clicks
+ * on a profile header -- pass FALSE for every other item kind. */
 void     ttl_notify_hotspot(Class *cl, Object *o, struct GadgetInfo *gi,
                              UBYTE type, const char *data, ULONG dataLen,
-                             const char *postId);
+                             const char *postId, BOOL favourited, BOOL following);
 /* only process have right to send render, ask with notify ProcessREfresh
  * void     ttl_render_self  (Class *cl, Object *o, struct GadgetInfo *gi);
 */

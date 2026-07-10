@@ -32,6 +32,17 @@
 
 typedef struct UniButtonBGBMData {
 
+    /* Set once in OM_NEW. GM_RENDER can be reached from GM_GOACTIVE/
+     * GM_HANDLEINPUT/GM_GOINACTIVE's ubgbm_render_self() calls, which run
+     * in input.device context, not necessarily this task -- ubgbm_
+     * rebuild_cache() calls FreeType (via URPDrawContext) and mutates
+     * cacheBm[]/cacheValid, which OM_SET's ubgbm_free_cache() can also be
+     * doing concurrently on this (the owning) task, e.g. a live theme
+     * change. GM_RENDER only rebuilds when FindTask(NULL) == callerTask;
+     * off-task it falls back to the flat-fill path instead, same as
+     * "cache not ready yet" -- see UniButtonBGBM_OnRender. */
+    struct Task *callerTask;
+
     struct URPDrawContext *dc;
     ULONG  pointSize;
     ULONG  fontFlags;

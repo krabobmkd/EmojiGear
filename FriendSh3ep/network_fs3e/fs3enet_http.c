@@ -34,10 +34,46 @@
 #define FS3EHTTP_INITIAL_BUF 4096
 #define FS3EHTTP_MAX_PATH    2048
 
-struct Library *AmiSSLMasterBase, *SocketBase;
-struct Library *AmiSSLBase, *AmiSSLExtBase;
+/* OSSL_HTTP_transfer's `timeout` arg, in seconds -- 0 means "no timeout,
+ * block forever", which is the unsafe part: a single dead/stalled
+ * connection then freezes the whole single-threaded network process
+ * permanently (see FS3ENet_ProcEntry). We tried positive values (30,
+ * then 60) to bound that, which instead deterministically truncated
+ * every large download at a point that scaled with file size. Traced
+ * this to actual OpenSSL source (see amissl_timeout_report/ at the
+ * FriendSh3ep project root, which has git-cloned AmiSSL's source and the
+ * full writeup): `timeout` is NOT "how long to wait for the connection"
+ * -- OSSL_HTTP_transfer() passes it to OSSL_HTTP_open() as the connect-
+ * phase deadline, computed ONCE as time(NULL)+timeout BEFORE any data
+ * is sent, then reuses that exact same one-shot deadline (rctx->max_time
+ * == rctx->max_total_time) for the ENTIRE exchange -- headers AND the
+ * full body, however long our own subsequent BIO_read() loop takes to
+ * drain it. There is no value of `timeout` here that's safe for an
+ * arbitrarily large/slow download; a bigger number only raises the size
+ * threshold where this bites, it doesn't remove it. Properly fixing the
+ * dead-connection-hang risk without this tradeoff would mean moving to
+ * OSSL_HTTP_open()'s own connect-only overall_timeout plus manually
+ * driving OSSL_HTTP_REQ_CTX_nbio()/OSSL_HTTP_exchange() ourselves,
+ * never re-arming an exchange-wide deadline -- a real architecture
+ * change, not done here. For now, 0 is the *correct* choice given we
+ * don't bound download size/duration, not just a fallback. */
+#define FS3EHTTP_TIMEOUT_SECS 0
 
-static SSL_CTX *g_SSLCtx;
+/* OSSL_HTTP_transfer's `max_resp_len` arg, in bytes -- confirmed from
+ * source (check_max_len(), http_client.c) that 0 really does mean "no
+ * limit" for this call chain: `if (max_len != 0 && len > max_len)` is
+ * skipped entirely when max_len==0. (A different entry point,
+ * OSSL_HTTP_REQ_CTX_set_max_response_length(), substitutes a default
+ * when passed 0 -- that's a different function, not what we call here.)
+ * So this was never the cause of the truncation above -- set explicitly
+ * anyway as good hygiene, so nothing we fetch can silently depend on
+ * which of those two behaviors a given code path happens to have. */
+#define FS3EHTTP_MAX_RESP_LEN (32UL * 1024UL * 1024UL) /* 32 MiB */
+
+struct Library *AmiSSLMasterBase=NULL, *SocketBase=NULL;
+struct Library *AmiSSLBase=NULL, *AmiSSLExtBase=NULL;
+
+static SSL_CTX *g_SSLCtx=NULL;
 
 /* Required callback to enable HTTPS connections via OSSL_HTTP_transfer(). */
 static SAVEDS STDARGS BIO *FS3EHttp_TLSCallback(BIO *bio, void *arg, int connect, int detail)
@@ -122,7 +158,16 @@ void FS3EHttp_Cleanup(void)
 
 void FS3EHttp_PrintErrors(void)
 {
-    BIO *bio_err = BIO_new(BIO_s_file());
+    BIO *bio_err;
+
+    /* Defensive: never touch AmiSSL if FS3EHttp_Init() never succeeded
+     * (or already ran FS3EHttp_Cleanup()) -- AmiSSLExtBase is only ever
+     * non-NULL between a successful OpenAmiSSLTags() and the matching
+     * CloseAmiSSL(). */
+    if (!AmiSSLExtBase)
+        return;
+
+    bio_err = BIO_new(BIO_s_file());
 
     if (bio_err)
     {
@@ -165,7 +210,22 @@ static BOOL FS3EHttp_ReadBody(BIO *bio, FS3EHttpResponse *out)
 
         n = BIO_read(bio, buf + len, 4096);
         if (n <= 0)
+        {
+            /* Restored to the original, known-working behavior: treat
+             * any n<=0 as "done". Two attempts at distinguishing a real
+             * read error from clean EOF (BIO_eof()+error queue, then
+             * n<0-only) both misfired on this BIO chain -- the second
+             * one specifically broke large downloads, which apparently
+             * hit an n<0 return mid-transfer on perfectly healthy
+             * connections (see amissl_timeout_report/BUG_REPORT.md at
+             * the FriendSh3ep project root for the full writeup and a
+             * standalone repro case). Silently truncating on a real
+             * timeout is a known, documented tradeoff for now -- better
+             * than failing every large download outright, until AmiSSL's
+             * actual timeout semantics for OSSL_HTTP_transfer's returned
+             * BIO are understood. */
             break;
+        }
 
         len += (ULONG)n;
     }
@@ -195,6 +255,14 @@ static BOOL FS3EHttp_DoRequest(const char *url, const FS3EHttpHeader *extraHeade
 
     out->fhr_Body    = NULL;
     out->fhr_BodyLen = 0;
+
+    /* Defensive: never call into AmiSSL/OpenSSL if FS3EHttp_Init() never
+     * succeeded. Structurally this can't happen today -- FS3ENet_ProcEntry
+     * only enters its dispatch loop (the only caller of FS3EHttp_Get/Post)
+     * when FS3EHttp_Init() returned TRUE -- but this keeps the invariant
+     * true at the point of use too, not just at the call site. */
+    if (!AmiSSLExtBase)
+        return FALSE;
 
     if (!OSSL_HTTP_parse_url(url, &useSSL, &user, &host, &port, &portNum,
                              &path, &query, &frag))
@@ -228,7 +296,7 @@ static BOOL FS3EHttp_DoRequest(const char *url, const FS3EHttpHeader *extraHeade
                                0, headers,
                                contentType, reqBody,
                                NULL, 0,
-                               0, 0, 0);
+                               FS3EHTTP_MAX_RESP_LEN, FS3EHTTP_TIMEOUT_SECS, 0);
 
     if (resp)
     {

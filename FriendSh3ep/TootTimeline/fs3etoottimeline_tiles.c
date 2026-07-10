@@ -229,21 +229,44 @@ void ttl_tile_evict_out_of_range(TTLData *inst, LONG keepTopY, LONG keepBotY)
 /*                                                                      */
 /* Both drawing (below) and hot-spot rect computation                  */
 /* (ttl_post_build_hotspots in fs3etoottimeline_posts.c) measure/draw   */
-/* from this exact array, so a click always lines up with what's on     */
-/* screen -- previously each file kept its own hand-typed copy of these */
-/* strings and they'd quietly drifted apart (different Boost/Fave       */
-/* glyphs), which threw off the hot-spot rects vs the drawn glyphs.     */
+/* from ttl_build_action_labels()'s output, so a click always lines up  */
+/* with what's on screen -- previously each file kept its own hand-     */
+/* typed copy of these strings and they'd quietly drifted apart         */
+/* (different Boost/Fave glyphs), which threw off the hot-spot rects    */
+/* vs the drawn glyphs. Labels are now per-post (they carry that post's */
+/* Reply/Boost/Fave counts, and the Fave glyph toggles empty/full star  */
+/* by post->favourited), so they can no longer be one static array.     */
 /* ------------------------------------------------------------------ */
-
-const char * const ttl_actionLabels[3] = {
-    "\xe2\x86\xa9 Reply",       /* ↩ Reply */
-    "\xF0\x9F\x94\x81 Boost",   /* 🔁 Boost */
-    "\xF0\x9F\x92\xAB Fave"     /* 💫 Fave */
-};
 
 const UBYTE ttl_actionTypes[3] = {
     TTL_HOT_REPLY, TTL_HOT_BOOST, TTL_HOT_FAVORITE
 };
+
+/* A zero count draws as a trailing space instead of "0" -- keeps the
+ * button from shouting a meaningless zero at every fresh/unboosted toot
+ * while still reserving roughly the same slot the digit(s) would take. */
+static void ttl_append_count(char *buf, ULONG bufsz, const char *prefix, ULONG count)
+{
+    if (count == 0)
+        snprintf(buf, bufsz, "%s ", prefix);
+    else
+        snprintf(buf, bufsz, "%s %lu", prefix, (unsigned long)count);
+}
+
+/* \xF0\x9F\x92\xAB = 💫 (dizzy symbol, stand-in for an empty/outline
+ * star -- none of the bundled fonts have one); \xE2\xAD\x90 = ⭐ (filled
+ * star), shown once the connected user has favourited the post. */
+void ttl_build_action_labels(const TTLPost *post,
+                              char labels[3][TTL_ACTION_LABEL_MAX])
+{
+    ttl_append_count(labels[0], TTL_ACTION_LABEL_MAX,
+                      "\xe2\x86\xa9 Reply", post->repliesCount);
+    ttl_append_count(labels[1], TTL_ACTION_LABEL_MAX,
+                      "\xF0\x9F\x94\x81 Boost", post->reblogsCount);
+    ttl_append_count(labels[2], TTL_ACTION_LABEL_MAX,
+                      post->favourited ? "\xE2\xAD\x90" : "\xF0\x9F\x92\xAB",
+                      post->favouritesCount);
+}
 
 /* ------------------------------------------------------------------ */
 /* Post drawing helpers                                                  */
@@ -603,14 +626,71 @@ void ttl_toot_render(TTLData *inst, struct RastPort *rp, TTLPost *post, LONG til
                     URPDrawTextUTF8(rp, dcBody, &pos, counter, (ULONG)nc);
                 }
 
-                /* Action bar: ↩ Reply  🔁 Boost  💫 Fave — right-aligned, normal
-                 * font. Same row Y formula, and the same ttl_actionLabels[]/
+                /* Poll ("survey") results — closed/result rendering only
+                 * (see TTL_POST_MAX_POLL_OPTIONS): one title+percentage
+                 * text row per option, followed by a track rect with a
+                 * proportional fill, then a "N votes · Poll closed"
+                 * summary line. pollBlockY was computed once by
+                 * ttl_toot_layout and is reused verbatim here -- never
+                 * re-derived (see that function's comment). */
+                if (post->pollOptionCount > 0) {
+                    LONG accentPen = (LONG)FS3E_PEN(inst->style, FS3E_COLOR_ACCENT);
+                    LONG trackPen  = (LONG)FS3E_PEN(inst->style, FS3E_COLOR_BUTTON_BG);
+                    WORD pollTextW = (WORD)(inst->gadWidth - textX - TTL_POST_PAD_RIGHT);
+                    WORD rowY = (WORD)(drawY + post->pollBlockY);
+                    ULONG oi;
+
+                    for (oi = 0; oi < post->pollOptionCount; oi++) {
+                        const char *title = post->pollOptionTitles[oi] ? post->pollOptionTitles[oi] : "";
+                        ULONG votes = post->pollOptionVotes[oi];
+                        ULONG pct = (post->pollVotesCount > 0)
+                                  ? (votes * 100) / post->pollVotesCount : 0;
+                        char pctLabel[16];
+                        struct URPTextMetric m;
+                        WORD barY = (WORD)(rowY + inst->miniLineHeight);
+                        WORD fillW;
+
+                        snprintf(pctLabel, sizeof(pctLabel), "%lu%%", (unsigned long)pct);
+
+                        URPDC_SetDrawColorFromPen(dcMini, inst->screen, txtPen, bgPen);
+                        tile_draw_text(inst, rp, textX, (WORD)(rowY + inst->miniLineAscent), title, dcMini);
+
+                        URPDC_TextSizeUTF8(dcMini, pctLabel, -1, &m);
+                        URPDC_SetDrawColorFromPen(dcMini, inst->screen, dimPen, bgPen);
+                        tile_draw_text(inst, rp,
+                                       (WORD)(inst->gadWidth - TTL_POST_PAD_RIGHT - m.width),
+                                       (WORD)(rowY + inst->miniLineAscent), pctLabel, dcMini);
+
+                        SetAPen(rp, trackPen);
+                        RectFill(rp, textX, barY, (WORD)(textX + pollTextW - 1), (WORD)(barY + TTL_POLL_BAR_H - 1));
+
+                        fillW = (WORD)(((LONG)pollTextW * (LONG)pct) / 100);
+                        if (fillW > 0) {
+                            SetAPen(rp, accentPen);
+                            RectFill(rp, textX, barY, (WORD)(textX + fillW - 1), (WORD)(barY + TTL_POLL_BAR_H - 1));
+                        }
+
+                        rowY = (WORD)(rowY + inst->miniLineHeight + TTL_POLL_BAR_H + TTL_POLL_ROW_GAP);
+                    }
+
+                    {
+                        char summary[64];
+                        snprintf(summary, sizeof(summary), "%lu votes \xC2\xB7 Poll closed",
+                                 (unsigned long)post->pollVotesCount);
+                        URPDC_SetDrawColorFromPen(dcMini, inst->screen, dimPen, bgPen);
+                        tile_draw_text(inst, rp, textX, (WORD)(rowY + inst->miniLineAscent), summary, dcMini);
+                    }
+                }
+
+                /* Action bar: ↩ Reply N  🔁 Boost N  ⭐/💫 N — right-aligned,
+                 * normal font. Same row Y formula, and the same labels/
                  * ttl_actionTypes[], that the hot-spot rects in
-                 * ttl_post_build_hotspots are measured from -- rather than
-                 * re-deriving "where does the content end" from the body
-                 * spans here (which used to ignore the media preview rect
-                 * entirely when it was taller than the text, or stacked
-                 * below it), this reads post->height, which
+                 * ttl_post_build_hotspots are measured from (both build
+                 * from ttl_build_action_labels(), see that function) --
+                 * rather than re-deriving "where does the content end"
+                 * from the body spans here (which used to ignore the media
+                 * preview rect entirely when it was taller than the text,
+                 * or stacked below it), this reads post->height, which
                  * ttl_post_layout already computed correctly accounting
                  * for whichever of the two is taller. */
                 {
@@ -619,19 +699,21 @@ void ttl_toot_render(TTLData *inst, struct RastPort *rp, TTLPost *post, LONG til
                                            - TTL_POST_PAD_BOT - inst->lineHeight);
                     WORD barBaselineY = (WORD)(barTopY + inst->lineAscent);
                     WORD xRight = (WORD)(inst->gadWidth - TTL_POST_PAD_RIGHT);
+                    char labels[3][TTL_ACTION_LABEL_MAX];
                     int  a;
+                    ttl_build_action_labels(post, labels);
                     URPDC_SetDrawColorFromPen(dcBody, inst->screen, actionPen, bgPen);
                     for (a = 2; a >= 0; a--) {
                         struct URPTextMetric m;
                         struct URPTextPos pos;
                         WORD itemX;
-                        LONG nc = utf8_codepoints_range(ttl_actionLabels[a],
-                                     ttl_actionLabels[a] + strlen(ttl_actionLabels[a]));
-                        URPDC_TextSizeUTF8(dcBody, ttl_actionLabels[a], nc, &m);
+                        LONG nc = utf8_codepoints_range(labels[a],
+                                     labels[a] + strlen(labels[a]));
+                        URPDC_TextSizeUTF8(dcBody, labels[a], nc, &m);
                         itemX = (WORD)(xRight - m.width);
                         pos.x = itemX;
                         pos.y = barBaselineY;
-                        URPDrawTextUTF8(rp, dcBody, &pos, ttl_actionLabels[a], (ULONG)nc);
+                        URPDrawTextUTF8(rp, dcBody, &pos, labels[a], (ULONG)nc);
                         xRight = (WORD)(itemX - TTL_ACTION_GAP);
                     }
                 }
@@ -677,11 +759,43 @@ void ttl_boundary_render(TTLData *inst, struct RastPort *rp, TTLPost *post, LONG
 /* they stay here rather than being duplicated per class.               */
 /* ------------------------------------------------------------------ */
 
+/* One item's contribution to one tile: ensure-hotspots, class render,
+ * bottom separator -- same for every item kind, and (see below) for the
+ * profile header too, which isn't a member of the channel's post list so
+ * can't just fall out of the loop below. Returns FALSE (nothing to do)
+ * if this item doesn't overlap tileBaseY..+TILE_HEIGHT at all. */
+static BOOL ttl_render_item_in_tile(TTLData *inst, struct RastPort *rp,
+                                     TTLPost *post, LONG tileBaseY)
+{
+    LONG postTop = post->timelineY;
+    LONG postBot = postTop + post->height;
+
+    if (postBot <= tileBaseY)                  return FALSE;
+    if (postTop >= tileBaseY + TTL_TILE_HEIGHT) return FALSE;
+
+    /* Pool-backed hot-spots -- cheap no-op if already fresh. Must run
+     * before item->cls->render, which may read post->hotSpots. */
+    ttl_post_ensure_hotspots(inst, post);
+
+    if (post->cls && post->cls->render)
+        post->cls->render(inst, rp, post, tileBaseY);
+
+    /* ---- Separator line at post bottom (every item kind) ---- */
+    {
+        WORD sepY = (WORD)(postBot - 1 - tileBaseY);
+        SetAPen(rp, (LONG)FS3E_PEN(inst->style, FS3E_COLOR_ACCENT));
+        Move(rp, 0,                sepY);
+        Draw(rp, inst->gadWidth-1, sepY);
+    }
+    return TRUE;
+}
+
 void ttl_render_tile(TTLData *inst, TTLTile *tile)
 {
     struct RastPort *rp;
     LONG             tileBaseY = tile->tileBaseY;
     TTLPost         *post;
+    TTLChannel      *active;
     LONG bgpen;
 //bdbprintf("ttl_render_tile\n");
     if (!inst->tileLayer) return;
@@ -696,33 +810,26 @@ void ttl_render_tile(TTLData *inst, TTLTile *tile)
     SetAPen(rp, bgpen);
     RectFill(rp, 0, 0, inst->gadWidth - 1, TTL_TILE_HEIGHT - 1);
 
+    active = ttl_active(inst);
+
+    /* Profile header (see TTLChannel.headerPost) is deliberately not a
+     * member of the channel's post list, so the walk below would never
+     * see it -- draw it first (it's always timelineY==0, the topmost
+     * thing). Guarded/no-op for every channel except Search with a
+     * profile loaded. */
+    if (active->headerPost)
+        ttl_render_item_in_tile(inst, rp, active->headerPost, tileBaseY);
+
     /* Walk the active channel's items; they are sorted newest-first but
      * their Y values are consecutive, so we can stop as soon as
      * item->timelineY >= tileBaseY+TILE_H */
-    for (post = (TTLPost *)ttl_active(inst)->posts.mlh_Head;
+    for (post = (TTLPost *)active->posts.mlh_Head;
          post->node.mln_Succ;
          post = (TTLPost *)post->node.mln_Succ)
     {
-        LONG postTop = post->timelineY;
-        LONG postBot = postTop + post->height;
-
-        if (postBot  <= tileBaseY)                  continue;
-        if (postTop  >= tileBaseY + TTL_TILE_HEIGHT) break;
-
-        /* Pool-backed hot-spots -- cheap no-op if already fresh. Must run
-         * before item->cls->render, which may read post->hotSpots. */
-        ttl_post_ensure_hotspots(inst, post);
-
-        if (post->cls && post->cls->render)
-            post->cls->render(inst, rp, post, tileBaseY);
-
-        /* ---- Separator line at post bottom (every item kind) ---- */
-        {
-            WORD sepY = (WORD)(postBot - 1 - tileBaseY);
-            SetAPen(rp, (LONG)FS3E_PEN(inst->style, FS3E_COLOR_ACCENT));
-            Move(rp, 0,                sepY);
-            Draw(rp, inst->gadWidth-1, sepY);
-        }
+        if (post->timelineY >= tileBaseY + TTL_TILE_HEIGHT) break;
+        if (post->timelineY + post->height <= tileBaseY) continue;
+        ttl_render_item_in_tile(inst, rp, post, tileBaseY);
     }
 
     tile->dirty = FALSE;
@@ -757,10 +864,10 @@ void ttl_notify(Class *cl, Object *o, struct GadgetInfo *gi,
 
 void ttl_notify_hotspot(Class *cl, Object *o, struct GadgetInfo *gi,
                          UBYTE type, const char *data, ULONG dataLen,
-                         const char *postId)
+                         const char *postId, BOOL favourited, BOOL following)
 {
     TTLData         *inst = TTL_DATA(cl, o);
-    struct TagItem  tags[5];
+    struct TagItem  tags[7];
     struct opUpdate nmsg;
 
     /* Copy into the gadget-owned buffers first -- see the TTLData comment
@@ -794,7 +901,11 @@ void ttl_notify_hotspot(Class *cl, Object *o, struct GadgetInfo *gi,
     tags[2].ti_Data = inst->lastHotSpotStr[0]     ? (ULONG)inst->lastHotSpotStr     : 0;
     tags[3].ti_Tag  = TTIMELINE_LastHotSpotPostId;
     tags[3].ti_Data = inst->lastHotSpotPostId[0]  ? (ULONG)inst->lastHotSpotPostId  : 0;
-    tags[4].ti_Tag  = TAG_DONE;
+    tags[4].ti_Tag  = TTIMELINE_LastHotSpotFavourited;
+    tags[4].ti_Data = (ULONG)favourited;
+    tags[5].ti_Tag  = TTIMELINE_LastHotSpotFollowing;
+    tags[5].ti_Data = (ULONG)following;
+    tags[6].ti_Tag  = TAG_DONE;
 
     nmsg.MethodID     = OM_UPDATE;
     nmsg.opu_AttrList = (struct TagItem *)tags;

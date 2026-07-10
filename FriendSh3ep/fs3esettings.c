@@ -134,7 +134,7 @@ void FS3ESettings_Load(FS3ESettings *s)
         s->userDataPath = StrDup("PROGDIR:.user");
 
     /* Max cache size (MB) */
-    s->maxCacheSizeMB = 4;
+    s->maxCacheSizeMB = 40;
     val = ToolTypePrefs_Get(TT_MAXCACHESIZE);
     if (val && val[0] != '\0') {
         int mb = atoi(val);

@@ -194,6 +194,8 @@ ULONG UniButtonBGBM_OnNew(Class *cl, Object *o, struct opSet *msg)
     inst = UBGBM_DATA(cl, newObj);
     memset(inst, 0, sizeof(UniButtonBGBMData));
 
+    inst->callerTask   = FindTask(NULL);
+
     inst->pointSize    = 14;
     inst->fontFlags    = 0;
     inst->txtPen       = 1;
