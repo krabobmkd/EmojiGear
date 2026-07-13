@@ -26,6 +26,7 @@ set(FRIENDSH3EP_SOURCES
     fs3ethumb.c
     rgbscale.c
     rgbimage.c
+    scalepixelarraybilinear.c
     clipboard.c
     patch9.c
     stylefile.c
@@ -38,6 +39,7 @@ set(FRIENDSH3EP_SOURCES
     fs3eemojibox.c
     fs3ethemeview.c
     fs3esettingsview.c
+    fs3emediaview.c
     fs3elocale.c
     fs3emenu.c
     fs3eaction.c
@@ -83,6 +85,7 @@ set(FRIENDSH3EP_HEADERS
     fs3eemojibox.h
     fs3ethemeview.h
     fs3esettingsview.h
+    fs3emediaview.h
     fs3elocale.h
     fs3emenu.h
     fs3eaction.h

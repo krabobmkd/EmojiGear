@@ -17,6 +17,7 @@
 #include "fs3ethemeview.h"
 #include "fs3esettingsview.h"
 #include "fs3eemojibox.h"
+#include "fs3emediaview.h"
 #include "fs3estyle.h"
 #include "fs3emenu.h"
 #include "fs3esettings.h"
@@ -122,6 +123,10 @@ struct App {
     FS3EThemeView  themeView;
     FS3ESettingsView settingsView;
     FS3EEmojiBoxWindow emojiBoxWindow;
+
+    /* Bare-Intuition-window full-size media viewer (see fs3emediaview.h),
+     * opened by clicking a toot's media preview. */
+    FS3EMediaView  mediaView;
 
     /* fs3enet ports: requestPort send-only; replyPort receives async replies */
     struct MsgPort *netRequestPort;

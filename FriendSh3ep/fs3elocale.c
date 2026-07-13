@@ -171,6 +171,24 @@ static const char *defaultStrings[MSG_COUNT] = {
     "Keep big user icons",
     /* MSG_SETTINGSV_KEEP_BIG_THUMBNAILS */
     "Keep big thumbnails",
+    /* MSG_SETTINGSV_THUMBNAILS_GROUP */
+    "Thumbnails & icons",
+    /* MSG_SETTINGSV_BIGGER_THUMBNAILS */
+    "Bigger Thumbnails",
+    /* MSG_SETTINGSV_SCALING_QUALITY */
+    "Scaling Quality",
+    /* MSG_SETTINGSV_SCALEQ_FAST */
+    "Fast linear (68020)",
+    /* MSG_SETTINGSV_SCALEQ_BILINEAR */
+    "Quick Bilinear (68030)",
+    /* MSG_SETTINGSV_SCALEQ_TRILINEAR */
+    "Full Trilinear (>=68060)",
+    /* MSG_SETTINGSV_RGB_DRAW_FUNCTION */
+    "RGB Draw function",
+    /* MSG_SETTINGSV_RGBDRAW_SCALEPIXELARRAY */
+    "ScalePixelArray()",
+    /* MSG_SETTINGSV_RGBDRAW_INTERNAL_BILINEAR */
+    "Internal Bilinear (>=68060)",
 };
 
 /* LocaleBase declared in friendsh3ep.c */

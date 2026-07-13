@@ -69,7 +69,28 @@ typedef struct FS3ESettings {
     short keepBigUserIcons;
     short keepBigThumbnails;
 
+    /* Thumbnails & icons rendering (see fs3esettingsview.c "Thumbnails &
+     * icons" group). Not yet consumed by the thumbnail process. */
+    short biggerThumbnails;   /* FALSE (default) = current size */
+    int   scalingQuality;     /* FS3E_SCALEQ_*, default FS3E_SCALEQ_FAST */
+    int   rgbDrawFunction;    /* FS3E_RGBDRAW_*, default FS3E_RGBDRAW_SCALEPIXELARRAY */
+
 } FS3ESettings;
+
+/* scalingQuality enum -- index matches the combo's CHOOSER_Active order */
+enum {
+    FS3E_SCALEQ_FAST = 0,     /* Fast linear (68020) */
+    FS3E_SCALEQ_BILINEAR,     /* Quick Bilinear (68030) */
+    FS3E_SCALEQ_TRILINEAR,    /* Full Trilinear (>=68060) */
+    FS3E_SCALEQ_COUNT
+};
+
+/* rgbDrawFunction enum -- index matches the combo's CHOOSER_Active order */
+enum {
+    FS3E_RGBDRAW_SCALEPIXELARRAY = 0, /* ScalePixelArray() */
+    FS3E_RGBDRAW_INTERNAL_BILINEAR,   /* Internal Bilinear (>=68060) */
+    FS3E_RGBDRAW_COUNT
+};
 
 /*
  * Load settings from PROGDIR:FriendSh3ep.info tooltypes.

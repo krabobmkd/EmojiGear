@@ -19,6 +19,10 @@
  *     [Flush cache]
  *   Server group (vertical):
  *     Check interval (seconds): [integer]
+ *   Thumbnails & icons group (vertical):
+ *     [x] Bigger Thumbnails
+ *     Scaling Quality:   [combo: Fast linear (68020) / Quick Bilinear (68030) / Full Trilinear (>=68060)]
+ *     RGB Draw function: [combo: ScalePixelArray() / Internal Bilinear (>=68060)]
  *
  * Uses getfile.gadget (GETFILE_DrawersOnly) for directories and
  * integer.gadget for numeric fields -- same libraries fs3ethemeview.c and
@@ -30,8 +34,11 @@
  */
 
 #include <exec/types.h>
+#include <exec/lists.h>
 #include <intuition/classusr.h>
 #include <intuition/intuition.h>
+
+#include "fs3esettings.h"
 
 typedef struct FS3ESettingsView {
     Object        *windowObj;
@@ -53,6 +60,15 @@ typedef struct FS3ESettingsView {
 
     /* Server group */
     Object *checkIntervalInt;
+
+    /* Thumbnails & icons group */
+    Object *biggerThumbnailsCheck;
+    Object *scalingQualityChooser;
+    Object *rgbDrawFunctionChooser;
+    struct List  scalingQualityList;
+    struct Node *scalingQualityNodes[FS3E_SCALEQ_COUNT];
+    struct List  rgbDrawFunctionList;
+    struct Node *rgbDrawFunctionNodes[FS3E_RGBDRAW_COUNT];
 
 } FS3ESettingsView;
 

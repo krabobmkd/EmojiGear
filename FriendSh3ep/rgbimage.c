@@ -9,6 +9,9 @@
 
 #include "rgbimage.h"
 #include "rgbscale.h"
+#include "scalepixelarraybilinear.h"
+#include "friendsh3ep.h"
+#include "fs3esettings.h"
 
 #include <proto/exec.h>
 #include <proto/dos.h>
@@ -139,9 +142,15 @@ void RgbImage_DrawScaled(const RgbImage *img, struct RastPort *rp,
     depth = GetBitMapAttr(rp->BitMap, BMA_DEPTH);
 
     if (depth > 8) {
-        ScalePixelArray((APTR)img->pixels, img->width, img->height,
-                         (UWORD)(img->width * 3), rp,
-                         (UWORD)destX, (UWORD)destY, destW, destH, RECTFMT_RGB);
+        if (app->settings.rgbDrawFunction == FS3E_RGBDRAW_INTERNAL_BILINEAR) {
+            ScalePixelArrayBilinear((APTR)img->pixels, img->width, img->height,
+                                     (UWORD)(img->width * 3), rp,
+                                     destX, destY, destW, destH);
+        } else {
+            ScalePixelArray((APTR)img->pixels, img->width, img->height,
+                             (UWORD)(img->width * 3), rp,
+                             (UWORD)destX, (UWORD)destY, destW, destH, RECTFMT_RGB);
+        }
         return;
     }
 
@@ -167,8 +176,10 @@ void RgbImage_DrawScaled(const RgbImage *img, struct RastPort *rp,
         } else {
             scaledRGB = (UBYTE *)AllocVec((ULONG)destW * destH * 3, MEMF_ANY);
             if (!scaledRGB) return;
+            /* Indexed-screen remap path: not user-configurable, always the
+             * pyramid-halve + nearest-neighbor default (see rgbscale.h). */
             RgbScale_ToSize(img->pixels, img->width, img->height,
-                             scaledRGB, destW, destH);
+                             scaledRGB, destW, destH, FS3E_SCALEQ_BILINEAR);
             rgbForRemap = scaledRGB;
         }
 

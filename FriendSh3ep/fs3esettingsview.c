@@ -36,6 +36,9 @@
 #include <proto/checkbox.h>
 #include <gadgets/checkbox.h>
 
+#include <proto/chooser.h>
+#include <gadgets/chooser.h>
+
 #include <dos/dos.h>
 
 #include "friendsh3ep.h"
@@ -48,6 +51,7 @@
 
 extern struct Library *GetFileBase;
 extern struct Library *IntegerBase;
+extern struct Library *ChooserBase;
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
@@ -91,6 +95,17 @@ static void updateDirPath(Object *gf, char **dest)
     }
 }
 
+static const ULONG scalingQualityMsgIds[FS3E_SCALEQ_COUNT] = {
+    MSG_SETTINGSV_SCALEQ_FAST,
+    MSG_SETTINGSV_SCALEQ_BILINEAR,
+    MSG_SETTINGSV_SCALEQ_TRILINEAR,
+};
+
+static const ULONG rgbDrawFunctionMsgIds[FS3E_RGBDRAW_COUNT] = {
+    MSG_SETTINGSV_RGBDRAW_SCALEPIXELARRAY,
+    MSG_SETTINGSV_RGBDRAW_INTERNAL_BILINEAR,
+};
+
 /* ------------------------------------------------------------------ */
 /* Public API                                                          */
 /* ------------------------------------------------------------------ */
@@ -100,12 +115,17 @@ BOOL FS3ESettingsView_Create(FS3ESettingsView *sv, const char *title)
     Object *pathsGroup;
     Object *cacheGroup;
     Object *serverGroup;
+    Object *thumbnailsGroup;
     Object *cachePathLabel;
     Object *userDataPathLabel;
     Object *maxCacheSizeLabel;
     Object *checkIntervalLabel;
     Object *keepBigUserIconsLabel;
     Object *keepBigThumbnailsLabel;
+    Object *biggerThumbnailsLabel;
+    Object *scalingQualityLabel;
+    Object *rgbDrawFunctionLabel;
+    ULONG   i;
 
     {
         LONG sl = sv->left, st = sv->top, sw = sv->width, sh = sv->height;
@@ -228,6 +248,79 @@ BOOL FS3ESettingsView_Create(FS3ESettingsView *sv, const char *title)
         TAG_END);
     if (!serverGroup) return FALSE;
 
+    /* --- Thumbnails & icons group --- */
+    sv->biggerThumbnailsCheck = NewObject(CHECKBOX_GetClass(), NULL,
+        GA_ID,        GID_SETTINGSV_BIGGER_THUMBNAILS,
+        GA_RelVerify, TRUE,
+        GA_Selected,  (ULONG)app->settings.biggerThumbnails,
+        TAG_END);
+    if (!sv->biggerThumbnailsCheck) return FALSE;
+
+    biggerThumbnailsLabel = NewObject(LABEL_GetClass(), NULL,
+        LABEL_Text, (ULONG)LOC(MSG_SETTINGSV_BIGGER_THUMBNAILS), TAG_END);
+
+    NewList(&sv->scalingQualityList);
+    for (i = 0; i < FS3E_SCALEQ_COUNT; i++) {
+        struct Node *node = NULL;
+        if (ChooserBase)
+            node = AllocChooserNode(CNA_Text, (ULONG)LOC(scalingQualityMsgIds[i]), TAG_END);
+        sv->scalingQualityNodes[i] = node;
+        if (node) AddTail(&sv->scalingQualityList, node);
+    }
+
+    sv->scalingQualityChooser = NewObject(CHOOSER_GetClass(), NULL,
+        GA_ID,          GID_SETTINGSV_SCALING_QUALITY,
+        GA_RelVerify,   TRUE,
+        CHOOSER_PopUp,  TRUE,
+        CHOOSER_Labels, (ULONG)&sv->scalingQualityList,
+        CHOOSER_Active, (ULONG)app->settings.scalingQuality,
+        TAG_END);
+    if (!sv->scalingQualityChooser) return FALSE;
+
+    scalingQualityLabel = NewObject(LABEL_GetClass(), NULL,
+        LABEL_Text, (ULONG)LOC(MSG_SETTINGSV_SCALING_QUALITY), TAG_END);
+
+    NewList(&sv->rgbDrawFunctionList);
+    for (i = 0; i < FS3E_RGBDRAW_COUNT; i++) {
+        struct Node *node = NULL;
+        if (ChooserBase)
+            node = AllocChooserNode(CNA_Text, (ULONG)LOC(rgbDrawFunctionMsgIds[i]), TAG_END);
+        sv->rgbDrawFunctionNodes[i] = node;
+        if (node) AddTail(&sv->rgbDrawFunctionList, node);
+    }
+
+    sv->rgbDrawFunctionChooser = NewObject(CHOOSER_GetClass(), NULL,
+        GA_ID,          GID_SETTINGSV_RGB_DRAW_FUNCTION,
+        GA_RelVerify,   TRUE,
+        CHOOSER_PopUp,  TRUE,
+        CHOOSER_Labels, (ULONG)&sv->rgbDrawFunctionList,
+        CHOOSER_Active, (ULONG)app->settings.rgbDrawFunction,
+        TAG_END);
+    if (!sv->rgbDrawFunctionChooser) return FALSE;
+
+    rgbDrawFunctionLabel = NewObject(LABEL_GetClass(), NULL,
+        LABEL_Text, (ULONG)LOC(MSG_SETTINGSV_RGB_DRAW_FUNCTION), TAG_END);
+
+    thumbnailsGroup = NewObject(LAYOUT_GetClass(), NULL,
+        LAYOUT_Orientation,   LAYOUT_ORIENT_VERT,
+        LAYOUT_BevelStyle,    BVS_GROUP,
+        LAYOUT_Label,         (ULONG)LOC(MSG_SETTINGSV_THUMBNAILS_GROUP),
+        LAYOUT_BackFill,      NULL,
+        LAYOUT_SpaceOuter,    TRUE,
+        LAYOUT_SpaceInner,    TRUE,
+        LAYOUT_AddChild,      (ULONG)sv->biggerThumbnailsCheck,
+        CHILD_WeightedWidth,  1,
+        CHILD_WeightedHeight, 0,
+        CHILD_Label,          (ULONG)biggerThumbnailsLabel,
+        LAYOUT_AddChild,      (ULONG)sv->scalingQualityChooser,
+        CHILD_WeightedHeight, 0,
+        CHILD_Label,          (ULONG)scalingQualityLabel,
+        LAYOUT_AddChild,      (ULONG)sv->rgbDrawFunctionChooser,
+        CHILD_WeightedHeight, 0,
+        CHILD_Label,          (ULONG)rgbDrawFunctionLabel,
+        TAG_END);
+    if (!thumbnailsGroup) return FALSE;
+
     /* --- Top-level vertical layout --- */
     sv->mainLayout = NewObject(LAYOUT_GetClass(), NULL,
         LAYOUT_DeferLayout,   TRUE,
@@ -240,6 +333,8 @@ BOOL FS3ESettingsView_Create(FS3ESettingsView *sv, const char *title)
         LAYOUT_AddChild,      (ULONG)cacheGroup,
         CHILD_WeightedHeight, 0,
         LAYOUT_AddChild,      (ULONG)serverGroup,
+        CHILD_WeightedHeight, 0,
+        LAYOUT_AddChild,      (ULONG)thumbnailsGroup,
         CHILD_WeightedHeight, 0,
         TAG_END);
     if (!sv->mainLayout) return FALSE;
@@ -266,12 +361,29 @@ BOOL FS3ESettingsView_Create(FS3ESettingsView *sv, const char *title)
 
 void FS3ESettingsView_Dispose(FS3ESettingsView *sv)
 {
+    ULONG i;
+
     if (!sv) return;
 
     if (sv->windowObj) {
         FS3ESettingsView_Close(sv);
         DisposeObject(sv->windowObj);
         sv->windowObj = NULL;
+    }
+
+    if (ChooserBase) {
+        for (i = 0; i < FS3E_SCALEQ_COUNT; i++) {
+            if (sv->scalingQualityNodes[i]) {
+                FreeChooserNode(sv->scalingQualityNodes[i]);
+                sv->scalingQualityNodes[i] = NULL;
+            }
+        }
+        for (i = 0; i < FS3E_RGBDRAW_COUNT; i++) {
+            if (sv->rgbDrawFunctionNodes[i]) {
+                FreeChooserNode(sv->rgbDrawFunctionNodes[i]);
+                sv->rgbDrawFunctionNodes[i] = NULL;
+            }
+        }
     }
 }
 
@@ -375,6 +487,21 @@ BOOL FS3ESettingsView_HandleInput(FS3ESettingsView *sv)
                     ULONG checked = 0;
                     GetAttr(GA_Selected, sv->keepBigThumbnailsCheck, &checked);
                     app->settings.keepBigThumbnails = checked ? TRUE : FALSE;
+
+                } else if (gadId == GID_SETTINGSV_BIGGER_THUMBNAILS) {
+                    ULONG checked = 0;
+                    GetAttr(GA_Selected, sv->biggerThumbnailsCheck, &checked);
+                    app->settings.biggerThumbnails = checked ? TRUE : FALSE;
+
+                } else if (gadId == GID_SETTINGSV_SCALING_QUALITY) {
+                    ULONG active = 0;
+                    GetAttr(CHOOSER_Active, sv->scalingQualityChooser, &active);
+                    app->settings.scalingQuality = (int)active;
+
+                } else if (gadId == GID_SETTINGSV_RGB_DRAW_FUNCTION) {
+                    ULONG active = 0;
+                    GetAttr(CHOOSER_Active, sv->rgbDrawFunctionChooser, &active);
+                    app->settings.rgbDrawFunction = (int)active;
 
                 } else if (gadId == GID_SETTINGSV_FLUSH_CACHE) {
                     if (app->netRequestPort) {

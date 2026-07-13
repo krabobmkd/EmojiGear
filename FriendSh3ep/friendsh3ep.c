@@ -106,12 +106,8 @@
 
 const char *pVersion = "$VER: FriendSh3ep " FRIENDSH3EP_VERSION;
 
-/* FS3ECache subdirectories (see fs3enet_cache.h) -- user avatars and toot
- * media thumbnails are fetched through the identical pipeline but kept in
- * their own cache subdirectory rather than one flat pile of hash-named
- * files, since they're conceptually distinct sets. */
-#define FS3E_CACHE_SUBDIR_USERICONS  "usericons"
-#define FS3E_CACHE_SUBDIR_THUMBNAILS "thumbnails"
+/* FS3E_CACHE_SUBDIR_USERICONS/THUMBNAILS now live in network_fs3e/fs3enet.h
+ * (already #included above) -- shared with fs3emediaview.c. */
 
 struct Task *myTask = NULL;
 
@@ -1901,6 +1897,15 @@ static void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                 }
             }
         }
+
+        /* Same reply, independent consumer: FS3EMediaView_ShowUrl() may be
+         * waiting on this exact URL (see fs3emediaview.h) -- ignores it if
+         * not. No-op on failure beyond clearing its own pending/loading
+         * state (msg->fs3em_Data on failure is the original request block,
+         * not a reply -- fs3enf_Key sits at the same offset in both, see
+         * FS3ENetFetchImageReq/Reply in fs3enet.h, so this is still safe). */
+        FS3EMediaView_OnFetchReply(&app->mediaView, msg->fs3em_Result,
+                                    (const FS3ENetFetchImageReply *)msg->fs3em_Data);
         break;
 
     case FS3ENETQ_POST_STATUS:
@@ -2579,6 +2584,8 @@ int main(int argc, char **argv)
     if (!FS3ESettingsView_Create(&app->settingsView, LOC(MSG_SETTINGSV_TITLE)))
         cleanexit("Can't create settings view");
 
+    FS3EMediaView_Init(&app->mediaView);
+
 
     /* ================================================================== */
     /* Part A: title bar children (7 gadgets)                              */
@@ -2838,8 +2845,9 @@ int main(int argc, char **argv)
             ULONG themeSig = FS3EThemeView_GetSignalMask(&app->themeView);
             ULONG settingsSig = FS3ESettingsView_GetSignalMask(&app->settingsView);
             ULONG emojiSig = FS3EEmojiBoxWindow_GetSignalMask(&app->emojiBoxWindow);
+            ULONG mediaSig = FS3EMediaView_GetSignalMask(&app->mediaView);
 
-            waitedSignals = winsignal | loginSig | tootSig | themeSig | settingsSig | emojiSig |
+            waitedSignals = winsignal | loginSig | tootSig | themeSig | settingsSig | emojiSig | mediaSig |
                 (1L << app->app_port->mp_SigBit) |
                 (app->netReplyPort ? (1L << app->netReplyPort->mp_SigBit) : 0) |
                 (app->thumbReplyPort ? (1L << app->thumbReplyPort->mp_SigBit) : 0) |
@@ -3007,6 +3015,7 @@ int main(int argc, char **argv)
             FS3ESettingsView_HandleInput(&app->settingsView);
             FS3EEmojiBoxWindow_HandleInput(&app->emojiBoxWindow);
             FS3EEmojiBoxWindow_FlushPendingRender(&app->emojiBoxWindow);
+            FS3EMediaView_HandleInput(&app->mediaView);
 
             /* Drain async network replies */
             if (app->netReplyPort &&
@@ -3453,6 +3462,18 @@ int main(int argc, char **argv)
                                              * for the main loop to do. */
                                             break;
 
+                                        case TTL_HOT_IMAGE:
+                                            /* Media preview rectangle
+                                             * clicked -- hotSpotString
+                                             * carries the currently-shown
+                                             * attachment's URL (see
+                                             * ttl_hs_add's TTL_HOT_IMAGE
+                                             * call in fs3etoottimeline_posts.c).
+                                             * Opens/reuses the "FriendSh3ep
+                                             * Media" viewer window. */
+                                            FS3EMediaView_ShowUrl(&app->mediaView, hotSpotString);
+                                            break;
+
                                         case TTL_HOT_LOAD_NEWER:
                                             /* Pinned "Look for something
                                              * new" row clicked. */
@@ -3653,6 +3674,7 @@ void exitclose(void)
         FS3EThemeView_Dispose(&app->themeView);
         FS3ESettingsView_Dispose(&app->settingsView);
         FS3EEmojiBoxWindow_Dispose(&app->emojiBoxWindow);
+        FS3EMediaView_Dispose(&app->mediaView);
  printf("exitclose2\n");
         if (app->window_obj)
         {

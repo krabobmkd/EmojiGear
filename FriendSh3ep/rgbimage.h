@@ -51,7 +51,10 @@ BOOL RgbImage_IsLoaded(const RgbImage *img);
  *
  * depth>8 (truecolor) RastPorts: scaled directly via
  * cybergraphics.library/ScalePixelArray(RECTFMT_RGB) -- screen/dc are
- * unused in this path.
+ * unused in this path. If app->settings.rgbDrawFunction is
+ * FS3E_RGBDRAW_INTERNAL_BILINEAR, scalepixelarraybilinear.c's
+ * ScalePixelArrayBilinear() is used instead (integer-only bilinear,
+ * see fs3esettingsview.c's "Thumbnails & icons" group).
  *
  * depth<=8 (indexed) RastPorts: img is first box-fit-scaled in RGB space
  * (RgbScale_ToSize, same routine bmimage.c uses -- higher quality than

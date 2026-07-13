@@ -40,6 +40,9 @@
 #define TT_CHECKINTERVAL  "CHECKINTERVALSEC" /* server poll interval, seconds     */
 #define TT_KEEPBIGUSERICONS   "KEEPBIGUSERICONS"   /* "1" or "0"                  */
 #define TT_KEEPBIGTHUMBNAILS  "KEEPBIGTHUMBNAILS"  /* "1" or "0"                  */
+#define TT_BIGGERTHUMBNAILS   "BIGGERTHUMBNAILS"   /* "1" or "0"                  */
+#define TT_SCALINGQUALITY     "SCALINGQUALITY"     /* FS3E_SCALEQ_* index         */
+#define TT_RGBDRAWFUNCTION    "RGBDRAWFUNCTION"    /* FS3E_RGBDRAW_* index        */
 
 /* -------------------------------------------------------------------------- */
 
@@ -159,6 +162,25 @@ void FS3ESettings_Load(FS3ESettings *s)
     s->keepBigThumbnails = FALSE;
     val = ToolTypePrefs_Get(TT_KEEPBIGTHUMBNAILS);
     if (val) s->keepBigThumbnails = (val[0] != '0');
+
+    /* Thumbnails & icons rendering */
+    s->biggerThumbnails = FALSE;
+    val = ToolTypePrefs_Get(TT_BIGGERTHUMBNAILS);
+    if (val) s->biggerThumbnails = (val[0] != '0');
+
+    s->scalingQuality = FS3E_SCALEQ_FAST;
+    val = ToolTypePrefs_Get(TT_SCALINGQUALITY);
+    if (val && val[0] != '\0') {
+        int q = atoi(val);
+        if (q >= 0 && q < FS3E_SCALEQ_COUNT) s->scalingQuality = q;
+    }
+
+    s->rgbDrawFunction = FS3E_RGBDRAW_SCALEPIXELARRAY;
+    val = ToolTypePrefs_Get(TT_RGBDRAWFUNCTION);
+    if (val && val[0] != '\0') {
+        int d = atoi(val);
+        if (d >= 0 && d < FS3E_RGBDRAW_COUNT) s->rgbDrawFunction = d;
+    }
 
     /* Main window position - written directly into app->mainwindow */
     if (app) {
@@ -289,6 +311,14 @@ void FS3ESettings_Save(FS3ESettings *s)
 
     ToolTypePrefs_Set(TT_KEEPBIGUSERICONS,  s->keepBigUserIcons  ? "1" : "0");
     ToolTypePrefs_Set(TT_KEEPBIGTHUMBNAILS, s->keepBigThumbnails ? "1" : "0");
+
+    ToolTypePrefs_Set(TT_BIGGERTHUMBNAILS, s->biggerThumbnails ? "1" : "0");
+
+    snprintf(buf, sizeof(buf), "%d", s->scalingQuality);
+    ToolTypePrefs_Set(TT_SCALINGQUALITY, buf);
+
+    snprintf(buf, sizeof(buf), "%d", s->rgbDrawFunction);
+    ToolTypePrefs_Set(TT_RGBDRAWFUNCTION, buf);
 
     /* Main window position */
     if (app && app->window_obj) {

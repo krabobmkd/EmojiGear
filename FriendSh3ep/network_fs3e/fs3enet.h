@@ -195,6 +195,17 @@ typedef struct FS3ENetInstanceInfoReply
     BOOL  fs3eii_Known;
 } FS3ENetInstanceInfoReply;
 
+/* FS3ECache subdirectories (see fs3enet_cache.h) -- user avatars and toot
+ * media thumbnails are fetched through the identical pipeline but kept in
+ * their own cache subdirectory rather than one flat pile of hash-named
+ * files, since they're conceptually distinct sets. Shared here (rather
+ * than a private #define in friendsh3ep.c) so any caller building an
+ * FS3ENetFetchImageReq -- friendsh3ep.c's avatar/thumbnail fetches,
+ * fs3emediaview.c's on-demand full-image fetch -- names the same
+ * subdirectory. */
+#define FS3E_CACHE_SUBDIR_USERICONS  "usericons"
+#define FS3E_CACHE_SUBDIR_THUMBNAILS "thumbnails"
+
 /*
  * FS3ENETQ_FETCH_IMAGE — fetch a media URL (avatar, attachment thumbnail,
  * custom emoji) and cache it under T:FS3ECache/.  The network process serves

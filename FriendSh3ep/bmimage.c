@@ -434,10 +434,11 @@ BOOL BmImage_GenerateScaledBmp(const char *srcPath, const char *cacheKeyPath,
         return FALSE;
     }
 
-    /* Pyramid pre-downscale + fixed-point nearest resample -- see
-     * rgbscale.h; same technique as blit_bgra_to_rgba_HQ() in
-     * libutf8rastport/utf8rastport.c. */
-    RgbScale_ToSize(srcBuf, origW, origH, dstBuf, dstW, dstH);
+    /* Pyramid pre-downscale + final resample, quality per
+     * app->settings.scalingQuality (fs3esettingsview.c's "Thumbnails &
+     * icons" group) -- see rgbscale.h's RgbScale_ToSize() doc comment. */
+    RgbScale_ToSize(srcBuf, origW, origH, dstBuf, dstW, dstH,
+                     app ? app->settings.scalingQuality : FS3E_SCALEQ_BILINEAR);
     FreeVec(srcBuf);
 
     if (!bmimage_write_bmp(outThumbPath, dstBuf, dstW, dstH)) {

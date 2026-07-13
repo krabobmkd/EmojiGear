@@ -62,6 +62,9 @@
 #include <intuition/gadgetclass.h>
 #include <gadgets/layout.h>
 #include <proto/layout.h>
+
+#include <proto/utf8rastport.h>
+#include <libraries/utf8rastport.h>
 #include <string.h>
 
 #include "../compilers.h"
@@ -545,6 +548,22 @@ static ULONG TitleBarLayout_OnRender(Class *cl, Object *o, struct gpRender *msg)
         } else {
             BltBitMapRastPort(timg->bitmap, 0, 0, rp, dstX, dstY,
                               (LONG)timg->width, (LONG)blitheight, 0xC0);
+        }
+    } else
+    {
+        if(inst->style && inst->style->dcUsername)
+        {
+            struct URPTextMetric tm;
+            struct URPTextPos tpos;
+            const char *ptext = "FriendSh3eep";
+            tpos.x = left+50;
+            tpos.y = top+2;
+            if(inst->style->titlebarTitleX>0)  tpos.x = left + inst->style->titlebarTitleX;
+            if(inst->style->titlebarTitleY>0)  tpos.y = top  + inst->style->titlebarTitleY;
+    // VOID URPDrawTextUTF8(struct RastPort * rp, struct URPDrawContext * dc, struct URPTextPos * pos, CONST STRPTR utf8, ULONG maxChars);
+            URPDC_TextSizeUTF8(inst->style->dcUsername,ptext,-1,&tm);
+            tpos.y += tm.baseY;
+            URPDrawTextUTF8(rp, inst->style->dcUsername,&tpos,ptext,-1);
         }
     }
 

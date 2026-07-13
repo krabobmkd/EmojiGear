@@ -19,6 +19,7 @@
 #include "fs3eboopsimainwindow.h"
 #include "stylefile.h"
 #include "bdbprintf.h"
+#include "friendsh3ep.h"
 /* Opened optionally in friendsh3ep.c, mirroring BevelBase: if the class
  * isn't available, FS3EStyle_LoadThemeImages() fails gracefully and title
  * bar buttons simply keep whatever image (none) they had. */
@@ -186,7 +187,8 @@ void FS3EStyle_ReleaseDrawContexts(FS3EStyle *st)
 /* ------------------------------------------------------------------ */
 
 /* Derive post-layout pixel values from dcNormal line metrics.
- *   avatarSize  = lineH × 2.5  (1.25× the old dpiHeight×2 formula)
+ *   avatarSize  = lineH × 2.5  (1.25× the old dpiHeight×2 formula),
+ *                 further ×1.25 when settings.biggerThumbnails is on
  *   postPadLeft = lineH/3 + 2  (~6px at 12pt, scales with font)
  *   avatarGap   = lineH/3 + 2  (same rule as postPadLeft)
  */
@@ -201,6 +203,8 @@ static void compute_layout(FS3EStyle *st)
     }
 
     st->avatarSize  = (WORD)(lineH * 5 / 2);
+    if (app && app->settings.biggerThumbnails)
+        st->avatarSize = (WORD)(st->avatarSize * 5 / 4);
     st->postPadLeft = (WORD)(lineH / 3 + 2);
     st->avatarGap   = (WORD)(lineH / 3 + 2);
 
