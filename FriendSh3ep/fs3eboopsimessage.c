@@ -18,6 +18,7 @@
 #include <proto/intuition.h>
 #include <proto/alib.h>
 #include <proto/utility.h>
+#include <exec/semaphores.h>
 
 #include <intuition/gadgetclass.h>
 #include <gadgets/button.h>
@@ -31,12 +32,58 @@
 /* Maximum tag entries in the queue */
 #define BOOPSIDELAY_QUEUE_SIZE 256
 
-/* Queue structure - instance data of TargetModelClass */
-struct BoopsiDelayQueue {
+/*
+ * Double-buffered queue - instance data of TargetModelClass.
+ *
+ * Why double-buffered rather than one locked queue: a gadget's OM_NOTIFY/
+ * OM_UPDATE (e.g. TootTimeline's GM_HANDLEINPUT -> ttl_notify_hotspot(),
+ * dispatched from input.device's own task chain, not necessarily the main
+ * GUI task -- see fs3etoottimeline_private.h's listSem comment for the
+ * same hazard elsewhere) can happen from any task, at any time, including
+ * recursively while the main loop is busy processing a just-drained
+ * message (that processing can itself trigger another DoMethod(target,
+ * OM_UPDATE/OM_NOTIFY)). A single locked queue would force every writer to
+ * wait out however long that processing takes -- exactly backwards for a
+ * UI event queue, where "append a new event" must never block on "handle
+ * the previous one".
+ *
+ * So: two physical buffers (buf[0], buf[1]). Writers always append to
+ * buf[active] -- BeginMessage/AddTag/EndMessage hold sem for that whole
+ * sequence (one logical message must land in one buffer, not be split
+ * across a concurrent swap), but that critical section is a handful of
+ * memory writes, never anything that blocks or calls back out.
+ *
+ * BoopsiDelay_HasMessages(), called once per main-loop iteration right
+ * before draining, holds sem only long enough to flip `active` -- buf[the
+ * old active] becomes the drain buffer (writers can no longer reach it),
+ * and buf[the new active] (== the previous drain buffer, guaranteed
+ * fully consumed by then, see the assertion-like check below) is reset
+ * for writers to reuse. drainLimit snapshots how many entries are in the
+ * drain buffer at swap time.
+ *
+ * BoopsiDelay_NextMessage() then walks the drain buffer with NO locking
+ * at all: nothing writes to it anymore until the next swap, and the next
+ * swap only happens after this drain fully exhausts it (readPos reaches
+ * drainLimit) -- so message *processing*, however slow or re-entrant, is
+ * completely decoupled from writer latency. Before this existed, a torn
+ * read/write of a single queue's indices (no lock at all) replayed stale
+ * hot-spot messages 2x/16x/... in the field and could spin the drain loop
+ * forever, starving the netReplyPort drain right after it -- looking
+ * exactly like "the network process got stuck" while the app stayed
+ * superficially responsive. Timing/memory-layout dependent, hence
+ * UAE-only in practice.
+ */
+struct BoopsiDelayBuf {
     struct TagItem queue[BOOPSIDELAY_QUEUE_SIZE];
     UWORD writePos;
-    UWORD readPos;
-    BOOL  hasMessages;
+};
+
+struct BoopsiDelayQueue {
+    struct BoopsiDelayBuf  buf[2];
+    UBYTE  active;      /* index writers currently append to; drain buffer is buf[1-active] */
+    UWORD  readPos;     /* reader's cursor into buf[1-active] -- reader-owned, no lock needed */
+    UWORD  drainLimit;  /* snapshot of buf[1-active].writePos taken at the last swap */
+    struct SignalSemaphore sem;
 };
 
 /* Global pointers */
@@ -104,9 +151,7 @@ static ULONG ASM SAVEDS TargetModelDispatch(
             if (obj) {
                 DelayQueue = (BoopsiDelayQueue *)INST_DATA(C, obj);
                 memset(DelayQueue, 0, sizeof(BoopsiDelayQueue));
-                DelayQueue->writePos   = 0;
-                DelayQueue->readPos    = 0;
-                DelayQueue->hasMessages = FALSE;
+                InitSemaphore(&DelayQueue->sem);
                 retval = (ULONG)obj;
             }
             break;
@@ -126,6 +171,13 @@ static ULONG ASM SAVEDS TargetModelDispatch(
             if (ptag) sender_ID = ptag->ti_Data;
 
             if (sender_ID != 0) {
+                /* BeginMessage + AddTag (repeated) + EndMessage is one
+                 * logical message -- must be atomic as a whole against a
+                 * concurrent drain on the main task (see struct
+                 * BoopsiDelayQueue's comment), not just individually
+                 * locked per call. */
+                ObtainSemaphore(&DelayQueue->sem);
+
                 BoopsiDelay_BeginMessage(DelayQueue, sender_ID);
 
                 for (i = 0; i < NB_DELAYED_ATTRIBS; i++) {
@@ -139,6 +191,8 @@ static ULONG ASM SAVEDS TargetModelDispatch(
                 }
 
                 BoopsiDelay_EndMessage(DelayQueue);
+
+                ReleaseSemaphore(&DelayQueue->sem);
 
                 /* Signal main loop to process queue */
                 if (myTask) Signal(myTask, SIGBREAKF_CTRL_F);
@@ -194,19 +248,21 @@ void FS3EMsg_Close(void)
 
 BOOL BoopsiDelay_AddTag(BoopsiDelayQueue *q, ULONG tag, ULONG data)
 {
+    struct BoopsiDelayBuf *b;
     UWORD maxPos;
 
     if (!q) return FALSE;
+    b = &q->buf[q->active];
 
     /* Reserve last 4 slots for TAG_END */
     maxPos = (tag == TAG_END) ? BOOPSIDELAY_QUEUE_SIZE
                               : BOOPSIDELAY_QUEUE_SIZE - 4;
 
-    if (q->writePos >= maxPos) return FALSE;
+    if (b->writePos >= maxPos) return FALSE;
 
-    q->queue[q->writePos].ti_Tag  = tag;
-    q->queue[q->writePos].ti_Data = data;
-    q->writePos++;
+    b->queue[b->writePos].ti_Tag  = tag;
+    b->queue[b->writePos].ti_Data = data;
+    b->writePos++;
     return TRUE;
 }
 
@@ -214,54 +270,83 @@ BOOL BoopsiDelay_BeginMessage(BoopsiDelayQueue *q, ULONG senderID)
 {
     if (!q) return FALSE;
     /* Need at least 2 slots: GA_ID entry + TAG_END */
-    if (q->writePos >= BOOPSIDELAY_QUEUE_SIZE - 1) return FALSE;
+    if (q->buf[q->active].writePos >= BOOPSIDELAY_QUEUE_SIZE - 1) return FALSE;
     return BoopsiDelay_AddTag(q, GA_ID, senderID);
 }
 
 BOOL BoopsiDelay_EndMessage(BoopsiDelayQueue *q)
 {
     if (!q) return FALSE;
-    if (!BoopsiDelay_AddTag(q, TAG_END, 0)) return FALSE;
-    q->hasMessages = TRUE;
-    return TRUE;
+    return BoopsiDelay_AddTag(q, TAG_END, 0);
 }
 
+/*
+ * Swaps the double buffer: called once per main-loop iteration, right
+ * before draining. buf[1-active] (the current drain buffer) only becomes
+ * the new write target once this confirms it has already been fully
+ * consumed (readPos caught up to the drainLimit snapshot from the last
+ * swap) -- true by construction given the caller's use pattern (fully
+ * drains via BoopsiDelay_NextMessage before calling this again), checked
+ * defensively rather than assumed: if somehow not, this reports whatever
+ * remains in the *current* drain buffer without swapping, so nothing is
+ * ever skipped or handed to a writer while still unread.
+ */
 BOOL BoopsiDelay_HasMessages(BoopsiDelayQueue *q)
 {
+    BOOL result;
     if (!q) return FALSE;
-    return q->hasMessages;
+
+    ObtainSemaphore(&q->sem);
+
+    if (q->readPos >= q->drainLimit) {
+        UBYTE oldActive = q->active;
+        q->active     = (UBYTE)(1 - oldActive);
+        q->drainLimit  = q->buf[oldActive].writePos;
+        q->readPos     = 0;
+        q->buf[q->active].writePos = 0; /* flush the new write target */
+    }
+
+    result = (q->readPos < q->drainLimit);
+
+    ReleaseSemaphore(&q->sem);
+    return result;
 }
+
+/*
+ * Copies the message out to a caller-owned buffer rather than returning a
+ * pointer straight into the drain buffer -- keeps BoopsiDelay_NextMessage()
+ * itself lock-free (see struct BoopsiDelayQueue's comment: nothing writes
+ * to buf[1-active] between swaps, so no lock is needed to read it), while
+ * still giving the caller a stable snapshot instead of a pointer that
+ * would become stale the moment the *next* swap flushes this same slot
+ * for reuse. A message is at most NB_DELAYED_ATTRIBS+2 entries (GA_ID +
+ * every delayed attribute + TAG_END); BOOPSIDELAY_MSG_MAX comfortably
+ * covers that with room to grow.
+ */
+#define BOOPSIDELAY_MSG_MAX 32
 
 struct TagItem *BoopsiDelay_NextMessage(BoopsiDelayQueue *q)
 {
-    struct TagItem *msg;
+    static struct TagItem msgBuf[BOOPSIDELAY_MSG_MAX];
+    struct BoopsiDelayBuf *drainBuf;
+    UWORD n = 0;
 
-    if (!q || !q->hasMessages || q->readPos >= q->writePos) {
-        if (q) {
-            q->readPos    = 0;
-            q->writePos   = 0;
-            q->hasMessages = FALSE;
-        }
-        return NULL;
-    }
+    if (!q || q->readPos >= q->drainLimit) return NULL;
 
-    msg = &q->queue[q->readPos];
+    drainBuf = &q->buf[1 - q->active];
 
-    /* Advance readPos past the TAG_END of this message */
-    while (q->readPos < q->writePos) {
-        if (q->queue[q->readPos].ti_Tag == TAG_END) {
-            q->readPos++;
-            break;
-        }
+    while (q->readPos < q->drainLimit && n < BOOPSIDELAY_MSG_MAX - 1) {
+        BOOL isEnd = (drainBuf->queue[q->readPos].ti_Tag == TAG_END);
+        msgBuf[n] = drainBuf->queue[q->readPos];
         q->readPos++;
+        n++;
+        if (isEnd) break;
+    }
+    if (n == 0 || msgBuf[n - 1].ti_Tag != TAG_END) {
+        msgBuf[n].ti_Tag  = TAG_END;
+        msgBuf[n].ti_Data = 0;
+        n++;
     }
 
-    /* Check if more messages remain */
-    if (q->readPos >= q->writePos) {
-        q->readPos    = 0;
-        q->writePos   = 0;
-        q->hasMessages = FALSE;
-    }
-
-    return msg;
+    return msgBuf;
 }

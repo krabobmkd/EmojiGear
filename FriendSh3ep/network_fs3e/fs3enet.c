@@ -846,7 +846,22 @@ static void FS3ENet_HandleInstanceInfo(FS3ENetMessage *fs3em)
     fs3em->fs3em_Result  = FS3ENETR_OK;
 }
 
-/* FS3ENETQ_FETCH_IMAGE — check disk cache, fetch on miss, reply with path. */
+/* FS3ENETQ_FETCH_IMAGE — check disk cache, fetch on miss, reply with path.
+ *
+ * Repeat requests for the same URL (e.g. a user double/triple-clicking the
+ * same thumbnail, or a click landing on media the passive timeline-render
+ * fetch already resolved earlier) are handled by the cache-lookup logic
+ * below (FS3ECache_Lookup for the persistent case, FS3ECache_LookupRAM for
+ * the !KeepOriginal/RAM:T case) finding the file and skipping the
+ * download/write -- every repeat request still gets its own normal
+ * FS3ENETR_OK reply with a real, usable path. (An earlier version of this
+ * function short-circuited same-URL-as-the-previous-request here with a
+ * bounce result and no data, on the theory that "the previous request will
+ * deliver it" -- wrong whenever that previous request was a *different*,
+ * already-finished fetch, e.g. the passive per-post thumbnail fetch: there
+ * was no second in-flight reply coming, and callers like fs3emediaview.c
+ * that were told "someone else has this" waited forever. Removed --
+ * this is what the cache lookups below are already for.) */
 static void FS3ENet_HandleFetchImage(FS3ENetMessage *fs3em)
 {
     FS3ENetFetchImageReq   *req = (FS3ENetFetchImageReq *)fs3em->fs3em_Data;
@@ -876,43 +891,59 @@ static void FS3ENet_HandleFetchImage(FS3ENetMessage *fs3em)
 
     if (!FS3ECache_Lookup(req->fs3enf_Url, req->fs3enf_Subdir, localPath, sizeof(localPath)))
     {
-        FS3EHttpResponse resp;
+        /* Not in the persistent cache -- but for a !KeepOriginal request,
+         * the deterministic RAM:T path FS3ECache_StoreRAM() would write to
+         * may already hold an earlier download of this exact URL (e.g.
+         * still being read by the thumbnail process, or just never
+         * cleaned up). Reuse it instead of re-downloading and re-opening
+         * with MODE_NEWFILE, which would silently truncate/replace a file
+         * another task might still have open for reading -- see
+         * FS3ECache_LookupRAM()'s doc comment for why that specific race
+         * is suspected to crash real UAE (not real hardware) setups. */
+        BOOL haveExisting = (!req->fs3enf_KeepOriginal) &&
+                             FS3ECache_LookupRAM(req->fs3enf_Url, localPath, sizeof(localPath));
 
-        if (!FS3EHttp_Get(req->fs3enf_Url, NULL, &resp))
-        {
-            fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
-            return;
-        }
+        if (haveExisting) isTemp = TRUE;
 
-        if (req->fs3enf_KeepOriginal)
+        if (!haveExisting)
         {
-            if (!FS3ECache_Store(req->fs3enf_Url, req->fs3enf_Subdir,
-                                 resp.fhr_Body, resp.fhr_BodyLen,
-                                 localPath, sizeof(localPath)))
+            FS3EHttpResponse resp;
+
+            if (!FS3EHttp_Get(req->fs3enf_Url, NULL, &resp))
             {
-                FS3EHttp_FreeResponse(&resp);
                 fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
                 return;
             }
-        }
-        else
-        {
-            if (!FS3ECache_StoreRAM(req->fs3enf_Url, resp.fhr_Body, resp.fhr_BodyLen,
-                                    localPath, sizeof(localPath)))
-            {
-                FS3EHttp_FreeResponse(&resp);
-                fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
-                return;
-            }
-            isTemp = TRUE;
-        }
 
-        FS3EHttp_FreeResponse(&resp);
+            if (req->fs3enf_KeepOriginal)
+            {
+                if (!FS3ECache_Store(req->fs3enf_Url, req->fs3enf_Subdir,
+                                     resp.fhr_Body, resp.fhr_BodyLen,
+                                     localPath, sizeof(localPath)))
+                {
+                    FS3EHttp_FreeResponse(&resp);
+                    fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
+                    return;
+                }
+            }
+            else
+            {
+                if (!FS3ECache_StoreRAM(req->fs3enf_Url, resp.fhr_Body, resp.fhr_BodyLen,
+                                        localPath, sizeof(localPath)))
+                {
+                    FS3EHttp_FreeResponse(&resp);
+                    fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
+                    return;
+                }
+                isTemp = TRUE;
+            }
+
+            FS3EHttp_FreeResponse(&resp);
+        } /* !haveExisting */
     }
-    /* else: found on disk already -- necessarily under the persistent
-     * cache (RAM:T downloads are deleted right after use, never looked
-     * up), so isTemp stays FALSE regardless of this request's
-     * KeepOriginal value. */
+    /* else: found on disk already -- either the persistent cache, or (see
+     * haveExisting above) an already-downloaded RAM:T temp file this
+     * request is now sharing rather than re-fetching. */
 
     total = sizeof(FS3ENetFetchImageReply)
           + FS3ENet_PackLen(localPath)
