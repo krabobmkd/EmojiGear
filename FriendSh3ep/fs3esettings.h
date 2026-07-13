@@ -11,6 +11,11 @@
  *   - Theme name
  *   - Main window position (written to app->mainwindow on Load,
  *                           read from app->mainwindow on Save)
+ *   - New toot / emoji box sub-window positions (written to
+ *     app->tootView/app->emojiBoxWindow on Load, read back on Save --
+ *     see FS3ETootView_GetWindowPos/FS3EEmojiBoxWindow_GetWindowPos).
+ *     Only these two sub-windows remember their position; login/theme/
+ *     settings sub-windows don't.
  *
  * What is NOT stored here: network / account / server credentials.
  */

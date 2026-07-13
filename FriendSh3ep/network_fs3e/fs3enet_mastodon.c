@@ -235,8 +235,78 @@ BOOL FS3EMastodon_VerifyCredentials(const char *apiBaseUrl, const char *accessTo
     return ok;
 }
 
+BOOL FS3EMastodon_GetInstanceInfo(const char *apiBaseUrl, ULONG *outMaxChars)
+{
+    char url[256];
+    FS3EHttpHeader headers[1];
+    FS3EHttpResponse resp;
+    cJSON *json;
+    BOOL ok = FALSE;
+
+    *outMaxChars = FS3EMASTODON_DEFAULT_MAX_CHARS;
+
+    headers[0].fhh_Name  = NULL;
+    headers[0].fhh_Value = NULL;
+
+    /* v2 first: configuration.statuses.max_characters -- current Mastodon
+     * and most compatible forks. */
+    snprintf(url, sizeof(url), "%s/api/v2/instance", apiBaseUrl);
+    if (FS3EHttp_Get(url, headers, &resp))
+    {
+        json = cJSON_Parse((char *)resp.fhr_Body);
+        if (json)
+        {
+            const cJSON *config   = cJSON_GetObjectItemCaseSensitive(json, "configuration");
+            const cJSON *statuses = config ? cJSON_GetObjectItemCaseSensitive(config, "statuses") : NULL;
+            const cJSON *maxChars = statuses ? cJSON_GetObjectItemCaseSensitive(statuses, "max_characters") : NULL;
+
+            if (maxChars && cJSON_IsNumber(maxChars) && maxChars->valueint > 0)
+            {
+                *outMaxChars = (ULONG)maxChars->valueint;
+                ok = TRUE;
+            }
+            cJSON_Delete(json);
+        }
+        FS3EHttp_FreeResponse(&resp);
+    }
+
+    if (ok) return TRUE;
+
+    /* Fallback: older/legacy GET /api/v1/instance, top-level
+     * max_toot_chars -- a non-standard field some Mastodon versions/
+     * forks exposed before v2's nested configuration existed. */
+    snprintf(url, sizeof(url), "%s/api/v1/instance", apiBaseUrl);
+    if (FS3EHttp_Get(url, headers, &resp))
+    {
+        json = cJSON_Parse((char *)resp.fhr_Body);
+        if (json)
+        {
+            const cJSON *maxChars = cJSON_GetObjectItemCaseSensitive(json, "max_toot_chars");
+
+            if (maxChars && cJSON_IsNumber(maxChars) && maxChars->valueint > 0)
+            {
+                *outMaxChars = (ULONG)maxChars->valueint;
+                ok = TRUE;
+            }
+            cJSON_Delete(json);
+        }
+        FS3EHttp_FreeResponse(&resp);
+    }
+
+    return ok;
+}
+
+/* Mirrors enum FS3ENetTimelineShape from fs3enet.h as plain ints -- see
+ * FS3EMastodon_GetTimeline's header comment in fs3enet_mastodon.h for why
+ * this file can't include that enum's own header (fs3enet.h includes
+ * fs3enet_mastodon.h, not the reverse). */
+#define FS3ENET_TLSHAPE_ARRAY               0
+#define FS3ENET_TLSHAPE_SINGLE              1
+#define FS3ENET_TLSHAPE_CONTEXT_DESCENDANTS 2
+
 BOOL FS3EMastodon_GetTimeline(const char *apiBaseUrl, const char *accessToken,
-                             const char *timeline, cJSON **outJson)
+                             const char *timeline, ULONG responseShape,
+                             cJSON **outJson)
 {
     char url[256];
     char authHeader[300];
@@ -246,6 +316,10 @@ BOOL FS3EMastodon_GetTimeline(const char *apiBaseUrl, const char *accessToken,
 
     *outJson = NULL;
 
+    /* "timeline" already carries the full path for the SINGLE/CONTEXT_
+     * DESCENDANTS shapes too (e.g. "statuses/123", "statuses/123/context")
+     * -- callers pass whatever's needed relative to /api/v1/, same as
+     * every other shape. */
     snprintf(url, sizeof(url), "%s/api/v1/%s", apiBaseUrl, timeline);
 
     if (accessToken && accessToken[0]) {
@@ -269,6 +343,27 @@ BOOL FS3EMastodon_GetTimeline(const char *apiBaseUrl, const char *accessToken,
     printf("net: GetTimeline response %lu bytes\n", resp.fhr_BodyLen);
 
     json = cJSON_Parse((char *)resp.fhr_Body);
+
+    /* Normalize the two non-array shapes into a plain array before the
+     * generic "!cJSON_IsArray" check below -- see this function's header
+     * comment in fs3enet_mastodon.h. */
+    if (json && cJSON_IsObject(json) && responseShape == FS3ENET_TLSHAPE_SINGLE)
+    {
+        cJSON *wrapper = cJSON_CreateArray();
+        if (wrapper && cJSON_AddItemToArray(wrapper, json)) {
+            json = wrapper; /* json (the single status object) is now owned by wrapper */
+        } else {
+            if (wrapper) cJSON_Delete(wrapper);
+            cJSON_Delete(json);
+            json = NULL;
+        }
+    }
+    else if (json && cJSON_IsObject(json) && responseShape == FS3ENET_TLSHAPE_CONTEXT_DESCENDANTS)
+    {
+        cJSON *descendants = cJSON_DetachItemFromObjectCaseSensitive(json, "descendants");
+        cJSON_Delete(json); /* frees the wrapper object + ancestors; descendants already detached, survives */
+        json = descendants;
+    }
 
     if (!json || !cJSON_IsArray(json))
     {
@@ -301,6 +396,7 @@ BOOL FS3EMastodon_GetTimeline(const char *apiBaseUrl, const char *accessToken,
 
 BOOL FS3EMastodon_PostStatus(const char *apiBaseUrl, const char *accessToken,
                             const char *statusText, const char *visibility,
+                            const char *inReplyToId,
                             char *outStatusId, ULONG outStatusIdSize)
 {
     char url[256];
@@ -317,6 +413,8 @@ BOOL FS3EMastodon_PostStatus(const char *apiBaseUrl, const char *accessToken,
 
     cJSON_AddStringToObject(reqJson, "status", statusText);
     cJSON_AddStringToObject(reqJson, "visibility", visibility ? visibility : "public");
+    if (inReplyToId && inReplyToId[0])
+        cJSON_AddStringToObject(reqJson, "in_reply_to_id", inReplyToId);
 
     reqBody = cJSON_PrintUnformatted(reqJson);
     cJSON_Delete(reqJson);
@@ -348,6 +446,93 @@ BOOL FS3EMastodon_PostStatus(const char *apiBaseUrl, const char *accessToken,
     }
 
     cJSON_free(reqBody);
+
+    return ok;
+}
+
+BOOL FS3EMastodon_EditStatus(const char *apiBaseUrl, const char *accessToken,
+                            const char *statusId, const char *statusText,
+                            const char *const *mediaIds, ULONG mediaCount)
+{
+    char url[300];
+    char authHeader[300];
+    FS3EHttpHeader headers[2];
+    FS3EHttpResponse resp;
+    cJSON *reqJson;
+    char *reqBody;
+    BOOL ok = FALSE;
+
+    reqJson = cJSON_CreateObject();
+    if (!reqJson)
+        return FALSE;
+
+    cJSON_AddStringToObject(reqJson, "status", statusText);
+
+    /* Only add the key at all when there's something to preserve -- see
+     * the header comment: the server only touches attachments when this
+     * key is present, so omitting it for a media-less toot is correct,
+     * not just harmless. No "visibility" here -- Mastodon's edit endpoint
+     * doesn't accept changing it. */
+    if (mediaIds && mediaCount > 0)
+    {
+        cJSON *arr = cJSON_CreateArray();
+        if (arr)
+        {
+            ULONG i;
+            for (i = 0; i < mediaCount; i++)
+                if (mediaIds[i] && mediaIds[i][0])
+                    cJSON_AddItemToArray(arr, cJSON_CreateString(mediaIds[i]));
+            cJSON_AddItemToObject(reqJson, "media_ids", arr);
+        }
+    }
+
+    reqBody = cJSON_PrintUnformatted(reqJson);
+    cJSON_Delete(reqJson);
+
+    if (!reqBody)
+        return FALSE;
+
+    snprintf(url, sizeof(url), "%s/api/v1/statuses/%s", apiBaseUrl, statusId);
+    FS3EMastodon_BuildAuthHeader(authHeader, sizeof(authHeader), accessToken);
+
+    headers[0].fhh_Name  = "Authorization";
+    headers[0].fhh_Value = authHeader;
+    headers[1].fhh_Name  = NULL;
+    headers[1].fhh_Value = NULL;
+
+    if (FS3EHttp_Put(url, headers, "application/json", reqBody, strlen(reqBody), &resp))
+    {
+        ok = (resp.fhr_StatusCode == 200);
+        FS3EHttp_FreeResponse(&resp);
+    }
+
+    cJSON_free(reqBody);
+
+    return ok;
+}
+
+BOOL FS3EMastodon_DeleteStatus(const char *apiBaseUrl, const char *accessToken,
+                              const char *statusId)
+{
+    char url[300];
+    char authHeader[300];
+    FS3EHttpHeader headers[2];
+    FS3EHttpResponse resp;
+    BOOL ok = FALSE;
+
+    snprintf(url, sizeof(url), "%s/api/v1/statuses/%s", apiBaseUrl, statusId);
+    FS3EMastodon_BuildAuthHeader(authHeader, sizeof(authHeader), accessToken);
+
+    headers[0].fhh_Name  = "Authorization";
+    headers[0].fhh_Value = authHeader;
+    headers[1].fhh_Name  = NULL;
+    headers[1].fhh_Value = NULL;
+
+    if (FS3EHttp_Delete(url, headers, &resp))
+    {
+        ok = (resp.fhr_StatusCode == 200);
+        FS3EHttp_FreeResponse(&resp);
+    }
 
     return ok;
 }

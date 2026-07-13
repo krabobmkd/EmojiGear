@@ -23,18 +23,40 @@ enum {
     MSG_LOGIN_TITLE,    /* window title and group label */
     MSG_LOGIN_SERVER,
     MSG_LOGIN_USER,
+    MSG_LOGIN_USERORMAIL,
     MSG_LOGIN_CODE,
     MSG_LOGIN_LOGIN,
 
     /* New toot window (fs3etootview.c) */
     MSG_TOOT_TITLE,
-    MSG_TOOT_SUBJECT,
+    MSG_TOOT_CONTEXT_NEW,          /* FS3ETOOT_KIND_NEW contextMessage text */
+    MSG_TOOT_CONTEXT_MODIFY,       /* FS3ETOOT_KIND_MODIFY contextMessage text */
+    MSG_TOOT_CONTEXT_POLL,         /* FS3ETOOT_KIND_POLL contextMessage text */
+    MSG_TOOT_CONTEXT_REPLY_FORMAT, /* FS3ETOOT_KIND_REPLY contextMessage format: "Reply to %s's
+                                     * toot" + a second line reminding to stay civil -- UniButton
+                                     * renders the embedded \n\n as real line breaks */
     MSG_TOOT_VISIBILITY_PUBLIC,
     MSG_TOOT_VISIBILITY_UNLISTED,
     MSG_TOOT_VISIBILITY_PRIVATE,
     MSG_TOOT_VISIBILITY_DIRECT,
-    MSG_TOOT_SEND,
-    MSG_TOOT_CHARS_FORMAT, /* format: "%lu chars" */
+    MSG_TOOT_SEND,        /* tootBtn label for FS3ETOOT_KIND_NEW/POLL */
+    MSG_TOOT_SEND_MODIFY, /* tootBtn label for FS3ETOOT_KIND_MODIFY */
+    MSG_TOOT_SEND_REPLY,  /* tootBtn label for FS3ETOOT_KIND_REPLY */
+    MSG_TOOT_CHARS_FORMAT, /* format: "%lu / Max: %s" -- typed chars, then
+                             * either the active account's server-confirmed
+                             * per-toot limit as a decimal string, or "-" if
+                             * not confirmed yet (see App.accountMaxChars in
+                             * friendsh3ep.h and FS3ETootView_UpdateCharCount) */
+
+    /* Toot window's own menu (fs3etootview.c) */
+    MSG_TOOTMENU_TOOT,     /* title */
+    MSG_TOOTMENU_CLEAR,
+    MSG_TOOTMENU_UNDO,
+    MSG_TOOTMENU_REDO,
+    MSG_TOOTMENU_CUT,
+    MSG_TOOTMENU_COPY,
+    MSG_TOOTMENU_PASTE,
+    MSG_TOOTMENU_EMOJIBOX,
 
     /* Menu: FriendSh3ep */
     MSG_MENU_FRIENDSH3EP,

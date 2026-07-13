@@ -295,9 +295,10 @@ ULONG UniButton_OnSet(Class *cl, Object *o, struct opSet *msg)
         case UBT_URPDrawContext:
         {
             struct URPDrawContext *newDc = (struct URPDrawContext *)tag->ti_Data;
+            if(newDc) /* important: can't pass NULL, there must exist one */
             if (newDc != inst->dc) {
                 if (inst->dc) URPDC_Release(inst->dc);
-                if (newDc)    URPDC_Retain(newDc);
+                URPDC_Retain(newDc);
                 inst->dc = newDc;
                 ubt_free_cache(inst);
                 redraw = TRUE;

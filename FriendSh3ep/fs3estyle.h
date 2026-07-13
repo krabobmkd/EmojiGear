@@ -100,7 +100,7 @@ typedef enum {
 
 /* Reached from the build dir: PROGDIR: is the directory the binary was
  * launched from. */
-#define FS3ESTYLE_THEME_DEFAULT_PATH "PROGDIR:/themes/mouton"
+#define FS3ESTYLE_THEME_DEFAULT_PATH "PROGDIR:themes/mouton"
 
 #define FS3ESTYLE_TBBUTTON_COUNT 4
 

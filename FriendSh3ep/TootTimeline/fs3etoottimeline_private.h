@@ -301,12 +301,33 @@ typedef struct TTLPost {
     ULONG  mediaCount;
     ULONG  mediaCurrentIndex;
 
+    /* Comma-joined media_attachments[].id list (AllocVec'd), built once
+     * from TTLPostSetup.mediaIds at alloc time; NULL if mediaCount==0. Not
+     * split back into a per-slot array here since nothing in TootTimeline
+     * itself needs per-item access -- this only exists to travel, whole,
+     * through ttl_notify_hotspot()/TTIMELINE_LastHotSpotMediaIds to a
+     * TTL_HOT_MODIFY handler outside the gadget. See TTLPostSetup.mediaIds. */
+    char  *mediaIdsJoined;
+
     /* Action-bar counts/state -- see the matching TTLPostSetup fields. */
     ULONG  repliesCount;
     ULONG  reblogsCount;
     ULONG  favouritesCount;
     BOOL   favourited;
     BOOL   reblogged;
+    BOOL   isOwn;      /* see TTLPostSetup.isOwn */
+    BOOL   isThreadReply; /* see TTLPostSetup.isThreadReply */
+
+    /* Notifications view -- see the matching TTLPostSetup fields. Mutually
+     * exclusive with boostBy/boostByAcct above by construction (nothing
+     * ever populates both on the same post -- boostBy comes from a plain
+     * timeline fetch, notifType from a notifications fetch), so
+     * ttl_toot_layout/render treat them as alternatives sharing the same
+     * "first line" position rather than reserving a second row. */
+    ULONG  notifType;      /* see TTLPostSetup.notifType */
+    char  *notifActorName; /* AllocVec'd copy */
+    char  *notifActorAcct; /* AllocVec'd copy */
+    char  *notifStatusId;  /* AllocVec'd copy */
 
     /* TTLProfileHeader_Class only: follower/following counts and the
      * connected user's own following state (see TTLProfileHeaderSetup).
@@ -338,6 +359,13 @@ typedef struct TTLPost {
     BOOL   pollExpired;
     BOOL   pollMultiple;
     WORD   pollBlockY;
+
+    /* "N replies" thread-indicator row (vertical bar + "...", see
+     * TTL_HOT_THREAD) -- post-relative Y of its top, computed once by
+     * ttl_toot_layout and reused as-is by render/build_hotspots, same
+     * "store once, never re-derive" rule as pollBlockY just above. 0 when
+     * repliesCount==0 (no row reserved at all in that case). */
+    WORD   threadRowY;
 
     struct MinList  textSpans;    /* list of TTLTextSpan (wrapped body lines, for hit-testing/selection) */
 
@@ -459,6 +487,9 @@ typedef struct TTLData {
      * front rather than handing out pointers into someone else's memory. */
     char   lastHotSpotStr[512];
     char   lastHotSpotPostId[64];
+    char   lastHotSpotMediaIds[96]; /* comma-joined, see TTIMELINE_LastHotSpotMediaIds --
+                                      * 96 bytes comfortably covers TTL_POST_MAX_MEDIA (4)
+                                      * ids at Mastodon's usual ~20-digit snowflake length */
 
     /* ---- TTIMELINE_OldestPostId/NewestPostId (see TTL_OnGet) ----
      * Same "owned copy, not a borrowed pointer" reasoning as
@@ -687,6 +718,14 @@ void     ttl_boundary_render(TTLData *inst, struct RastPort *rp,
 extern const TTLItemClass TTLProfileHeader_Class;
 TTLPost *ttl_profile_header_alloc(const TTLProfileHeaderSetup *setup); /* fs3etoottimeline_profile.c */
 
+/* Account-only notification row (FOLLOW/FOLLOW_REQUEST -- see
+ * TTLPostSetup.notifType) -- unlike TTLProfileHeader_Class above, this IS
+ * an ordinary member of channel->posts, added via TTIMELINE_AddPost/
+ * AppendPost like a toot, just via this class pointer instead of
+ * TTLToot_Class. Defined in the new fs3etoottimeline_notif.c. */
+extern const TTLItemClass TTLNotifFollow_Class;
+TTLPost *ttl_notif_follow_alloc(const TTLPostSetup *setup); /* fs3etoottimeline_notif.c */
+
 /* fs3etoottimeline_tiles.c */
 BOOL     ttl_tiles_alloc  (TTLData *inst, struct RastPort *rp);
 void     ttl_tiles_free   (TTLData *inst);
@@ -708,10 +747,14 @@ void     ttl_notify       (Class *cl, Object *o, struct GadgetInfo *gi,
  * TTIMELINE_LastHotSpotFavourited -- pass FALSE when postId is NULL (no
  * owning post to have a favourited state). following is carried as
  * TTIMELINE_LastHotSpotFollowing the same way, for TTL_HOT_FOLLOW clicks
- * on a profile header -- pass FALSE for every other item kind. */
+ * on a profile header -- pass FALSE for every other item kind. mediaIds is
+ * copied into lastHotSpotMediaIds and carried as
+ * TTIMELINE_LastHotSpotMediaIds the same way as data/postId -- NULL for
+ * every item kind but a toot (see TTLPost.mediaIdsJoined). */
 void     ttl_notify_hotspot(Class *cl, Object *o, struct GadgetInfo *gi,
                              UBYTE type, const char *data, ULONG dataLen,
-                             const char *postId, BOOL favourited, BOOL following);
+                             const char *postId, BOOL favourited, BOOL following,
+                             const char *mediaIds);
 /* only process have right to send render, ask with notify ProcessREfresh
  * void     ttl_render_self  (Class *cl, Object *o, struct GadgetInfo *gi);
 */

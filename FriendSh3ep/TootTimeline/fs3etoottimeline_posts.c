@@ -253,11 +253,51 @@ TTLPost *ttl_post_alloc(const TTLPostSetup *setup)
             post->mediaKinds[mi] = setup->mediaKinds[mi];
         }
 
+        /* Comma-join attachment ids for TTL_HOT_MODIFY -- see
+         * TTLPost.mediaIdsJoined. Kept separate from post->mediaUrls
+         * above since nothing here needs per-item id access, only the
+         * whole joined string travelling out through a hot-spot notify. */
+        post->mediaIdsJoined = NULL;
+        {
+            ULONG totalLen = 0, n, joinedCount = 0;
+            for (mi = 0; mi < post->mediaCount; mi++) {
+                if (setup->mediaIds[mi] && setup->mediaIds[mi][0]) {
+                    totalLen += (ULONG)strlen(setup->mediaIds[mi]);
+                    joinedCount++;
+                }
+            }
+            if (joinedCount > 0) {
+                totalLen += joinedCount - 1; /* one ',' between each pair */
+                post->mediaIdsJoined = AllocVec(totalLen + 1, MEMF_ANY);
+                if (post->mediaIdsJoined) {
+                    char *dst = post->mediaIdsJoined;
+                    BOOL  first = TRUE;
+                    for (mi = 0; mi < post->mediaCount; mi++) {
+                        if (setup->mediaIds[mi] && setup->mediaIds[mi][0]) {
+                            if (!first) *dst++ = ',';
+                            n = (ULONG)strlen(setup->mediaIds[mi]);
+                            CopyMem((APTR)setup->mediaIds[mi], dst, n);
+                            dst += n;
+                            first = FALSE;
+                        }
+                    }
+                    *dst = '\0';
+                }
+            }
+        }
+
         post->repliesCount    = setup->repliesCount;
         post->reblogsCount    = setup->reblogsCount;
         post->favouritesCount = setup->favouritesCount;
         post->favourited      = setup->favourited;
         post->reblogged       = setup->reblogged;
+        post->isOwn           = setup->isOwn;
+        post->isThreadReply   = setup->isThreadReply;
+
+        post->notifType       = setup->notifType;
+        post->notifActorName  = (setup->notifActorName && setup->notifActorName[0]) ? dup_str(setup->notifActorName) : NULL;
+        post->notifActorAcct  = (setup->notifActorAcct && setup->notifActorAcct[0]) ? dup_str(setup->notifActorAcct) : NULL;
+        post->notifStatusId   = (setup->notifStatusId && setup->notifStatusId[0]) ? dup_str(setup->notifStatusId) : NULL;
 
         post->pollOptionCount = setup->pollOptionCount;
         if (post->pollOptionCount > TTL_POST_MAX_POLL_OPTIONS) post->pollOptionCount = TTL_POST_MAX_POLL_OPTIONS;
@@ -319,6 +359,10 @@ static void ttl_toot_dispose(TTLPost *post)
     if (post->boostByAcct) FreeVec(post->boostByAcct);
     if (post->avatarURL) FreeVec(post->avatarURL);
     if (post->postId)    FreeVec(post->postId);
+    if (post->mediaIdsJoined) FreeVec(post->mediaIdsJoined);
+    if (post->notifActorName) FreeVec(post->notifActorName);
+    if (post->notifActorAcct) FreeVec(post->notifActorAcct);
+    if (post->notifStatusId)  FreeVec(post->notifStatusId);
     {
         ULONG mi;
         for (mi = 0; mi < post->mediaCount; mi++)
@@ -395,11 +439,19 @@ static void ttl_toot_layout(TTLData *inst, TTLPost *post)
 
     curRelY = TTL_POST_PAD_TOP;
 
-    /* "↺ Name boosted" line (dcMini) — only for reblogs */
+    /* "↺ Name boosted" line (dcMini) — only for reblogs. Mutually
+     * exclusive with the notifications-view prefix line below (see
+     * TTLPost.notifType's comment) -- never both on the same post. */
     if (post->boostBy && post->boostBy[0]) {
         TTLTextSpan *sp = ttl_span_alloc(post->boostBy, TTL_SPAN_BOOSTBY,
                                           curRelY, textX, inst);
         if (sp) AddTail((struct List *)&post->textSpans, (struct Node *)&sp->node);
+        curRelY += inst->miniLineHeight;
+    } else if (post->notifType > TTL_NOTIF_MENTION) {
+        /* Notifications view's actor/verb prefix line -- see
+         * ttl_toot_render's notifVerbFormat table for what's actually
+         * drawn. NONE/MENTION (<=TTL_NOTIF_MENTION) draw nothing, so no
+         * row is reserved for those. */
         curRelY += inst->miniLineHeight;
     }
 
@@ -489,6 +541,18 @@ static void ttl_toot_layout(TTLData *inst, TTLPost *post)
         curRelY += inst->miniLineHeight;       /* "N votes - Poll closed" summary line */
     }
 
+    /* ---- Thread indicator: short vertical bar + "..." meaning "this
+     * toot has replies, click to see the discussion" -- reserved only
+     * when it actually does, right above the action bar. threadRowY
+     * stored here and reused as-is by render/build_hotspots, same
+     * "store once, never re-derive" rule as pollBlockY above. ---- */
+    post->threadRowY = 0;
+    if (post->repliesCount > 0) {
+        curRelY += avatarGap;
+        post->threadRowY = (WORD)curRelY;
+        curRelY += inst->miniLineHeight;
+    }
+
     /* ---- Action bar: ↩ Reply N  🔁 Boost N  ⭐/💫 N ----
      * Only the row's height is needed for layout; exact button rects are
      * (re)computed lazily in ttl_post_build_hotspots from
@@ -510,6 +574,8 @@ static void ttl_toot_layout(TTLData *inst, TTLPost *post)
 /* ------------------------------------------------------------------ */
 
 extern const UBYTE        ttl_actionTypes[3];
+extern const UBYTE        ttl_ownActionTypes[2];
+extern const char *const  ttl_ownActionLabels[2];
 
 /* data/dataLen are stored as given -- a borrowed pointer into text the
  * caller already owns (post->acct/boostBy, or a TTLTextSpan's utf8), not
@@ -602,21 +668,39 @@ void ttl_scan_span_tokens(TTLPost *post, TTLTextSpan *sp)
 static void ttl_toot_build_hotspots(TTLData *inst, TTLPost *post)
 {
     TTLTextSpan *sp;
-    WORD avatarW, padLeft;
+    WORD avatarW, padLeft, avatarGap, textX;
 
     post->hotSpotCount = 0;
 
     if (inst->style && inst->style->avatarSize > 0) {
         avatarW = inst->style->avatarSize;
         padLeft = inst->style->postPadLeft;
+        avatarGap = inst->style->avatarGap;
     } else {
         avatarW = 35;
         padLeft = 6;
+        avatarGap = 6;
     }
+    textX = (WORD)(padLeft + avatarW + avatarGap);
 
     /* Avatar icon -> profile */
     ttl_hs_add(post, TTL_HOT_AVATAR, padLeft, TTL_POST_PAD_TOP, avatarW, avatarW,
                post->acct, post->acct ? (ULONG)strlen(post->acct) : 0);
+
+    /* Notifications view's actor/verb prefix line -- see TTLPost.notifType's
+     * comment for why this is mutually exclusive with "boosted" (never
+     * both hotspots on the same post), and ttl_toot_render's
+     * notifVerbFormat table for which types actually draw a line
+     * (NONE/MENTION don't, so no hotspot either). Same "first line"
+     * position the boostBy span would occupy. */
+    if (post->notifType > TTL_NOTIF_MENTION && post->notifStatusId && post->notifStatusId[0] &&
+        post->hotSpotCount < TTL_HOTSPOT_MAX_PER_TOOT)
+    {
+        WORD rowW = (WORD)(inst->gadWidth - textX - TTL_POST_PAD_RIGHT);
+        ttl_hs_add(post, TTL_HOT_NOTIF_STATUS, textX, TTL_POST_PAD_TOP,
+                   rowW, inst->miniLineHeight,
+                   post->notifStatusId, (ULONG)strlen(post->notifStatusId));
+    }
 
     for (sp = (TTLTextSpan *)post->textSpans.mlh_Head;
          sp->node.mln_Succ && post->hotSpotCount < TTL_HOTSPOT_MAX_PER_TOOT;
@@ -669,6 +753,18 @@ static void ttl_toot_build_hotspots(TTLData *inst, TTLPost *post)
         }
     }
 
+    /* "N replies" thread-indicator row -- see TTLPost.threadRowY. Spans
+     * the same left-to-right text column as the body, full clickable
+     * width rather than just the small vertical-bar-and-dots glyph,
+     * easier to hit than the glyph alone. */
+    if (post->repliesCount > 0 && post->threadRowY > 0 &&
+        post->hotSpotCount < TTL_HOTSPOT_MAX_PER_TOOT)
+    {
+        WORD rowW = (WORD)(inst->gadWidth - textX - TTL_POST_PAD_RIGHT);
+        ttl_hs_add(post, TTL_HOT_THREAD, textX, post->threadRowY,
+                   rowW, inst->miniLineHeight, NULL, 0);
+    }
+
     /* Action bar buttons: same geometry rule ttl_post_layout used to
      * reserve the row (post->height - separator - PAD_BOT - barH), same
      * labels tiles.c draws -- both build from ttl_build_action_labels(),
@@ -698,8 +794,57 @@ static void ttl_toot_build_hotspots(TTLData *inst, TTLPost *post)
                 URPDC_TextSizeUTF8(dcA, s, nc, &m);
                 w = (WORD)(m.width > 0 ? m.width : 40);
             }
-            ttl_hs_add(post, ttl_actionTypes[a], (WORD)(xRight - w), y, w, barH, NULL, 0);
+            {
+                /* Reply carries the original author's acct so the caller
+                 * can show/address them without a separate lookup (title
+                 * text + @-mention prefix -- see
+                 * FS3ETootView_SetComposeContext's REPLY kind); Boost/Fave
+                 * need no data. */
+                const char *hsData = (ttl_actionTypes[a] == TTL_HOT_REPLY && post->acct)
+                                    ? post->acct : NULL;
+                ULONG hsDataLen = hsData ? (ULONG)strlen(hsData) : 0;
+                ttl_hs_add(post, ttl_actionTypes[a], (WORD)(xRight - w), y, w, barH, hsData, hsDataLen);
+            }
             xRight = (WORD)(xRight - w - TTL_ACTION_GAP);
+        }
+    }
+
+    /* Modify/Delete: same bar row, left-aligned from textX, own toots
+     * only -- measured from the same ttl_ownActionLabels[] that
+     * ttl_toot_render draws, per this codebase's "single shared copy"
+     * rule (see that array's definition in fs3etoottimeline_tiles.c). */
+    if (post->isOwn && post->hotSpotCount < TTL_HOTSPOT_MAX_PER_TOOT) {
+        struct URPDrawContext *dcA = inst->style ? inst->style->dcNormal : NULL;
+        WORD barH  = inst->lineHeight;
+        WORD y     = (WORD)(post->height - 1 - TTL_POST_PAD_BOT - barH);
+        WORD xLeft = textX;
+        int  a;
+
+        for (a = 0; a < 2 && post->hotSpotCount < TTL_HOTSPOT_MAX_PER_TOOT; a++) {
+            WORD w = 40;
+            if (dcA) {
+                struct URPTextMetric m;
+                LONG nc = 0;
+                const char *s = ttl_ownActionLabels[a];
+                const unsigned char *q = (const unsigned char *)s;
+                while (*q) {
+                    unsigned char c = *q;
+                    q += (c < 0x80) ? 1 : (c < 0xE0) ? 2 : (c < 0xF0) ? 3 : 4;
+                    nc++;
+                }
+                URPDC_TextSizeUTF8(dcA, s, nc, &m);
+                w = (WORD)(m.width > 0 ? m.width : 40);
+            }
+            {
+                /* Modify carries the raw body so the caller can prefill
+                 * the compose window without a separate lookup by
+                 * postId; Delete needs no data. */
+                const char *hsData = (ttl_ownActionTypes[a] == TTL_HOT_MODIFY && post->body)
+                                    ? post->body : NULL;
+                ULONG hsDataLen = hsData ? (ULONG)strlen(hsData) : 0;
+                ttl_hs_add(post, ttl_ownActionTypes[a], xLeft, y, w, barH, hsData, hsDataLen);
+            }
+            xLeft = (WORD)(xLeft + w + TTL_ACTION_GAP);
         }
     }
 }

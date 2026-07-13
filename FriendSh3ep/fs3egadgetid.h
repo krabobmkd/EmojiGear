@@ -15,14 +15,13 @@
 #define GID_LOGIN_LOGIN_BUTTON       13  /* phase 1: connect / register app */
 #define GID_LOGIN_URL_EDITOR         14  /* read-only display of authorize URL */
 #define GID_LOGIN_SUBMIT_CODE_BUTTON 15  /* phase 2: submit the auth code */
+#define GID_LOGIN_ACCOUNTS_LIST      16  /* listbrowser.gadget: known accounts, click to switch */
 
 /* New toot window (fs3etootview.c) */
-#define GID_TOOT_SUBJECT_EDITOR  20
 #define GID_TOOT_BODY_EDITOR     21
 #define GID_TOOT_VISIBILITY      22
-#define GID_TOOT_EMOJI1_BUTTON   23
-#define GID_TOOT_EMOJI2_BUTTON   24
-#define GID_TOOT_SEND_BUTTON     25
+#define GID_TOOT_EMOJI_BUTTON    23
+#define GID_TOOT_SEND_BUTTON     24
 
 /* Title bar (Part A, TitleBarLayout) */
 #define GID_TITLEBAR_CLOSE       30
@@ -78,5 +77,9 @@
 #define GID_SETTINGSV_CHECK_INTERVAL  304
 #define GID_SETTINGSV_KEEP_BIG_USERICONS  305
 #define GID_SETTINGSV_KEEP_BIG_THUMBNAILS 306
+
+/* Emoji picker window (fs3eemojibox.c), opened from GID_TOOT_EMOJI_BUTTON */
+#define GID_EMOJIBOX_CHOOSER  400  /* emoji-set popup chooser */
+#define GID_EMOJIBOX_GRID     401  /* private grid gadget: click a cell to pick */
 
 #endif /* FS3EGADGETID_H */

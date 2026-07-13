@@ -83,6 +83,14 @@
  * had none. Same buffer/pointer as the accompanying
  * TTIMELINE_HotSpotNotify notification's TTIMELINE_LastHotSpotPostId tag. */
 #define TTIMELINE_LastHotSpotPostId  (TTIMELINE_Base + 14)
+/* [G] STRPTR: comma-joined media_attachments[].id list (see
+ * TTLPostSetup.mediaIds) of the post the most recently activated hot-spot
+ * belongs to, or NULL/"" if that post has no attachments. Same buffer/
+ * pointer as the accompanying TTIMELINE_HotSpotNotify notification's tag of
+ * the same name -- currently only meaningful for TTL_HOT_MODIFY, which
+ * needs these ids to resend as media_ids[] on a PUT edit so existing
+ * attachments survive a text-only edit (see FS3ENetStatus.fmas_MediaIds). */
+#define TTIMELINE_LastHotSpotMediaIds (TTIMELINE_Base + 30)
 /* [G] STRPTR: Mastodon status id (see TTLPostSetup.postId) of the active
  * channel's newest real post -- skips any non-toot pinned boundary row
  * (e.g. a "look for something new" item, which has no postId; see
@@ -135,6 +143,22 @@
  * has no header right now, or its header is for a different account id
  * than accountId (a stale reply racing a new profile being opened). */
 #define TTIMELINE_UpdateProfileFollow (TTIMELINE_Base + 27)
+/* [S] any: like TTIMELINE_ClearPosts, but every channel (0..
+ * TTIMELINE_NUM_VIEWMODES-1), not just the currently active one -- for
+ * switching the connected account, where every channel's posts belong to
+ * the account being left and must not linger once a different account's
+ * data starts arriving. The active channel's waiting state re-evaluates
+ * the same way TTIMELINE_ClearPosts's does (empty post list -> waiting). */
+#define TTIMELINE_ClearAllChannels    (TTIMELINE_Base + 29)
+/* [S] STRPTR: Mastodon status id (see TTLPostSetup.postId) of a status that
+ * was just deleted on the server -- the matching post is unlinked and
+ * freed from EVERY channel that has it (same "can be in more than one
+ * channel at once" reasoning as TTIMELINE_UpdatePost, see
+ * TTLPostSetup.viewModeBits), each affected channel's Y positions are
+ * rebuilt, and the active channel's tiles are invalidated for redraw.
+ * Silently a no-op if no channel currently has that postId (already
+ * evicted, or the reply raced a ClearPosts) -- see TTL_HOT_DELETE. */
+#define TTIMELINE_RemovePost          (TTIMELINE_Base + 31)
 
 /* ------------------------------------------------------------------ */
 /* Notification tags  (sent to ICA_TARGET via OM_NOTIFY)               */
@@ -150,10 +174,11 @@
 #define TTIMELINE_HotSpotActivated    (TTIMELINE_Base + 22)
 /* User activated a hot-spot; value = hs->type (TTL_HOT_*). The same
  * OM_NOTIFY's tag list also carries TTIMELINE_LastHotSpotString (the
- * hot-spot's data string, e.g. an @handle/#tag/URL, or NULL) and
- * TTIMELINE_LastHotSpotPostId (that post's Mastodon status id, or NULL)
- * -- read them via FindTagItem on the notify message rather than a
- * separate GetAttr call. See ttl_notify_hotspot() in
+ * hot-spot's data string, e.g. an @handle/#tag/URL, or NULL),
+ * TTIMELINE_LastHotSpotPostId (that post's Mastodon status id, or NULL),
+ * and TTIMELINE_LastHotSpotMediaIds (that post's comma-joined attachment
+ * ids, or NULL) -- read them via FindTagItem on the notify message rather
+ * than a separate GetAttr call. See ttl_notify_hotspot() in
  * fs3etoottimeline_tiles.c. */
 #define TTIMELINE_HotSpotNotify       (TTIMELINE_Base + 24)
 /* [G] BOOL: same OM_NOTIFY tag list as TTIMELINE_HotSpotNotify above --
@@ -210,6 +235,30 @@
  * is a later session's work, no TTL_HOT_ type exists for it yet. */
 #define TTL_POST_MAX_POLL_OPTIONS 8
 
+/* Parallels network_fs3e/fs3enet.h's enum FS3ENetNotifType. Kept as its
+ * own small set of defines rather than a shared header, same reasoning as
+ * TTL_MEDIA_KIND_* above. TTL_NOTIF_NONE is a real, distinct zero value
+ * (not reused as "unset MENTION") specifically so ordinary toots -- which
+ * also leave notifType at its zeroed default -- can be told apart from an
+ * actual mention notification, which legitimately wants notifType set but
+ * draws no prefix line either (see ttl_toot_render's notifVerbFormat
+ * table: NONE and MENTION both map to "no line", for different reasons --
+ * NONE because there's nothing to say, MENTION because the byline already
+ * shows the mentioning author). FOLLOW/FOLLOW_REQUEST are only ever seen
+ * by TTIMELINE_AddPost/AppendPost (choosing TTLNotifFollow_Class instead
+ * of TTLToot_Class -- see fs3etoottimeline_attribs.c) and by
+ * TTLNotifFollow_Class's own layout/render itself picking "followed you"
+ * vs "requested to follow you" -- ttl_toot_render's notifVerbFormat table
+ * never sees them, that class is never used for a FOLLOW-type post. */
+#define TTL_NOTIF_NONE           0
+#define TTL_NOTIF_MENTION        1
+#define TTL_NOTIF_REBLOG         2
+#define TTL_NOTIF_FAVOURITE      3
+#define TTL_NOTIF_POLL           4
+#define TTL_NOTIF_UPDATE         5
+#define TTL_NOTIF_FOLLOW         6
+#define TTL_NOTIF_FOLLOW_REQUEST 7
+
 typedef struct TTLPostSetup {
     const char *username;    /* original author display name (UTF-8) */
     const char *acct;        /* original author @user@instance (UTF-8) */
@@ -231,6 +280,12 @@ typedef struct TTLPostSetup {
                                * avatars -- see AvatarImages_GetMedia. */
     ULONG       mediaKinds[TTL_POST_MAX_MEDIA]; /* TTL_MEDIA_KIND_* per slot,
                                * same indexing as mediaUrls. */
+    const char *mediaIds[TTL_POST_MAX_MEDIA]; /* attachment ids (see
+                               * FS3ENetStatus.fmas_MediaIds), same indexing
+                               * as mediaUrls -- not shown, only kept so a
+                               * later PUT-edit of an own toot can resend
+                               * them and not lose the attachments. NULL
+                               * past mediaCount. */
     ULONG       mediaCount;   /* 0..TTL_POST_MAX_MEDIA; 0 = no preview rect */
     ULONG       viewModeBits; /* bit i set = also prepend to channel i (see
                                 * TTIMELINE_NUM_VIEWMODES); a post can be
@@ -245,6 +300,41 @@ typedef struct TTLPostSetup {
     ULONG       favouritesCount;
     BOOL        favourited;
     BOOL        reblogged;
+
+    /* TRUE if this post's original author is the connected user (caller
+     * compares the status author's acct against the active account, e.g.
+     * FS3EApp_HandleNetReply's FS3ENETQ_TIMELINE case) -- adds the
+     * left-aligned Modify/Delete text buttons to the action bar
+     * (TTL_HOT_MODIFY/TTL_HOT_DELETE) alongside the always-present
+     * right-aligned Reply/Boost/Fave. FALSE (the default) for anyone
+     * else's toot, and for a boost of someone else's toot even if you're
+     * the one who boosted it -- boosting doesn't make the original
+     * content yours to edit/delete. */
+    BOOL        isOwn;
+
+    /* TRUE marks this post as one of the replies in a "discussion mode"
+     * view (see TTL_HOT_THREAD) -- draws a full-height vertical accent
+     * line down the tile's left edge, otherwise laid out identically to
+     * any other toot. FALSE for the discussion's own main toot (the first
+     * item) and for every ordinary timeline/profile post. */
+    BOOL        isThreadReply;
+
+    /* Notifications view (see TTL_HOT_THREAD... er, TTL_HOT_NOTIF_STATUS
+     * below): notifType TTL_NOTIF_NONE (the zeroed default) means this is
+     * an ordinary toot and the other notif* fields are unused. Otherwise
+     * notifActorName/Acct identify who triggered the notification (drawn
+     * as a prefix line above the username row, same mechanism as
+     * boostBy above but generalized -- see ttl_toot_render's
+     * notifVerbFormat table) and notifStatusId is the embedded status's
+     * own id, used for the prefix line's click action (opens that status'
+     * discussion -- see TTL_HOT_NOTIF_STATUS). Deliberately NOT reusing
+     * postId for this: postId must stay the *notification's* own id so
+     * TTIMELINE_OldestPostId/NewestPostId-driven pagination keeps
+     * working unmodified. */
+    ULONG       notifType;
+    const char *notifActorName;
+    const char *notifActorAcct;
+    const char *notifStatusId;
 
     /* Poll ("survey"), closed/result rendering only -- see
      * TTL_POST_MAX_POLL_OPTIONS above. pollOptionCount==0 = no poll. */
@@ -331,7 +421,11 @@ typedef struct TTLProfileFollowUpdate {
 #define TTL_HOT_HASHTAG     2  /* #hashtag token inside the body text (data = "#tag") */
 #define TTL_HOT_URL         3  /* http(s):// URL inside the body text (data = the URL) */
 #define TTL_HOT_IMAGE       4  /* media preview rectangle (see TTLPostSetup.mediaUrls/mediaCount) */
-#define TTL_HOT_REPLY       5
+#define TTL_HOT_REPLY       5  /* action bar's "Reply" button; postId is the status being
+                                 * replied to, data/dataLen carry its original author's acct
+                                 * (so the caller can show/address them and prefill the
+                                 * @-mention without a lookup -- see
+                                 * FS3ETootView_SetComposeContext's REPLY kind) */
 #define TTL_HOT_BOOST       6
 #define TTL_HOT_FAVORITE    7
 #define TTL_HOT_MEDIA_PREV  8  /* left-arrow zone inside the preview rect; only present when mediaCount>1 */
@@ -343,6 +437,34 @@ typedef struct TTLProfileFollowUpdate {
                                  * thumbnail is ever fetched for these; data = the attachment URL */
 #define TTL_HOT_FOLLOW      13 /* profile header's Follow/Unfollow label; data/postId are NULL --
                                  * see TTIMELINE_LastHotSpotFollowing for the account's current state */
+#define TTL_HOT_MODIFY      14 /* action bar's "Modify" text button, own toots only (post->isOwn) --
+                                 * left-aligned, opposite the Reply/Boost/Fave group; postId is the
+                                 * status to edit, data/dataLen carry its raw body text (so the caller
+                                 * can prefill the compose window without a lookup -- see
+                                 * FS3ETootView_SetComposeContext's MODIFY kind). The accompanying
+                                 * TTIMELINE_LastHotSpotMediaIds notify tag carries the same status's
+                                 * attachment ids, needed to resend on a PUT edit. */
+#define TTL_HOT_DELETE      15 /* action bar's "Delete" text button, own toots only (post->isOwn) --
+                                 * left-aligned, next to TTL_HOT_MODIFY; data is NULL, postId is the
+                                 * status to delete */
+#define TTL_HOT_THREAD      16 /* "N replies, click to see the discussion" affordance row -- a short
+                                 * vertical bar + "..." shown only when post->repliesCount>0, just
+                                 * above the action bar (see TTLPost.threadRowY). data is NULL,
+                                 * postId is the status whose discussion to open -- see
+                                 * FS3EApp_OpenDiscussion. */
+#define TTL_HOT_NOTIF_STATUS 17 /* notifications view's actor/verb prefix line (see
+                                 * TTLPostSetup.notifType/notifActorName/notifActorAcct) --
+                                 * data/dataLen carry notifStatusId (the embedded status, NOT
+                                 * postId, which for a notification row is the *notification's*
+                                 * own id, needed unchanged for pagination -- see
+                                 * TTLPostSetup.notifStatusId), so clicking it opens that status'
+                                 * discussion the same way TTL_HOT_THREAD does, just reading
+                                 * hotSpotString instead of hotSpotId. Only present for
+                                 * status-bearing notification types with a verb line at all (not
+                                 * TTL_NOTIF_NONE/MENTION -- see ttl_toot_render's notifVerbFormat
+                                 * table). Account-only (follow/follow_request) notification rows
+                                 * are a different item
+                                 * class (TTLNotifFollow_Class) and reuse TTL_HOT_AVATAR instead. */
 
 /* Opaque handle; cast to TTLHotSpot* from private header if needed */
 typedef struct TTLHotSpot TTLHotSpot;

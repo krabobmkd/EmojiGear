@@ -33,7 +33,11 @@ enum FS3ENetRequestType
     FS3ENETQ_FAVORITE,       /* toggle favourite/unfavourite on a status */
     FS3ENETQ_ACCOUNT_LOOKUP, /* resolve an acct string to a full account (profile view) */
     FS3ENETQ_RELATIONSHIP,   /* fetch following/followed-by state for an account id */
-    FS3ENETQ_FOLLOW          /* toggle follow/unfollow on an account */
+    FS3ENETQ_FOLLOW,         /* toggle follow/unfollow on an account */
+    FS3ENETQ_INSTANCE_INFO,  /* fetch the server's per-toot character limit */
+    FS3ENETQ_EDIT_STATUS,    /* edit an existing status' text (own toots only) */
+    FS3ENETQ_DELETE_STATUS,  /* delete an existing status (own toots only) */
+    FS3ENETQ_NOTIFICATIONS   /* fetch a page of notifications */
 };
 
 /* Result codes returned in FS3ENetMessage.fs3em_Result on reply. */
@@ -161,6 +165,37 @@ typedef struct FS3ENetVerifyAccountReply
 } FS3ENetVerifyAccountReply;
 
 /*
+ * FS3ENETQ_INSTANCE_INFO — fetches the server's per-toot character limit
+ * (see FS3EMastodon_GetInstanceInfo). No access token needed. Meant to be
+ * sent once per account (right after login/load, see
+ * FS3EApp_SetAccount() in friendsh3ep.c) rather than per-compose, since
+ * an instance's limit essentially never changes mid-session.
+ *
+ * On FS3ENETR_OK, fs3em_Data is replaced with an FS3ENetInstanceInfoReply.
+ * fs3eii_Known says whether fs3eii_MaxChars is a real value the server
+ * confirmed, or just FS3EMastodon_GetInstanceInfo's own best-guess
+ * fallback because neither instance endpoint answered -- the GUI must NOT
+ * present that fallback as if it were a real limit (see
+ * FS3ETootView_UpdateCharCount in fs3etootview.c, which shows "Max: -"
+ * rather than a possibly-wrong number until fs3eii_Known is TRUE for the
+ * currently active account).
+ * On error, fs3em_Data still points at the original request block.
+ */
+typedef struct FS3ENetInstanceInfoReq
+{
+    char *fs3eii_ApiBaseUrl;
+} FS3ENetInstanceInfoReq;
+
+/* Allocates a flat request block for INSTANCE_INFO. FreeVec() when done. */
+FS3ENetInstanceInfoReq *FS3ENetInstanceInfoReq_Alloc(const char *apiBaseUrl);
+
+typedef struct FS3ENetInstanceInfoReply
+{
+    ULONG fs3eii_MaxChars;
+    BOOL  fs3eii_Known;
+} FS3ENetInstanceInfoReply;
+
+/*
  * FS3ENETQ_FETCH_IMAGE — fetch a media URL (avatar, attachment thumbnail,
  * custom emoji) and cache it under T:FS3ECache/.  The network process serves
  * from disk cache when the file is already present; it only hits the network
@@ -238,12 +273,38 @@ enum FS3ENetPageDirection
     FS3ENETPAGE_NEWER         /* fs3et_MinId set: statuses strictly newer than it */
 };
 
+/* Which JSON shape fs3et_Timeline's endpoint returns -- lets
+ * FS3ENETQ_TIMELINE be reused for endpoints that don't hand back a bare
+ * status array, without forking the per-status field-extraction parser
+ * (content, media_attachments, poll, counts, ...) that ARRAY already
+ * shares with every timeline/profile fetch. Echoed back into
+ * FS3ENetTimelineReply the same way fs3et_ViewModeBit/PageDirection are,
+ * so the GUI reply handler knows which shape it got without depending on
+ * mutable app state that could have changed by the time the reply lands. */
+enum FS3ENetTimelineShape
+{
+    FS3ENET_TLSHAPE_ARRAY = 0,       /* bare Status[] -- every timeline/profile-statuses endpoint */
+    FS3ENET_TLSHAPE_SINGLE,          /* GET .../statuses/:id -- one Status object, wrapped as a 1-elem array */
+    FS3ENET_TLSHAPE_CONTEXT_DESCENDANTS /* GET .../statuses/:id/context -- {ancestors,descendants}; only
+                                          * descendants (the replies) is unwrapped and used, ancestors
+                                          * discarded */
+};
+
 /*
  * FS3ENETQ_TIMELINE — fetch one page of statuses for a timeline.
  *
  * fs3et_ViewModeBit identifies the UI channel (VIEWMODE_* value from
  * friendsh3ep.h); it is echoed unchanged into FS3ENetTimelineReply so the
  * GUI can route replies back to the right TootTimeline channel.
+ * fs3et_AccountGeneration is an opaque caller-defined token (FriendSh3ep
+ * stamps its App.accountGeneration, bumped on every login/account switch)
+ * echoed back the same way -- lets the caller tell a reply for the account
+ * that was active when the request was sent apart from one for whatever
+ * account is active *now*, since two FS3ENETQ_TIMELINE requests for the
+ * same fs3et_ViewModeBit sent under different accounts (e.g. one still in
+ * flight when the user switches accounts) are otherwise indistinguishable
+ * once the reply comes back -- this process treats it as opaque and never
+ * inspects it.
  * fs3et_AccessToken may be "" for public timelines.
  * fs3et_MaxId/fs3et_MinId may be NULL/empty; at most one should be set (see
  * fs3et_PageDirection) -- fs3et_MaxId asks for statuses strictly older than
@@ -257,6 +318,8 @@ enum FS3ENetPageDirection
 typedef struct FS3ENetTimelineReq {
     ULONG  fs3et_ViewModeBit;    /* echoed in reply */
     ULONG  fs3et_PageDirection;  /* FS3ENetPageDirection; echoed in reply */
+    ULONG  fs3et_AccountGeneration; /* opaque caller token; echoed in reply */
+    ULONG  fs3et_ResponseShape;  /* FS3ENetTimelineShape; echoed in reply */
     char  *fs3et_ApiBaseUrl;
     char  *fs3et_AccessToken;    /* "" = no auth (public timelines) */
     char  *fs3et_Timeline;       /* "home", "public", "public?local=true", … */
@@ -265,8 +328,9 @@ typedef struct FS3ENetTimelineReq {
 } FS3ENetTimelineReq;
 
 FS3ENetTimelineReq *FS3ENetTimelineReq_Alloc(ULONG viewModeBit,
-    ULONG pageDirection, const char *apiBaseUrl, const char *accessToken,
-    const char *timeline, const char *maxId, const char *minId);
+    ULONG pageDirection, ULONG accountGeneration, ULONG responseShape,
+    const char *apiBaseUrl, const char *accessToken, const char *timeline,
+    const char *maxId, const char *minId);
 
 /* Max media_attachments entries kept per status (Mastodon itself caps
  * normal posts at 4 attachments, so this never truncates in practice). */
@@ -313,6 +377,11 @@ typedef struct FS3ENetStatus {
     char  *fmas_MediaUrls[FS3ENET_MAX_MEDIA];
     /* media_attachments[].type for the same slots -- enum FS3ENetMediaKind. */
     ULONG  fmas_MediaKind[FS3ENET_MAX_MEDIA];
+    /* media_attachments[].id for the same slots -- needed to resend as
+     * media_ids[] on a PUT edit of this status, since Mastodon treats that
+     * field as a full replace-list: omit it and existing attachments get
+     * stripped even if the edit never touched them. */
+    char  *fmas_MediaIds[FS3ENET_MAX_MEDIA];
     ULONG  fmas_MediaCount;
 
     /* Action-bar counts/state -- for reblogs these belong to the boosted
@@ -345,6 +414,8 @@ typedef struct FS3ENetStatus {
 typedef struct FS3ENetTimelineReply {
     ULONG fs3et_ViewModeBit;    /* echoed from request */
     ULONG fs3et_PageDirection; /* echoed from request, see FS3ENetPageDirection */
+    ULONG fs3et_AccountGeneration; /* echoed from request, see FS3ENetTimelineReq */
+    ULONG fs3et_ResponseShape; /* echoed from request, see FS3ENetTimelineShape */
     ULONG fs3et_Count;
     /* FS3ENetStatus[fs3et_Count] follows immediately in memory */
 } FS3ENetTimelineReply;
@@ -353,6 +424,8 @@ typedef struct FS3ENetTimelineReply {
  * FS3ENETQ_POST_STATUS — publish a new status (toot).
  *
  * fs3ep_Spoiler is the CW/subject text; pass "" for no content warning.
+ * fs3ep_InReplyToId is the status this replies to, "" for a standalone
+ * toot -- see FS3EMastodon_PostStatus.
  * On FS3ENETR_OK, fs3em_Data is replaced with an FS3ENetPostStatusReply.
  */
 typedef struct FS3ENetPostStatusReq {
@@ -361,15 +434,134 @@ typedef struct FS3ENetPostStatusReq {
     char *fs3ep_Content;     /* UTF-8 post body */
     char *fs3ep_Visibility;  /* "public", "unlisted", "private", "direct" */
     char *fs3ep_Spoiler;     /* CW text; "" = no content warning */
+    char *fs3ep_InReplyToId; /* status being replied to; "" = standalone toot */
 } FS3ENetPostStatusReq;
 
 FS3ENetPostStatusReq *FS3ENetPostStatusReq_Alloc(
     const char *apiBaseUrl, const char *accessToken,
-    const char *content, const char *visibility, const char *spoiler);
+    const char *content, const char *visibility, const char *spoiler,
+    const char *inReplyToId);
 
 typedef struct FS3ENetPostStatusReply {
     char *fs3ep_StatusId; /* new status id string */
 } FS3ENetPostStatusReply;
+
+/*
+ * FS3ENETQ_EDIT_STATUS — PUT /api/v1/statuses/:id, edit an existing status'
+ * text (own toots only). fs3ee_MediaIds[0..fs3ee_MediaCount) are the
+ * status' existing attachment ids (see FS3ENetStatus.fmas_MediaIds),
+ * resent unchanged so the edit doesn't strip them -- see
+ * FS3EMastodon_EditStatus. No spoiler/visibility fields: Mastodon's edit
+ * endpoint doesn't accept changing either. On FS3ENETR_OK, fs3em_Data is
+ * replaced with an FS3ENetEditStatusReply (same free/replace convention as
+ * every other request in this file -- the GUI side always expects
+ * fs3em_Data to end up a freshly allocated reply block, never the original
+ * request left in place).
+ */
+typedef struct FS3ENetEditStatusReq {
+    char *fs3ee_ApiBaseUrl;
+    char *fs3ee_AccessToken;
+    char *fs3ee_StatusId;
+    char *fs3ee_Content;     /* UTF-8 new post body */
+    char *fs3ee_MediaIds[FS3ENET_MAX_MEDIA];
+    ULONG fs3ee_MediaCount;
+} FS3ENetEditStatusReq;
+
+FS3ENetEditStatusReq *FS3ENetEditStatusReq_Alloc(
+    const char *apiBaseUrl, const char *accessToken,
+    const char *statusId, const char *content,
+    const char *const *mediaIds, ULONG mediaCount);
+
+typedef struct FS3ENetEditStatusReply {
+    char *fs3ee_StatusId; /* echoes the edited status id back */
+} FS3ENetEditStatusReply;
+
+/*
+ * FS3ENETQ_DELETE_STATUS — DELETE /api/v1/statuses/:id, delete an existing
+ * status (own toots only). On FS3ENETR_OK, fs3em_Data is replaced with an
+ * FS3ENetDeleteStatusReply echoing the deleted status id back -- the GUI
+ * needs it to remove that post from TootTimeline's in-memory data (see
+ * TTIMELINE_RemovePost), same reasoning FS3ENetFavouriteReply already
+ * echoes its id for TTIMELINE_UpdatePost.
+ */
+typedef struct FS3ENetDeleteStatusReq {
+    char *fs3ed_ApiBaseUrl;
+    char *fs3ed_AccessToken;
+    char *fs3ed_StatusId;
+} FS3ENetDeleteStatusReq;
+
+FS3ENetDeleteStatusReq *FS3ENetDeleteStatusReq_Alloc(
+    const char *apiBaseUrl, const char *accessToken, const char *statusId);
+
+typedef struct FS3ENetDeleteStatusReply {
+    char *fs3ed_StatusId;
+} FS3ENetDeleteStatusReply;
+
+/* Mastodon Notification.type, mapped from the JSON string. FOLLOW/
+ * FOLLOW_REQUEST carry no status (see FS3ENetNotification.fen_HasStatus);
+ * every other value does. UNKNOWN covers the admin-only types (sign-up,
+ * report, severed relationships, moderation warning) and anything else
+ * this app doesn't specifically handle -- rendered with no actor/verb
+ * prefix rather than guessed at. */
+enum FS3ENetNotifType
+{
+    FS3ENOTIF_MENTION = 0,
+    FS3ENOTIF_REBLOG,
+    FS3ENOTIF_FAVOURITE,
+    FS3ENOTIF_FOLLOW,
+    FS3ENOTIF_FOLLOW_REQUEST,
+    FS3ENOTIF_POLL,
+    FS3ENOTIF_UPDATE,
+    FS3ENOTIF_UNKNOWN
+};
+
+/*
+ * FS3ENETQ_NOTIFICATIONS — GET /api/v1/notifications.
+ *
+ * No fs3en_ViewModeBit -- this queue always targets VIEWMODE_Notifs, only
+ * one channel is ever meaningful for it, unlike FS3ENETQ_TIMELINE which is
+ * shared across every channel including Search's several sub-modes.
+ * fs3en_MaxId/MinId/PageDirection mirror FS3ENetTimelineReq exactly --
+ * Mastodon paginates notifications by the notification's own id, the same
+ * max_id/min_id query-param shape every timeline endpoint already uses.
+ */
+typedef struct FS3ENetNotificationsReq {
+    ULONG  fs3en_PageDirection;     /* FS3ENetPageDirection; echoed in reply */
+    ULONG  fs3en_AccountGeneration; /* opaque caller token; echoed in reply */
+    char  *fs3en_ApiBaseUrl;
+    char  *fs3en_AccessToken;
+    char  *fs3en_MaxId;             /* "" = no lower bound */
+    char  *fs3en_MinId;             /* "" = no upper bound */
+} FS3ENetNotificationsReq;
+
+FS3ENetNotificationsReq *FS3ENetNotificationsReq_Alloc(ULONG pageDirection,
+    ULONG accountGeneration, const char *apiBaseUrl, const char *accessToken,
+    const char *maxId, const char *minId);
+
+/* One notification entry inside a FS3ENetNotificationsReply.
+ * All char * fields point into the same flat block, same convention as
+ * FS3ENetStatus -- one FreeVec() on the enclosing reply frees everything,
+ * including fen_Status's own pointer fields (fen_Status is embedded by
+ * value, not pointed-to, precisely so this holds). */
+typedef struct FS3ENetNotification {
+    char  *fen_Id;               /* notification's own id -- see TTLPost.postId's
+                                   * doc comment on why this, not the status id, drives pagination */
+    ULONG  fen_Type;             /* FS3ENetNotifType */
+    char  *fen_ActorDisplayName; /* who triggered this notification */
+    char  *fen_ActorAcct;
+    char  *fen_ActorAvatarURL;
+    BOOL   fen_HasStatus;        /* FALSE for FOLLOW/FOLLOW_REQUEST */
+    FS3ENetStatus fen_Status;    /* meaningful iff fen_HasStatus */
+} FS3ENetNotification;
+
+/* Header of the flat notifications reply block.
+ * Notifications follow immediately: (FS3ENetNotification *)(reply + 1)[i] */
+typedef struct FS3ENetNotificationsReply {
+    ULONG fs3en_PageDirection;
+    ULONG fs3en_AccountGeneration;
+    ULONG fs3en_Count;
+    /* FS3ENetNotification[fs3en_Count] follows immediately in memory */
+} FS3ENetNotificationsReply;
 
 /*
  * FS3ENETQ_FAVORITE — POST /api/v1/statuses/:id/favourite or .../unfavourite.

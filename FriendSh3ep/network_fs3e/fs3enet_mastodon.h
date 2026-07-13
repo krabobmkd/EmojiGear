@@ -91,21 +91,65 @@ BOOL FS3EMastodon_VerifyCredentials(const char *apiBaseUrl, const char *accessTo
 
 /*
  * GET /api/v1/{timeline} -- timeline is the full path relative to /api/v1/,
- * e.g. "timelines/home?limit=20" or "accounts/123/statuses?limit=20"
- * (a user's own toots). On success *outJson is a cJSON array of Status
- * objects owned by the caller, who must cJSON_Delete() it.
+ * e.g. "timelines/home?limit=20", "accounts/123/statuses?limit=20" (a
+ * user's own toots), "statuses/123" (one status), or "statuses/123/context"
+ * (that status' replies). On success *outJson is a cJSON array of Status
+ * objects owned by the caller, who must cJSON_Delete() it -- regardless of
+ * responseShape, always a plain array, never the raw shape the endpoint
+ * itself returned.
+ *
+ * responseShape is a `enum FS3ENetTimelineShape` value from fs3enet.h,
+ * passed as a plain ULONG here since that header is the one including
+ * this one, not the reverse (same reasoning TootTimeline keeps its own
+ * TTL_MEDIA_KIND_* defines instead of including fs3enet.h directly):
+ *   FS3ENET_TLSHAPE_ARRAY (0)        -- endpoint already returns Status[]
+ *   FS3ENET_TLSHAPE_SINGLE (1)       -- endpoint returns one Status object;
+ *                                        wrapped into a 1-element array
+ *   FS3ENET_TLSHAPE_CONTEXT_DESCENDANTS (2) -- endpoint returns
+ *                                        {"ancestors":[...],"descendants":[...]};
+ *                                        only descendants is unwrapped and
+ *                                        returned, ancestors is discarded
  */
 BOOL FS3EMastodon_GetTimeline(const char *apiBaseUrl, const char *accessToken,
-                             const char *timeline, cJSON **outJson);
+                             const char *timeline, ULONG responseShape,
+                             cJSON **outJson);
 
 /*
  * POST /api/v1/statuses - publishes a new status. On success fills
  * outStatusId (the new status' id, NUL-terminated) and returns TRUE.
  * visibility is one of "public", "unlisted", "private", "direct".
+ * inReplyToId is the status this is a reply to, or NULL/"" for a
+ * standalone toot -- this is what actually threads the reply on the
+ * server (Mastodon also auto-notifies/mentions the parent's author from
+ * this alone, regardless of whether the body text visibly @-mentions them).
  */
 BOOL FS3EMastodon_PostStatus(const char *apiBaseUrl, const char *accessToken,
                             const char *statusText, const char *visibility,
+                            const char *inReplyToId,
                             char *outStatusId, ULONG outStatusIdSize);
+
+/*
+ * PUT /api/v1/statuses/:id -- edits an existing status' text (and, if
+ * mediaCount>0, resends its existing media_ids so they survive the edit --
+ * Mastodon's real server-side UpdateStatusService only touches attachments
+ * "if @options.key?(:media_ids)" at all, so omitting the key here when
+ * mediaCount==0 is correct, not just "empty"). Does NOT send visibility --
+ * Mastodon's edit endpoint doesn't accept changing it. Success = the
+ * server responded 200 OK; unlike FS3EMastodon_PostStatus this doesn't
+ * need to infer success from a parsed field, since FS3EHttp_Put() (unlike
+ * Get/Post) exposes a real HTTP status code.
+ */
+BOOL FS3EMastodon_EditStatus(const char *apiBaseUrl, const char *accessToken,
+                            const char *statusId, const char *statusText,
+                            const char *const *mediaIds, ULONG mediaCount);
+
+/*
+ * DELETE /api/v1/statuses/:id -- deletes an existing status (own toots
+ * only). No request body. Success = the server responded 200 OK, same
+ * "real status code, not a parsed field" reasoning as FS3EMastodon_EditStatus.
+ */
+BOOL FS3EMastodon_DeleteStatus(const char *apiBaseUrl, const char *accessToken,
+                              const char *statusId);
 
 /*
  * POST /api/v1/statuses/:id/favourite or .../unfavourite. On success fills
@@ -161,5 +205,28 @@ BOOL FS3EMastodon_GetRelationship(const char *apiBaseUrl, const char *accessToke
 BOOL FS3EMastodon_Follow(const char *apiBaseUrl, const char *accessToken,
                          const char *accountId, BOOL follow,
                          BOOL *outFollowing);
+
+/* Mastodon's own historical per-toot character limit -- used as
+ * outMaxChars' fallback value by FS3EMastodon_GetInstanceInfo() when
+ * neither the v2 nor v1 instance endpoint hands back a usable number, so
+ * callers never have to special-case "unknown". */
+#define FS3EMASTODON_DEFAULT_MAX_CHARS 500
+
+/*
+ * GET /api/v2/instance -- reads configuration.statuses.max_characters,
+ * the server's per-toot character limit (varies per instance: some raise
+ * it well past Mastodon's 500 default, e.g. many Fediverse forks default
+ * to a few thousand). Falls back to GET /api/v1/instance's legacy
+ * top-level max_toot_chars field (older Mastodon versions, some forks)
+ * if v2 is unreachable or doesn't carry the field, and to
+ * FS3EMASTODON_DEFAULT_MAX_CHARS if neither does.
+ *
+ * outMaxChars is always set to something usable. Returns TRUE only if a
+ * real value came back from the server (FALSE means outMaxChars is the
+ * fallback default) -- callers that don't care about that distinction can
+ * ignore the return value and just use outMaxChars either way.
+ * No accessToken needed; both endpoints are public.
+ */
+BOOL FS3EMastodon_GetInstanceInfo(const char *apiBaseUrl, ULONG *outMaxChars);
 
 #endif /* FS3ENET_MASTODON_H */

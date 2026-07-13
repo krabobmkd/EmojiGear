@@ -25,15 +25,22 @@ static const char *defaultStrings[MSG_COUNT] = {
     "Server",
     /* MSG_LOGIN_USER */
     "User",
+    "User or mail",
     /* MSG_LOGIN_CODE */
     "Code",
     /* MSG_LOGIN_LOGIN */
     "Login",
 
     /* MSG_TOOT_TITLE */
-    "New toot",
-    /* MSG_TOOT_SUBJECT */
-    "CW or subject",
+    "Toot",
+    /* MSG_TOOT_CONTEXT_NEW */
+    "Creating a new toot",
+    /* MSG_TOOT_CONTEXT_MODIFY */
+    "Modify your toot",
+    /* MSG_TOOT_CONTEXT_POLL */
+    "Creating a new poll",
+    /* MSG_TOOT_CONTEXT_REPLY_FORMAT */
+    "Reply to %s's toot\n\nRemember to stay polite and calm,\n and avoid sarcasm.\n -- tone doesn't always come across in text.\nRemember you can be a better person.\xE2\x9D\xA4",
     /* MSG_TOOT_VISIBILITY_PUBLIC */
     "Public",
     /* MSG_TOOT_VISIBILITY_UNLISTED */
@@ -44,8 +51,29 @@ static const char *defaultStrings[MSG_COUNT] = {
     "Direct",
     /* MSG_TOOT_SEND */
     "Toot",
+    /* MSG_TOOT_SEND_MODIFY */
+    "Modify",
+    /* MSG_TOOT_SEND_REPLY */
+    "Reply",
     /* MSG_TOOT_CHARS_FORMAT */
-    "%lu chars",
+    "%lu / Max: %s",
+
+    /* MSG_TOOTMENU_TOOT */
+    "Toot",
+    /* MSG_TOOTMENU_CLEAR */
+    "Clear",
+    /* MSG_TOOTMENU_UNDO */
+    "Undo",
+    /* MSG_TOOTMENU_REDO */
+    "Redo",
+    /* MSG_TOOTMENU_CUT */
+    "Cut",
+    /* MSG_TOOTMENU_COPY */
+    "Copy UTF8",
+    /* MSG_TOOTMENU_PASTE */
+    "Paste UTF8",
+    /* MSG_TOOTMENU_EMOJIBOX */
+    "Emoji Box",
 
     /* MSG_MENU_FRIENDSH3EP */
     "FriendSh3ep",

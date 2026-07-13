@@ -242,6 +242,34 @@ const UBYTE ttl_actionTypes[3] = {
     TTL_HOT_REPLY, TTL_HOT_BOOST, TTL_HOT_FAVORITE
 };
 
+/* Left-aligned, own-toot-only action buttons (post->isOwn) -- plain text,
+ * no per-post counts unlike Reply/Boost/Fave above, so there's no
+ * "build labels" step: render and hot-spot code both just measure/draw
+ * this same array directly, same "single shared copy" reasoning. */
+const UBYTE ttl_ownActionTypes[2] = {
+    TTL_HOT_MODIFY, TTL_HOT_DELETE
+};
+const char *const ttl_ownActionLabels[2] = {
+    "Modify", "Delete"
+};
+
+/* Notifications view's generalized actor/verb prefix -- parameterizes the
+ * exact mechanism the "boosted" line below already uses (reserve one
+ * mini-line, dcMini/dim pen, one %s format string) instead of hardcoding
+ * a single verb, indexed by TTL_NOTIF_* (see fs3etoottimeline.h). NULL
+ * entries draw nothing: TTL_NOTIF_NONE because there's nothing to say
+ * (ordinary toot), TTL_NOTIF_MENTION because the byline already shows the
+ * mentioning author -- a prefix there would just repeat it. */
+static const char *const notifVerbFormat[] = {
+    NULL,                                            /* TTL_NOTIF_NONE */
+    NULL,                                            /* TTL_NOTIF_MENTION */
+    "\xE2\x99\xBB %s boosted your toot",              /* TTL_NOTIF_REBLOG */
+    "\xE2\x98\x85 %s favourited your toot",           /* TTL_NOTIF_FAVOURITE */
+    "%s's poll has ended",                            /* TTL_NOTIF_POLL */
+    "A toot by %s you interacted with was edited",    /* TTL_NOTIF_UPDATE */
+};
+#define TTL_NOTIF_VERBFORMAT_COUNT (sizeof(notifVerbFormat) / sizeof(notifVerbFormat[0]))
+
 /* A zero count draws as a trailing space instead of "0" -- keeps the
  * button from shouting a meaningless zero at every fresh/unboosted toot
  * while still reserving roughly the same slot the digit(s) would take. */
@@ -331,6 +359,20 @@ void ttl_toot_render(TTLData *inst, struct RastPort *rp, TTLPost *post, LONG til
     }
     textX = (WORD)(padLeft + avatarW + avatarGap);
 
+    /* Thread-reply marker: full-height vertical accent line down the left
+     * edge, for posts shown as replies in "discussion mode" (see
+     * TTL_HOT_THREAD / TTLPost.isThreadReply) -- drawn unconditionally (no
+     * style-DC dependency), same as the post-bottom separator line in
+     * ttl_render_item_in_tile, so it survives even a transient
+     * no-style-yet render. Purely decorative, no layout/height impact --
+     * otherwise identical to a normal toot, per the "same layouting as
+     * classic toots" requirement. */
+    if (post->isThreadReply) {
+        SetAPen(rp, (LONG)FS3E_PEN(inst->style, FS3E_COLOR_ACCENT));
+        Move(rp, 2, drawY);
+        Draw(rp, 2, (WORD)(drawY + post->height - 1));
+    }
+
     /* ---- Avatar: draw from cache if available, else placeholder ---- */
     {
         WORD ay = (WORD)(drawY + TTL_POST_PAD_TOP);
@@ -395,7 +437,9 @@ void ttl_toot_render(TTLData *inst, struct RastPort *rp, TTLPost *post, LONG til
 // bdbprintf("ttl_render_tile txtPen:%d\n",txtPen);
             curY = (WORD)(drawY + TTL_POST_PAD_TOP);
 
-            /* "↺ Name boosted" header line (dcMini, dim pen) — reblogs only */
+            /* "↺ Name boosted" header line (dcMini, dim pen) — reblogs only.
+             * Mutually exclusive with the notifications-view prefix line
+             * below -- see TTLPost.notifType's comment. */
             if (post->boostBy && post->boostBy[0]) {
                 char boostLine[128];
 
@@ -404,6 +448,17 @@ void ttl_toot_render(TTLData *inst, struct RastPort *rp, TTLPost *post, LONG til
                 baselineY = (WORD)(curY + inst->miniLineAscent);
                 URPDC_SetDrawColorFromPen(dcMini, inst->screen, dimPen, bgPen);
                 tile_draw_text(inst, rp, textX, baselineY, boostLine, dcMini);
+                curY += inst->miniLineHeight;
+            } else if (post->notifType < TTL_NOTIF_VERBFORMAT_COUNT &&
+                       notifVerbFormat[post->notifType] != NULL) {
+                char notifLine[160];
+
+                snprintf(notifLine, sizeof(notifLine), notifVerbFormat[post->notifType],
+                         (post->notifActorName && post->notifActorName[0])
+                             ? post->notifActorName : "Someone");
+                baselineY = (WORD)(curY + inst->miniLineAscent);
+                URPDC_SetDrawColorFromPen(dcMini, inst->screen, dimPen, bgPen);
+                tile_draw_text(inst, rp, textX, baselineY, notifLine, dcMini);
                 curY += inst->miniLineHeight;
             }
 
@@ -682,6 +737,26 @@ void ttl_toot_render(TTLData *inst, struct RastPort *rp, TTLPost *post, LONG til
                     }
                 }
 
+                /* Thread indicator: short vertical bar + "..." meaning
+                 * "this toot has replies, click to see the discussion" --
+                 * threadRowY was computed once by ttl_toot_layout and is
+                 * reused verbatim here -- never re-derived, same rule as
+                 * pollBlockY above. Not clickable yet (see TTL_HOT_THREAD's
+                 * doc comment) -- layout/render only for now. */
+                if (post->repliesCount > 0 && post->threadRowY > 0) {
+                    LONG accentPen = (LONG)FS3E_PEN(inst->style, FS3E_COLOR_ACCENT);
+                    WORD rowY    = (WORD)(drawY + post->threadRowY);
+                    WORD barBotY = (WORD)(rowY + inst->miniLineHeight - 1);
+
+                    SetAPen(rp, accentPen);
+                    Move(rp, textX, rowY);
+                    Draw(rp, textX, barBotY);
+
+                    URPDC_SetDrawColorFromPen(dcMini, inst->screen, dimPen, bgPen);
+                    tile_draw_text(inst, rp, (WORD)(textX + 6), (WORD)(rowY + inst->miniLineAscent),
+                                   "\xE2\x80\xA2\xE2\x80\xA2\xE2\x80\xA2" /* "•••" */, dcMini);
+                }
+
                 /* Action bar: ↩ Reply N  🔁 Boost N  ⭐/💫 N — right-aligned,
                  * normal font. Same row Y formula, and the same labels/
                  * ttl_actionTypes[], that the hot-spot rects in
@@ -715,6 +790,33 @@ void ttl_toot_render(TTLData *inst, struct RastPort *rp, TTLPost *post, LONG til
                         pos.y = barBaselineY;
                         URPDrawTextUTF8(rp, dcBody, &pos, labels[a], (ULONG)nc);
                         xRight = (WORD)(itemX - TTL_ACTION_GAP);
+                    }
+                }
+
+                /* Modify/Delete -- left-aligned, own toots only. Same bar
+                 * row (barBaselineY recomputed identically to the block
+                 * above) and same ttl_ownActionTypes[]/ttl_ownActionLabels[]
+                 * shared arrays that ttl_toot_build_hotspots measures its
+                 * hot-spot rects from -- see the "single shared copy"
+                 * comment on those arrays' definition. */
+                if (post->isOwn) {
+                    LONG actionPen = (LONG)FS3E_PEN(inst->style, FS3E_COLOR_ACTION_TEXT);
+                    WORD barTopY = (WORD)(drawY + post->height - 1
+                                           - TTL_POST_PAD_BOT - inst->lineHeight);
+                    WORD barBaselineY = (WORD)(barTopY + inst->lineAscent);
+                    WORD xLeft = textX;
+                    int  a;
+                    URPDC_SetDrawColorFromPen(dcBody, inst->screen, actionPen, bgPen);
+                    for (a = 0; a < 2; a++) {
+                        struct URPTextMetric m;
+                        struct URPTextPos pos;
+                        LONG nc = utf8_codepoints_range(ttl_ownActionLabels[a],
+                                     ttl_ownActionLabels[a] + strlen(ttl_ownActionLabels[a]));
+                        URPDC_TextSizeUTF8(dcBody, ttl_ownActionLabels[a], nc, &m);
+                        pos.x = xLeft;
+                        pos.y = barBaselineY;
+                        URPDrawTextUTF8(rp, dcBody, &pos, ttl_ownActionLabels[a], (ULONG)nc);
+                        xLeft = (WORD)(xLeft + m.width + TTL_ACTION_GAP);
                     }
                 }
             }
@@ -864,10 +966,11 @@ void ttl_notify(Class *cl, Object *o, struct GadgetInfo *gi,
 
 void ttl_notify_hotspot(Class *cl, Object *o, struct GadgetInfo *gi,
                          UBYTE type, const char *data, ULONG dataLen,
-                         const char *postId, BOOL favourited, BOOL following)
+                         const char *postId, BOOL favourited, BOOL following,
+                         const char *mediaIds)
 {
     TTLData         *inst = TTL_DATA(cl, o);
-    struct TagItem  tags[7];
+    struct TagItem  tags[8];
     struct opUpdate nmsg;
 
     /* Copy into the gadget-owned buffers first -- see the TTLData comment
@@ -891,6 +994,15 @@ void ttl_notify_hotspot(Class *cl, Object *o, struct GadgetInfo *gi,
         inst->lastHotSpotPostId[0] = '\0';
     }
 
+    if (mediaIds && mediaIds[0]) {
+        ULONG n = (ULONG)strlen(mediaIds);
+        if (n >= sizeof(inst->lastHotSpotMediaIds)) n = sizeof(inst->lastHotSpotMediaIds) - 1;
+        CopyMem((APTR)mediaIds, inst->lastHotSpotMediaIds, n);
+        inst->lastHotSpotMediaIds[n] = '\0';
+    } else {
+        inst->lastHotSpotMediaIds[0] = '\0';
+    }
+
     if (!inst->target) return;
 
     tags[0].ti_Tag  = GA_ID;
@@ -905,7 +1017,9 @@ void ttl_notify_hotspot(Class *cl, Object *o, struct GadgetInfo *gi,
     tags[4].ti_Data = (ULONG)favourited;
     tags[5].ti_Tag  = TTIMELINE_LastHotSpotFollowing;
     tags[5].ti_Data = (ULONG)following;
-    tags[6].ti_Tag  = TAG_DONE;
+    tags[6].ti_Tag  = TTIMELINE_LastHotSpotMediaIds;
+    tags[6].ti_Data = inst->lastHotSpotMediaIds[0] ? (ULONG)inst->lastHotSpotMediaIds : 0;
+    tags[7].ti_Tag  = TAG_DONE;
 
     nmsg.MethodID     = OM_UPDATE;
     nmsg.opu_AttrList = (struct TagItem *)tags;

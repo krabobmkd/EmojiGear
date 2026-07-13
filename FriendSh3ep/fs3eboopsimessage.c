@@ -22,6 +22,7 @@
 #include <intuition/gadgetclass.h>
 #include <gadgets/button.h>
 #include <gadgets/unitexteditor.h>
+#include <gadgets/listbrowser.h>
 
 #include "TitleBarLayout/fs3etitlebar.h"
 #include "TootTimeline/fs3etoottimeline.h"
@@ -50,6 +51,9 @@ extern struct Task *myTask;
 static ULONG delayedAttribs[] = {
     GA_Selected,
 
+    /* from listbrowser.gadget (fs3eloginview.c's accounts list) */
+    LISTBROWSER_Selected,
+
     /* from UniTextEditor gadget */
     UTEDN_CursorMoved,
     UTEDN_TextChanged,
@@ -63,6 +67,8 @@ static ULONG delayedAttribs[] = {
     UTED_CursorColumn,
     UTED_ScrollLeft,
     UTED_ScrollTop,
+    UTED_SetPrivateActivation,
+    UTED_InternalRawKey_Code,
 
     TTIMELINE_ScrollDomainChanged,
     TTIMELINE_PostClicked,
@@ -73,7 +79,7 @@ static ULONG delayedAttribs[] = {
     TTIMELINE_LastHotSpotFavourited,
     TTIMELINE_LastHotSpotFollowing,
     TTIMELINE_HotSpotNotify,
-
+    TTIMELINE_LastHotSpotMediaIds,
 
 };
 

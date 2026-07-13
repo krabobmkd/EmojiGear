@@ -32,6 +32,8 @@
 #define TT_THEME          "THEME"          /* theme name string                   */
 #define TT_WINDOW         "WINDOW"         /* "left:top:width:height"             */
 #define TT_WINDOWALT      "WINDOWALT"      /* "left:top:width:height" ZipWindow alternate */
+#define TT_TOOTWINDOW     "TOOTWINDOW"     /* "left:top:width:height" New toot sub-window */
+#define TT_EMOJIBOXWINDOW "EMOJIBOXWINDOW" /* "left:top:width:height" Emoji box sub-window */
 #define TT_CACHEPATH      "CACHEPATH"      /* media cache directory path          */
 #define TT_USERDATAPATH   "USERDATAPATH"   /* user data directory path            */
 #define TT_MAXCACHESIZE   "MAXCACHESIZEMB" /* max cache size, megabytes           */
@@ -187,6 +189,38 @@ void FS3ESettings_Load(FS3ESettings *s)
             }
         }
     }
+
+    /* New toot / emoji box sub-window positions -- read into
+     * app->tootView/emojiBoxWindow's own left/top/width/height fields
+     * *before* their respective _Create() calls run later in main(), so
+     * each _Create()'s save-across-memset dance (see fs3etootview.c/
+     * fs3eemojibox.c) carries these through, and the first _Open() applies
+     * them exactly like a remembered mid-session position would. */
+    if (app) {
+        val = ToolTypePrefs_Get(TT_TOOTWINDOW);
+        if (val && val[0] != '\0') {
+            int l = 0, t = 0, w = 0, h = 0;
+            sscanf(val, "%d:%d:%d:%d", &l, &t, &w, &h);
+            if (w > 0 && h > 0) {
+                app->tootView.left   = (LONG)l;
+                app->tootView.top    = (LONG)t;
+                app->tootView.width  = (LONG)w;
+                app->tootView.height = (LONG)h;
+            }
+        }
+
+        val = ToolTypePrefs_Get(TT_EMOJIBOXWINDOW);
+        if (val && val[0] != '\0') {
+            int l = 0, t = 0, w = 0, h = 0;
+            sscanf(val, "%d:%d:%d:%d", &l, &t, &w, &h);
+            if (w > 0 && h > 0) {
+                app->emojiBoxWindow.left   = (LONG)l;
+                app->emojiBoxWindow.top    = (LONG)t;
+                app->emojiBoxWindow.width  = (LONG)w;
+                app->emojiBoxWindow.height = (LONG)h;
+            }
+        }
+    }
 }
 
 void FS3ESettings_Save(FS3ESettings *s)
@@ -275,6 +309,28 @@ void FS3ESettings_Save(FS3ESettings *s)
         ToolTypePrefs_Set(TT_WINDOWALT, buf);
     } else {
         ToolTypePrefs_Remove(TT_WINDOWALT);
+    }
+
+    /* New toot / emoji box sub-window positions -- refreshed from the
+     * live window first in case either is still open at quit time
+     * (otherwise their left/top/width/height fields already hold the
+     * last-known position, set by the respective _Close()). */
+    if (app) {
+        FS3ETootView_GetWindowPos(&app->tootView);
+        if (app->tootView.width > 0 && app->tootView.height > 0) {
+            snprintf(buf, sizeof(buf), "%d:%d:%d:%d",
+                     (int)app->tootView.left,  (int)app->tootView.top,
+                     (int)app->tootView.width, (int)app->tootView.height);
+            ToolTypePrefs_Set(TT_TOOTWINDOW, buf);
+        }
+
+        FS3EEmojiBoxWindow_GetWindowPos(&app->emojiBoxWindow);
+        if (app->emojiBoxWindow.width > 0 && app->emojiBoxWindow.height > 0) {
+            snprintf(buf, sizeof(buf), "%d:%d:%d:%d",
+                     (int)app->emojiBoxWindow.left,  (int)app->emojiBoxWindow.top,
+                     (int)app->emojiBoxWindow.width, (int)app->emojiBoxWindow.height);
+            ToolTypePrefs_Set(TT_EMOJIBOXWINDOW, buf);
+        }
     }
 
     ToolTypePrefs_Save();

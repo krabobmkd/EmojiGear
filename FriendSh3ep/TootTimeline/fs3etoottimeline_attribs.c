@@ -117,8 +117,13 @@ ULONG ttl_apply_tags(Class *cl, Object *o, struct opSet *msg, int couldRefreshDr
                         /* Independent copy per targeted channel: a post's
                          * node can only ever be linked into one list, and
                          * its timelineY is meaningless outside the
-                         * channel it was laid out for. */
-                        post = ttl_post_alloc(setup);
+                         * channel it was laid out for. FOLLOW/FOLLOW_REQUEST
+                         * notifications carry no status at all, so they get
+                         * TTLNotifFollow_Class's much shorter row instead of
+                         * a toot -- see TTLPostSetup.notifType. */
+                        post = (setup->notifType == TTL_NOTIF_FOLLOW ||
+                                setup->notifType == TTL_NOTIF_FOLLOW_REQUEST)
+                             ? ttl_notif_follow_alloc(setup) : ttl_post_alloc(setup);
                         if (!post) continue;
 
                         channel = &inst->channels[ch];
@@ -171,7 +176,9 @@ ULONG ttl_apply_tags(Class *cl, Object *o, struct opSet *msg, int couldRefreshDr
 
                         if (!(setup->viewModeBits & (1UL << ch))) continue;
 
-                        post = ttl_post_alloc(setup);
+                        post = (setup->notifType == TTL_NOTIF_FOLLOW ||
+                                setup->notifType == TTL_NOTIF_FOLLOW_REQUEST)
+                             ? ttl_notif_follow_alloc(setup) : ttl_post_alloc(setup);
                         if (!post) continue;
 
                         channel = &inst->channels[ch];
@@ -276,6 +283,47 @@ ULONG ttl_apply_tags(Class *cl, Object *o, struct opSet *msg, int couldRefreshDr
                             if (ch == inst->viewMode)
                                 ttl_tiles_invalidate_range(inst,
                                     post->timelineY, post->timelineY + post->height);
+                            redraw = TRUE;
+                            break; /* unique within this channel's list */
+                        }
+                    }
+                    used = 1;
+                }
+                break;
+            }
+
+            case TTIMELINE_RemovePost: {
+                const char *postId = (const char *)tag->ti_Data;
+                if (postId && postId[0]) {
+                    ULONG ch;
+                    for (ch = 0; ch < TTIMELINE_NUM_VIEWMODES; ch++) {
+                        TTLChannel *channel = &inst->channels[ch];
+                        TTLPost    *post;
+
+                        /* Same "search every channel" reasoning as
+                         * TTIMELINE_UpdatePost above -- the same status
+                         * can be present in more than one channel
+                         * independently (see TTLPostSetup.viewModeBits). */
+                        for (post = (TTLPost *)channel->posts.mlh_Head;
+                             post->node.mln_Succ;
+                             post = (TTLPost *)post->node.mln_Succ)
+                        {
+                            if (!post->postId ||
+                                strcmp(post->postId, postId) != 0)
+                                continue;
+
+                            /* Removing a post shifts every post below it,
+                             * unlike TTIMELINE_UpdatePost's in-place field
+                             * patch -- rebuild the whole channel's Y
+                             * positions, not just invalidate this post's
+                             * old rect. */
+                            Remove((struct Node *)&post->node);
+                            ttl_post_free(inst, post);
+                            if (channel->postCount > 0) channel->postCount--;
+                            ttl_rebuild_ypositions(inst, ch);
+
+                            if (ch == inst->viewMode)
+                                ttl_tiles_invalidate_all(inst);
                             redraw = TRUE;
                             break; /* unique within this channel's list */
                         }
@@ -413,6 +461,16 @@ ULONG ttl_apply_tags(Class *cl, Object *o, struct opSet *msg, int couldRefreshDr
                 redraw = TRUE;
                 used = 1;
                 break;
+
+            case TTIMELINE_ClearAllChannels:
+            {
+                ULONG ch;
+                for (ch = 0; ch < TTIMELINE_NUM_VIEWMODES; ch++)
+                    ttl_clear_channel(inst, ch);
+                redraw = TRUE;
+                used = 1;
+                break;
+            }
 
             case TTIMELINE_ViewMode:
                 /* Out-of-range values are ignored. Waiting is purely

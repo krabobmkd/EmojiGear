@@ -138,9 +138,23 @@ FS3ENetVerifyAccountReq *FS3ENetVerifyAccountReq_Alloc(const char *apiBaseUrl,
     return req;
 }
 
+FS3ENetInstanceInfoReq *FS3ENetInstanceInfoReq_Alloc(const char *apiBaseUrl)
+{
+    ULONG total = sizeof(FS3ENetInstanceInfoReq) + FS3ENet_PackLen(apiBaseUrl);
+    FS3ENetInstanceInfoReq *req =
+        (FS3ENetInstanceInfoReq *)AllocVec(total, MEMF_ANY | MEMF_PUBLIC);
+    char *p;
+
+    if (!req) return NULL;
+    p = (char *)req + sizeof(*req);
+    FS3ENet_PackStr(&req->fs3eii_ApiBaseUrl, &p, apiBaseUrl);
+    return req;
+}
+
 FS3ENetTimelineReq *FS3ENetTimelineReq_Alloc(ULONG viewModeBit,
-    ULONG pageDirection, const char *apiBaseUrl, const char *accessToken,
-    const char *timeline, const char *maxId, const char *minId)
+    ULONG pageDirection, ULONG accountGeneration, ULONG responseShape,
+    const char *apiBaseUrl, const char *accessToken, const char *timeline,
+    const char *maxId, const char *minId)
 {
     ULONG total = sizeof(FS3ENetTimelineReq)
                 + FS3ENet_PackLen(apiBaseUrl)
@@ -153,8 +167,10 @@ FS3ENetTimelineReq *FS3ENetTimelineReq_Alloc(ULONG viewModeBit,
     char *p;
 
     if (!req) return NULL;
-    req->fs3et_ViewModeBit   = viewModeBit;
-    req->fs3et_PageDirection = pageDirection;
+    req->fs3et_ViewModeBit      = viewModeBit;
+    req->fs3et_PageDirection    = pageDirection;
+    req->fs3et_AccountGeneration = accountGeneration;
+    req->fs3et_ResponseShape    = responseShape;
     p = (char *)req + sizeof(*req);
     FS3ENet_PackStr(&req->fs3et_ApiBaseUrl,   &p, apiBaseUrl);
     FS3ENet_PackStr(&req->fs3et_AccessToken,  &p, accessToken);
@@ -166,14 +182,16 @@ FS3ENetTimelineReq *FS3ENetTimelineReq_Alloc(ULONG viewModeBit,
 
 FS3ENetPostStatusReq *FS3ENetPostStatusReq_Alloc(
     const char *apiBaseUrl, const char *accessToken,
-    const char *content, const char *visibility, const char *spoiler)
+    const char *content, const char *visibility, const char *spoiler,
+    const char *inReplyToId)
 {
     ULONG total = sizeof(FS3ENetPostStatusReq)
                 + FS3ENet_PackLen(apiBaseUrl)
                 + FS3ENet_PackLen(accessToken)
                 + FS3ENet_PackLen(content)
                 + FS3ENet_PackLen(visibility)
-                + FS3ENet_PackLen(spoiler);
+                + FS3ENet_PackLen(spoiler)
+                + FS3ENet_PackLen(inReplyToId);
     FS3ENetPostStatusReq *req =
         (FS3ENetPostStatusReq *)AllocVec(total, MEMF_ANY | MEMF_PUBLIC);
     char *p;
@@ -185,6 +203,85 @@ FS3ENetPostStatusReq *FS3ENetPostStatusReq_Alloc(
     FS3ENet_PackStr(&req->fs3ep_Content,      &p, content);
     FS3ENet_PackStr(&req->fs3ep_Visibility,   &p, visibility);
     FS3ENet_PackStr(&req->fs3ep_Spoiler,      &p, spoiler);
+    FS3ENet_PackStr(&req->fs3ep_InReplyToId,  &p, inReplyToId);
+    return req;
+}
+
+FS3ENetEditStatusReq *FS3ENetEditStatusReq_Alloc(
+    const char *apiBaseUrl, const char *accessToken,
+    const char *statusId, const char *content,
+    const char *const *mediaIds, ULONG mediaCount)
+{
+    ULONG total = sizeof(FS3ENetEditStatusReq)
+                + FS3ENet_PackLen(apiBaseUrl)
+                + FS3ENet_PackLen(accessToken)
+                + FS3ENet_PackLen(statusId)
+                + FS3ENet_PackLen(content);
+    FS3ENetEditStatusReq *req;
+    char *p;
+    ULONG i;
+
+    if (mediaCount > FS3ENET_MAX_MEDIA) mediaCount = FS3ENET_MAX_MEDIA;
+    for (i = 0; i < mediaCount; i++)
+        total += FS3ENet_PackLen(mediaIds ? mediaIds[i] : NULL);
+
+    req = (FS3ENetEditStatusReq *)AllocVec(total, MEMF_ANY | MEMF_PUBLIC);
+    if (!req) return NULL;
+
+    p = (char *)req + sizeof(*req);
+    FS3ENet_PackStr(&req->fs3ee_ApiBaseUrl,  &p, apiBaseUrl);
+    FS3ENet_PackStr(&req->fs3ee_AccessToken, &p, accessToken);
+    FS3ENet_PackStr(&req->fs3ee_StatusId,    &p, statusId);
+    FS3ENet_PackStr(&req->fs3ee_Content,     &p, content);
+    for (i = 0; i < mediaCount; i++)
+        FS3ENet_PackStr(&req->fs3ee_MediaIds[i], &p, mediaIds ? mediaIds[i] : NULL);
+    for (; i < FS3ENET_MAX_MEDIA; i++)
+        req->fs3ee_MediaIds[i] = NULL;
+    req->fs3ee_MediaCount = mediaCount;
+
+    return req;
+}
+
+FS3ENetDeleteStatusReq *FS3ENetDeleteStatusReq_Alloc(
+    const char *apiBaseUrl, const char *accessToken, const char *statusId)
+{
+    ULONG total = sizeof(FS3ENetDeleteStatusReq)
+                + FS3ENet_PackLen(apiBaseUrl)
+                + FS3ENet_PackLen(accessToken)
+                + FS3ENet_PackLen(statusId);
+    FS3ENetDeleteStatusReq *req =
+        (FS3ENetDeleteStatusReq *)AllocVec(total, MEMF_ANY | MEMF_PUBLIC);
+    char *p;
+
+    if (!req) return NULL;
+    p = (char *)req + sizeof(*req);
+    FS3ENet_PackStr(&req->fs3ed_ApiBaseUrl,  &p, apiBaseUrl);
+    FS3ENet_PackStr(&req->fs3ed_AccessToken, &p, accessToken);
+    FS3ENet_PackStr(&req->fs3ed_StatusId,    &p, statusId);
+    return req;
+}
+
+FS3ENetNotificationsReq *FS3ENetNotificationsReq_Alloc(ULONG pageDirection,
+    ULONG accountGeneration, const char *apiBaseUrl, const char *accessToken,
+    const char *maxId, const char *minId)
+{
+    ULONG total = sizeof(FS3ENetNotificationsReq)
+                + FS3ENet_PackLen(apiBaseUrl)
+                + FS3ENet_PackLen(accessToken)
+                + FS3ENet_PackLen(maxId)
+                + FS3ENet_PackLen(minId);
+    FS3ENetNotificationsReq *req =
+        (FS3ENetNotificationsReq *)AllocVec(total, MEMF_ANY | MEMF_PUBLIC);
+    char *p;
+
+    if (!req) return NULL;
+    req->fs3en_PageDirection     = pageDirection;
+    req->fs3en_AccountGeneration = accountGeneration;
+    p = (char *)req + sizeof(*req);
+    FS3ENet_PackStr(&req->fs3en_ApiBaseUrl,  &p, apiBaseUrl);
+    FS3ENet_PackStr(&req->fs3en_AccessToken, &p, accessToken);
+    FS3ENet_PackStr(&req->fs3en_MaxId,       &p, maxId);
+    FS3ENet_PackStr(&req->fs3en_MinId,       &p, minId);
     return req;
 }
 
@@ -706,6 +803,49 @@ static void FS3ENet_HandleVerifyAccount(FS3ENetMessage *fs3em)
     fs3em->fs3em_Result  = FS3ENETR_OK;
 }
 
+/* FS3ENETQ_INSTANCE_INFO — the server's per-toot character limit. */
+static void FS3ENet_HandleInstanceInfo(FS3ENetMessage *fs3em)
+{
+    FS3ENetInstanceInfoReq   *req = (FS3ENetInstanceInfoReq *)fs3em->fs3em_Data;
+    FS3ENetInstanceInfoReply *reply;
+    ULONG maxChars;
+    BOOL  known;
+
+    if (!req || fs3em->fs3em_DataLen < sizeof(*req))
+    {
+        printf("net: INSTANCE_INFO parse error\n");
+        fs3em->fs3em_Result = FS3ENETR_PARSE_ERROR;
+        return;
+    }
+
+    printf("net: INSTANCE_INFO server=%s\n", req->fs3eii_ApiBaseUrl ? req->fs3eii_ApiBaseUrl : "NULL");
+
+    /* Always fills maxChars with *some* usable value (falls back to
+     * FS3EMASTODON_DEFAULT_MAX_CHARS) so a network hiccup here never
+     * surfaces as an error the GUI has to handle specially -- but the
+     * return value says whether that's a real, server-confirmed limit or
+     * just the fallback guess, and the reply carries that distinction
+     * through as fs3eii_Known so the GUI doesn't present a guess as fact. */
+    known = FS3EMastodon_GetInstanceInfo(req->fs3eii_ApiBaseUrl, &maxChars);
+
+    reply = (FS3ENetInstanceInfoReply *)AllocVec(sizeof(FS3ENetInstanceInfoReply),
+                                                  MEMF_ANY | MEMF_PUBLIC);
+    if (!reply)
+    {
+        fs3em->fs3em_Result = FS3ENETR_NETWORK_ERROR;
+        return;
+    }
+    reply->fs3eii_MaxChars = maxChars;
+    reply->fs3eii_Known    = known;
+
+    printf("net: INSTANCE_INFO done, maxChars=%lu known=%d\n",
+           (unsigned long)maxChars, (int)known);
+    FreeVec(fs3em->fs3em_Data);
+    fs3em->fs3em_Data    = reply;
+    fs3em->fs3em_DataLen = sizeof(*reply);
+    fs3em->fs3em_Result  = FS3ENETR_OK;
+}
+
 /* FS3ENETQ_FETCH_IMAGE — check disk cache, fetch on miss, reply with path. */
 static void FS3ENet_HandleFetchImage(FS3ENetMessage *fs3em)
 {
@@ -912,6 +1052,226 @@ static void StripHTML(const char *html, char *out, ULONG outSize)
 /* FS3ENETQ_TIMELINE — fetch statuses and pack them into a flat reply block. */
 #define MAX_STATUSES_TIMELINE 40
 
+/* Extracts every FS3ENetStatus field EXCEPT fmas_BoostBy/fmas_BoostByAcct
+ * (reblog-booster identity -- meaningless off a notification's embedded
+ * status, which is never itself a reblog wrapper for this app's purposes;
+ * callers needing that pair handle it themselves, see the "src != item"
+ * blocks in FS3ENet_HandleTimeline). item/src are pre-resolved by the
+ * caller: for a genuine reblog-unwrapped timeline entry they differ
+ * (content/media/poll/counts live on src, id/created_at on item); pass the
+ * same pointer for both when there's no such wrapper (a notification's
+ * embedded status, or any plain non-reblog status). Sizing pass -- see
+ * FS3ENet_FillStatusFields for the matching fill pass, kept as a
+ * deliberately separate function (not a single size-or-fill-by-flag one)
+ * so each stays a plain top-to-bottom read of the fields it's summing/
+ * writing, same two-pass shape the rest of this file already uses. */
+static ULONG FS3ENet_SizeStatusFields(const cJSON *item, const cJSON *src)
+{
+    ULONG total = sizeof(FS3ENetStatus);
+    const cJSON *acct = cJSON_GetObjectItemCaseSensitive(src, "account");
+    const cJSON *v;
+
+    v = acct ? cJSON_GetObjectItemCaseSensitive(acct, "display_name") : NULL;
+    total += (v && cJSON_IsString(v) && v->valuestring) ? strlen(v->valuestring) + 1 : 1;
+
+    v = acct ? cJSON_GetObjectItemCaseSensitive(acct, "acct") : NULL;
+    total += (v && cJSON_IsString(v) && v->valuestring) ? strlen(v->valuestring) + 1 : 1;
+
+    /* reserve original HTML length for stripped content (stripped ≤ original) */
+    v = cJSON_GetObjectItemCaseSensitive(src, "content");
+    total += (v && cJSON_IsString(v) && v->valuestring) ? strlen(v->valuestring) + 1 : 1;
+
+    v = cJSON_GetObjectItemCaseSensitive(item, "created_at");
+    total += (v && cJSON_IsString(v) && v->valuestring) ? strlen(v->valuestring) + 1 : 1;
+
+    v = acct ? cJSON_GetObjectItemCaseSensitive(acct, "avatar") : NULL;
+    total += (v && cJSON_IsString(v) && v->valuestring) ? strlen(v->valuestring) + 1 : 1;
+
+    v = cJSON_GetObjectItemCaseSensitive(item, "id");
+    total += (v && cJSON_IsString(v) && v->valuestring) ? strlen(v->valuestring) + 1 : 1;
+
+    /* media_attachments belongs to src (the reblogged status for boosts),
+     * same as "content" above. */
+    v = cJSON_GetObjectItemCaseSensitive(src, "media_attachments");
+    {
+        int mCount = (v && cJSON_IsArray(v)) ? cJSON_GetArraySize(v) : 0;
+        int mi;
+        if (mCount > FS3ENET_MAX_MEDIA) mCount = FS3ENET_MAX_MEDIA;
+        for (mi = 0; mi < mCount; mi++) {
+            const cJSON *att  = cJSON_GetArrayItem(v, mi);
+            const cJSON *purl = att ? cJSON_GetObjectItemCaseSensitive(att, "preview_url") : NULL;
+            const cJSON *aid  = att ? cJSON_GetObjectItemCaseSensitive(att, "id") : NULL;
+            if (!purl || !cJSON_IsString(purl) || !purl->valuestring)
+                purl = att ? cJSON_GetObjectItemCaseSensitive(att, "url") : NULL;
+            total += (purl && cJSON_IsString(purl) && purl->valuestring)
+                   ? strlen(purl->valuestring) + 1 : 1;
+            total += (aid && cJSON_IsString(aid) && aid->valuestring)
+                   ? strlen(aid->valuestring) + 1 : 1;
+        }
+    }
+
+    /* Poll -- belongs to src same as media_attachments/content above;
+     * mutually exclusive with media_attachments in practice (Mastodon
+     * disallows both on one status), but sized independently either way. */
+    v = cJSON_GetObjectItemCaseSensitive(src, "poll");
+    if (v && !cJSON_IsNull(v)) {
+        const cJSON *options = cJSON_GetObjectItemCaseSensitive(v, "options");
+        int oCount = (options && cJSON_IsArray(options)) ? cJSON_GetArraySize(options) : 0;
+        int oi;
+        if (oCount > FS3ENET_MAX_POLL_OPTIONS) oCount = FS3ENET_MAX_POLL_OPTIONS;
+        for (oi = 0; oi < oCount; oi++) {
+            const cJSON *opt   = cJSON_GetArrayItem(options, oi);
+            const cJSON *title = opt ? cJSON_GetObjectItemCaseSensitive(opt, "title") : NULL;
+            total += (title && cJSON_IsString(title) && title->valuestring)
+                   ? strlen(title->valuestring) + 1 : 1;
+        }
+    }
+
+    return total;
+}
+
+/* Fill pass matching FS3ENet_SizeStatusFields -- see its comment for the
+ * item/src contract and what's deliberately excluded (the boostBy pair).
+ * stripped/strippedSize is caller-owned scratch space for StripHTML (not
+ * declared locally here so a caller processing many items in a loop, like
+ * FS3ENet_HandleTimeline's pass 2, can reuse one buffer instead of paying
+ * for it on every call). */
+static void FS3ENet_FillStatusFields(const cJSON *item, const cJSON *src,
+                                      FS3ENetStatus *dst, char **p,
+                                      char *stripped, ULONG strippedSize)
+{
+    const cJSON *acct = cJSON_GetObjectItemCaseSensitive(src, "account");
+    const cJSON *v;
+    const char *str;
+
+    v = acct ? cJSON_GetObjectItemCaseSensitive(acct, "display_name") : NULL;
+    str = (v && cJSON_IsString(v)) ? v->valuestring : "";
+    FS3ENet_PackStrClean(&dst->fmas_DisplayName, p, str);
+
+    v = acct ? cJSON_GetObjectItemCaseSensitive(acct, "acct") : NULL;
+    str = (v && cJSON_IsString(v)) ? v->valuestring : "";
+    FS3ENet_PackStr(&dst->fmas_Acct, p, str);
+
+    v = cJSON_GetObjectItemCaseSensitive(src, "content");
+    str = (v && cJSON_IsString(v)) ? v->valuestring : "";
+    StripHTML(str, stripped, strippedSize);
+    FS3ENet_PackStr(&dst->fmas_Content, p, stripped);
+
+    v = cJSON_GetObjectItemCaseSensitive(item, "created_at");
+    str = (v && cJSON_IsString(v)) ? v->valuestring : "";
+    FS3ENet_PackStr(&dst->fmas_CreatedAt, p, str);
+
+    v = acct ? cJSON_GetObjectItemCaseSensitive(acct, "avatar") : NULL;
+    str = (v && cJSON_IsString(v)) ? v->valuestring : "";
+    FS3ENet_PackStr(&dst->fmas_AvatarURL, p, str);
+
+    v = cJSON_GetObjectItemCaseSensitive(item, "id");
+    str = (v && cJSON_IsString(v)) ? v->valuestring : "";
+    FS3ENet_PackStr(&dst->fmas_Id, p, str);
+
+    /* media_attachments -- see the matching block in FS3ENet_SizeStatusFields. */
+    v = cJSON_GetObjectItemCaseSensitive(src, "media_attachments");
+    {
+        int mCount = (v && cJSON_IsArray(v)) ? cJSON_GetArraySize(v) : 0;
+        int mi;
+        if (mCount > FS3ENET_MAX_MEDIA) mCount = FS3ENET_MAX_MEDIA;
+        for (mi = 0; mi < mCount; mi++) {
+            const cJSON *att  = cJSON_GetArrayItem(v, mi);
+            const cJSON *purl = att ? cJSON_GetObjectItemCaseSensitive(att, "preview_url") : NULL;
+            const cJSON *aid  = att ? cJSON_GetObjectItemCaseSensitive(att, "id") : NULL;
+            const cJSON *typeV;
+            const char  *typeStr;
+            if (!purl || !cJSON_IsString(purl) || !purl->valuestring)
+                purl = att ? cJSON_GetObjectItemCaseSensitive(att, "url") : NULL;
+            str = (purl && cJSON_IsString(purl)) ? purl->valuestring : "";
+            FS3ENet_PackStr(&dst->fmas_MediaUrls[mi], p, str);
+
+            /* Needed to resend as media_ids[] on a PUT edit so existing
+             * attachments survive a text-only edit -- see
+             * FS3ENetStatus.fmas_MediaIds. */
+            str = (aid && cJSON_IsString(aid)) ? aid->valuestring : "";
+            FS3ENet_PackStr(&dst->fmas_MediaIds[mi], p, str);
+
+            /* "image"/"video"/"gifv"/"audio"/"unknown" -- lets the GUI
+             * skip fetching a thumbnail for audio entirely instead of
+             * routing its (fallback, no-preview) full file URL into the
+             * image decoder. */
+            typeV   = att ? cJSON_GetObjectItemCaseSensitive(att, "type") : NULL;
+            typeStr = (typeV && cJSON_IsString(typeV)) ? typeV->valuestring : "";
+            if      (strcmp(typeStr, "image") == 0) dst->fmas_MediaKind[mi] = FS3ENET_MEDIAKIND_IMAGE;
+            else if (strcmp(typeStr, "video") == 0) dst->fmas_MediaKind[mi] = FS3ENET_MEDIAKIND_VIDEO;
+            else if (strcmp(typeStr, "gifv")  == 0) dst->fmas_MediaKind[mi] = FS3ENET_MEDIAKIND_GIFV;
+            else if (strcmp(typeStr, "audio") == 0) dst->fmas_MediaKind[mi] = FS3ENET_MEDIAKIND_AUDIO;
+            else                                     dst->fmas_MediaKind[mi] = FS3ENET_MEDIAKIND_UNKNOWN;
+        }
+        for (; mi < FS3ENET_MAX_MEDIA; mi++) {
+            dst->fmas_MediaUrls[mi] = NULL;
+            dst->fmas_MediaIds[mi]  = NULL;
+            dst->fmas_MediaKind[mi] = FS3ENET_MEDIAKIND_UNKNOWN;
+        }
+        dst->fmas_MediaCount = (ULONG)mCount;
+        if (mCount > 0)
+            printf("net: status id=%s mediaCount=%d mediaIds[0]=%s\n",
+                   dst->fmas_Id ? dst->fmas_Id : "?",
+                   mCount,
+                   dst->fmas_MediaIds[0] ? dst->fmas_MediaIds[0] : "(null)");
+    }
+
+    /* Poll -- see the matching block in FS3ENet_SizeStatusFields. */
+    v = cJSON_GetObjectItemCaseSensitive(src, "poll");
+    if (v && !cJSON_IsNull(v)) {
+        const cJSON *options = cJSON_GetObjectItemCaseSensitive(v, "options");
+        int oCount = (options && cJSON_IsArray(options)) ? cJSON_GetArraySize(options) : 0;
+        int oi;
+        const cJSON *ev;
+        if (oCount > FS3ENET_MAX_POLL_OPTIONS) oCount = FS3ENET_MAX_POLL_OPTIONS;
+        for (oi = 0; oi < oCount; oi++) {
+            const cJSON *opt   = cJSON_GetArrayItem(options, oi);
+            const cJSON *title = opt ? cJSON_GetObjectItemCaseSensitive(opt, "title") : NULL;
+            const cJSON *votes = opt ? cJSON_GetObjectItemCaseSensitive(opt, "votes_count") : NULL;
+            str = (title && cJSON_IsString(title)) ? title->valuestring : "";
+            FS3ENet_PackStr(&dst->fmas_PollOptionTitles[oi], p, str);
+            dst->fmas_PollOptionVotes[oi] = (votes && cJSON_IsNumber(votes)) ? (ULONG)votes->valueint : 0;
+        }
+        for (; oi < FS3ENET_MAX_POLL_OPTIONS; oi++)
+            dst->fmas_PollOptionTitles[oi] = NULL;
+        dst->fmas_PollOptionCount = (ULONG)oCount;
+
+        ev = cJSON_GetObjectItemCaseSensitive(v, "votes_count");
+        dst->fmas_PollVotesCount = (ev && cJSON_IsNumber(ev)) ? (ULONG)ev->valueint : 0;
+        ev = cJSON_GetObjectItemCaseSensitive(v, "expired");
+        dst->fmas_PollExpired = (ev && cJSON_IsTrue(ev)) ? TRUE : FALSE;
+        ev = cJSON_GetObjectItemCaseSensitive(v, "multiple");
+        dst->fmas_PollMultiple = (ev && cJSON_IsTrue(ev)) ? TRUE : FALSE;
+    } else {
+        ULONG oi;
+        for (oi = 0; oi < FS3ENET_MAX_POLL_OPTIONS; oi++)
+            dst->fmas_PollOptionTitles[oi] = NULL;
+        dst->fmas_PollOptionCount = 0;
+        dst->fmas_PollVotesCount = 0;
+        dst->fmas_PollExpired = FALSE;
+        dst->fmas_PollMultiple = FALSE;
+    }
+
+    /* Action-bar counts/state -- read from src (see the field comment in
+     * fs3enet.h: for reblogs these live on the boosted status, not the
+     * outer reblog wrapper). */
+    v = cJSON_GetObjectItemCaseSensitive(src, "replies_count");
+    dst->fmas_RepliesCount = (v && cJSON_IsNumber(v)) ? (ULONG)v->valueint : 0;
+
+    v = cJSON_GetObjectItemCaseSensitive(src, "reblogs_count");
+    dst->fmas_ReblogsCount = (v && cJSON_IsNumber(v)) ? (ULONG)v->valueint : 0;
+
+    v = cJSON_GetObjectItemCaseSensitive(src, "favourites_count");
+    dst->fmas_FavouritesCount = (v && cJSON_IsNumber(v)) ? (ULONG)v->valueint : 0;
+
+    v = cJSON_GetObjectItemCaseSensitive(src, "favourited");
+    dst->fmas_Favourited = (v && cJSON_IsTrue(v)) ? TRUE : FALSE;
+
+    v = cJSON_GetObjectItemCaseSensitive(src, "reblogged");
+    dst->fmas_Reblogged = (v && cJSON_IsTrue(v)) ? TRUE : FALSE;
+}
+
 static void FS3ENet_HandleTimeline(FS3ENetMessage *fs3em)
 {
     FS3ENetTimelineReq   *req = (FS3ENetTimelineReq *)fs3em->fs3em_Data;
@@ -955,7 +1315,7 @@ static void FS3ENet_HandleTimeline(FS3ENetMessage *fs3em)
 
         if (!FS3EMastodon_GetTimeline(req->fs3et_ApiBaseUrl,
                 req->fs3et_AccessToken,
-                timelineWithPage, &json)) {
+                timelineWithPage, req->fs3et_ResponseShape, &json)) {
             printf("net: TIMELINE GetTimeline failed\n");
             fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
             return;
@@ -969,36 +1329,18 @@ static void FS3ENet_HandleTimeline(FS3ENetMessage *fs3em)
          * The booster is item.account.  For original posts reblog is null/absent. */
         const cJSON *reblog = cJSON_GetObjectItemCaseSensitive(item, "reblog");
         const cJSON *src    = (reblog && !cJSON_IsNull(reblog)) ? reblog : item;
-        const cJSON *acct   = cJSON_GetObjectItemCaseSensitive(src,  "account");
         const cJSON *bAcct  = cJSON_GetObjectItemCaseSensitive(item, "account");
         const cJSON *v;
 
         if (count >= MAX_STATUSES_TIMELINE) break;
-        total += sizeof(FS3ENetStatus);
 
-        v = acct ? cJSON_GetObjectItemCaseSensitive(acct, "display_name") : NULL;
-        total += (v && cJSON_IsString(v) && v->valuestring) ? strlen(v->valuestring) + 1 : 1;
-
-        v = acct ? cJSON_GetObjectItemCaseSensitive(acct, "acct") : NULL;
-        total += (v && cJSON_IsString(v) && v->valuestring) ? strlen(v->valuestring) + 1 : 1;
-
-        /* reserve original HTML length for stripped content (stripped ≤ original) */
-        v = cJSON_GetObjectItemCaseSensitive(src, "content");
-        total += (v && cJSON_IsString(v) && v->valuestring) ? strlen(v->valuestring) + 1 : 1;
-
-        v = cJSON_GetObjectItemCaseSensitive(item, "created_at");
-        total += (v && cJSON_IsString(v) && v->valuestring) ? strlen(v->valuestring) + 1 : 1;
-
-        v = acct ? cJSON_GetObjectItemCaseSensitive(acct, "avatar") : NULL;
-        total += (v && cJSON_IsString(v) && v->valuestring) ? strlen(v->valuestring) + 1 : 1;
-
-        v = cJSON_GetObjectItemCaseSensitive(item, "id");
-        total += (v && cJSON_IsString(v) && v->valuestring) ? strlen(v->valuestring) + 1 : 1;
+        total += FS3ENet_SizeStatusFields(item, src);
 
         /* booster display_name + acct (empty strings for non-reblogs) --
          * acct is what a TTL_HOT_AVATAR click on the "X boosted" line
          * actually needs (see TTLPost.boostByAcct): the display name
-         * alone can't be looked up via /api/v1/accounts/lookup. */
+         * alone can't be looked up via /api/v1/accounts/lookup. Not part
+         * of FS3ENet_SizeStatusFields -- see its comment. */
         if (src != item) {
             v = bAcct ? cJSON_GetObjectItemCaseSensitive(bAcct, "display_name") : NULL;
             total += (v && cJSON_IsString(v) && v->valuestring) ? strlen(v->valuestring) + 1 : 1;
@@ -1007,41 +1349,6 @@ static void FS3ENet_HandleTimeline(FS3ENetMessage *fs3em)
             total += (v && cJSON_IsString(v) && v->valuestring) ? strlen(v->valuestring) + 1 : 1;
         } else {
             total += 2; /* two empty strings */
-        }
-
-        /* media_attachments belongs to the actual content (src, i.e. the
-         * reblogged status for boosts), same as "content" above. */
-        v = cJSON_GetObjectItemCaseSensitive(src, "media_attachments");
-        {
-            int mCount = (v && cJSON_IsArray(v)) ? cJSON_GetArraySize(v) : 0;
-            int mi;
-            if (mCount > FS3ENET_MAX_MEDIA) mCount = FS3ENET_MAX_MEDIA;
-            for (mi = 0; mi < mCount; mi++) {
-                const cJSON *att  = cJSON_GetArrayItem(v, mi);
-                const cJSON *purl = att ? cJSON_GetObjectItemCaseSensitive(att, "preview_url") : NULL;
-                if (!purl || !cJSON_IsString(purl) || !purl->valuestring)
-                    purl = att ? cJSON_GetObjectItemCaseSensitive(att, "url") : NULL;
-                total += (purl && cJSON_IsString(purl) && purl->valuestring)
-                       ? strlen(purl->valuestring) + 1 : 1;
-            }
-        }
-
-        /* Poll -- belongs to src same as media_attachments/content above;
-         * mutually exclusive with media_attachments in practice (Mastodon
-         * disallows both on one status), but sized independently either
-         * way. */
-        v = cJSON_GetObjectItemCaseSensitive(src, "poll");
-        if (v && !cJSON_IsNull(v)) {
-            const cJSON *options = cJSON_GetObjectItemCaseSensitive(v, "options");
-            int oCount = (options && cJSON_IsArray(options)) ? cJSON_GetArraySize(options) : 0;
-            int oi;
-            if (oCount > FS3ENET_MAX_POLL_OPTIONS) oCount = FS3ENET_MAX_POLL_OPTIONS;
-            for (oi = 0; oi < oCount; oi++) {
-                const cJSON *opt   = cJSON_GetArrayItem(options, oi);
-                const cJSON *title = opt ? cJSON_GetObjectItemCaseSensitive(opt, "title") : NULL;
-                total += (title && cJSON_IsString(title) && title->valuestring)
-                       ? strlen(title->valuestring) + 1 : 1;
-            }
         }
 
         count++;
@@ -1053,9 +1360,11 @@ static void FS3ENet_HandleTimeline(FS3ENetMessage *fs3em)
         fs3em->fs3em_Result = FS3ENETR_NETWORK_ERROR;
         return;
     }
-    reply->fs3et_ViewModeBit   = req->fs3et_ViewModeBit;
-    reply->fs3et_PageDirection = req->fs3et_PageDirection;
-    reply->fs3et_Count         = count;
+    reply->fs3et_ViewModeBit      = req->fs3et_ViewModeBit;
+    reply->fs3et_PageDirection    = req->fs3et_PageDirection;
+    reply->fs3et_AccountGeneration = req->fs3et_AccountGeneration;
+    reply->fs3et_ResponseShape    = req->fs3et_ResponseShape;
+    reply->fs3et_Count            = count;
 
     /* Pass 2: pack strings into the block. */
     {
@@ -1064,40 +1373,18 @@ static void FS3ENet_HandleTimeline(FS3ENetMessage *fs3em)
         p = (char *)(statuses + count);
 
         cJSON_ArrayForEach(item, json) {
-            const cJSON *reblog, *src, *acct, *bAcct, *v;
+            const cJSON *reblog, *src, *bAcct, *v;
             const char *str;
             if (i >= count) break;
 
             reblog = cJSON_GetObjectItemCaseSensitive(item, "reblog");
             src    = (reblog && !cJSON_IsNull(reblog)) ? reblog : item;
-            acct   = cJSON_GetObjectItemCaseSensitive(src,  "account");
             bAcct  = cJSON_GetObjectItemCaseSensitive(item, "account");
 
-            v = acct ? cJSON_GetObjectItemCaseSensitive(acct, "display_name") : NULL;
-            str = (v && cJSON_IsString(v)) ? v->valuestring : "";
-            FS3ENet_PackStrClean(&statuses[i].fmas_DisplayName, &p, str);
+            FS3ENet_FillStatusFields(item, src, &statuses[i], &p, stripped, sizeof(stripped));
 
-            v = acct ? cJSON_GetObjectItemCaseSensitive(acct, "acct") : NULL;
-            str = (v && cJSON_IsString(v)) ? v->valuestring : "";
-            FS3ENet_PackStr(&statuses[i].fmas_Acct, &p, str);
-
-            v = cJSON_GetObjectItemCaseSensitive(src, "content");
-            str = (v && cJSON_IsString(v)) ? v->valuestring : "";
-            StripHTML(str, stripped, sizeof(stripped));
-            FS3ENet_PackStr(&statuses[i].fmas_Content, &p, stripped);
-
-            v = cJSON_GetObjectItemCaseSensitive(item, "created_at");
-            str = (v && cJSON_IsString(v)) ? v->valuestring : "";
-            FS3ENet_PackStr(&statuses[i].fmas_CreatedAt, &p, str);
-
-            v = acct ? cJSON_GetObjectItemCaseSensitive(acct, "avatar") : NULL;
-            str = (v && cJSON_IsString(v)) ? v->valuestring : "";
-            FS3ENet_PackStr(&statuses[i].fmas_AvatarURL, &p, str);
-
-            v = cJSON_GetObjectItemCaseSensitive(item, "id");
-            str = (v && cJSON_IsString(v)) ? v->valuestring : "";
-            FS3ENet_PackStr(&statuses[i].fmas_Id, &p, str);
-
+            /* booster display_name + acct -- not part of
+             * FS3ENet_FillStatusFields, see its comment. */
             if (src != item) {
                 v = bAcct ? cJSON_GetObjectItemCaseSensitive(bAcct, "display_name") : NULL;
                 str = (v && cJSON_IsString(v)) ? v->valuestring : "";
@@ -1114,95 +1401,6 @@ static void FS3ENet_HandleTimeline(FS3ENetMessage *fs3em)
             }
             FS3ENet_PackStr(&statuses[i].fmas_BoostByAcct, &p, str);
 
-            /* media_attachments -- see the matching block in pass 1. */
-            v = cJSON_GetObjectItemCaseSensitive(src, "media_attachments");
-            {
-                int mCount = (v && cJSON_IsArray(v)) ? cJSON_GetArraySize(v) : 0;
-                int mi;
-                if (mCount > FS3ENET_MAX_MEDIA) mCount = FS3ENET_MAX_MEDIA;
-                for (mi = 0; mi < mCount; mi++) {
-                    const cJSON *att  = cJSON_GetArrayItem(v, mi);
-                    const cJSON *purl = att ? cJSON_GetObjectItemCaseSensitive(att, "preview_url") : NULL;
-                    const cJSON *typeV;
-                    const char  *typeStr;
-                    if (!purl || !cJSON_IsString(purl) || !purl->valuestring)
-                        purl = att ? cJSON_GetObjectItemCaseSensitive(att, "url") : NULL;
-                    str = (purl && cJSON_IsString(purl)) ? purl->valuestring : "";
-                    FS3ENet_PackStr(&statuses[i].fmas_MediaUrls[mi], &p, str);
-
-                    /* "image"/"video"/"gifv"/"audio"/"unknown" -- lets the
-                     * GUI skip fetching a thumbnail for audio entirely
-                     * instead of routing its (fallback, no-preview) full
-                     * file URL into the image decoder. */
-                    typeV   = att ? cJSON_GetObjectItemCaseSensitive(att, "type") : NULL;
-                    typeStr = (typeV && cJSON_IsString(typeV)) ? typeV->valuestring : "";
-                    if      (strcmp(typeStr, "image") == 0) statuses[i].fmas_MediaKind[mi] = FS3ENET_MEDIAKIND_IMAGE;
-                    else if (strcmp(typeStr, "video") == 0) statuses[i].fmas_MediaKind[mi] = FS3ENET_MEDIAKIND_VIDEO;
-                    else if (strcmp(typeStr, "gifv")  == 0) statuses[i].fmas_MediaKind[mi] = FS3ENET_MEDIAKIND_GIFV;
-                    else if (strcmp(typeStr, "audio") == 0) statuses[i].fmas_MediaKind[mi] = FS3ENET_MEDIAKIND_AUDIO;
-                    else                                     statuses[i].fmas_MediaKind[mi] = FS3ENET_MEDIAKIND_UNKNOWN;
-                }
-                for (; mi < FS3ENET_MAX_MEDIA; mi++) {
-                    statuses[i].fmas_MediaUrls[mi] = NULL;
-                    statuses[i].fmas_MediaKind[mi] = FS3ENET_MEDIAKIND_UNKNOWN;
-                }
-                statuses[i].fmas_MediaCount = (ULONG)mCount;
-            }
-
-            /* Poll -- see the matching block in pass 1. */
-            v = cJSON_GetObjectItemCaseSensitive(src, "poll");
-            if (v && !cJSON_IsNull(v)) {
-                const cJSON *options = cJSON_GetObjectItemCaseSensitive(v, "options");
-                int oCount = (options && cJSON_IsArray(options)) ? cJSON_GetArraySize(options) : 0;
-                int oi;
-                const cJSON *ev;
-                if (oCount > FS3ENET_MAX_POLL_OPTIONS) oCount = FS3ENET_MAX_POLL_OPTIONS;
-                for (oi = 0; oi < oCount; oi++) {
-                    const cJSON *opt   = cJSON_GetArrayItem(options, oi);
-                    const cJSON *title = opt ? cJSON_GetObjectItemCaseSensitive(opt, "title") : NULL;
-                    const cJSON *votes = opt ? cJSON_GetObjectItemCaseSensitive(opt, "votes_count") : NULL;
-                    str = (title && cJSON_IsString(title)) ? title->valuestring : "";
-                    FS3ENet_PackStr(&statuses[i].fmas_PollOptionTitles[oi], &p, str);
-                    statuses[i].fmas_PollOptionVotes[oi] = (votes && cJSON_IsNumber(votes)) ? (ULONG)votes->valueint : 0;
-                }
-                for (; oi < FS3ENET_MAX_POLL_OPTIONS; oi++)
-                    statuses[i].fmas_PollOptionTitles[oi] = NULL;
-                statuses[i].fmas_PollOptionCount = (ULONG)oCount;
-
-                ev = cJSON_GetObjectItemCaseSensitive(v, "votes_count");
-                statuses[i].fmas_PollVotesCount = (ev && cJSON_IsNumber(ev)) ? (ULONG)ev->valueint : 0;
-                ev = cJSON_GetObjectItemCaseSensitive(v, "expired");
-                statuses[i].fmas_PollExpired = (ev && cJSON_IsTrue(ev)) ? TRUE : FALSE;
-                ev = cJSON_GetObjectItemCaseSensitive(v, "multiple");
-                statuses[i].fmas_PollMultiple = (ev && cJSON_IsTrue(ev)) ? TRUE : FALSE;
-            } else {
-                ULONG oi;
-                for (oi = 0; oi < FS3ENET_MAX_POLL_OPTIONS; oi++)
-                    statuses[i].fmas_PollOptionTitles[oi] = NULL;
-                statuses[i].fmas_PollOptionCount = 0;
-                statuses[i].fmas_PollVotesCount = 0;
-                statuses[i].fmas_PollExpired = FALSE;
-                statuses[i].fmas_PollMultiple = FALSE;
-            }
-
-            /* Action-bar counts/state -- read from src (see the field
-             * comment in fs3enet.h: for reblogs these live on the boosted
-             * status, not the outer reblog wrapper). */
-            v = cJSON_GetObjectItemCaseSensitive(src, "replies_count");
-            statuses[i].fmas_RepliesCount = (v && cJSON_IsNumber(v)) ? (ULONG)v->valueint : 0;
-
-            v = cJSON_GetObjectItemCaseSensitive(src, "reblogs_count");
-            statuses[i].fmas_ReblogsCount = (v && cJSON_IsNumber(v)) ? (ULONG)v->valueint : 0;
-
-            v = cJSON_GetObjectItemCaseSensitive(src, "favourites_count");
-            statuses[i].fmas_FavouritesCount = (v && cJSON_IsNumber(v)) ? (ULONG)v->valueint : 0;
-
-            v = cJSON_GetObjectItemCaseSensitive(src, "favourited");
-            statuses[i].fmas_Favourited = (v && cJSON_IsTrue(v)) ? TRUE : FALSE;
-
-            v = cJSON_GetObjectItemCaseSensitive(src, "reblogged");
-            statuses[i].fmas_Reblogged = (v && cJSON_IsTrue(v)) ? TRUE : FALSE;
-
             i++;
         }
     }
@@ -1214,6 +1412,154 @@ static void FS3ENet_HandleTimeline(FS3ENetMessage *fs3em)
     fs3em->fs3em_Result  = FS3ENETR_OK;
     printf("net: TIMELINE done, count=%lu viewMode=%lu\n",
            (unsigned long)count, (unsigned long)reply->fs3et_ViewModeBit);
+}
+
+/* FS3ENETQ_NOTIFICATIONS — fetch a page of notifications. Reuses
+ * FS3EMastodon_GetTimeline() directly rather than a dedicated Mastodon-
+ * layer function: GET /api/v1/notifications returns a bare JSON array,
+ * the exact FS3ENET_TLSHAPE_ARRAY shape every timeline endpoint already
+ * returns, so passing "notifications[?max_id=...]" as the path is all
+ * that's needed. Each notification's embedded "status" (when present --
+ * see FS3ENetNotification.fen_HasStatus) is parsed via the same
+ * FS3ENet_SizeStatusFields/FillStatusFields helpers FS3ENet_HandleTimeline
+ * uses, passing the status object as both "item" and "src" (a
+ * notification's status is never itself a further reblog wrapper for
+ * this app's purposes -- see those helpers' own comment). */
+static void FS3ENet_HandleNotifications(FS3ENetMessage *fs3em)
+{
+    FS3ENetNotificationsReq   *req = (FS3ENetNotificationsReq *)fs3em->fs3em_Data;
+    FS3ENetNotificationsReply *reply;
+    cJSON *json = NULL;
+    cJSON *item;
+    ULONG count = 0, total;
+    char *p;
+    char stripped[2048];
+
+    if (!req || fs3em->fs3em_DataLen < sizeof(*req)) {
+        printf("net: NOTIFICATIONS parse error\n");
+        fs3em->fs3em_Result = FS3ENETR_PARSE_ERROR;
+        return;
+    }
+
+    printf("net: NOTIFICATIONS maxId=%s minId=%s\n",
+           (req->fs3en_MaxId && req->fs3en_MaxId[0]) ? req->fs3en_MaxId : "(none)",
+           (req->fs3en_MinId && req->fs3en_MinId[0]) ? req->fs3en_MinId : "(none)");
+
+    {
+        char pathWithPage[300];
+
+        if (req->fs3en_MaxId && req->fs3en_MaxId[0])
+            snprintf(pathWithPage, sizeof(pathWithPage), "notifications?max_id=%s", req->fs3en_MaxId);
+        else if (req->fs3en_MinId && req->fs3en_MinId[0])
+            snprintf(pathWithPage, sizeof(pathWithPage), "notifications?min_id=%s", req->fs3en_MinId);
+        else
+            snprintf(pathWithPage, sizeof(pathWithPage), "notifications");
+
+        if (!FS3EMastodon_GetTimeline(req->fs3en_ApiBaseUrl, req->fs3en_AccessToken,
+                pathWithPage, FS3ENET_TLSHAPE_ARRAY, &json)) {
+            printf("net: NOTIFICATIONS GetTimeline failed\n");
+            fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
+            return;
+        }
+    }
+
+    /* Pass 1: count notifications and compute flat-block size. */
+    total = sizeof(FS3ENetNotificationsReply);
+    cJSON_ArrayForEach(item, json) {
+        const cJSON *account = cJSON_GetObjectItemCaseSensitive(item, "account");
+        const cJSON *status  = cJSON_GetObjectItemCaseSensitive(item, "status");
+        BOOL hasStatus = (status && !cJSON_IsNull(status)) ? TRUE : FALSE;
+        const cJSON *v;
+
+        if (count >= MAX_STATUSES_TIMELINE) break;
+        total += sizeof(FS3ENetNotification);
+
+        v = cJSON_GetObjectItemCaseSensitive(item, "id");
+        total += (v && cJSON_IsString(v) && v->valuestring) ? strlen(v->valuestring) + 1 : 1;
+
+        v = account ? cJSON_GetObjectItemCaseSensitive(account, "display_name") : NULL;
+        total += (v && cJSON_IsString(v) && v->valuestring) ? strlen(v->valuestring) + 1 : 1;
+
+        v = account ? cJSON_GetObjectItemCaseSensitive(account, "acct") : NULL;
+        total += (v && cJSON_IsString(v) && v->valuestring) ? strlen(v->valuestring) + 1 : 1;
+
+        v = account ? cJSON_GetObjectItemCaseSensitive(account, "avatar") : NULL;
+        total += (v && cJSON_IsString(v) && v->valuestring) ? strlen(v->valuestring) + 1 : 1;
+
+        if (hasStatus)
+            total += FS3ENet_SizeStatusFields(status, status);
+
+        count++;
+    }
+
+    reply = (FS3ENetNotificationsReply *)AllocVec(total, MEMF_ANY | MEMF_PUBLIC);
+    if (!reply) {
+        cJSON_Delete(json);
+        fs3em->fs3em_Result = FS3ENETR_NETWORK_ERROR;
+        return;
+    }
+    reply->fs3en_PageDirection     = req->fs3en_PageDirection;
+    reply->fs3en_AccountGeneration = req->fs3en_AccountGeneration;
+    reply->fs3en_Count             = count;
+
+    /* Pass 2: pack strings into the block. */
+    {
+        FS3ENetNotification *notifs = (FS3ENetNotification *)(reply + 1);
+        ULONG i = 0;
+        p = (char *)(notifs + count);
+
+        cJSON_ArrayForEach(item, json) {
+            const cJSON *account = cJSON_GetObjectItemCaseSensitive(item, "account");
+            const cJSON *status  = cJSON_GetObjectItemCaseSensitive(item, "status");
+            const cJSON *typeV   = cJSON_GetObjectItemCaseSensitive(item, "type");
+            const cJSON *v;
+            const char *str;
+            const char *typeStr;
+            if (i >= count) break;
+
+            notifs[i].fen_HasStatus = (status && !cJSON_IsNull(status)) ? TRUE : FALSE;
+
+            typeStr = (typeV && cJSON_IsString(typeV)) ? typeV->valuestring : "";
+            if      (strcmp(typeStr, "mention")   == 0) notifs[i].fen_Type = FS3ENOTIF_MENTION;
+            else if (strcmp(typeStr, "reblog")    == 0) notifs[i].fen_Type = FS3ENOTIF_REBLOG;
+            else if (strcmp(typeStr, "favourite") == 0) notifs[i].fen_Type = FS3ENOTIF_FAVOURITE;
+            else if (strcmp(typeStr, "follow")    == 0) notifs[i].fen_Type = FS3ENOTIF_FOLLOW;
+            else if (strcmp(typeStr, "follow_request") == 0) notifs[i].fen_Type = FS3ENOTIF_FOLLOW_REQUEST;
+            else if (strcmp(typeStr, "poll")      == 0) notifs[i].fen_Type = FS3ENOTIF_POLL;
+            else if (strcmp(typeStr, "update")    == 0) notifs[i].fen_Type = FS3ENOTIF_UPDATE;
+            else                                          notifs[i].fen_Type = FS3ENOTIF_UNKNOWN;
+
+            v = cJSON_GetObjectItemCaseSensitive(item, "id");
+            str = (v && cJSON_IsString(v)) ? v->valuestring : "";
+            FS3ENet_PackStr(&notifs[i].fen_Id, &p, str);
+
+            v = account ? cJSON_GetObjectItemCaseSensitive(account, "display_name") : NULL;
+            str = (v && cJSON_IsString(v)) ? v->valuestring : "";
+            FS3ENet_PackStrClean(&notifs[i].fen_ActorDisplayName, &p, str);
+
+            v = account ? cJSON_GetObjectItemCaseSensitive(account, "acct") : NULL;
+            str = (v && cJSON_IsString(v)) ? v->valuestring : "";
+            FS3ENet_PackStr(&notifs[i].fen_ActorAcct, &p, str);
+
+            v = account ? cJSON_GetObjectItemCaseSensitive(account, "avatar") : NULL;
+            str = (v && cJSON_IsString(v)) ? v->valuestring : "";
+            FS3ENet_PackStr(&notifs[i].fen_ActorAvatarURL, &p, str);
+
+            if (notifs[i].fen_HasStatus)
+                FS3ENet_FillStatusFields(status, status, &notifs[i].fen_Status, &p, stripped, sizeof(stripped));
+            else
+                memset(&notifs[i].fen_Status, 0, sizeof(notifs[i].fen_Status));
+
+            i++;
+        }
+    }
+
+    cJSON_Delete(json);
+    FreeVec(fs3em->fs3em_Data);
+    fs3em->fs3em_Data    = reply;
+    fs3em->fs3em_DataLen = total;
+    fs3em->fs3em_Result  = FS3ENETR_OK;
+    printf("net: NOTIFICATIONS done, count=%lu\n", (unsigned long)count);
 }
 
 /* FS3ENETQ_POST_STATUS — publish a toot and return its id. */
@@ -1231,11 +1577,12 @@ static void FS3ENet_HandlePostStatus(FS3ENetMessage *fs3em)
         return;
     }
 
-    printf("net: POST_STATUS visibility=%s\n",
-           req->fs3ep_Visibility ? req->fs3ep_Visibility : "public");
+    printf("net: POST_STATUS visibility=%s inReplyToId=%s\n",
+           req->fs3ep_Visibility ? req->fs3ep_Visibility : "public",
+           (req->fs3ep_InReplyToId && req->fs3ep_InReplyToId[0]) ? req->fs3ep_InReplyToId : "(none)");
 
     if (!FS3EMastodon_PostStatus(req->fs3ep_ApiBaseUrl, req->fs3ep_AccessToken,
-            req->fs3ep_Content, req->fs3ep_Visibility,
+            req->fs3ep_Content, req->fs3ep_Visibility, req->fs3ep_InReplyToId,
             statusId, sizeof(statusId)))
     {
         printf("net: POST_STATUS PostStatus failed\n");
@@ -1255,6 +1602,86 @@ static void FS3ENet_HandlePostStatus(FS3ENetMessage *fs3em)
     fs3em->fs3em_DataLen = total;
     fs3em->fs3em_Result  = FS3ENETR_OK;
     printf("net: POST_STATUS done, statusId=%s\n", statusId);
+}
+
+/* FS3ENETQ_EDIT_STATUS — edit an existing status' text (own toots only). */
+static void FS3ENet_HandleEditStatus(FS3ENetMessage *fs3em)
+{
+    FS3ENetEditStatusReq   *req = (FS3ENetEditStatusReq *)fs3em->fs3em_Data;
+    FS3ENetEditStatusReply *reply;
+    ULONG total;
+    char *p;
+
+    if (!req || fs3em->fs3em_DataLen < sizeof(*req)) {
+        printf("net: EDIT_STATUS parse error\n");
+        fs3em->fs3em_Result = FS3ENETR_PARSE_ERROR;
+        return;
+    }
+
+    printf("net: EDIT_STATUS statusId=%s mediaCount=%lu\n",
+           req->fs3ee_StatusId ? req->fs3ee_StatusId : "?",
+           (unsigned long)req->fs3ee_MediaCount);
+
+    if (!FS3EMastodon_EditStatus(req->fs3ee_ApiBaseUrl, req->fs3ee_AccessToken,
+            req->fs3ee_StatusId, req->fs3ee_Content,
+            (const char *const *)req->fs3ee_MediaIds, req->fs3ee_MediaCount))
+    {
+        printf("net: EDIT_STATUS EditStatus failed\n");
+        fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
+        return;
+    }
+
+    total = sizeof(FS3ENetEditStatusReply) + FS3ENet_PackLen(req->fs3ee_StatusId);
+    reply = (FS3ENetEditStatusReply *)AllocVec(total, MEMF_ANY | MEMF_PUBLIC);
+    if (!reply) { fs3em->fs3em_Result = FS3ENETR_NETWORK_ERROR; return; }
+
+    p = (char *)reply + sizeof(*reply);
+    FS3ENet_PackStr(&reply->fs3ee_StatusId, &p, req->fs3ee_StatusId);
+
+    FreeVec(fs3em->fs3em_Data);
+    fs3em->fs3em_Data    = reply;
+    fs3em->fs3em_DataLen = total;
+    fs3em->fs3em_Result  = FS3ENETR_OK;
+    printf("net: EDIT_STATUS done\n");
+}
+
+/* FS3ENETQ_DELETE_STATUS — delete an existing status (own toots only). */
+static void FS3ENet_HandleDeleteStatus(FS3ENetMessage *fs3em)
+{
+    FS3ENetDeleteStatusReq   *req = (FS3ENetDeleteStatusReq *)fs3em->fs3em_Data;
+    FS3ENetDeleteStatusReply *reply;
+    ULONG total;
+    char *p;
+
+    if (!req || fs3em->fs3em_DataLen < sizeof(*req)) {
+        printf("net: DELETE_STATUS parse error\n");
+        fs3em->fs3em_Result = FS3ENETR_PARSE_ERROR;
+        return;
+    }
+
+    printf("net: DELETE_STATUS statusId=%s\n",
+           req->fs3ed_StatusId ? req->fs3ed_StatusId : "?");
+
+    if (!FS3EMastodon_DeleteStatus(req->fs3ed_ApiBaseUrl, req->fs3ed_AccessToken,
+            req->fs3ed_StatusId))
+    {
+        printf("net: DELETE_STATUS DeleteStatus failed\n");
+        fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
+        return;
+    }
+
+    total = sizeof(FS3ENetDeleteStatusReply) + FS3ENet_PackLen(req->fs3ed_StatusId);
+    reply = (FS3ENetDeleteStatusReply *)AllocVec(total, MEMF_ANY | MEMF_PUBLIC);
+    if (!reply) { fs3em->fs3em_Result = FS3ENETR_NETWORK_ERROR; return; }
+
+    p = (char *)reply + sizeof(*reply);
+    FS3ENet_PackStr(&reply->fs3ed_StatusId, &p, req->fs3ed_StatusId);
+
+    FreeVec(fs3em->fs3em_Data);
+    fs3em->fs3em_Data    = reply;
+    fs3em->fs3em_DataLen = total;
+    fs3em->fs3em_Result  = FS3ENETR_OK;
+    printf("net: DELETE_STATUS done\n");
 }
 
 /* FS3ENETQ_FAVORITE — toggle favourite/unfavourite on a status, returning
@@ -1487,6 +1914,18 @@ static void FS3ENet_Dispatch(FS3ENetMessage *fs3em)
             FS3ENet_HandlePostStatus(fs3em);
             break;
 
+        case FS3ENETQ_EDIT_STATUS:
+            FS3ENet_HandleEditStatus(fs3em);
+            break;
+
+        case FS3ENETQ_DELETE_STATUS:
+            FS3ENet_HandleDeleteStatus(fs3em);
+            break;
+
+        case FS3ENETQ_NOTIFICATIONS:
+            FS3ENet_HandleNotifications(fs3em);
+            break;
+
         case FS3ENETQ_VERIFY_ACCOUNT:
             FS3ENet_HandleVerifyAccount(fs3em);
             break;
@@ -1505,6 +1944,10 @@ static void FS3ENet_Dispatch(FS3ENetMessage *fs3em)
 
         case FS3ENETQ_FOLLOW:
             FS3ENet_HandleFollow(fs3em);
+            break;
+
+        case FS3ENETQ_INSTANCE_INFO:
+            FS3ENet_HandleInstanceInfo(fs3em);
             break;
 
         default:

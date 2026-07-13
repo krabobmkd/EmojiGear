@@ -15,6 +15,7 @@
 
 #include <errno.h>
 #include <stdio.h>
+#include <string.h>
 
 #include <exec/memory.h>
 #include <proto/exec.h>
@@ -253,8 +254,9 @@ static BOOL FS3EHttp_DoRequest(const char *url, const FS3EHttpHeader *extraHeade
     BIO   *resp;
     BOOL   ok = FALSE;
 
-    out->fhr_Body    = NULL;
-    out->fhr_BodyLen = 0;
+    out->fhr_Body       = NULL;
+    out->fhr_BodyLen    = 0;
+    out->fhr_StatusCode = 0; /* OSSL_HTTP_transfer()'s BIO never exposes this */
 
     /* Defensive: never call into AmiSSL/OpenSSL if FS3EHttp_Init() never
      * succeeded. Structurally this can't happen today -- FS3ENet_ProcEntry
@@ -330,6 +332,204 @@ static BOOL FS3EHttp_DoRequest(const char *url, const FS3EHttpHeader *extraHeade
         OPENSSL_free(frag);
 
     return ok;
+}
+
+/* Raw HTTP/1.1 request path used only by FS3EHttp_Put() -- OSSL_HTTP_transfer()
+ * (used by FS3EHttp_DoRequest() above) can only ever emit GET or POST, since
+ * OSSL_HTTP_REQ_CTX_set_request_line() takes the verb as a hardcoded
+ * boolean at every level of that API, not a string. Always sends
+ * "Connection: close" so the response can be read exactly the way
+ * FS3EHttp_ReadBody() already reads GET/POST bodies -- loop until
+ * BIO_read() returns <=0 -- without needing a chunked-transfer decoder: a
+ * compliant server has to close the socket once it's done sending,
+ * regardless of what framing (Content-Length or chunked) it used along the
+ * way. Once the full raw response (status line + headers + body) is
+ * buffered this way, pulling the status code and body back out is plain
+ * string scanning (find the blank line, parse the status line), not
+ * protocol parsing. Trade-off: no connection reuse -- fine for this rarely-
+ * used path (status edits), not meant to replace FS3EHttp_Get/Post. */
+static BOOL FS3EHttp_DoRawRequest(const char *method, const char *url,
+                                   const FS3EHttpHeader *extraHeaders,
+                                   const char *contentType,
+                                   const void *reqBody, ULONG reqBodyLen,
+                                   FS3EHttpResponse *out)
+{
+    int    useSSL, portNum;
+    char  *user = NULL, *host = NULL, *port = NULL;
+    char  *path = NULL, *query = NULL, *frag = NULL;
+    char   pathBuf[FS3EHTTP_MAX_PATH];
+    char   portBuf[16];
+    char   hostPort[300];
+    BIO   *bio = NULL;
+    SSL   *ssl = NULL;
+    BOOL   ok = FALSE;
+
+    out->fhr_Body       = NULL;
+    out->fhr_BodyLen    = 0;
+    out->fhr_StatusCode = 0;
+
+    /* Defensive, same invariant as FS3EHttp_DoRequest() above. */
+    if (!AmiSSLExtBase)
+        return FALSE;
+
+    if (!OSSL_HTTP_parse_url(url, &useSSL, &user, &host, &port, &portNum,
+                             &path, &query, &frag))
+        return FALSE;
+
+    if (!port)
+    {
+        snprintf(portBuf, sizeof(portBuf), "%d", portNum);
+        port = portBuf;
+    }
+
+    if (query && query[0])
+        snprintf(pathBuf, sizeof(pathBuf), "%s?%s", path ? path : "/", query);
+    else
+        snprintf(pathBuf, sizeof(pathBuf), "%s", path ? path : "/");
+
+    snprintf(hostPort, sizeof(hostPort), "%s:%s", host, port);
+
+    if (useSSL)
+    {
+        bio = BIO_new_ssl_connect(g_SSLCtx);
+        if (bio)
+        {
+            BIO_set_conn_hostname(bio, hostPort);
+            BIO_get_ssl(bio, &ssl);
+            if (ssl)
+                SSL_set_tlsext_host_name(ssl, host);
+        }
+    }
+    else
+    {
+        bio = BIO_new(BIO_s_connect());
+        if (bio)
+            BIO_set_conn_hostname(bio, hostPort);
+    }
+
+    if (!bio || BIO_do_connect(bio) <= 0)
+    {
+        printf("net: HTTP %s raw connect failed for %s://%s\n",
+               method, useSSL ? "https" : "http", hostPort);
+        FS3EHttp_PrintErrors();
+        goto out_free_bio;
+    }
+
+    /* Request line + headers, hand-written into one buffer then sent with
+     * a plain BIO_write() -- BIO_printf() on this platform is an SFDC
+     * vararg-tag macro with a FIXED arity (not a real C variadic function),
+     * so it can't be used as a normal printf() here (see the "%s %s"
+     * two-substitution call below the amissl.h include produces a "macro
+     * requires 4 arguments" error). snprintf() into reqHead avoids it
+     * entirely. (See the function comment above for why "Connection:
+     * close" is load-bearing, not just hygiene.) */
+    {
+        char reqHead[4096];
+        int  n = 0;
+
+        n += snprintf(reqHead + n, sizeof(reqHead) - n, "%s %s HTTP/1.1\r\n", method, pathBuf);
+        n += snprintf(reqHead + n, sizeof(reqHead) - n, "Host: %s\r\n", host);
+        n += snprintf(reqHead + n, sizeof(reqHead) - n, "User-Agent: %s\r\n", FS3EHTTP_USER_AGENT);
+        n += snprintf(reqHead + n, sizeof(reqHead) - n, "Connection: close\r\n");
+
+        if (extraHeaders)
+        {
+            const FS3EHttpHeader *h;
+            for (h = extraHeaders; h->fhh_Name; h++)
+                n += snprintf(reqHead + n, sizeof(reqHead) - n, "%s: %s\r\n", h->fhh_Name, h->fhh_Value);
+        }
+
+        if (reqBody && reqBodyLen > 0)
+        {
+            if (contentType)
+                n += snprintf(reqHead + n, sizeof(reqHead) - n, "Content-Type: %s\r\n", contentType);
+            n += snprintf(reqHead + n, sizeof(reqHead) - n, "Content-Length: %lu\r\n", (unsigned long)reqBodyLen);
+        }
+
+        n += snprintf(reqHead + n, sizeof(reqHead) - n, "\r\n");
+
+        if (n < 0 || n >= (int)sizeof(reqHead))
+        {
+            /* Headers didn't fit -- bail rather than send a truncated/
+             * corrupt request. Not expected in practice (URL is already
+             * capped by FS3EHTTP_MAX_PATH, headers here are just
+             * Authorization/Content-Type). */
+            goto out_free_bio;
+        }
+
+        BIO_write(bio, reqHead, n);
+    }
+
+    if (reqBody && reqBodyLen > 0)
+        BIO_write(bio, reqBody, (int)reqBodyLen);
+
+    {
+        FS3EHttpResponse raw;
+
+        if (FS3EHttp_ReadBody(bio, &raw))
+        {
+            /* raw.fhr_Body is the whole raw response (status line +
+             * headers + blank line + body), NUL-terminated -- split it by
+             * hand instead of a protocol-level parser. */
+            char *text      = (char *)raw.fhr_Body;
+            char *headerEnd = strstr(text, "\r\n\r\n");
+
+            if (headerEnd)
+            {
+                int code = 0;
+                sscanf(text, "HTTP/%*d.%*d %d", &code);
+                out->fhr_StatusCode = (ULONG)code;
+
+                {
+                    char  *bodyStart = headerEnd + 4;
+                    ULONG  bodyLen   = raw.fhr_BodyLen - (ULONG)(bodyStart - text);
+                    UBYTE *bodyCopy  = AllocVec(bodyLen + 1, MEMF_ANY);
+
+                    if (bodyCopy)
+                    {
+                        CopyMem(bodyStart, bodyCopy, bodyLen);
+                        bodyCopy[bodyLen] = '\0';
+                        out->fhr_Body    = bodyCopy;
+                        out->fhr_BodyLen = bodyLen;
+                        ok = TRUE;
+                    }
+                }
+            }
+            FreeVec(raw.fhr_Body);
+        }
+    }
+
+out_free_bio:
+    if (bio)
+        BIO_free_all(bio);
+
+    if (user)
+        OPENSSL_free(user);
+    if (host)
+        OPENSSL_free(host);
+    if (port != portBuf)
+        OPENSSL_free(port);
+    if (path)
+        OPENSSL_free(path);
+    if (query)
+        OPENSSL_free(query);
+    if (frag)
+        OPENSSL_free(frag);
+
+    return ok;
+}
+
+BOOL FS3EHttp_Put(const char *url, const FS3EHttpHeader *headers,
+                 const char *contentType,
+                 const void *body, ULONG bodyLen,
+                 FS3EHttpResponse *out)
+{
+    return FS3EHttp_DoRawRequest("PUT", url, headers, contentType, body, bodyLen, out);
+}
+
+BOOL FS3EHttp_Delete(const char *url, const FS3EHttpHeader *headers, FS3EHttpResponse *out)
+{
+    return FS3EHttp_DoRawRequest("DELETE", url, headers, NULL, NULL, 0, out);
 }
 
 BOOL FS3EHttp_Get(const char *url, const FS3EHttpHeader *headers, FS3EHttpResponse *out)
