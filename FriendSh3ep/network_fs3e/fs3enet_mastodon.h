@@ -90,13 +90,15 @@ BOOL FS3EMastodon_VerifyCredentials(const char *apiBaseUrl, const char *accessTo
                                    FS3EMastodonAccount *outAccount);
 
 /*
- * GET /api/v1/{timeline} -- timeline is the full path relative to /api/v1/,
- * e.g. "timelines/home?limit=20", "accounts/123/statuses?limit=20" (a
- * user's own toots), "statuses/123" (one status), or "statuses/123/context"
- * (that status' replies). On success *outJson is a cJSON array of Status
- * objects owned by the caller, who must cJSON_Delete() it -- regardless of
- * responseShape, always a plain array, never the raw shape the endpoint
- * itself returned.
+ * GET /api/v1/{timeline} (or /api/v2/{timeline} -- see
+ * FS3ENET_TLSHAPE_SEARCH_STATUSES below) -- timeline is the full path
+ * relative to that, e.g. "timelines/home?limit=20",
+ * "accounts/123/statuses?limit=20" (a user's own toots), "statuses/123"
+ * (one status), "statuses/123/context" (that status' replies), or
+ * "search?type=statuses&limit=20&q=..." (word/hashtag search). On success
+ * *outJson is a cJSON array of Status objects owned by the caller, who
+ * must cJSON_Delete() it -- regardless of responseShape, always a plain
+ * array, never the raw shape the endpoint itself returned.
  *
  * responseShape is a `enum FS3ENetTimelineShape` value from fs3enet.h,
  * passed as a plain ULONG here since that header is the one including
@@ -109,10 +111,26 @@ BOOL FS3EMastodon_VerifyCredentials(const char *apiBaseUrl, const char *accessTo
  *                                        {"ancestors":[...],"descendants":[...]};
  *                                        only descendants is unwrapped and
  *                                        returned, ancestors is discarded
+ *   FS3ENET_TLSHAPE_SEARCH_STATUSES (3) -- GET /api/v2/{timeline} (not v1);
+ *                                        endpoint returns
+ *                                        {"accounts":[...],"statuses":[...],
+ *                                        "hashtags":[...]}; only statuses is
+ *                                        unwrapped and returned, the rest
+ *                                        discarded -- word and hashtag
+ *                                        search both go through this same
+ *                                        shape/endpoint (Mastodon's own
+ *                                        search treats a leading '#' in q
+ *                                        as a hashtag match)
  */
 BOOL FS3EMastodon_GetTimeline(const char *apiBaseUrl, const char *accessToken,
                              const char *timeline, ULONG responseShape,
                              cJSON **outJson);
+
+/* application/x-www-form-urlencoded percent-encoding -- see the definition
+ * in fs3enet_mastodon.c for the exact rule. Exposed so FS3ENet_HandleTimeline
+ * (fs3enet.c) can encode a search query's raw user text before folding it
+ * into the timeline string GetTimeline above receives. */
+void FS3EMastodon_UrlEncode(const char *src, char *dst, ULONG dstSize);
 
 /*
  * POST /api/v1/statuses - publishes a new status. On success fills

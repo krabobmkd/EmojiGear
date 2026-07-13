@@ -126,6 +126,17 @@ enum {
     MSG_SETTINGSV_RGBDRAW_SCALEPIXELARRAY,
     MSG_SETTINGSV_RGBDRAW_INTERNAL_BILINEAR,
 
+    /* Search channel (VIEWMODE_Search) TTIMELINE_WaitText, shown while a
+     * word/hashtag search request is in flight (see
+     * FS3EApp_CheckConnectionState, FS3EApp_SearchWord) instead of the
+     * generic "Updating..." every other channel gets. One is picked per
+     * search fired, round-robin. Must stay exactly 4 -- see
+     * FS3EApp_CheckConnectionState's modulo. */
+    MSG_SEARCHV_WAIT1,
+    MSG_SEARCHV_WAIT2,
+    MSG_SEARCHV_WAIT3,
+    MSG_SEARCHV_WAIT4,
+
     /* Must be last */
     MSG_COUNT
 };

@@ -91,6 +91,14 @@ static void GenericOpenWindow(FS3EMainWindow *mw, Object *window_obj)
      */
     FS3EStyle_ApplyColors(&app->style, CurrentMainScreen);
 
+    /* Re-derive style's font-size-dependent layout (avatarSize and friends)
+     * now that a real screen is bound to the draw contexts -- the first
+     * pass (main(), before any screen exists) computes it wrong (avatar
+     * thumbnails render far too big until the user manually changes a font
+     * setting, which is the only other thing that re-triggers this). See
+     * FS3EApp_ApplyFontSettings_Delayed's comment in friendsh3ep.c. */
+    FS3EApp_ApplyFontSettings_Delayed();
+
     if(app->titlebar_settingsBtn)
     {
 

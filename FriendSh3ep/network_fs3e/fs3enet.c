@@ -154,14 +154,15 @@ FS3ENetInstanceInfoReq *FS3ENetInstanceInfoReq_Alloc(const char *apiBaseUrl)
 FS3ENetTimelineReq *FS3ENetTimelineReq_Alloc(ULONG viewModeBit,
     ULONG pageDirection, ULONG accountGeneration, ULONG responseShape,
     const char *apiBaseUrl, const char *accessToken, const char *timeline,
-    const char *maxId, const char *minId)
+    const char *maxId, const char *minId, const char *searchQuery)
 {
     ULONG total = sizeof(FS3ENetTimelineReq)
                 + FS3ENet_PackLen(apiBaseUrl)
                 + FS3ENet_PackLen(accessToken)
                 + FS3ENet_PackLen(timeline)
                 + FS3ENet_PackLen(maxId)
-                + FS3ENet_PackLen(minId);
+                + FS3ENet_PackLen(minId)
+                + FS3ENet_PackLen(searchQuery);
     FS3ENetTimelineReq *req =
         (FS3ENetTimelineReq *)AllocVec(total, MEMF_ANY| MEMF_PUBLIC);
     char *p;
@@ -177,6 +178,7 @@ FS3ENetTimelineReq *FS3ENetTimelineReq_Alloc(ULONG viewModeBit,
     FS3ENet_PackStr(&req->fs3et_Timeline,     &p, timeline);
     FS3ENet_PackStr(&req->fs3et_MaxId,        &p, maxId);
     FS3ENet_PackStr(&req->fs3et_MinId,        &p, minId);
+    FS3ENet_PackStr(&req->fs3et_SearchQuery,  &p, searchQuery);
     return req;
 }
 
@@ -1331,7 +1333,9 @@ static void FS3ENet_HandleTimeline(FS3ENetMessage *fs3em)
      * FS3ENetPageDirection), so this never produces both. */
     {
         char timelineWithPage[300];
+        char timelineWithQuery[700];
         const char *timeline = req->fs3et_Timeline ? req->fs3et_Timeline : "";
+        const char *finalTimeline;
 
         if (req->fs3et_MaxId && req->fs3et_MaxId[0])
             snprintf(timelineWithPage, sizeof(timelineWithPage), "%s&max_id=%s",
@@ -1343,10 +1347,26 @@ static void FS3ENet_HandleTimeline(FS3ENetMessage *fs3em)
             strncpy(timelineWithPage, timeline, sizeof(timelineWithPage) - 1);
             timelineWithPage[sizeof(timelineWithPage) - 1] = '\0';
         }
+        finalTimeline = timelineWithPage;
+
+        /* Search: fold the raw query text on as a URL-encoded q= param --
+         * kept separate from timelineWithPage's fixed literal/opaque-id
+         * components above (never URL-encoded, since they never carry
+         * arbitrary user text) because this is the one field here that
+         * can. */
+        if (req->fs3et_ResponseShape == FS3ENET_TLSHAPE_SEARCH_STATUSES &&
+            req->fs3et_SearchQuery && req->fs3et_SearchQuery[0])
+        {
+            char encQuery[512];
+            FS3EMastodon_UrlEncode(req->fs3et_SearchQuery, encQuery, sizeof(encQuery));
+            snprintf(timelineWithQuery, sizeof(timelineWithQuery), "%s&q=%s",
+                     timelineWithPage, encQuery);
+            finalTimeline = timelineWithQuery;
+        }
 
         if (!FS3EMastodon_GetTimeline(req->fs3et_ApiBaseUrl,
                 req->fs3et_AccessToken,
-                timelineWithPage, req->fs3et_ResponseShape, &json)) {
+                finalTimeline, req->fs3et_ResponseShape, &json)) {
             printf("net: TIMELINE GetTimeline failed\n");
             fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
             return;

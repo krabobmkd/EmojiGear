@@ -17,8 +17,13 @@
 static const char FS3EMASTODON_HEX[] = "0123456789ABCDEF";
 
 /* application/x-www-form-urlencoded percent-encoding: unreserved chars
- * pass through, space becomes '+', everything else is %XX. */
-static void FS3EMastodon_UrlEncode(const char *src, char *dst, ULONG dstSize)
+ * pass through, space becomes '+', everything else is %XX. Not static:
+ * FS3ENet_HandleTimeline (fs3enet.c, same network process, different
+ * translation unit) also calls this directly, to encode
+ * FS3ENetTimelineReq.fs3et_SearchQuery's raw user text for the
+ * FS3ENET_TLSHAPE_SEARCH_STATUSES shape's q= param -- see its comment in
+ * fs3enet.h. */
+void FS3EMastodon_UrlEncode(const char *src, char *dst, ULONG dstSize)
 {
     ULONG di = 0;
 
@@ -303,12 +308,13 @@ BOOL FS3EMastodon_GetInstanceInfo(const char *apiBaseUrl, ULONG *outMaxChars)
 #define FS3ENET_TLSHAPE_ARRAY               0
 #define FS3ENET_TLSHAPE_SINGLE              1
 #define FS3ENET_TLSHAPE_CONTEXT_DESCENDANTS 2
+#define FS3ENET_TLSHAPE_SEARCH_STATUSES     3
 
 BOOL FS3EMastodon_GetTimeline(const char *apiBaseUrl, const char *accessToken,
                              const char *timeline, ULONG responseShape,
                              cJSON **outJson)
 {
-    char url[256];
+    char url[512];
     char authHeader[300];
     FS3EHttpHeader headers[2];
     FS3EHttpResponse resp;
@@ -317,10 +323,14 @@ BOOL FS3EMastodon_GetTimeline(const char *apiBaseUrl, const char *accessToken,
     *outJson = NULL;
 
     /* "timeline" already carries the full path for the SINGLE/CONTEXT_
-     * DESCENDANTS shapes too (e.g. "statuses/123", "statuses/123/context")
-     * -- callers pass whatever's needed relative to /api/v1/, same as
-     * every other shape. */
-    snprintf(url, sizeof(url), "%s/api/v1/%s", apiBaseUrl, timeline);
+     * DESCENDANTS/SEARCH_STATUSES shapes too (e.g. "statuses/123",
+     * "statuses/123/context", "search?type=statuses&limit=20&q=...") --
+     * callers pass whatever's needed relative to the API root, same as
+     * every other shape. Search alone is a /api/v2/ endpoint, not v1. */
+    if (responseShape == FS3ENET_TLSHAPE_SEARCH_STATUSES)
+        snprintf(url, sizeof(url), "%s/api/v2/%s", apiBaseUrl, timeline);
+    else
+        snprintf(url, sizeof(url), "%s/api/v1/%s", apiBaseUrl, timeline);
 
     if (accessToken && accessToken[0]) {
         FS3EMastodon_BuildAuthHeader(authHeader, sizeof(authHeader), accessToken);
@@ -363,6 +373,12 @@ BOOL FS3EMastodon_GetTimeline(const char *apiBaseUrl, const char *accessToken,
         cJSON *descendants = cJSON_DetachItemFromObjectCaseSensitive(json, "descendants");
         cJSON_Delete(json); /* frees the wrapper object + ancestors; descendants already detached, survives */
         json = descendants;
+    }
+    else if (json && cJSON_IsObject(json) && responseShape == FS3ENET_TLSHAPE_SEARCH_STATUSES)
+    {
+        cJSON *statuses = cJSON_DetachItemFromObjectCaseSensitive(json, "statuses");
+        cJSON_Delete(json); /* frees the wrapper object + accounts/hashtags; statuses already detached, survives */
+        json = statuses;
     }
 
     if (!json || !cJSON_IsArray(json))

@@ -45,7 +45,8 @@
 #define GID_NAV_BOOKMARKS        46
 #define GID_NAV_NEWS             47
 
-
+/* Search word editor (Part C container, SearchBarLayout) */
+#define GID_SEARCH_WORD_EDITOR   90
 
 
 /* The whole Toot TimeLine (part C) */

@@ -12,7 +12,9 @@
  *   mainlayout (layout.gadget, VERT, borderless)
  *     Part A: titleBarLayout  (TitleBarLayoutClass)  — 2 × dpiH rows
  *     Part B: navBarLayout    (NavBarLayoutClass)    — 1 or 2 × dpiH rows
- *     Part C: tootTimeline (TootTimelineClass)              — fills rest
+ *     Part C: searchBarLayout (SearchBarLayoutClass) — fills rest
+ *               searchWordEditor (one-line UniTextEditor, VIEWMODE_Search only)
+ *               tootTimeline     (TootTimelineClass)
  *
  * dpiHeight (default 14 px) acts as the "DPI factor": every row in the
  * mobile-style UI is exactly one dpiHeight pixel tall.
@@ -99,6 +101,7 @@
 #include "UniButtonBGBM/unibuttonbgbm.h"
 #include "TitleBarLayout/fs3etitlebar.h"
 #include "NavBarLayout/fs3enavbar.h"
+#include "SearchBarLayout/fs3esearchbar.h"
 #include "TootTimeline/fs3etoottimeline.h"
 
 #include "network_fs3e/fs3enet.h"
@@ -871,6 +874,13 @@ static const char *NormalizeServerUrl(const char *server, char *buf, ULONG bufSi
     return buf;
 }
 
+/* Index into the MSG_SEARCHV_WAIT1..4 rotation -- bumped once per search
+ * fired (see FS3EApp_SearchWord), NOT on every FS3EApp_CheckConnectionState
+ * call (that runs on all sorts of unrelated state changes too, e.g. login
+ * phase or account changes; incrementing here would rotate the message
+ * mid-search for no reason instead of picking one per search). */
+static ULONG s_searchWaitMsgIdx = 0;
+
 /* Update TTIMELINE_WaitText to reflect current connection / login state.
  * Called whenever the state machine advances so the empty-channel placeholder
  * always shows a meaningful message. */
@@ -918,7 +928,20 @@ static void FS3EApp_CheckConnectionState(void)
                         text = "Connection error.";        break;
                 }
             } else if (app->timelineFetchedMask & bit) {
-                text = "Updating...";
+                /* Word/hashtag search in flight (see FS3EApp_SearchWord)
+                 * gets one of a few fediverse-flavored wait messages
+                 * instead of the generic "Updating..." every other
+                 * channel shows here -- purely cosmetic, no meaning
+                 * attached to which one shows (see s_searchWaitMsgIdx). */
+                if (app->viewMode == VIEWMODE_Search && app->searchMode == FS3ESEARCH_WORD) {
+                    static const ULONG searchWaitMsgs[4] = {
+                        MSG_SEARCHV_WAIT1, MSG_SEARCHV_WAIT2,
+                        MSG_SEARCHV_WAIT3, MSG_SEARCHV_WAIT4
+                    };
+                    text = LOC(searchWaitMsgs[s_searchWaitMsgIdx % 4]);
+                } else {
+                    text = "Updating...";
+                }
             } else {
                 text = "Account connected.";
             }
@@ -987,7 +1010,7 @@ static void FS3EApp_FetchTimeline(ULONG viewMode)
     req = FS3ENetTimelineReq_Alloc(viewMode, FS3ENETPAGE_INITIAL,
               app->accountGeneration, FS3ENET_TLSHAPE_ARRAY,
               app->accountApiBaseUrl, app->accountAccessToken,
-              tl, NULL, NULL);
+              tl, NULL, NULL, NULL);
     if (!req) return;
 
     if (FS3EApp_NetSend(FS3ENETQ_TIMELINE, req,
@@ -1164,7 +1187,8 @@ static void FS3EApp_FetchTimelinePage(ULONG viewMode, ULONG direction)
               app->accountGeneration, FS3ENET_TLSHAPE_ARRAY,
               app->accountApiBaseUrl, app->accountAccessToken, tl,
               (direction == FS3ENETPAGE_OLDER) ? fromId : NULL,
-              (direction == FS3ENETPAGE_NEWER) ? fromId : NULL);
+              (direction == FS3ENETPAGE_NEWER) ? fromId : NULL,
+              NULL);
     if (!req) return;
 
     if (FS3EApp_NetSend(FS3ENETQ_TIMELINE, req, sizeof(FS3ENetTimelineReq)))
@@ -1198,6 +1222,23 @@ static void FS3EApp_OpenProfile(const char *acctOrHandle)
     app->searchMode        = FS3ESEARCH_USER_PROFILE;
 
     fs3e_setViewMode(VIEWMODE_Search);
+
+    /* Mirror the opened profile into the search editor as "user@server" --
+     * Mastodon's own "acct" field already has "@server" for remote users,
+     * but is bare "user" for local ones (same instance as us), so fill in
+     * our own instance's domain in that case. */
+    if (app->searchWordEditor) {
+        char handle[256];
+        if (strchr(acct, '@')) {
+            snprintf(handle, sizeof(handle), "%s", acct);
+        } else {
+            const char *domain = app->accountApiBaseUrl ? app->accountApiBaseUrl : "";
+            if (strncmp(domain, "https://", 8) == 0) domain += 8;
+            else if (strncmp(domain, "http://", 7) == 0) domain += 7;
+            snprintf(handle, sizeof(handle), "%s@%s", acct, domain);
+        }
+        SetGdAttrs(app->searchWordEditor, UTED_Text, (ULONG)handle, TAG_END);
+    }
 
     if (!app->searchProfileAcct) return;
 
@@ -1251,7 +1292,7 @@ static void FS3EApp_OpenDiscussion(const char *statusId)
               app->accountGeneration, FS3ENET_TLSHAPE_SINGLE,
               app->accountApiBaseUrl,
               app->accountAccessToken ? app->accountAccessToken : "",
-              tl, "", "");
+              tl, "", "", NULL);
     if (req) FS3EApp_NetSend(FS3ENETQ_TIMELINE, req, sizeof(*req));
 
     snprintf(tl, sizeof(tl), "statuses/%s/context", app->searchDiscussionStatusId);
@@ -1259,8 +1300,56 @@ static void FS3EApp_OpenDiscussion(const char *statusId)
               app->accountGeneration, FS3ENET_TLSHAPE_CONTEXT_DESCENDANTS,
               app->accountApiBaseUrl,
               app->accountAccessToken ? app->accountAccessToken : "",
-              tl, "", "");
+              tl, "", "", NULL);
     if (req) FS3EApp_NetSend(FS3ENETQ_TIMELINE, req, sizeof(*req));
+}
+
+/* Word/hashtag search -- the Enter-pressed handler on the search line (see
+ * GID_SEARCH_WORD_EDITOR in the main event loop) calls this for any query
+ * that doesn't look like a "name@server" user handle. Mirrors
+ * FS3EApp_OpenDiscussion() exactly: clears the Search channel synchronously
+ * (no profile header, just a flat status list, same as discussion mode),
+ * then fires one FS3ENETQ_TIMELINE request through the
+ * FS3ENET_TLSHAPE_SEARCH_STATUSES shape (GET /api/v2/search, see
+ * FS3EMastodon_GetTimeline). query is raw UTF-8 text, NOT URL-encoded --
+ * FS3ENet_HandleTimeline (network process) does that itself from
+ * fs3et_SearchQuery. No pagination yet (single page, FS3ENETPAGE_INITIAL
+ * only): TTL_HOT_LOAD_OLDER/NEWER route through ViewModeTimeline(), which
+ * has no FS3ESEARCH_WORD case, so they're a harmless no-op for now. */
+static void FS3EApp_SearchWord(const char *query)
+{
+    char tl[64];
+    FS3ENetTimelineReq *req;
+
+    if (!query || !query[0]) return;
+    if (!app->accountApiBaseUrl) return;
+
+    if (app->searchProfileAcct)        { FreeVec(app->searchProfileAcct);        app->searchProfileAcct        = NULL; }
+    if (app->searchProfileAccountId)   { FreeVec(app->searchProfileAccountId);   app->searchProfileAccountId   = NULL; }
+    if (app->searchDiscussionStatusId) { FreeVec(app->searchDiscussionStatusId); app->searchDiscussionStatusId = NULL; }
+    app->searchMode = FS3ESEARCH_WORD;
+
+    fs3e_setViewMode(VIEWMODE_Search);
+
+    if (app->tootTimeline)
+        SetAttrs(app->tootTimeline, TTIMELINE_ClearPosts, TRUE, TAG_DONE);
+
+    snprintf(tl, sizeof(tl), "search?type=statuses&limit=20");
+    req = FS3ENetTimelineReq_Alloc(VIEWMODE_Search, FS3ENETPAGE_INITIAL,
+              app->accountGeneration, FS3ENET_TLSHAPE_SEARCH_STATUSES,
+              app->accountApiBaseUrl,
+              app->accountAccessToken ? app->accountAccessToken : "",
+              tl, "", "", query);
+    if (req && FS3EApp_NetSend(FS3ENETQ_TIMELINE, req, sizeof(*req))) {
+        /* Marks the Search channel "fetching" so
+         * FS3EApp_CheckConnectionState shows one of the search wait
+         * messages instead of "Updating..." -- cleared the same way every
+         * other channel's INITIAL fetch already is, in the generic
+         * FS3ENETQ_TIMELINE reply handler. */
+        app->timelineFetchedMask |= (1UL << VIEWMODE_Search);
+        s_searchWaitMsgIdx++;
+        FS3EApp_CheckConnectionState();
+    }
 }
 
 /* Visibility index (from FS3ETootView) → Mastodon API string. */
@@ -2058,7 +2147,7 @@ static void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                             app->accountGeneration, FS3ENET_TLSHAPE_ARRAY,
                             app->accountApiBaseUrl,
                             app->accountAccessToken ? app->accountAccessToken : "",
-                            tl, "", "");
+                            tl, "", "", NULL);
                         if (tlReq)
                             FS3EApp_NetSend(FS3ENETQ_TIMELINE, tlReq, sizeof(FS3ENetTimelineReq));
                     }
@@ -2256,6 +2345,7 @@ static void FS3EApp_SetButtonFontSize(ULONG pointSize)
      */
     if(app->tootView.contextMessage) SetAttrs(app->tootView.contextMessage,UBT_PointSize,pointSize,TAG_END);
     if(app->tootView.bodyEditor) SetAttrs(app->tootView.bodyEditor,UTED_PointSize,pointSize,TAG_END);
+    if(app->searchWordEditor) SetAttrs(app->searchWordEditor,UTED_PointSize,pointSize,TAG_END);
     if(app->tootView.emojiBtn) SetAttrs(app->tootView.emojiBtn,UBT_PointSize,pointSize,TAG_END);
     if(app->loginView.urlInstructLabel) SetAttrs(app->loginView.urlInstructLabel,UBT_PointSize,pointSize,TAG_END);
     if(app->tootView.window) DoMethod(app->tootView.windowObj, WM_RETHINK);
@@ -2277,8 +2367,22 @@ void FS3EApp_ApplyFontSettings(void)
 }
 /* this is the private delayed version .
 This has to be followed by a WM_RETHINK to recompute whole layout against font size*
-- expect when used just before first window open  */
-static void FS3EApp_ApplyFontSettings_Delayed()
+- expect when used just before first window open.
+ *
+ * Not static: GenericOpenWindow() (fs3eboopsimainwindow.c) calls this a
+ * second time right after FS3EStyle_ApplyColors() binds a real screen to
+ * app->style's draw contexts (URPDC_SetDrawScreen). FS3EStyle_SetFontSize
+ * -> compute_layout() below reads line-height metrics (URPDC_
+ * GetFontLineMetrics) from those same draw contexts, and until a screen is
+ * bound that reads back wrong -- this function's first call, from main()
+ * before the window/screen exist at all, computes app->style.avatarSize
+ * (and TootTimeline's own cached line-height fields, re-cached from the
+ * TTIMELINE_Style SetAttrs below) from an unscreened context and gets it
+ * wrong (avatar thumbnails render far too big). Nothing recomputes it
+ * again until the user changes a font setting by hand -- hence the bug
+ * only ever showing up before that first manual "resize". Re-running this
+ * once a screen exists fixes it before the very first paint. */
+void FS3EApp_ApplyFontSettings_Delayed(void)
 {
     ULONG prefFlags;
     if (!app || !app->window_obj || !app->buttonDC) return;
@@ -2358,6 +2462,7 @@ static Object *makeLabel(const char *text, UWORD dpiH)
 void fs3e_setViewMode(ULONG viewMode)
 {
     int i;
+    ULONG oldViewMode;
     if(app->viewMode == viewMode) return;
     if(viewMode >=VIEWMODE_NumberOf) return;
     /* synchronize buttons states with no drama */
@@ -2373,7 +2478,25 @@ void fs3e_setViewMode(ULONG viewMode)
     }
 
     /* now, it's official */
+    oldViewMode = app->viewMode;
     app->viewMode = viewMode;
+
+    /* Show the search word editor only in VIEWMODE_Search, and only touch
+     * it (SetGdAttrs + RethinkLayout) when actually entering/leaving that
+     * channel -- switching between two non-Search channels must not fire
+     * a relayout of this subtree at all. RethinkLayout is called at the
+     * searchBarLayout level on purpose: it recomputes only that gadget's
+     * own GM_LAYOUT (search editor + tootTimeline), not the whole window
+     * (titleBarLayout/navBarLayout are untouched). */
+    if (app->searchBarLayout &&
+        (oldViewMode == VIEWMODE_Search) != (viewMode == VIEWMODE_Search))
+    {
+        BOOL wantVisible = (viewMode == VIEWMODE_Search);
+        SetGdAttrs(app->searchBarLayout, SBLAYOUT_Visible, (ULONG)wantVisible, TAG_END);
+        if (CurrentMainWindow)
+            RethinkLayout((struct Gadget *)app->searchBarLayout,
+                          CurrentMainWindow, NULL, TRUE);
+    }
 
     /* tell TootTimeline we're to display that channel */
     if (app->tootTimeline)
@@ -2384,6 +2507,12 @@ void fs3e_setViewMode(ULONG viewMode)
 
     /* Update WaitText for channels that don't trigger a fetch (Search, Notifs, …). */
     FS3EApp_CheckConnectionState();
+
+    /* if we jump to search view, give keyboard focus to search */
+    if(viewMode == VIEWMODE_Search && app->searchWordEditor && CurrentMainWindow)
+    {
+        ActivateGadget(app->searchWordEditor,CurrentMainWindow,NULL);
+    }
 }
 
 /* Close every classic BOOPSI sub-window (but don't dispose them -- they
@@ -2450,6 +2579,31 @@ static BOOL FS3E_CheckSingleInstance(void)
     return TRUE;
 }
 
+void StartSearchFromLine()
+{
+    const char *text = NULL;
+
+    if(!app || !app->searchWordEditor) return;
+    SetAttrs(app->searchWordEditor, UTED_LineTextToGet, 0, TAG_END);
+    GetAttr(UTED_LineUTF8TextBuffer, app->searchWordEditor, (ULONG *)&text);
+    if(!text || *text == 0) return;
+
+    if (text && strchr(text, '@')) {
+        /* "name@server"-shaped text -> user
+         * search: a different kind of request,
+         * returning an account instead of a
+         * list of toots. Not wired up yet. */
+        printf("search line: user search (TODO): %s\n", text);
+    } else if (text && text[0]) {
+        /* Hashtag ("#tag", '#' kept as typed/
+         * prefilled -- see TTL_HOT_HASHTAG
+         * above) and plain word searches act
+         * the same: a word search on the
+         * server. */
+        FS3EApp_SearchWord(text);
+    }
+}
+
 /* - - - - - - - - - - - - - - - - - - - MAIN - - - - - - - - - - - - - - - */
 
 int main(int argc, char **argv)
@@ -2509,6 +2663,7 @@ int main(int argc, char **argv)
     if (!UniButtonBGBM_Init())  cleanexit("Can't init UniButtonBGBM class");
     if (!TitleBarLayout_Init()) cleanexit("Can't init TitleBarLayout class");
     if (!NavBarLayout_Init())   cleanexit("Can't init NavBarLayout class");
+    if (!SearchBarLayout_Init()) cleanexit("Can't init SearchBarLayout class");
     if (!TootTimeline_Init())   cleanexit("Can't init TootTimeline class");
 
     /* --- Shared button draw context (utf8rastport, fonts, emoji) -------- */
@@ -2751,6 +2906,44 @@ int main(int argc, char **argv)
  flushbdbprint();
 
     /* ================================================================== */
+    /* Part C: search word editor, wrapped with tootTimeline in           */
+    /* SearchBarLayoutClass (see fs3esearchbar.h). One-line UniTextEditor, */
+    /* same one-line setup as EmojiGear/egsearchbox.c's searchEditor.     */
+    /* Hidden by default -- fs3e_setViewMode toggles SBLAYOUT_Visible and  */
+    /* RethinkLayout()s just this subtree when VIEWMODE_Search is entered/ */
+    /* left, instead of relaying out the whole window.                    */
+    /* ================================================================== */
+    app->searchWordEditor = (Object *)NewObject(UNITEXTEDITOR_GetClass(), NULL,
+        GA_ID,                  (ULONG)GID_SEARCH_WORD_EDITOR,
+        ICA_TARGET,             (ULONG)TargetInstance,
+        UTED_KeyMessageMode,    UKM_Internal,
+        UTED_BevelStyle,        BVS_FIELD,
+        UTED_URPDrawContext,    (ULONG)app->buttonDC,
+        UTED_TextPen,           1UL,
+        UTED_BgPen,             0UL,
+        UTED_MaxDisplayLines,   1UL,
+        UTED_NoLineFeed,        TRUE,
+        UTED_WordWrap,          FALSE,
+        UTED_LeftMargin,        2,
+        UTED_TopMargin,         3,
+        UTED_BottomMargin,      1,
+        UTED_LineSpacing,       0,
+        TAG_END);
+    if (!app->searchWordEditor) cleanexit("Can't create search word editor");
+
+    app->searchBarLayout = (Object *)NewObject(SearchBarLayoutClass, NULL,
+        LAYOUT_BevelStyle, BVS_NONE,
+        LAYOUT_SpaceOuter, FALSE,
+        LAYOUT_SpaceInner, FALSE,
+        LAYOUT_BackFill,   NULL,
+        SBLAYOUT_Visible,  FALSE,
+        /* children in required order (see fs3esearchbar.h) */
+        LAYOUT_AddChild,   (ULONG)app->searchWordEditor,
+        LAYOUT_AddChild,   (ULONG)app->tootTimeline,
+        TAG_END);
+    if (!app->searchBarLayout) cleanexit("Can't create search bar layout");
+
+    /* ================================================================== */
     /* Root layout (A + B + C, vertical, borderless, no gaps)             */
     /* ================================================================== */
 
@@ -2767,7 +2960,7 @@ int main(int argc, char **argv)
         LAYOUT_AddChild,    (ULONG)app->navBarLayout,
             CHILD_WeightedHeight, 0,
 
-        LAYOUT_AddChild,    (ULONG)app->tootTimeline,
+        LAYOUT_AddChild,    (ULONG)app->searchBarLayout,
             CHILD_WeightedHeight, 100,
 
         TAG_END);
@@ -2831,6 +3024,7 @@ int main(int argc, char **argv)
 
 #define reflags_bodyEditor    2
 #define reflags_tootTimeLine    4
+#define reflags_searchworduted 8
         GetAttr(WINDOW_SigMask, app->window_obj, &winsignal);
 
         while (ok)
@@ -3371,7 +3565,21 @@ int main(int argc, char **argv)
                             }
                             break;
                         }
-
+                        case GID_SEARCH_WORD_EDITOR:
+                        refreshFlags |= reflags_searchworduted;
+                        {
+                            ptag = FindTagItem(UTEDN_EnterPressed, msg);
+                            if (ptag)
+                            {   /* enter pressed on the search line */
+                                StartSearchFromLine();
+                                /*good idea to send stop having focus to editor so usual keys works */
+                                if(CurrentMainWindow && app->tootTimeline)
+                                {
+                                    ActivateGadget(app->tootTimeline,CurrentMainWindow,NULL);
+                                }
+                            }
+                        }
+                        break;
                         case GID_TTIMELINE:
                             refreshFlags |= reflags_tootTimeLine;
                             {
@@ -3419,6 +3627,32 @@ int main(int argc, char **argv)
                                              * mention scan -- see
                                              * ttl_scan_span_tokens). */
                                             FS3EApp_OpenProfile(hotSpotString);
+                                            break;
+
+                                        case TTL_HOT_HASHTAG:
+                                            /* hotSpotString already carries
+                                             * the "#tag" token as it appears
+                                             * in the text (see
+                                             * TTL_HOT_HASHTAG's comment in
+                                             * fs3etoottimeline.h) -- prefill
+                                             * the search line with it
+                                             * unchanged (keep the '#'),
+                                             * switch to the Search channel
+                                             * so the bar is visible, and
+                                             * fire the search right away
+                                             * (StartSearchFromLine reads
+                                             * the line back from
+                                             * app->searchWordEditor, so the
+                                             * SetGdAttrs above must land
+                                             * first) -- one click gets both
+                                             * the right view and the actual
+                                             * results, no separate Enter
+                                             * needed. */
+                                            fs3e_setViewMode(VIEWMODE_Search);
+                                            if (app->searchWordEditor && hotSpotString)
+                                                SetGdAttrs(app->searchWordEditor,
+                                                    UTED_Text, (ULONG)hotSpotString, TAG_END);
+                                            StartSearchFromLine();
                                             break;
 
                                         case TTL_HOT_THREAD:
@@ -3628,6 +3862,13 @@ int main(int argc, char **argv)
 
             } // end if has boopsimessage
 
+            if((refreshFlags & reflags_searchworduted) && app->searchWordEditor && CurrentMainWindow
+             && app->viewMode == VIEWMODE_Search)
+            {
+                RefreshGList((struct Gadget *)app->searchWordEditor,
+                             CurrentMainWindow, NULL, 1);
+            }
+
             if ((refreshFlags & reflags_bodyEditor) && app->tootView.window)
                 RefreshGList((struct Gadget *)app->tootView.bodyEditor,
                              app->tootView.window, NULL, 1);
@@ -3688,6 +3929,7 @@ void exitclose(void)
  printf("exitclose3\n");
         /* Free private classes AFTER all objects using them are disposed. */
         TootTimeline_Exit();
+        SearchBarLayout_Exit();
         NavBarLayout_Exit();
         TitleBarLayout_Exit();
         UniButtonP9_Exit();

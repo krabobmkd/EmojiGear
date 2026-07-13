@@ -49,12 +49,15 @@ typedef enum {
 /* What the Search channel (VIEWMODE_Search) is currently showing --
  * TootTimeline itself only knows "does this channel have a profile
  * header" (see TTLChannel.headerPost); this is the app-level policy of
- * *why*, driving which requests to fire when Search is (re-)entered.
- * Word search (see todo.txt) is a future sub-mode of this same channel. */
+ * *why*, driving which requests to fire when Search is (re-)entered. */
 typedef enum {
     FS3ESEARCH_NONE = 0,
     FS3ESEARCH_USER_PROFILE,
-    FS3ESEARCH_DISCUSSION /* see FS3EApp_OpenDiscussion(), searchDiscussionStatusId */
+    FS3ESEARCH_DISCUSSION, /* see FS3EApp_OpenDiscussion(), searchDiscussionStatusId */
+    FS3ESEARCH_WORD        /* see FS3EApp_SearchWord(); word/hashtag search, both
+                             * go through the same FS3ENET_TLSHAPE_SEARCH_STATUSES
+                             * request -- flat status list, no profile header,
+                             * same as FS3ESEARCH_DISCUSSION */
 } FS3ESearchMode;
 
 /* Max number of accounts kept in App.accounts[] / persisted to
@@ -111,7 +114,13 @@ struct App {
     Object *navBarLayout;
     Object *nav_btns[8];
 
-    /* Part C: toot timeline (TootTimelineClass) */
+    /* Part C: search editor + toot timeline (SearchBarLayoutClass).
+     * searchBarLayout wraps searchWordEditor (one-line UniTextEditor,
+     * shown only in VIEWMODE_Search -- see fs3e_setViewMode) above
+     * tootTimeline (TootTimelineClass); searchBarLayout is what actually
+     * gets added to mainlayout, not tootTimeline directly. */
+    Object *searchBarLayout;
+    Object *searchWordEditor;
     Object *tootTimeline;
 
     /* Shared draw context for all UniButtonP9 buttons */
@@ -259,4 +268,11 @@ extern struct App *app;
 void cleanexit(const char *pmessage);
 
 void fs3e_setViewMode(ULONG viewMode);
+
+/* Re-applies app->settings' font/rendering options to every draw context
+ * (button bar, timeline style). Not static so fs3eboopsimainwindow.c's
+ * GenericOpenWindow() can call it again right after a real screen is bound
+ * -- see its comment in friendsh3ep.c for why that second call is needed. */
+void FS3EApp_ApplyFontSettings_Delayed(void);
+
 #endif /* FRIENDSH3EP_H */

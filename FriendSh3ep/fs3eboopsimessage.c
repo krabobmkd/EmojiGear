@@ -116,6 +116,7 @@ static ULONG delayedAttribs[] = {
     UTED_ScrollTop,
     UTED_SetPrivateActivation,
     UTED_InternalRawKey_Code,
+    UTEDN_EnterPressed,
 
     TTIMELINE_ScrollDomainChanged,
     TTIMELINE_PostClicked,

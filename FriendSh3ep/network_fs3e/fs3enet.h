@@ -296,9 +296,15 @@ enum FS3ENetTimelineShape
 {
     FS3ENET_TLSHAPE_ARRAY = 0,       /* bare Status[] -- every timeline/profile-statuses endpoint */
     FS3ENET_TLSHAPE_SINGLE,          /* GET .../statuses/:id -- one Status object, wrapped as a 1-elem array */
-    FS3ENET_TLSHAPE_CONTEXT_DESCENDANTS /* GET .../statuses/:id/context -- {ancestors,descendants}; only
+    FS3ENET_TLSHAPE_CONTEXT_DESCENDANTS, /* GET .../statuses/:id/context -- {ancestors,descendants}; only
                                           * descendants (the replies) is unwrapped and used, ancestors
                                           * discarded */
+    FS3ENET_TLSHAPE_SEARCH_STATUSES  /* GET /api/v2/search?type=statuses&q=... (note: v2, not v1) --
+                                          * {accounts,statuses,hashtags}; only statuses is unwrapped and
+                                          * used. Word and hashtag search both use this same shape/request
+                                          * (see fs3et_SearchQuery below) -- Mastodon's own search treats
+                                          * a leading '#' in q as a hashtag match, so there's no need for
+                                          * a separate hashtag-timeline request type. */
 };
 
 /*
@@ -325,6 +331,11 @@ enum FS3ENetTimelineShape
  *
  * On FS3ENETR_OK, fs3em_Data is replaced with a flat FS3ENetTimelineReply
  * block; fs3em_Data on error still points at the original request block.
+ *
+ * fs3et_SearchQuery is only meaningful for FS3ENET_TLSHAPE_SEARCH_STATUSES:
+ * the raw (NOT URL-encoded) search text -- FS3ENet_HandleTimeline encodes
+ * it itself and folds it onto fs3et_Timeline as "&q=...". "" for every
+ * other shape.
  */
 typedef struct FS3ENetTimelineReq {
     ULONG  fs3et_ViewModeBit;    /* echoed in reply */
@@ -336,12 +347,14 @@ typedef struct FS3ENetTimelineReq {
     char  *fs3et_Timeline;       /* "home", "public", "public?local=true", … */
     char  *fs3et_MaxId;          /* "" = no lower bound */
     char  *fs3et_MinId;          /* "" = no upper bound */
+    char  *fs3et_SearchQuery;    /* raw (unencoded) search text; "" unless
+                                   * fs3et_ResponseShape is SEARCH_STATUSES */
 } FS3ENetTimelineReq;
 
 FS3ENetTimelineReq *FS3ENetTimelineReq_Alloc(ULONG viewModeBit,
     ULONG pageDirection, ULONG accountGeneration, ULONG responseShape,
     const char *apiBaseUrl, const char *accessToken, const char *timeline,
-    const char *maxId, const char *minId);
+    const char *maxId, const char *minId, const char *searchQuery);
 
 /* Max media_attachments entries kept per status (Mastodon itself caps
  * normal posts at 4 attachments, so this never truncates in practice). */

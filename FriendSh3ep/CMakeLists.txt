@@ -59,6 +59,7 @@ set(FRIENDSH3EP_SOURCES
     UniButtonBGBM/offscreenbm.c
     TitleBarLayout/fs3etitlebar.c
     NavBarLayout/fs3enavbar.c
+    SearchBarLayout/fs3esearchbar.c
     TootTimeline/fs3etoottimeline.c
     TootTimeline/fs3etoottimeline_attribs.c
     TootTimeline/fs3etoottimeline_posts.c
@@ -98,6 +99,7 @@ set(FRIENDSH3EP_HEADERS
     UniButtonBGBM/unibuttonbgbm.h
     TitleBarLayout/fs3etitlebar.h
     NavBarLayout/fs3enavbar.h
+    SearchBarLayout/fs3esearchbar.h
     TootTimeline/fs3etoottimeline.h
     TootTimeline/fs3etoottimeline_private.h
 )

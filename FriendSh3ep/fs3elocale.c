@@ -189,6 +189,15 @@ static const char *defaultStrings[MSG_COUNT] = {
     "ScalePixelArray()",
     /* MSG_SETTINGSV_RGBDRAW_INTERNAL_BILINEAR */
     "Internal Bilinear (>=68060)",
+
+    /* MSG_SEARCHV_WAIT1 */
+    "\xF0\x9F\x90\x98 Casting the net across the fediverse...",
+    /* MSG_SEARCHV_WAIT2 */
+    "Chasing toots through the herd...",
+    /* MSG_SEARCHV_WAIT3 */
+    "Searching the elephant's memory...",
+    /* MSG_SEARCHV_WAIT4 */
+    "Combing timelines, one toot at a time...",
 };
 
 /* LocaleBase declared in friendsh3ep.c */

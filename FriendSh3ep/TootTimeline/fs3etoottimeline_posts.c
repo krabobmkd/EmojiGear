@@ -425,13 +425,13 @@ static void ttl_toot_layout(TTLData *inst, TTLPost *post)
     /* Media preview rectangle sizing: same scale factor as the avatar
      * (both derive from lineH via FS3EStyle's compute_layout -- see
      * TTL_AVATAR_BASE_SIZE). Side-by-side needs the gadget wide enough
-     * both by the caller's own >400px rule and to leave a usable text
+     * both by the caller's own >800px rule and to leave a usable text
      * column; otherwise it stacks below the text. */
     post->previewX = post->previewY = post->previewW = post->previewH = 0;
     if (post->mediaCount > 0 && post->pollOptionCount == 0) {
         previewW = (WORD)(((LONG)TTL_PREVIEW_BASE_W * avatarW) / TTL_AVATAR_BASE_SIZE);
         previewH = (WORD)(((LONG)TTL_PREVIEW_BASE_H * avatarW) / TTL_AVATAR_BASE_SIZE);
-        if (inst->gadWidth > 400 && (textW - previewW - avatarGap) >= 32)
+        if (inst->gadWidth > 500 && (textW - previewW - avatarGap) >= 32)
             sideBySide = TRUE;
         if (!sideBySide && previewW > textW)
             previewW = textW;
