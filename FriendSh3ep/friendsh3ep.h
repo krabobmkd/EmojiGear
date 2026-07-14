@@ -3,6 +3,13 @@
 
 /*
  * FriendSh3ep - main application header: struct App and global state.
+ *
+ * Scope (see friendsh3ep.c's own file header for the fuller rationale):
+ * this header exists to expose struct App/FS3EAccount/the enums and to let
+ * other files reach app-wide state -- it is not the place to declare a new
+ * subsystem's functions. A subsystem split out of friendsh3ep.c (requests,
+ * accounts, ...) gets its own <name>.h instead.
+ *
  * See ARCHITECTURE.md for the overall design.
  */
 
@@ -105,7 +112,7 @@ struct App {
     /* Row-2 user icon is drawn directly by TitleBarLayout_OnRender() from
      * TBLAYOUT_AvatarImages/TBLAYOUT_AccountAcct -- no gadget/image object
      * of its own anymore (see fs3etitlebar.c's file header comment). */
-    Object *titlebar_settingsBtn;       /*  */
+//olde    Object *titlebar_settingsBtn;       /*  */
     Object *titlebar_accountBtn;       /*  */
     Object *titlebar_newtootBtn;       /*  */
 
@@ -274,5 +281,28 @@ void fs3e_setViewMode(ULONG viewMode);
  * GenericOpenWindow() can call it again right after a real screen is bound
  * -- see its comment in friendsh3ep.c for why that second call is needed. */
 void FS3EApp_ApplyFontSettings_Delayed(void);
+
+/* Request loading (or unloading) a UI theme onto the main window from
+ * app->settings.themeName: unloads any currently-loaded theme bitmaps and
+ * releases their pens, loads style.txt (from PROGDIR:themes/<themeName>)
+ * and images if themeName is non-NULL/non-empty, or just resets colors to
+ * the built-in defaults if it's NULL/empty ("no theme"), re-applies colors
+ * to pens, re-syncs the title bar button images, and WM_RETHINKs the main
+ * window so the new layout/colors actually show.
+ *
+ * Debounced like FS3EApp_ApplyFontSettings(): the real work (see
+ * FS3EApp_LoadTheme_Delayed in friendsh3ep.c) runs once on the next
+ * Wait() wakeup, not synchronously on this call. Rapid repeated calls
+ * (e.g. two fast clicks on the theme chooser) coalesce to a single
+ * WM_RETHINK against whatever app->settings.themeName holds by then,
+ * instead of each doing a synchronous unload/load/WM_RETHINK re-entrantly
+ * from inside WM_HANDLEINPUT dispatch, which used to crash. Callers
+ * (fs3ethemeview.c's chooser handler, main()'s startup restore) are
+ * expected to have already written the requested name into
+ * app->settings.themeName before calling this -- the themeName parameter
+ * itself is unused, kept only so call sites read as documentation of that
+ * contract. Not static: fs3ethemeview.c calls this when the theme chooser
+ * selection changes. */
+void FS3EApp_LoadTheme(const char *themeName);
 
 #endif /* FRIENDSH3EP_H */

@@ -51,9 +51,13 @@ typedef struct FS3ESettings {
      * subsystem yet. AllocVec'd, always non-NULL; default "PROGDIR:.user". */
     char *userDataPath;
 
-    /* Maximum on-disk media cache size, in megabytes. Not yet enforced by
-     * the network process (see FS3ECache_Flush for the manual alternative);
-     * default 4. */
+    /* Maximum on-disk media cache size, in megabytes. Enforced by the
+     * network process (see FS3ECache_Init/FS3ECache_Store in
+     * network_fs3e/fs3enet_cache.c -- oldest-first eviction, checked once
+     * at startup and after every new download); FS3ECache_Flush (the
+     * SettingsView "Flush cache" button) is a separate manual full wipe.
+     * Takes effect on the next launch, same as cachePath above -- both are
+     * only read once at FS3ENet_Start() time. Default 40. */
     int   maxCacheSizeMB;
 
     /* Seconds between polling the server for new toots; default 60. */

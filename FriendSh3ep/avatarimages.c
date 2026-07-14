@@ -35,12 +35,39 @@ static AvatarEntry *find_entry(AvatarImages *ai, const char *acct)
 static AvatarEntry *find_or_create(AvatarImages *ai, const char *acct)
 {
     AvatarEntry *e = find_entry(ai, acct);
-    if (!e) {
-        if (!ai || ai->count >= AVATAR_CACHE_MAX) return NULL;
+    if (e) return e;
+    if (!ai || !acct || !acct[0]) return NULL;
+
+    if (ai->count < AVATAR_CACHE_MAX) {
         e = &ai->entries[ai->count++];
-        memset(e, 0, sizeof(*e));
-        strncpy(e->acct, acct, AVATAR_ACCT_SIZE - 1);
+    } else {
+        /* Round-robin eviction once full -- same reasoning as
+         * find_or_create_media below: never evict a slot with a fetch/
+         * thumbnail still outstanding (requested but not yet loaded and
+         * not failed), since that would let a later timeline refresh
+         * re-request the same acct and race a second fetch/thumbnail
+         * chain against the first one still in flight. A failed entry
+         * has nothing in flight for it, so it's just as evictable as a
+         * loaded one. Search up to a full lap for an idle slot; if every
+         * slot is genuinely in flight, decline to track this acct this
+         * round rather than evict something live. */
+        ULONG tries;
+        AvatarEntry *victim = NULL;
+        for (tries = 0; tries < AVATAR_CACHE_MAX; tries++) {
+            ULONG idx = (ai->avatarNextEvict + tries) % AVATAR_CACHE_MAX;
+            AvatarEntry *cand = &ai->entries[idx];
+            if (!cand->requested || RgbImage_IsLoaded(&cand->img) || cand->failed) {
+                victim = cand;
+                ai->avatarNextEvict = (idx + 1) % AVATAR_CACHE_MAX;
+                break;
+            }
+        }
+        if (!victim) return NULL;
+        e = victim;
+        RgbImage_Free(&e->img);
     }
+    memset(e, 0, sizeof(*e));
+    strncpy(e->acct, acct, AVATAR_ACCT_SIZE - 1);
     return e;
 }
 

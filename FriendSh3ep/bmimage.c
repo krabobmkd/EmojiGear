@@ -79,6 +79,9 @@
 #include <datatypes/datatypes.h>
 #include <datatypes/datatypesclass.h>
 #include <datatypes/pictureclass.h>
+
+#include "compilers.h"
+#include "bdbprintf.h"
 #include <proto/datatypes.h>
 
 #include "friendsh3ep.h"
@@ -134,6 +137,9 @@ static BOOL bmimage_open_file_to_screen(BmImage *img, const char *path, struct S
     struct BitMapHeader *bmhd = NULL;
     struct BitMap       *bm   = NULL;
 
+    bdbprintf_now("bmimage: bmimage_open_file_to_screen entering NewDTObject path=%s screen=%08lx\n",
+                  path ? path : "?", (unsigned long)screen);
+
     if (screen) {
         ULONG depth = GetBitMapAttr(screen->RastPort.BitMap, BMA_DEPTH);
         if (depth <= 8) {
@@ -161,13 +167,28 @@ static BOOL bmimage_open_file_to_screen(BmImage *img, const char *path, struct S
             TAG_DONE);
     }
 
+    bdbprintf_now("bmimage: bmimage_open_file_to_screen NewDTObject done path=%s dto=%08lx\n",
+                  path ? path : "?", (unsigned long)dto);
     if (!dto) {
         img->error = BMIMAGE_ERR_OPEN_FAILED;
         return FALSE;
     }
 
-    /* Decode image and perform colour remapping on the calling process. */
-    DoDTMethod(dto, NULL, NULL, DTM_PROCLAYOUT, NULL, TRUE);
+    /* Decode image and perform colour remapping on the calling process.
+     * alib's DoMethod(), not DoDTMethod() -- see the file header comment:
+     * DoDTMethod()/DoDTMethodA() are already known to freeze for
+     * PDTM_READPIXELARRAY on this codebase's picture.datatype, and
+     * DTM_PROCLAYOUT ("same as GM_LAYOUT") goes through the exact same
+     * BOOPSI dispatch mechanism, just on a different method -- no reason
+     * to trust the tag-call path here when the plain one is already
+     * proven safe elsewhere in this file. gpLayout's fields after
+     * MethodID are gpl_GInfo (NULL, no window/gadget context here) and
+     * gpl_Initial (TRUE, matching the original DoDTMethod call). */
+    bdbprintf_now("bmimage: entering DTM_PROCLAYOUT path=%s dto=%08lx\n",
+                  path ? path : "?", (unsigned long)dto);
+    DoMethod(dto, DTM_PROCLAYOUT, (ULONG)NULL, (ULONG)TRUE);
+    bdbprintf_now("bmimage: DTM_PROCLAYOUT done path=%s dto=%08lx\n",
+                  path ? path : "?", (unsigned long)dto);
 
     GetDTAttrs(dto, PDTA_BitMapHeader, (ULONG)&bmhd, TAG_DONE);
     if (bmhd) {
@@ -234,12 +255,16 @@ static BOOL bmimage_scale_read_source_rgb(BmImage *img,
     UBYTE               *buf  = NULL;
     ULONG                w, h, rowBytes, nbpix;
 
+    bdbprintf_now("bmimage: entering NewDTObject path=%s\n",
+                  img->filePath ? img->filePath : "?");
     dto = NewDTObject((APTR)img->filePath,
         DTA_GroupID,             GID_PICTURE,
         PDTA_Remap,              FALSE,
         PDTA_DestMode,           PMODE_V43,
         PDTA_SubClassRendersAll, TRUE,
         TAG_DONE);
+    bdbprintf_now("bmimage: NewDTObject done path=%s dto=%08lx\n",
+                  img->filePath ? img->filePath : "?", (unsigned long)dto);
     if (!dto) {
         img->error = BMIMAGE_ERR_OPEN_FAILED;
         return FALSE;
@@ -263,11 +288,16 @@ static BOOL bmimage_scale_read_source_rgb(BmImage *img,
     }
 
     /* alib's DoMethod() -- DoDTMethod()/DoDTMethodA() freeze for this method. */
+    bdbprintf_now("bmimage: entering PDTM_READPIXELARRAY path=%s w=%lu h=%lu\n",
+                  img->filePath ? img->filePath : "?",
+                  (unsigned long)w, (unsigned long)h);
     nbpix = DoMethod(dto,
             PDTM_READPIXELARRAY,
             (ULONG)buf, PBPAFMT_RGB, rowBytes,
             0, 0, w, h,
             TAG_DONE);
+    bdbprintf_now("bmimage: PDTM_READPIXELARRAY done path=%s nbpix=%lu\n",
+                  img->filePath ? img->filePath : "?", (unsigned long)nbpix);
     DisposeDTObject(dto);
     if (nbpix == 0) {
         FreeVec(buf);

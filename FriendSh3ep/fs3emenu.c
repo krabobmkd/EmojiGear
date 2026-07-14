@@ -104,7 +104,6 @@ BOOL FS3EMenu_Create(FS3EMenu *m, struct Screen *screen, struct Window *window)
 
     m->visualInfo = GetVisualInfo(screen, TAG_END);
     if (!m->visualInfo) {
-        printf("FS3EMenu_Create: GetVisualInfo failed\n");
         return FALSE;
     }
 
@@ -113,7 +112,6 @@ BOOL FS3EMenu_Create(FS3EMenu *m, struct Screen *screen, struct Window *window)
 
     m->menu = CreateMenus(s_menuTemplate, TAG_END);
     if (!m->menu) {
-        printf("FS3EMenu_Create: CreateMenus failed\n");
         FreeVisualInfo(m->visualInfo);
         m->visualInfo = NULL;
         return FALSE;
@@ -122,7 +120,6 @@ BOOL FS3EMenu_Create(FS3EMenu *m, struct Screen *screen, struct Window *window)
     if (!LayoutMenus(m->menu, m->visualInfo,
                      GTMN_NewLookMenus, TRUE,
                      TAG_END)) {
-        printf("FS3EMenu_Create: LayoutMenus failed\n");
         FreeMenus(m->menu);
         FreeVisualInfo(m->visualInfo);
         m->menu       = NULL;

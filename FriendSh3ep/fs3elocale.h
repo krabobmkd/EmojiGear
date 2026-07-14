@@ -102,7 +102,8 @@ enum {
     MSG_THEMEV_PRESET_MONO,
     MSG_THEMEV_THEME_GROUP,
     MSG_THEMEV_THEME_NAME,
-    MSG_THEMEV_THEME_DEFAULT,
+    MSG_THEMEV_THEME_NONE,      /* "-" -- first chooser entry, no theme */
+    MSG_THEMEV_SCAN_THEMES,     /* "Scan Themes" button */
 
     /* General Settings view (fs3esettingsview.c) */
     MSG_SETTINGSV_TITLE,

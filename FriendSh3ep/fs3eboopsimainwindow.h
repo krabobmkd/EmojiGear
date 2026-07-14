@@ -43,6 +43,23 @@ void FS3EMain_Close(FS3EMainWindow *mw, Object *window_obj, int iconify);
 /* Save the current window position/size into *mw. */
 void FS3EMain_GetWindowPos(FS3EMainWindow *mw, Object *window_obj);
 
+/* Propagates app->style (colors, theme images, Patch9 skins -- already
+ * loaded/reset and pen-applied by the caller) onto every widget that
+ * caches its own rendering from it: the 4 plain-image title bar buttons,
+ * the 2 Patch9-skinned ones, the toot timeline (background/text colors
+ * via TTIMELINE_Style, which also re-derives avatarSize and other
+ * font-size-dependent layout -- see FS3EApp_ApplyFontSettings_Delayed's
+ * own doc comment), and the 8 nav bar buttons. Callers are expected to
+ * have already called FS3EStyle_LoadThemeImages()/ResetColors()/
+ * ResetPatch9Colors() and FS3EStyle_ApplyColors() -- this only propagates
+ * that already-updated state onward, it doesn't compute anything itself.
+ * Used by GenericOpenWindow (every window open/uniconize, this file) and
+ * FS3EApp_LoadTheme (friendsh3ep.c, a live theme switch) -- kept as one
+ * function specifically so those two call sites can't silently drift
+ * apart the way FS3EApp_LoadTheme once shipped without the toot
+ * timeline/nav bar steps below. */
+void FS3EMain_SyncStyleToWidgets(void);
+
 /* SetGadgetAttrs() if a window is currently open, else SetAttrs(). */
 void SetGdAttrsA(Object *g, CONST struct TagItem *tags);
 void  __attribute__((noinline)) SetGdAttrs(Object *g, ULONG tag, ...);

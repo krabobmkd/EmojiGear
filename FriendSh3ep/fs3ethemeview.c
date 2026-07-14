@@ -70,6 +70,155 @@ static char *ThemeStrDup(const char *s)
     return copy;
 }
 
+/* ------------------------------------------------------------------ */
+/* Theme scanning                                                      */
+/* ------------------------------------------------------------------ */
+
+/* Directory root scanned by FS3EThemeView_ScanThemes() -- see fs3estyle.h's
+ * FS3ESTYLE_THEMES_ROOT, shared with FS3EApp_LoadTheme in friendsh3ep.c.
+ * "PROGDIR:themes/mouton" (bundled with the app) is one such subdirectory,
+ * but is not auto-loaded -- see FS3EStyle_SetThemePath's doc comment. */
+
+/* Detaches CHOOSER_Labels (if attached), frees every node in
+ * tv->themeList/themeNodes[]/themeNames[], and resets the list to empty.
+ * Detaching first, same "Labels, ~0 then rebuild" idiom
+ * FS3ELoginView_SetAccountsList uses for its ListBrowser (see
+ * fs3eloginview.c), keeps the gadget from ever holding a pointer into a
+ * node this is about to free. */
+static void clearThemeNodes(FS3EThemeView *tv)
+{
+    int i;
+
+    if (!ChooserBase) return;
+
+    if (tv->window) {
+        SetGadgetAttrs((struct Gadget *)tv->themeChooser, tv->window, NULL,
+            CHOOSER_Labels, (ULONG)~0, TAG_DONE);
+    } else if (tv->themeChooser) {
+        SetAttrs(tv->themeChooser, CHOOSER_Labels, (ULONG)~0, TAG_END);
+    }
+
+    for (i = 0; i < tv->themeCount; i++) {
+        if (tv->themeNodes[i]) FreeChooserNode(tv->themeNodes[i]);
+        tv->themeNodes[i] = NULL;
+        FreeVec(tv->themeNames[i]);
+        tv->themeNames[i] = NULL;
+    }
+    NewList(&tv->themeList);
+    tv->themeCount = 0;
+}
+
+/* Appends the always-present "-" (no theme) entry at index 0. Uses the
+ * LOC()'d string directly, same as before this was pulled into its own
+ * function -- a static-lifetime string needs no owned copy. */
+static void addNoThemeNode(FS3EThemeView *tv)
+{
+    struct Node *node;
+
+    if (!ChooserBase || tv->themeCount >= FS3ETHEMEVIEW_MAX_THEMES) return;
+
+    node = AllocChooserNode(CNA_Text, (ULONG)LOC(MSG_THEMEV_THEME_NONE), TAG_END);
+    if (!node) return;
+
+    tv->themeNodes[tv->themeCount] = node;
+    tv->themeNames[tv->themeCount] = NULL;
+    tv->themeCount++;
+    AddTail(&tv->themeList, node);
+}
+
+/* Appends one scanned-theme entry, displayed as dirName verbatim (no
+ * prettification -- the chooser label IS the subdirectory name). Keeps
+ * its own AllocVec'd copy of dirName alive in themeNames[] for as long as
+ * the node exists and hands THAT pointer to CNA_Text, rather than relying
+ * on the chooser to copy it itself -- chooser.gadget's CNA_CopyText is
+ * OS4-only (see <gadgets/chooser.h>), so on OS3 there's no guarantee
+ * CNA_Text doesn't just store the pointer it's given. */
+static void addScannedThemeNode(FS3EThemeView *tv, const char *dirName)
+{
+    struct Node *node;
+    char *ownedName;
+
+    if (!ChooserBase || tv->themeCount >= FS3ETHEMEVIEW_MAX_THEMES) return;
+
+    ownedName = ThemeStrDup(dirName);
+    if (!ownedName) return;
+
+    node = AllocChooserNode(CNA_Text, (ULONG)ownedName, TAG_END);
+    if (!node) { FreeVec(ownedName); return; }
+
+    tv->themeNodes[tv->themeCount] = node;
+    tv->themeNames[tv->themeCount] = ownedName;
+    tv->themeCount++;
+    AddTail(&tv->themeList, node);
+}
+
+/* TRUE if PROGDIR:themes/<dirName>/style.txt exists -- a plain Open()
+ * probe, same idiom FS3ECache_Lookup uses in
+ * network_fs3e/fs3enet_cache.c. */
+static BOOL hasStyleFile(const char *dirName)
+{
+    char path[300];
+    BPTR fh;
+
+    snprintf(path, sizeof(path), "%s/%s/style.txt", FS3ESTYLE_THEMES_ROOT, dirName);
+    fh = Open((STRPTR)path, MODE_OLDFILE);
+    if (!fh) return FALSE;
+    Close(fh);
+    return TRUE;
+}
+
+/* Rebuilds the theme chooser's list from scratch: entry 0 is always "-"
+ * (no theme), followed by every immediate subdirectory of
+ * PROGDIR:themes/ that contains a style.txt (see hasStyleFile), in
+ * whatever order Examine()/ExNext() enumerate them. Capped at
+ * FS3ETHEMEVIEW_MAX_THEMES total entries (including the "-" one).
+ * Selection resets to "-" afterward (does NOT call FS3EApp_LoadTheme --
+ * simplest safe behavior, since a rescan can add/remove/reorder entries
+ * out from under whatever index/theme was previously active/loaded; the
+ * main window's currently loaded theme, if any, is left alone until the
+ * user explicitly picks something from the freshly rebuilt list). */
+static void FS3EThemeView_ScanThemes(FS3EThemeView *tv)
+{
+    BPTR                   lock;
+    struct FileInfoBlock  *fib;
+
+    if (!tv || !ChooserBase) return;
+
+    clearThemeNodes(tv);
+    addNoThemeNode(tv);
+
+    lock = Lock((STRPTR)FS3ESTYLE_THEMES_ROOT, SHARED_LOCK);
+    if (lock) {
+        fib = (struct FileInfoBlock *)AllocDosObject(DOS_FIB, NULL);
+        if (fib) {
+            if (Examine(lock, fib)) {
+                while (ExNext(lock, fib) && tv->themeCount < FS3ETHEMEVIEW_MAX_THEMES) {
+                    if (fib->fib_DirEntryType >= 0 &&   /* directory, not a file */
+                        hasStyleFile((const char *)fib->fib_FileName))
+                    {
+                        addScannedThemeNode(tv, (const char *)fib->fib_FileName);
+                    }
+                }
+            }
+            FreeDosObject(DOS_FIB, fib);
+        }
+        UnLock(lock);
+    }
+
+    if (tv->window) {
+        SetGadgetAttrs((struct Gadget *)tv->themeChooser, tv->window, NULL,
+            CHOOSER_Labels, (ULONG)&tv->themeList,
+            CHOOSER_Active, 0UL,
+            TAG_DONE);
+        RefreshGList((struct Gadget *)tv->themeChooser, tv->window, NULL, 1);
+    } else if (tv->themeChooser) {
+        SetAttrs(tv->themeChooser,
+            CHOOSER_Labels, (ULONG)&tv->themeList,
+            CHOOSER_Active, 0UL,
+            TAG_END);
+    }
+}
+
 static Object *makeGetFileGadget(ULONG gadId, const char *initialPath)
 {
     return NewObject(GETFILE_GetClass(), NULL,
@@ -351,28 +500,44 @@ BOOL FS3EThemeView_Create(FS3EThemeView *tv, const char *title)
     /* --- Theme chooser --- */
     NewList(&tv->themeList);
     tv->themeCount = 0;
-    if (ChooserBase) {
-        struct Node *node = AllocChooserNode(
-            CNA_Text, (ULONG)LOC(MSG_THEMEV_THEME_DEFAULT), TAG_END);
-        if (node) {
-            tv->themeNodes[0] = node;
-            tv->themeCount    = 1;
-            AddTail(&tv->themeList, node);
-        }
-    }
+    addNoThemeNode(tv);
 
-    tv->themeChooser = NewObject(CHOOSER_GetClass(), NULL,
-        GA_ID,          GID_THEMEV_THEME_CHOOSER,
-        GA_RelVerify,   TRUE,
-        CHOOSER_PopUp,  TRUE,
-        CHOOSER_Labels, (ULONG)&tv->themeList,
-        CHOOSER_Active, 0UL,
-        TAG_END);
-    if (!tv->themeChooser) return FALSE;
+    /* If a theme is currently activated (app->settings.themeName, restored
+     * at startup by FS3EApp_LoadTheme in friendsh3ep.c) and it still
+     * actually exists on disk, seed it as the one other entry so the
+     * chooser reflects what's really loaded on the main window right now
+     * -- without a full FS3EThemeView_ScanThemes() rescan, which the user
+     * has to ask for explicitly (Scan Themes button). */
+    {
+        ULONG initialActive = 0;
+        if (app->settings.themeName && app->settings.themeName[0] &&
+            hasStyleFile(app->settings.themeName))
+        {
+            addScannedThemeNode(tv, app->settings.themeName);
+            initialActive = (ULONG)(tv->themeCount - 1);
+        }
+
+        tv->themeChooser = NewObject(CHOOSER_GetClass(), NULL,
+            GA_ID,          GID_THEMEV_THEME_CHOOSER,
+            GA_RelVerify,   TRUE,
+            CHOOSER_PopUp,  TRUE,
+            CHOOSER_Labels, (ULONG)&tv->themeList,
+            CHOOSER_Active, initialActive,
+            TAG_END);
+        if (!tv->themeChooser) return FALSE;
+    }
 
     themeLabel = NewObject(LABEL_GetClass(), NULL,
         LABEL_Text, (ULONG)LOC(MSG_THEMEV_THEME_NAME),
         TAG_END);
+
+    /* --- Scan Themes button -- sits above the chooser, populates it --- */
+    tv->scanThemesBtn = NewObject(BUTTON_GetClass(), NULL,
+        GA_ID,        GID_THEMEV_SCAN_THEMES,
+        GA_RelVerify, TRUE,
+        GA_Text,      (ULONG)LOC(MSG_THEMEV_SCAN_THEMES),
+        TAG_END);
+    if (!tv->scanThemesBtn) return FALSE;
 
     themeGroup = NewObject(LAYOUT_GetClass(), NULL,
         LAYOUT_Orientation,   LAYOUT_ORIENT_VERT,
@@ -381,6 +546,8 @@ BOOL FS3EThemeView_Create(FS3EThemeView *tv, const char *title)
         LAYOUT_BackFill,      NULL,
         LAYOUT_SpaceOuter,    TRUE,
         LAYOUT_SpaceInner,    TRUE,
+        LAYOUT_AddChild,      (ULONG)tv->scanThemesBtn,
+        CHILD_WeightedHeight, 0,
         LAYOUT_AddChild,      (ULONG)tv->themeChooser,
         CHILD_WeightedHeight, 0,
         CHILD_Label,          (ULONG)themeLabel,
@@ -442,6 +609,8 @@ void FS3EThemeView_Dispose(FS3EThemeView *tv)
                 FreeChooserNode(tv->themeNodes[i]);
                 tv->themeNodes[i] = NULL;
             }
+            FreeVec(tv->themeNames[i]);
+            tv->themeNames[i] = NULL;
         }
     }
     tv->themeCount = 0;
@@ -631,14 +800,25 @@ BOOL FS3EThemeView_HandleInput(FS3EThemeView *tv)
                     syncFontPaths(tv);
                     FS3EApp_ApplyFontSettings();
 
+                } else if (gadId == GID_THEMEV_SCAN_THEMES) {
+                    FS3EThemeView_ScanThemes(tv);
+
                 } else if (gadId == GID_THEMEV_THEME_CHOOSER) {
-                    /* Theme name selection: update settings.themeName.
-                     * Index 0 is always the built-in default (NULL name). */
+                    /* Theme selection: persist to settings.themeName (NULL
+                     * for index 0, "-"/no theme) and apply it to the main
+                     * window right away. Saved to disk when this window
+                     * closes, same as every other field here (see
+                     * FS3EThemeView_Close's FS3ESettings_Save call). */
                     ULONG active = 0;
+                    const char *name = NULL;
+
                     GetAttr(CHOOSER_Active, tv->themeChooser, &active);
+                    if ((int)active >= 0 && (int)active < tv->themeCount)
+                        name = tv->themeNames[active];
+
                     FreeVec(app->settings.themeName);
-                    app->settings.themeName = NULL;
-                    /* TODO: when more themes are added, set themeName from node */
+                    app->settings.themeName = name ? ThemeStrDup(name) : NULL;
+                    FS3EApp_LoadTheme(app->settings.themeName);
                 }
                 break;
             }

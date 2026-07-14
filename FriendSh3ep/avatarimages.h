@@ -6,8 +6,13 @@
  * their keys have very different cardinality:
  *
  *   - Avatars: one RgbImage per unique @user@instance seen, keyed by acct.
- *     Bounded (AVATAR_CACHE_MAX), no eviction -- unique users in a session
- *     realistically never gets close to the cap.
+ *     AVATAR_CACHE_MAX is generous since unique users in a session rarely
+ *     get close to it, but a long enough session scrolling a busy home/
+ *     federated timeline does eventually reach it -- confirmed as the
+ *     cause of avatars silently, permanently never loading past that
+ *     point (find_or_create used to just return NULL once full, with no
+ *     eviction at all). Round-robin evicted the same way as media
+ *     thumbnails below now (see find_or_create in the .c).
  *   - Media thumbnails: one RgbImage per unique attachment preview URL,
  *     keyed by that URL. Far more numerous over a long scroll session (a
  *     handful of distinct users vs. potentially hundreds of distinct
@@ -85,7 +90,8 @@ typedef struct {
 
 typedef struct AvatarImages {
     AvatarEntry entries[AVATAR_CACHE_MAX];
-    ULONG       count;
+    ULONG       count;            /* populated slots, <=AVATAR_CACHE_MAX */
+    ULONG       avatarNextEvict;  /* round-robin cursor once full */
 
     ThumbnailEntry thumbs[THUMBNAIL_CACHE_MAX];
     ULONG          thumbCount;       /* populated slots, <=THUMBNAIL_CACHE_MAX */

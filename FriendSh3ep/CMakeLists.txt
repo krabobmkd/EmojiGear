@@ -31,6 +31,9 @@ set(FRIENDSH3EP_SOURCES
     patch9.c
     stylefile.c
     friendsh3ep.c
+    fs3erequests.c
+    fs3eaccounts.c
+    fs3enetworkhelper.c
     fs3estyle.c
     fs3eboopsimainwindow.c
     fs3eboopsimessage.c
@@ -78,6 +81,9 @@ set(FRIENDSH3EP_HEADERS
     patch9.h
     stylefile.h
     friendsh3ep.h
+    fs3erequests.h
+    fs3eaccounts.h
+    fs3enetworkhelper.h
     fs3estyle.h
     fs3eboopsimainwindow.h
     fs3eboopsimessage.h

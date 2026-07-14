@@ -98,9 +98,13 @@ typedef enum {
 /* (close, iconify, altpos, depth) of 8x8 pixel title bar glyphs.      */
 /* ------------------------------------------------------------------ */
 
-/* Reached from the build dir: PROGDIR: is the directory the binary was
- * launched from. */
-#define FS3ESTYLE_THEME_DEFAULT_PATH "PROGDIR:themes/mouton"
+/* Parent directory FS3EThemeView_ScanThemes() (fs3ethemeview.c) searches
+ * for theme subdirectories, and FS3EApp_LoadTheme() (friendsh3ep.c)
+ * resolves a theme name against -- "PROGDIR:themes/mouton" (bundled with
+ * the app, but not auto-loaded -- see FS3EStyle_SetThemePath's doc
+ * comment) is one such subdirectory of this root. Shared #define so both
+ * stay in sync instead of each hardcoding "PROGDIR:themes" independently. */
+#define FS3ESTYLE_THEMES_ROOT "PROGDIR:themes"
 
 #define FS3ESTYLE_TBBUTTON_COUNT 4
 
@@ -220,6 +224,30 @@ typedef struct {
  * Does not touch pens — safe to call before any screen is available. */
 void FS3EStyle_InitDefaults(FS3EStyle *st);
 
+/* Resets every FS3EColorRole's rgbcolor to its built-in default, without
+ * touching pens, draw contexts, fonts, layout metrics, or themePath --
+ * unlike FS3EStyle_InitDefaults (which also does all of those, and is
+ * meant for one-time startup setup before a screen/theme exists).
+ * FS3EStyle_LoadThemeImages() calls this itself before applying a theme's
+ * style.txt overrides, so a role a *previous* theme set but the new one
+ * doesn't mention resets to the default instead of bleeding through.
+ * Also useful standalone for an explicit "no theme" state, e.g.
+ * FS3EApp_LoadTheme(NULL) in friendsh3ep.c. Call FS3EStyle_ApplyColors()
+ * afterwards to push the change to actual screen pens. */
+void FS3EStyle_ResetColors(FS3EStyle *st);
+
+/* Resets both Patch9 skin slots' (FS3ESTYLE_PATCH9_BT1/BT2) per-state
+ * bgcolors[]/textcolors[] to their built-in defaults (patch9Slots[] in
+ * fs3estyle.c) -- these are NOT part of colors[]/FS3EColorRole, so
+ * FS3EStyle_ResetColors() above doesn't touch them. Doesn't touch
+ * st->patch9[slot].img (the skin bitmap) at all -- pair with
+ * FS3EStyle_UnloadThemeImages() to also drop that. Companion to
+ * FS3EStyle_ResetColors() for the "no theme" case (see FS3EApp_LoadTheme
+ * in friendsh3ep.c); FS3EStyle_LoadThemeImages() doesn't need this itself,
+ * its own per-slot loader already falls back to these same defaults when
+ * a style.txt key is missing. */
+void FS3EStyle_ResetPatch9Colors(FS3EStyle *st);
+
 /* Obtain Amiga pens for every color role from scr->ViewPort.ColorMap.
  * Releases any previously held pens first, so safe to call on theme change
  * or when switching screens. */
@@ -256,10 +284,13 @@ void FS3EStyle_SetFontSize(FS3EStyle *st, int baseSize,
 /* Image theme API                                                     */
 /* ------------------------------------------------------------------ */
 
-/* Set the theme directory. path == NULL resets to the built-in default
- * (FS3ESTYLE_THEME_DEFAULT_PATH). Copies the string; frees any previously
- * held themePath. Does not load anything -- call FS3EStyle_LoadThemeImages()
- * afterwards. */
+/* Set the theme directory. path == NULL/"" clears themePath to NULL, i.e.
+ * "no theme" -- there is no automatic built-in default (see
+ * FS3EApp_LoadTheme in friendsh3ep.c: a NULL/empty themeName is a real,
+ * persisted state, not "haven't decided yet"). Copies the string; frees
+ * any previously held themePath. Does not load anything -- call
+ * FS3EStyle_LoadThemeImages() afterwards, and only when themePath is
+ * actually set to something (it now returns FALSE immediately otherwise). */
 void FS3EStyle_SetThemePath(FS3EStyle *st, const char *path);
 
 /* Load title bar button images (tbbuttons.png), tbbg.png, every
@@ -269,29 +300,48 @@ void FS3EStyle_SetThemePath(FS3EStyle *st, const char *path);
  * value from style.txt (see colorStyleKeys[] in fs3estyle.c) -- call this
  * before FS3EStyle_ApplyColors() so the override takes effect. Call once
  * per screen open. Safe to call again on theme or screen change -- disposes
- * previously loaded images first. If st->themePath is unset, defaults it
- * first.
- * Returns FALSE if images/bitmap.image isn't open, or tbbuttons.png could
- * not be loaded -- st->tbImages[] stay NULL and
+ * previously loaded images first. Returns FALSE immediately (after that
+ * disposal) if st->themePath is unset -- see FS3EStyle_SetThemePath's doc
+ * comment: there is no automatic default to fall back to.
+ * Also returns FALSE if images/bitmap.image isn't open, or tbbuttons.png
+ * could not be loaded -- st->tbImages[] stay NULL and
  * FS3EStyle_SyncTitleBarButtons() becomes a no-op, leaving gadgets with
  * whatever image they had before. */
 BOOL FS3EStyle_LoadThemeImages(FS3EStyle *st, struct Screen *scr);
 
 /* Push st->tbImages[] (GA_Image) plus BUTTON_Transparent onto the four
  * title bar button.gadget objects, in GID_TITLEBAR_CLOSE, ICONIFY, ALTPOS,
- * DEPTH order. Any gadget pointer that is NULL, or whose matching image
- * failed to load, is left untouched. Uses SetGdAttrs() (see
+ * DEPTH order. A NULL gadget pointer is skipped, but otherwise this always
+ * acts, whether or not that slot's image is currently loaded: NULL image
+ * detaches GA_Image and falls back to a plain BVS_BUTTON bevel, not just
+ * "leave whatever was there before" -- see the .c file's doc comment for
+ * the dangling-pointer bug that was. Uses SetGdAttrs() (see
  * fs3eboopsimainwindow.h), which targets CurrentMainWindow when open or
  * falls back to a plain SetAttrs() otherwise. */
 void FS3EStyle_SyncTitleBarButtons(FS3EStyle *st,
                                     Object *closeBtn, Object *iconifyBtn,
                                     Object *altposBtn, Object *depthBtn);
 
+/* Push UBTP9_Patch9 onto accountBtn/newtootBtn (the two UniButtonP9
+ * gadgets skinned from st->patch9[FS3ESTYLE_PATCH9_BT1]/[_BT2] instead of
+ * a plain GA_Image) -- unlike FS3EStyle_SyncTitleBarButtons above, this
+ * explicitly clears to NULL when that slot isn't loaded (Patch9_IsLoaded
+ * false), not just when it is, since it must also be able to take a
+ * button back to its flat colour fill on an unload/theme switch, not only
+ * push a freshly loaded image. Call this every time theme images are
+ * (re)loaded or unloaded, not just once at window-open time -- see
+ * FS3EApp_LoadTheme in friendsh3ep.c. */
+void FS3EStyle_SyncPatch9Buttons(FS3EStyle *st, Object *accountBtn, Object *newtootBtn);
+
 /* Dispose the title bar button images and unload (but keep the path of) the
  * source bitmap. Call before closing/iconifying the screen, alongside
  * FS3EStyle_ReleasePens. Note: button.gadget does not take ownership of
  * GA_Image, so these must be disposed explicitly once nothing references
- * them anymore. */
+ * them anymore. Callers doing a live theme switch on an already-open
+ * window should first SetAttrs(button, GA_Image, NULL, TAG_END) on the
+ * four title bar buttons -- see FS3EApp_LoadTheme_Delayed in
+ * friendsh3ep.c -- so no gadget is left holding a pointer to a bitmap this
+ * call is about to free. */
 void FS3EStyle_UnloadThemeImages(FS3EStyle *st);
 
 /* Unload theme images and free themePath. Call once at final teardown,

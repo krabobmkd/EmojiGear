@@ -19,6 +19,15 @@
  * dpiHeight (default 14 px) acts as the "DPI factor": every row in the
  * mobile-style UI is exactly one dpiHeight pixel tall.
  *
+ * Scope of this file (watch out for this growing back into a God Object --
+ * it used to be one, split apart into fs3erequests.c/fs3eaccounts.c/
+ * fs3enetworkhelper.c/etc.): creating the main window's BOOPSI objects,
+ * initializing every other subsystem, running the main Wait()/event loop,
+ * and closing everything down on exit. Anything that isn't one of those
+ * four -- a new network request/reply case, account persistence, a self-
+ * contained UI action, ... -- belongs in its own file, not here. A few
+ * pre-existing out-of-scope functions are tolerated; don't add more.
+ *
  * See ARCHITECTURE.md for the overall design and roadmap.
  */
 
@@ -96,6 +105,9 @@
 #include "fs3eaction.h"
 #include "fs3esettings.h"
 #include "fs3emachineid.h"
+#include "fs3erequests.h"
+#include "fs3eaccounts.h"
+#include "fs3enetworkhelper.h"
 
 #include "UniButtonP9/unibuttonp9.h"
 #include "UniButtonBGBM/unibuttonbgbm.h"
@@ -234,657 +246,29 @@ void cleanexit(const char *pmessage)
     exit(0);
 }
 
-/* - - - - - - - - - - - - - - - - NETWORK HELPERS - - - - - - - - - - - - - */
-
-static char *NetStrDup(const char *s)
-{
-    ULONG len;
-    char *copy;
-    if (!s || !s[0]) return NULL;
-    len  = (ULONG)strlen(s) + 1;
-    copy = (char *)AllocVec(len, MEMF_ANY);
-    if (copy) CopyMem(s, copy, len);
-    return copy;
-}
-
-/* Send a pre-allocated request block to the network process asynchronously.
- * On failure, frees data and returns FALSE.
- *
- * PutMsg() enqueues via Exec's Enqueue(), which is priority-ordered (FIFO
- * within equal priority) -- so a bulk FETCH_IMAGE backlog (one avatar plus
- * up to TTL_POST_MAX_MEDIA thumbnails per status, times a whole timeline
- * page) doesn't make an interactive request like switching timelines wait
- * behind dozens of queued downloads: FETCH_IMAGE goes in at a lower
- * priority than everything else, so a fresh TIMELINE/LOGIN/POST_STATUS
- * request cuts to the front of that backlog instead of queuing after it.
- *
- * Not static: fs3eaction.c's toot actions (e.g. Action_ToggleFavorite)
- * call this directly too -- see the extern declaration there. */
-BOOL FS3EApp_NetSend(ULONG type, APTR data, ULONG dataLen)
-{
-    FS3ENetMessage *msg;
-    if (!app->netRequestPort || !app->netReplyPort || !data) {
-        if (data) FreeVec(data);
-        return FALSE;
-    }
-    msg = (FS3ENetMessage *)AllocVec(sizeof(FS3ENetMessage), MEMF_CLEAR | MEMF_PUBLIC );
-    if (!msg) { FreeVec(data); return FALSE; }
-    msg->fs3em_Msg.mn_Length   = sizeof(*msg);
-    msg->fs3em_Msg.mn_ReplyPort = app->netReplyPort;
-    msg->fs3em_Msg.mn_Node.ln_Pri = (type == FS3ENETQ_FETCH_IMAGE) ? -5 : 0;
-
-    msg->fs3em_Type    = type;
-    msg->fs3em_Data    = data;
-    msg->fs3em_DataLen = dataLen;
-    PutMsg(app->netRequestPort, &msg->fs3em_Msg);
-    return TRUE;
-}
-
-/* Free login interim state (called on login error or completion). */
-static void FS3EApp_FreeLoginState(void)
-{
-    if (app->loginApiBaseUrl)   { FreeVec(app->loginApiBaseUrl);   app->loginApiBaseUrl   = NULL; }
-    if (app->loginClientId)     { FreeVec(app->loginClientId);     app->loginClientId     = NULL; }
-    if (app->loginClientSecret) { FreeVec(app->loginClientSecret); app->loginClientSecret = NULL; }
-    app->loginPhase = FS3ELOGIN_IDLE;
-}
-
-/* Free stored account credentials. */
-static void FS3EApp_FreeAccount(void)
-{
-    if (app->accountApiBaseUrl)  { FreeVec(app->accountApiBaseUrl);  app->accountApiBaseUrl  = NULL; }
-    if (app->accountAccessToken) { FreeVec(app->accountAccessToken); app->accountAccessToken = NULL; }
-    if (app->accountDisplayName) { FreeVec(app->accountDisplayName); app->accountDisplayName = NULL; }
-    if (app->accountAcct)        { FreeVec(app->accountAcct);        app->accountAcct        = NULL; }
-    if (app->accountAvatarURL)   { FreeVec(app->accountAvatarURL);   app->accountAvatarURL   = NULL; }
-    if (app->accountId)          { FreeVec(app->accountId);          app->accountId          = NULL; }
-}
-
-/* Store account credentials from a LOGIN_FINISH reply. */
-static void FS3EApp_SetAccount(const char *apiBaseUrl, const char *accessToken,
-                               const char *displayName, const char *acct,
-                               const char *avatarURL, const char *accountId)
-{
-    /* Only a genuine account change bumps accountGeneration -- a same-
-     * account re-confirm (e.g. FS3ENETQ_VERIFY_ACCOUNT's backfill, which
-     * calls this with the same apiBaseUrl+acct just to refresh
-     * displayName/avatarURL/accountId) must NOT invalidate a TIMELINE
-     * request already in flight for this very account, or its reply would
-     * be wrongly discarded as stale and leave timelineFetchedMask's bit
-     * permanently stuck set with no content ever applied. */
-    BOOL sameAccount = app->accountApiBaseUrl && app->accountAcct &&
-                        apiBaseUrl && acct &&
-                        !strcmp(app->accountApiBaseUrl, apiBaseUrl) &&
-                        !strcmp(app->accountAcct, acct);
-
-    FS3EApp_FreeAccount();
-    app->accountApiBaseUrl  = NetStrDup(apiBaseUrl);
-    app->accountAccessToken = NetStrDup(accessToken);
-    app->accountDisplayName = NetStrDup(displayName);
-    app->accountAcct        = NetStrDup(acct);
-    app->accountAvatarURL   = NetStrDup(avatarURL);
-    app->accountId          = NetStrDup(accountId);
-
-    /* Toot button has nothing to post to without a connected account --
-     * safe to call before the toot window exists yet (checked inside). */
-    FS3ETootView_UpdateSendEnabled(&app->tootView);
-
-    /* The active account just changed -- any FS3ENETQ_TIMELINE request
-     * still in flight from before this point now belongs to a stale
-     * generation; see accountGeneration's comment in friendsh3ep.h. */
-    if (!sameAccount) {
-        app->accountGeneration++;
-
-        /* A different server may have a different per-toot character
-         * limit (or none confirmed at all yet) -- the old value belongs
-         * to the account being left, so it must not keep showing as if
-         * confirmed for this one. Refresh once per real account change
-         * (an instance's limit essentially never changes mid-session, so
-         * there's no reason to re-ask on every same-account re-confirm).
-         * FS3ETootView_UpdateCharCount reflects the reset immediately
-         * ("Max: -") rather than lagging until the async reply arrives. */
-        app->accountMaxChars = 0;
-        FS3ETootView_UpdateCharCount(&app->tootView);
-
-        if (app->accountApiBaseUrl) {
-            FS3ENetInstanceInfoReq *iiReq =
-                FS3ENetInstanceInfoReq_Alloc(app->accountApiBaseUrl);
-            if (iiReq)
-                FS3EApp_NetSend(FS3ENETQ_INSTANCE_INFO, iiReq, sizeof(*iiReq));
-        }
-    }
-
-    /* Tell the title bar which account to draw the row-2 icon for -- see
-     * TBLAYOUT_AccountAcct. Safe to call before titleBarLayout exists
-     * (SetAttrs on a NULL object is a no-op) -- FS3EApp_LoadAccount()
-     * runs before window creation, which passes app->accountAcct again
-     * as an initial NewObject tag at that point (see main()). A redraw
-     * right away shows the (likely blank/placeholder) icon promptly on a
-     * fresh login or re-login rather than waiting for some unrelated
-     * event to repaint the title bar; FS3EApp_UpdateUserIcon() covers the
-     * separate "the avatar bitmap itself just finished loading" redraw. */
-    if (app->titleBarLayout) {
-        SetAttrs(app->titleBarLayout, TBLAYOUT_AccountAcct,
-                 (ULONG)app->accountAcct, TAG_DONE);
-        if (CurrentMainWindow)
-            RefreshGList((struct Gadget *)app->titleBarLayout, CurrentMainWindow, NULL, 1);
-    }
-
-    /* Fetch our own avatar the same way timeline posts do (see
-     * FS3ENETQ_FETCH_IMAGE handling in FS3EApp_HandleNetReply) --
-     * AvatarImages is keyed by acct, so this reuses the exact same cache
-     * entry/scale pipeline; FS3EApp_UpdateUserIcon() picks up the result
-     * once the reply arrives. (Previously disabled: the trashed/garbage
-     * image data this used to show was the titlebar_userIcon
-     * button.gadget's images/bitmap.image wrapper going stale, not this
-     * fetch -- see TitleBarLayout_OnRender, which now draws the avatar
-     * directly instead.) */
-    if (app->avatarImages && app->accountAcct &&
-        app->accountAvatarURL && app->accountAvatarURL[0] &&
-        !AvatarImages_IsRequested(app->avatarImages, app->accountAcct))
-    {
-        ULONG reqSize = sizeof(FS3ENetFetchImageReq)
-                      + strlen(app->accountAvatarURL) + 1
-                      + strlen(app->accountAcct) + 1
-                      + strlen(FS3E_CACHE_SUBDIR_USERICONS) + 1;
-        FS3ENetFetchImageReq *req =
-            FS3ENetFetchImageReq_Alloc(app->accountAvatarURL, app->accountAcct,
-                                       FS3E_CACHE_SUBDIR_USERICONS,
-                                       (BOOL)app->settings.keepBigUserIcons);
-        if (req) {
-            if (FS3EApp_NetSend(FS3ENETQ_FETCH_IMAGE, req, reqSize))
-                AvatarImages_MarkRequested(app->avatarImages, app->accountAcct);
-            else
-                FreeVec(req);
-        }
-    }
-}
-
 /* The connected account's avatar (row 2 of the title bar) just became
  * available or changed -- TitleBarLayout_OnRender reads it fresh from
  * AvatarImages_Get() on every render (no cached bitmap/wrapper object of
  * its own to go stale), so all that's needed here is asking for a
- * redraw. */
-static void FS3EApp_UpdateUserIcon(void)
+ * redraw.
+ * Not static: fs3erequests.c's FS3EApp_HandleThumbReply calls this too --
+ * see the extern declaration there. */
+void FS3EApp_UpdateUserIcon(void)
 {
     if (CurrentMainWindow && app->titleBarLayout)
         RefreshGList((struct Gadget *)app->titleBarLayout, CurrentMainWindow, NULL, 1);
 }
 
-/* -------------------------------------------------------------------------
- * Recursive directory creation (AmigaOS mkdir -p equivalent). Mirrors
- * FS3ECache_MakeDir() in network_fs3e/fs3enet_cache.c -- that one is
- * `static` and private to the network process, so it can't be called from
- * here; same AmigaOS path-splitting rules apply:
- *   "VOL:dir/sub"  -> last '/'  splits "VOL:dir" / "sub"
- *   "VOL:leaf"     -> no '/',   ':' splits volume root "VOL:" / "leaf"
- *   "VOL:"         -> volume/assign root; Lock() tells us if it exists
- * ---------------------------------------------------------------------- */
-static BOOL FS3EApp_MakeDirRecursive(const char *path)
-{
-    BPTR        lock;
-    const char *sep;
-    char        parent[512];
-    ULONG       parentLen;
-
-    lock = Lock(path, SHARED_LOCK);
-    if (lock) { UnLock(lock); return TRUE; }
-
-    sep = strrchr(path, '/');
-    if (sep) {
-        /* Parent is everything before the last '/'. */
-        parentLen = (ULONG)(sep - path);
-        if (parentLen == 0 || parentLen >= sizeof(parent)) return FALSE;
-        memcpy(parent, path, parentLen);
-        parent[parentLen] = '\0';
-        if (!FS3EApp_MakeDirRecursive(parent)) return FALSE;
-    } else {
-        /* No slash: path is "VOL:leaf". Parent is the volume/assign root
-         * "VOL:" which must already exist (we can't create a volume). */
-        sep = strchr(path, ':');
-        if (!sep) return FALSE;  /* relative path with no drive — refuse */
-        parentLen = (ULONG)(sep - path + 1);   /* include ':' */
-        if (parentLen >= sizeof(parent)) return FALSE;
-        memcpy(parent, path, parentLen);
-        parent[parentLen] = '\0';
-        lock = Lock(parent, SHARED_LOCK);
-        if (!lock) return FALSE;   /* volume/assign offline */
-        UnLock(lock);
-    }
-
-    lock = CreateDir(path);
-    if (!lock) {
-        /* Another process may have created it between our Lock check and
-         * CreateDir — verify before reporting failure. */
-        lock = Lock(path, SHARED_LOCK);
-        if (!lock) return FALSE;
-    }
-    UnLock(lock);
-    return TRUE;
-}
-
-/* Builds "<userDataPath>/account.dat" into buf, creating userDataPath
- * (recursively) first if it doesn't exist yet. userDataPath is anything
- * user-related that isn't disposable cache (unlike settings.cachePath,
- * which FS3ECache_Flush is free to empty) -- see FS3ESettings.userDataPath,
- * defaults to "PROGDIR:.user". Returns FALSE if the directory couldn't be
- * created/reached. */
-static BOOL FS3EApp_AccountDatPath(char *buf, ULONG bufSize)
-{
-    const char *dir = (app->settings.userDataPath && app->settings.userDataPath[0])
-                     ? app->settings.userDataPath : "PROGDIR:.user";
-    if (!FS3EApp_MakeDirRecursive(dir)) return FALSE;
-    snprintf(buf, bufSize, "%s/account.dat", dir);
-    return TRUE;
-}
-
-/* -------------------------------------------------------------------------
- * Multi-account list -- every account the user has ever logged into, all
- * kept in the single account.dat (see FS3EAPP_ACCOUNTS_MAGIC below), so
- * fs3eloginview.c's acclistGroup can offer one-click switching
- * (FS3EApp_SwitchAccount) without a fresh OAuth round-trip, and so the app
- * reconnects to whichever one was active when it last quit. The currently
- * active account (app->accountXXX fields) is always kept mirrored into
- * this array too -- see FS3EApp_UpsertAccountsList, called from
- * FS3EApp_SaveAccount() below.
- * ---------------------------------------------------------------------- */
-
-static void FS3EApp_FreeAccountEntry(FS3EAccount *a)
-{
-    if (a->apiBaseUrl)  { FreeVec(a->apiBaseUrl);  a->apiBaseUrl  = NULL; }
-    if (a->accessToken) { FreeVec(a->accessToken); a->accessToken = NULL; }
-    if (a->displayName) { FreeVec(a->displayName); a->displayName = NULL; }
-    if (a->acct)        { FreeVec(a->acct);        a->acct        = NULL; }
-    if (a->avatarURL)   { FreeVec(a->avatarURL);   a->avatarURL   = NULL; }
-    if (a->accountId)   { FreeVec(a->accountId);   a->accountId   = NULL; }
-}
-
-/* Index of the account matching apiBaseUrl+acct, or -1. Matches on both
- * since the same acct name could theoretically exist on two servers. */
-static LONG FS3EApp_FindAccountIndex(const char *apiBaseUrl, const char *acct)
-{
-    ULONG i;
-    if (!apiBaseUrl || !acct) return -1;
-    for (i = 0; i < app->accountCount; i++) {
-        if (app->accounts[i].apiBaseUrl && app->accounts[i].acct &&
-            !strcmp(app->accounts[i].apiBaseUrl, apiBaseUrl) &&
-            !strcmp(app->accounts[i].acct, acct))
-            return (LONG)i;
-    }
-    return -1;
-}
-
-/* Add-or-update one account in app->accounts[] (matched by apiBaseUrl+
- * acct). Called every time FS3EApp_SetAccount() is confirmed/saved, so
- * the list is always current -- a re-login to an already-known account
- * just refreshes its token/displayName/avatar in place rather than
- * growing the array. Silently drops the update if the array is full and
- * this would be a genuinely new account (FS3E_MAX_ACCOUNTS is generous
- * for a personal client, so this is not expected in practice). */
-static void FS3EApp_UpsertAccountsList(const char *apiBaseUrl, const char *accessToken,
-                                        const char *displayName, const char *acct,
-                                        const char *avatarURL, const char *accountId)
-{
-    LONG idx = FS3EApp_FindAccountIndex(apiBaseUrl, acct);
-    FS3EAccount *a;
-
-    if (idx < 0) {
-        if (app->accountCount >= FS3E_MAX_ACCOUNTS) {
-            printf("FS3EApp_UpsertAccountsList: account.dat full (%d), dropping %s@%s\n",
-                   FS3E_MAX_ACCOUNTS, acct ? acct : "?", apiBaseUrl ? apiBaseUrl : "?");
-            return;
-        }
-        idx = (LONG)app->accountCount++;
-    }
-
-    a = &app->accounts[idx];
-    FS3EApp_FreeAccountEntry(a);
-    a->apiBaseUrl  = NetStrDup(apiBaseUrl);
-    a->accessToken = NetStrDup(accessToken);
-    a->displayName = NetStrDup(displayName);
-    a->acct        = NetStrDup(acct);
-    a->avatarURL   = NetStrDup(avatarURL);
-    a->accountId   = NetStrDup(accountId);
-}
-
-/* First line of the multi-account account.dat format, distinguishing it
- * from every older on-disk format (the original single-account 6-line
- * format, and "FS3EACCOUNTS1", a since-abandoned multi-account format
- * that still wrote accessToken in plaintext) -- all of which stored a
- * token with no machine-key binding at all, and are therefore refused
- * rather than read, see FS3EApp_LoadAccount. This format's accessToken
- * is instead hex+XOR-encoded with FS3EMachineId_GetKey() (see below). */
-#define FS3EAPP_ACCOUNTS_MAGIC "FS3EACCOUNTS2"
-
-/* Machine-derived XOR key (see fs3emachineid.h -- NOT cryptography, just a
- * deterrent against a copied account.dat's tokens working verbatim on a
- * different machine), cached for the process lifetime so the underlying
- * device I/O only ever runs once no matter how many accounts get saved. */
-static BOOL  s_machineKeyValid = FALSE;
-static UBYTE s_machineKey[FS3EMACHINEID_KEYLEN];
-
-/* Arbitrary fixed constant, folded on top of the raw geometry/RDB-derived
- * bytes below. Those source fields are mostly small numbers (sector size,
- * cylinder/head counts, ...) with long runs of zero high-order bytes, so
- * left alone the derived key would visibly encode "which byte came from
- * which geometry field" (an attacker familiar with typical Amiga geometry
- * could guess large chunks of it), and any two machines with the same
- * common sector size would share those same zero bytes. XORing with this
- * constant is just as cheap and removes that structure -- it adds no real
- * secrecy (anyone reading this source has the constant too), it just
- * stops the key from looking meaningful. */
-static const UBYTE s_machineKeySalt[FS3EMACHINEID_KEYLEN] = {
-    0x4b, 0x92, 0xd1, 0x07, 0x6a, 0xf3, 0x1c, 0x85,
-    0x3e, 0xb0, 0x59, 0xc4, 0x2d, 0x97, 0x60, 0xfa
-};
-
-static const UBYTE *FS3EApp_MachineKey(void)
-{
-    if (!s_machineKeyValid) {
-        ULONG i;
-        FS3EMachineId_GetKey(s_machineKey);
-        for (i = 0; i < FS3EMACHINEID_KEYLEN; i++)
-            s_machineKey[i] ^= s_machineKeySalt[i];
-        s_machineKeyValid = TRUE;
-        printf("FS3EApp_MachineKey: ");
-        for (i = 0; i < FS3EMACHINEID_KEYLEN; i++)
-            printf("%02lx", (unsigned long)s_machineKey[i]);
-        printf("\n");
-    }
-    return s_machineKey;
-}
-
-static int FS3EApp_HexNibble(char c)
-{
-    if (c >= '0' && c <= '9') return c - '0';
-    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-    return -1;
-}
-
-/* Encodes rawToken as hex(XOR(rawToken, machine key)) into out (a plain
- * printable ASCII string, safe for the line-based account.dat format --
- * XORing a token's raw bytes directly would produce arbitrary bytes,
- * including embedded '\n'/'\0', that RLINE's line-at-a-time FGets() can't
- * round-trip). Truncates rather than overflows if rawToken is implausibly
- * longer than outCap allows. */
-static void FS3EApp_EncodeToken(const char *rawToken, char *out, ULONG outCap)
-{
-    static const char hexDigits[] = "0123456789abcdef";
-    const UBYTE *key = FS3EApp_MachineKey();
-    ULONG len    = rawToken ? (ULONG)strlen(rawToken) : 0;
-    ULONG maxLen = (outCap >= 1) ? (outCap - 1) / 2 : 0;
-    ULONG i;
-
-    if (len > maxLen) len = maxLen;
-
-    for (i = 0; i < len; i++) {
-        UBYTE b = (UBYTE)rawToken[i] ^ key[i % FS3EMACHINEID_KEYLEN];
-        out[i * 2]     = hexDigits[b >> 4];
-        out[i * 2 + 1] = hexDigits[b & 0xF];
-    }
-    out[len * 2] = '\0';
-}
-
-/* Reverses FS3EApp_EncodeToken. Tolerant of malformed input (a non-hex
- * character stops decoding right there rather than reading garbage) --
- * this only ever runs on account.dat's own previously-written content, but
- * a hand-edited or corrupted file should degrade to a truncated/wrong
- * token (which then just fails to authenticate) rather than misbehave. */
-static void FS3EApp_DecodeToken(const char *hexIn, char *out, ULONG outCap)
-{
-    const UBYTE *key = FS3EApp_MachineKey();
-    ULONG hexLen = hexIn ? (ULONG)strlen(hexIn) : 0;
-    ULONG rawLen = hexLen / 2;
-    ULONG maxLen = (outCap >= 1) ? outCap - 1 : 0;
-    ULONG i;
-
-    if (rawLen > maxLen) rawLen = maxLen;
-
-    for (i = 0; i < rawLen; i++) {
-        int hi = FS3EApp_HexNibble(hexIn[i * 2]);
-        int lo = FS3EApp_HexNibble(hexIn[i * 2 + 1]);
-        if (hi < 0 || lo < 0) { rawLen = i; break; }
-        out[i] = (char)(((UBYTE)((hi << 4) | lo)) ^ key[i % FS3EMACHINEID_KEYLEN]);
-    }
-    out[rawLen] = '\0';
-}
-
-/* Save every entry in app->accounts[] (mirroring the currently active
- * account into it first) to <userDataPath>/account.dat: magic line, count,
- * index of the active account (so relaunching reconnects to the same one
- * -- see FS3EApp_LoadAccount), then 6 lines per account. */
-static void FS3EApp_SaveAccount(void)
-{
-    BPTR f;
-    char path[300];
-    LONG activeIdx;
-    ULONG i;
-
-    if (!app->accountApiBaseUrl || !app->accountAccessToken) return;
-
-    /* Keep app->accounts[] current before writing it out. */
-    FS3EApp_UpsertAccountsList(app->accountApiBaseUrl, app->accountAccessToken,
-                                app->accountDisplayName, app->accountAcct,
-                                app->accountAvatarURL, app->accountId);
-    activeIdx = FS3EApp_FindAccountIndex(app->accountApiBaseUrl, app->accountAcct);
-
-    if (!FS3EApp_AccountDatPath(path, sizeof(path))) {
-        printf("FS3EApp_SaveAccount: can't create user data dir %s\n",
-               app->settings.userDataPath ? app->settings.userDataPath : "?");
-        return;
-    }
-    f = Open(path, MODE_NEWFILE);
-    if (!f) return;
-
-    FPuts(f, FS3EAPP_ACCOUNTS_MAGIC); FPuts(f, "\n");
-    {
-        char numLine[16];
-        snprintf(numLine, sizeof(numLine), "%lu", (unsigned long)app->accountCount);
-        FPuts(f, numLine); FPuts(f, "\n");
-        snprintf(numLine, sizeof(numLine), "%ld", (long)activeIdx);
-        FPuts(f, numLine); FPuts(f, "\n");
-    }
-    for (i = 0; i < app->accountCount; i++) {
-        FS3EAccount *a = &app->accounts[i];
-        char encTok[1025];
-        FS3EApp_EncodeToken(a->accessToken ? a->accessToken : "", encTok, sizeof(encTok));
-        FPuts(f, a->apiBaseUrl  ? a->apiBaseUrl  : ""); FPuts(f, "\n");
-        FPuts(f, encTok); FPuts(f, "\n");
-        FPuts(f, a->displayName ? a->displayName : ""); FPuts(f, "\n");
-        FPuts(f, a->acct        ? a->acct        : ""); FPuts(f, "\n");
-        FPuts(f, a->avatarURL   ? a->avatarURL   : ""); FPuts(f, "\n");
-        FPuts(f, a->accountId   ? a->accountId   : ""); FPuts(f, "\n");
-    }
-    Close(f);
-    printf("FS3EApp_SaveAccount: saved %lu account(s), active=%s @ %s\n",
-           (unsigned long)app->accountCount,
-           app->accountAcct ? app->accountAcct : "?",
-           app->accountApiBaseUrl);
-}
-
-/* Load <userDataPath>/account.dat into app->accounts[]/accountCount, and
- * reconnect to whichever one was active when the app last quit (so a
- * relaunch resumes the same session, not just "the last thing that was
- * ever written"). Returns TRUE if an account is now active.
- *
- * Only the current format (FS3EAPP_ACCOUNTS_MAGIC, token hex+XOR-encoded
- * with the machine key -- see FS3EApp_EncodeToken/FS3EMachineId_GetKey) is
- * ever auto-connected. Anything older -- FS3EAPP_ACCOUNTS_MAGIC_V1 (an
- * earlier multi-account format that still wrote the token in plaintext)
- * or the original single-account 6-line format -- stored its token with
- * no machine binding at all, which is exactly the "an account.dat copied
- * off this machine still works elsewhere" risk the encoding exists to
- * close. Trusting such a file "just this once, then upgrade it" (an
- * earlier version of this function did that) defeats the whole point: it
- * still authenticates with the bare, unbound token before ever
- * re-encoding it. So an unrecognized/older format is refused outright --
- * logged, not connected, not migrated -- and the user has to log back in,
- * which produces a freshly machine-bound entry. */
-static BOOL FS3EApp_LoadAccount(void)
-{
-    BPTR f;
-    char path[300];
-    char apiBaseUrl[256], tokLine[1025], accessToken[512];
-    char displayName[128], acct[128], avatarURL[512], accountId[64];
-    ULONG n;
-
-    if (!FS3EApp_AccountDatPath(path, sizeof(path))) return FALSE;
-    f = Open(path, MODE_OLDFILE);
-    if (!f) return FALSE;
-
-    /* FGets includes the trailing '\n' — strip it. */
-#define RLINE(buf) \
-    (FGets(f, buf, sizeof(buf)) && (buf[0] != '\0') && \
-     ((n = strlen(buf)) > 0) && (buf[n-1] == '\n' ? (buf[n-1] = '\0', 1) : 1))
-
-    if (!RLINE(apiBaseUrl)) { Close(f); return FALSE; }
-
-    if (strcmp(apiBaseUrl, FS3EAPP_ACCOUNTS_MAGIC) != 0) {
-        Close(f);
-        printf("FS3EApp_LoadAccount: account.dat is an older, un-hashed format "
-               "(no machine-key binding) -- refusing to auto-connect; "
-               "please log in again to re-secure this account\n");
-        return FALSE;
-    }
-
-    {
-        char  numLine[16];
-        ULONG count, i;
-        LONG  activeIdx;
-
-        if (!RLINE(numLine)) { Close(f); return FALSE; }
-        count = (ULONG)atol(numLine);
-        if (count > FS3E_MAX_ACCOUNTS) count = FS3E_MAX_ACCOUNTS;
-
-        if (!RLINE(numLine)) { Close(f); return FALSE; }
-        activeIdx = (LONG)atol(numLine);
-
-        for (i = 0; i < count; i++) {
-            if (!RLINE(apiBaseUrl) || !RLINE(tokLine) || !apiBaseUrl[0] || !tokLine[0])
-                break;
-            FS3EApp_DecodeToken(tokLine, accessToken, sizeof(accessToken));
-            if (!RLINE(displayName)) displayName[0] = '\0';
-            if (!RLINE(acct))        acct[0]        = '\0';
-            if (!RLINE(avatarURL))   avatarURL[0]   = '\0';
-            if (!RLINE(accountId))   accountId[0]   = '\0';
-
-            FS3EApp_UpsertAccountsList(apiBaseUrl, accessToken, displayName,
-                                        acct, avatarURL, accountId);
-        }
-        Close(f);
-#undef RLINE
-
-        printf("FS3EApp_LoadAccount: loaded %lu account(s), active=%ld\n",
-               (unsigned long)app->accountCount, (long)activeIdx);
-
-        if (activeIdx < 0 || (ULONG)activeIdx >= app->accountCount) return FALSE;
-        {
-            FS3EAccount *a = &app->accounts[activeIdx];
-            FS3EApp_SetAccount(a->apiBaseUrl, a->accessToken, a->displayName,
-                                a->acct, a->avatarURL, a->accountId);
-        }
-        app->loginPhase = FS3ELOGIN_DONE;
-        return TRUE;
-    }
-}
-
-/* account.dat files saved before accountId existed load with an empty id,
- * which silently disables VIEWMODE_User's fetch (ViewModeTimeline returns
- * FALSE without it). Re-verify the existing access token to backfill it
- * instead of requiring the user to log out and back in -- see
- * FS3ENETQ_VERIFY_ACCOUNT's reply case in FS3EApp_HandleNetReply(). */
-static void FS3EApp_BackfillAccountId(void)
-{
-    FS3ENetVerifyAccountReq *req;
-
-    if (!app->accountApiBaseUrl || !app->accountAccessToken) return;
-    if (app->accountId && app->accountId[0]) return;
-
-    req = FS3ENetVerifyAccountReq_Alloc(app->accountApiBaseUrl, app->accountAccessToken);
-    if (!req) return;
-
-    FS3EApp_NetSend(FS3ENETQ_VERIFY_ACCOUNT, req,
-        sizeof(FS3ENetVerifyAccountReq) /* net process only reads char* fields */);
-}
-
-/* Builds the /api/v1/-relative path to fetch for a given VIEWMODE_* value
- * into buf (see FS3EMastodon_GetTimeline, which just appends this onto
- * "apiBaseUrl/api/v1/"). Returns FALSE if there's nothing to fetch yet
- * (unknown view mode, or VIEWMODE_User before accountId is known). */
-static BOOL ViewModeTimeline(ULONG viewMode, char *buf, ULONG bufSize)
-{
-    /* Initial page is kept small on purpose: a big first page (Home used to
-     * ask for 35) enqueues one low-priority FETCH_IMAGE request per avatar/
-     * thumbnail, and since the network process is single-threaded/serialized
-     * (see FS3ENet_ProcEntry), that backlog is what actually stalls switching
-     * to another view right after startup -- not the timeline fetch itself.
-     * Scrolling triggers incremental older/newer pages on top of this. */
-    switch (viewMode) {
-        case VIEWMODE_Home:
-            snprintf(buf, bufSize, "timelines/home?limit=4");
-            return TRUE;
-        case VIEWMODE_Local:
-            snprintf(buf, bufSize, "timelines/public?local=true&limit=4");
-            return TRUE;
-        case VIEWMODE_Fed:
-            snprintf(buf, bufSize, "timelines/public?limit=4");
-            return TRUE;
-        case VIEWMODE_User:
-            if (!app->accountId || !app->accountId[0]) return FALSE;
-            /* exclude_reblogs=false is Mastodon's own documented default,
-             * but made explicit rather than left implicit -- some servers/
-             * versions could differ, and a profile that only ever boosts
-             * (never posts originally) would otherwise show as empty. */
-            snprintf(buf, bufSize, "accounts/%s/statuses?limit=4&exclude_reblogs=false", app->accountId);
-            return TRUE;
-        case VIEWMODE_Search:
-            /* Only the FS3ESEARCH_USER_PROFILE sub-mode fetches anything
-             * today (word/user search are future sub-modes of this same
-             * channel -- see FS3ESearchMode). Mirrors VIEWMODE_User
-             * above exactly, just for whichever account is currently
-             * open instead of always our own. */
-            if (app->searchMode != FS3ESEARCH_USER_PROFILE ||
-                !app->searchProfileAccountId || !app->searchProfileAccountId[0])
-                return FALSE;
-            /* exclude_reblogs=false -- see the matching comment on
-             * VIEWMODE_User above; a profile that only ever boosts is
-             * exactly the case that prompted making this explicit. */
-            snprintf(buf, bufSize, "accounts/%s/statuses?limit=4&exclude_reblogs=false", app->searchProfileAccountId);
-            return TRUE;
-        default:
-            return FALSE;
-    }
-}
-
-/* Ensure server URL has a scheme and no trailing slash.
- * "mastoot.fr" → "https://mastoot.fr"
- * "https://mastoot.fr/" → "https://mastoot.fr" */
-static const char *NormalizeServerUrl(const char *server, char *buf, ULONG bufSize)
-{
-    ULONG len;
-    if (!server || !server[0]) return server;
-    if (strncmp(server, "http://", 7) == 0 || strncmp(server, "https://", 8) == 0)
-        strncpy(buf, server, bufSize - 1);
-    else
-        snprintf(buf, bufSize, "https://%s", server);
-    buf[bufSize - 1] = '\0';
-    len = (ULONG)strlen(buf);
-    while (len > 0 && buf[len - 1] == '/') buf[--len] = '\0';
-    return buf;
-}
-
-/* Index into the MSG_SEARCHV_WAIT1..4 rotation -- bumped once per search
- * fired (see FS3EApp_SearchWord), NOT on every FS3EApp_CheckConnectionState
- * call (that runs on all sorts of unrelated state changes too, e.g. login
- * phase or account changes; incrementing here would rotate the message
- * mid-search for no reason instead of picking one per search). */
-static ULONG s_searchWaitMsgIdx = 0;
+/* s_searchWaitMsgIdx lives in fs3erequests.c (bumped by FS3EApp_SearchWord);
+ * read-only here to pick a wait message below. */
+extern ULONG s_searchWaitMsgIdx;
 
 /* Update TTIMELINE_WaitText to reflect current connection / login state.
  * Called whenever the state machine advances so the empty-channel placeholder
- * always shows a meaningful message. */
-static void FS3EApp_CheckConnectionState(void)
+ * always shows a meaningful message.
+ * Not static: fs3erequests.c's request/reply functions call this too --
+ * see the extern declaration there. */
+void FS3EApp_CheckConnectionState(void)
 {
     const char *text = NULL;
     ULONG bit;
@@ -951,406 +335,6 @@ static void FS3EApp_CheckConnectionState(void)
     SetGdAttrs(app->tootTimeline, TTIMELINE_WaitText, (ULONG)text, TAG_END);
 }
 
-/* Send an async TIMELINE request for viewMode if credentials are available
- * and a fetch hasn't already been started for that channel. */
-static void FS3EApp_FetchTimeline(ULONG viewMode)
-{
-    char tl[128];
-    FS3ENetTimelineReq *req;
-    ULONG bit = (1UL << viewMode);
-
-    /* Search is never driven by this "fetch once per session the first
-     * time a channel is viewed" mechanism -- FS3EApp_OpenProfile() owns
-     * its fetch entirely (fired once per profile opened, not once per
-     * view switch), always as an FS3ENETPAGE_OLDER page so it correctly
-     * lands via TIMELINE_AppendPost below the profile header (see
-     * TTIMELINE_ShowProfile) instead of through the AddPost/prepend path
-     * this function's FS3ENETPAGE_INITIAL request below would take.
-     * Without this guard, merely switching back to an already-open
-     * profile (fs3e_setViewMode calls this unconditionally) would fire a
-     * second, wrongly-directed fetch. */
-    if (viewMode == VIEWMODE_Search) return;
-
-    /* Notifications aren't Status objects and don't have a /api/v1/-
-     * relative timeline path the way every other channel does (see
-     * ViewModeTimeline, which has no case for VIEWMODE_Notifs at all) --
-     * FS3ENETQ_NOTIFICATIONS instead, reusing the exact same
-     * timelineFetchedMask/timelineErrorMask bookkeeping so
-     * FS3EApp_CheckConnectionState's waiting/idle text keeps working here
-     * with no special-casing there. */
-    if (viewMode == VIEWMODE_Notifs) {
-        FS3ENetNotificationsReq *nreq;
-
-        if (!app->accountApiBaseUrl || !app->accountAccessToken) return;
-        if (app->channelPopulatedMask & bit) return; /* already has its first page -- see the field comment */
-        if (app->timelineFetchedMask & bit) return;
-
-        printf("FS3EApp_FetchTimeline: viewMode=Notifs\n");
-
-        nreq = FS3ENetNotificationsReq_Alloc(FS3ENETPAGE_INITIAL,
-                   app->accountGeneration, app->accountApiBaseUrl,
-                   app->accountAccessToken, NULL, NULL);
-        if (!nreq) return;
-
-        if (FS3EApp_NetSend(FS3ENETQ_NOTIFICATIONS, nreq, sizeof(*nreq))) {
-            app->timelineFetchedMask |= bit;
-            app->timelineErrorMask   &= ~bit;
-            FS3EApp_CheckConnectionState();
-        }
-        return;
-    }
-
-    if (!app->accountApiBaseUrl || !app->accountAccessToken) return;
-    if (app->channelPopulatedMask & bit) return; /* already has its first page -- see the field comment */
-    if (app->timelineFetchedMask & bit) return;
-    if (!ViewModeTimeline(viewMode, tl, sizeof(tl))) return;
-
-    printf("FS3EApp_FetchTimeline: viewMode=%u timeline=%s\n", (unsigned)viewMode, tl);
-
-    req = FS3ENetTimelineReq_Alloc(viewMode, FS3ENETPAGE_INITIAL,
-              app->accountGeneration, FS3ENET_TLSHAPE_ARRAY,
-              app->accountApiBaseUrl, app->accountAccessToken,
-              tl, NULL, NULL, NULL);
-    if (!req) return;
-
-    if (FS3EApp_NetSend(FS3ENETQ_TIMELINE, req,
-            sizeof(FS3ENetTimelineReq) /* net process only reads char* fields */)) {
-        app->timelineFetchedMask |= bit;
-        app->timelineErrorMask   &= ~bit; /* clear any previous error for this channel */
-        FS3EApp_CheckConnectionState();
-    }
-}
-
-/* Rebuild the login window's accounts list from app->accounts[], marking
- * whichever entry matches the currently active account as "current" (see
- * FS3ELoginAccountRow.current). Safe to call any time -- before the
- * window has ever been created it's a no-op (FS3ELoginView_SetAccountsList
- * bails on a NULL acclistBrowser). Call this any time app->accounts[] or
- * the active account changes: after loading accounts.dat at startup,
- * after a successful login/switch, and right before opening the login
- * window (GID_TITLEBAR_ACCOUNTS) so it's never stale. */
-static void FS3EApp_RefreshLoginAccountsList(void)
-{
-    FS3ELoginAccountRow rows[FS3E_MAX_ACCOUNTS];
-    ULONG i;
-
-    for (i = 0; i < app->accountCount; i++) {
-        rows[i].server  = app->accounts[i].apiBaseUrl;
-        rows[i].user    = app->accounts[i].acct;
-        rows[i].current = (app->accountApiBaseUrl && app->accountAcct &&
-                           app->accounts[i].apiBaseUrl && app->accounts[i].acct &&
-                           !strcmp(app->accounts[i].apiBaseUrl, app->accountApiBaseUrl) &&
-                           !strcmp(app->accounts[i].acct, app->accountAcct));
-    }
-    FS3ELoginView_SetAccountsList(&app->loginView, rows, app->accountCount);
-}
-
-/* Switch the connected account to app->accounts[index] (a row click in
- * fs3eloginview.c's acclistGroup -- see GID_LOGIN_ACCOUNTS_LIST). No-op if
- * index is out of range or already the active account. Every toot
- * timeline channel is wiped (they hold the outgoing account's posts) and
- * the current view mode's channel is fetched fresh under the new
- * account, exactly like a brand new login does (FS3ENETQ_LOGIN_FINISH's
- * reply handler below). */
-static void FS3EApp_SwitchAccount(LONG index)
-{
-    FS3EAccount *a;
-    /* Reentrancy guard: FS3ELoginView_SetAccountsList() no longer sets
-     * LISTBROWSER_Selected on reattach (that was the confirmed root cause
-     * of an infinite switch-A/switch-B loop -- see its comment in
-     * fs3eloginview.c), but this guard stays as defense in depth against
-     * any *other* BOOPSI notify this function's own side effects might
-     * someday trigger back into GID_LOGIN_ACCOUNTS_LIST: the BoopsiDelay
-     * queue drains in a single while loop (fs3eboopsimessage.c), so a
-     * notify enqueued from inside this call is picked up by that same
-     * loop before this call returns, not on some later, safely-separate
-     * iteration. */
-    static BOOL s_switching = FALSE;
-
-    if (s_switching) {
-        printf("FS3EApp_SwitchAccount: reentrant call ignored (index=%ld)\n", (long)index);
-        return;
-    }
-
-    if (index < 0 || (ULONG)index >= app->accountCount) return;
-    a = &app->accounts[index];
-    if (!a->apiBaseUrl || !a->acct) return;
-
-    if (app->accountApiBaseUrl && app->accountAcct &&
-        !strcmp(a->apiBaseUrl, app->accountApiBaseUrl) &&
-        !strcmp(a->acct, app->accountAcct))
-        return; /* already connected -- see the caller's "not connected yet" gate */
-
-    s_switching = TRUE;
-
-    printf("FS3EApp_SwitchAccount: switching to %s @ %s\n", a->acct, a->apiBaseUrl);
-
-    /* Abandon any fresh-login flow in progress (e.g. the user had pasted
-     * a server/started OAuth for yet another account, then changed their
-     * mind and clicked an existing row instead). */
-    FS3EApp_FreeLoginState();
-
-    FS3EApp_SetAccount(a->apiBaseUrl, a->accessToken, a->displayName,
-                        a->acct, a->avatarURL, a->accountId);
-    FS3EApp_SaveAccount(); /* account.dat now points at this account too */
-    app->loginPhase = FS3ELOGIN_DONE;
-
-    /* Every channel's posts belong to the account being left. */
-    if (app->tootTimeline) {
-        SetAttrs(app->tootTimeline, TTIMELINE_ClearAllChannels, TRUE, TAG_DONE);
-        if (CurrentMainWindow)
-            RefreshGList((struct Gadget *)app->tootTimeline, CurrentMainWindow, NULL, 1);
-    }
-
-    /* Search-channel profile/discussion state belonged to the outgoing account too. */
-    if (app->searchProfileAcct)       { FreeVec(app->searchProfileAcct);       app->searchProfileAcct       = NULL; }
-    if (app->searchProfileAccountId)  { FreeVec(app->searchProfileAccountId);  app->searchProfileAccountId  = NULL; }
-    if (app->searchDiscussionStatusId){ FreeVec(app->searchDiscussionStatusId);app->searchDiscussionStatusId= NULL; }
-    app->searchMode = FS3ESEARCH_NONE;
-
-    app->timelineFetchedMask   = 0;
-    app->channelPopulatedMask  = 0;
-    app->timelineErrorMask     = 0;
-    app->olderPageInFlightMask = 0;
-    app->newerPageInFlightMask = 0;
-    FS3EApp_FetchTimeline(app->viewMode);
-
-    FS3EApp_RefreshLoginAccountsList();
-
-    s_switching = FALSE;
-}
-
-/* Send an async TIMELINE request for viewMode paginating in `direction`
- * (FS3ENETPAGE_OLDER/NEWER) from whatever status id the gadget currently
- * has at that end of its list (TTIMELINE_OldestPostId/NewestPostId) --
- * no-op if a page in that direction is already in flight for this
- * channel, or there's no known id to paginate from yet. Separate from
- * FS3EApp_FetchTimeline's one-shot-per-session initial fetch: this fires
- * repeatedly, driven by scroll position/clicks on the pinned boundary
- * rows -- see the TTL_HOT_LOAD_OLDER/NEWER handling in
- * FS3EApp_HandleNetReply's GID_TTIMELINE case. */
-static void FS3EApp_FetchTimelinePage(ULONG viewMode, ULONG direction)
-{
-    char tl[128];
-    FS3ENetTimelineReq *req;
-    ULONG  bit = (1UL << viewMode);
-    ULONG *inFlightMask = (direction == FS3ENETPAGE_OLDER)
-                         ? &app->olderPageInFlightMask
-                         : &app->newerPageInFlightMask;
-    ULONG  attrTag = (direction == FS3ENETPAGE_OLDER)
-                    ? TTIMELINE_OldestPostId : TTIMELINE_NewestPostId;
-    ULONG  fromIdVal = 0;
-    const char *fromId;
-
-    if (!app->accountApiBaseUrl || !app->accountAccessToken) return;
-    if (*inFlightMask & bit) return;
-    if (!app->tootTimeline) return;
-
-    /* Notifications: same FS3ENETQ_NOTIFICATIONS/postId-as-notification-id
-     * reasoning as FS3EApp_FetchTimeline's VIEWMODE_Notifs branch --
-     * TTIMELINE_OldestPostId/NewestPostId already read post->postId
-     * generically, which for a notification row holds the notification's
-     * own id (not the embedded status' id -- see
-     * TTLPostSetup.notifStatusId), exactly what /api/v1/notifications'
-     * max_id/min_id pagination needs. */
-    if (viewMode == VIEWMODE_Notifs) {
-        FS3ENetNotificationsReq *nreq;
-
-        GetAttr(attrTag, app->tootTimeline, &fromIdVal);
-        fromId = (const char *)fromIdVal;
-        if (!fromId || !fromId[0]) return;
-
-        printf("FS3EApp_FetchTimelinePage: viewMode=Notifs dir=%u from=%s\n",
-               (unsigned)direction, fromId);
-
-        nreq = FS3ENetNotificationsReq_Alloc(direction,
-                   app->accountGeneration, app->accountApiBaseUrl, app->accountAccessToken,
-                   (direction == FS3ENETPAGE_OLDER) ? fromId : NULL,
-                   (direction == FS3ENETPAGE_NEWER) ? fromId : NULL);
-        if (!nreq) return;
-
-        if (FS3EApp_NetSend(FS3ENETQ_NOTIFICATIONS, nreq, sizeof(*nreq)))
-            *inFlightMask |= bit;
-        return;
-    }
-
-    if (!ViewModeTimeline(viewMode, tl, sizeof(tl))) return;
-
-    GetAttr(attrTag, app->tootTimeline, &fromIdVal);
-    fromId = (const char *)fromIdVal;
-    if (!fromId || !fromId[0]) return; /* nothing loaded yet to paginate from */
-
-    printf("FS3EApp_FetchTimelinePage: viewMode=%u dir=%u from=%s\n",
-           (unsigned)viewMode, (unsigned)direction, fromId);
-
-    req = FS3ENetTimelineReq_Alloc(viewMode, direction,
-              app->accountGeneration, FS3ENET_TLSHAPE_ARRAY,
-              app->accountApiBaseUrl, app->accountAccessToken, tl,
-              (direction == FS3ENETPAGE_OLDER) ? fromId : NULL,
-              (direction == FS3ENETPAGE_NEWER) ? fromId : NULL,
-              NULL);
-    if (!req) return;
-
-    if (FS3EApp_NetSend(FS3ENETQ_TIMELINE, req, sizeof(FS3ENetTimelineReq)))
-        *inFlightMask |= bit;
-}
-
-/* Opens (or re-opens) a user's profile in the Search channel -- the
- * shared entry point for both TTL_HOT_AVATAR and TTL_HOT_MENTION clicks
- * (a toot author's avatar, or an @mention inside any toot/bio body).
- * acctOrHandle may or may not have a leading '@' (avatar-click data
- * never does, mention-click data always does -- see TTL_HOT_MENTION's
- * comment in fs3etoottimeline.h) -- stripped here so both paths converge
- * on the same acct string /api/v1/accounts/lookup expects.
- *
- * Only starts the lookup; the rest of the flow (header population,
- * avatar fetch, relationship + first toot page) continues in the
- * FS3ENETQ_ACCOUNT_LOOKUP reply handler once the account id is known. */
-static void FS3EApp_OpenProfile(const char *acctOrHandle)
-{
-    const char *acct = acctOrHandle;
-    FS3ENetAccountLookupReq *req;
-
-    if (!acct || !acct[0]) return;
-    if (acct[0] == '@') acct++;
-    if (!acct[0]) return;
-    if (!app->accountApiBaseUrl) return;
-
-    if (app->searchProfileAcct)      { FreeVec(app->searchProfileAcct);      app->searchProfileAcct      = NULL; }
-    if (app->searchProfileAccountId) { FreeVec(app->searchProfileAccountId); app->searchProfileAccountId = NULL; }
-    app->searchProfileAcct = NetStrDup(acct);
-    app->searchMode        = FS3ESEARCH_USER_PROFILE;
-
-    fs3e_setViewMode(VIEWMODE_Search);
-
-    /* Mirror the opened profile into the search editor as "user@server" --
-     * Mastodon's own "acct" field already has "@server" for remote users,
-     * but is bare "user" for local ones (same instance as us), so fill in
-     * our own instance's domain in that case. */
-    if (app->searchWordEditor) {
-        char handle[256];
-        if (strchr(acct, '@')) {
-            snprintf(handle, sizeof(handle), "%s", acct);
-        } else {
-            const char *domain = app->accountApiBaseUrl ? app->accountApiBaseUrl : "";
-            if (strncmp(domain, "https://", 8) == 0) domain += 8;
-            else if (strncmp(domain, "http://", 7) == 0) domain += 7;
-            snprintf(handle, sizeof(handle), "%s@%s", acct, domain);
-        }
-        SetGdAttrs(app->searchWordEditor, UTED_Text, (ULONG)handle, TAG_END);
-    }
-
-    if (!app->searchProfileAcct) return;
-
-    req = FS3ENetAccountLookupReq_Alloc(app->accountApiBaseUrl,
-              app->accountAccessToken ? app->accountAccessToken : "",
-              app->searchProfileAcct);
-    if (!req) return;
-
-    FS3EApp_NetSend(FS3ENETQ_ACCOUNT_LOOKUP, req, sizeof(*req));
-}
-
-/* "Discussion mode" -- shows statusId's toot as the first item in the
- * Search channel, followed by its replies (Mastodon's "descendants"),
- * each flagged isThreadReply (see TTLPostSetup.isThreadReply). Deliberately
- * simple, mirroring the user's own description: no ancestors (the chain
- * this toot itself replied to), no nested/threaded indentation, no
- * pagination for long discussions -- just "main toot, then its answers
- * below," flat, in server order. Unlike FS3EApp_OpenProfile there's no
- * single atomic "clear + seed" tag, so the channel is cleared proactively
- * here, before either fetch's reply can land.
- *
- * Two FS3ENETQ_TIMELINE requests, fired back to back: the main toot
- * (FS3ENET_TLSHAPE_SINGLE, lands via AddPost as item 1 since the channel
- * is already empty) then its replies (FS3ENET_TLSHAPE_CONTEXT_DESCENDANTS,
- * FS3ENETPAGE_OLDER so it lands via AppendPost below -- same trick
- * FS3EApp_OpenProfile's second request uses for its header). Relies on
- * the network process being a single serialized task (see the
- * accountGeneration comment in FS3EApp_HandleNetReply's FS3ENETQ_TIMELINE
- * case) so reply #1 always lands before reply #2 is even attempted. */
-static void FS3EApp_OpenDiscussion(const char *statusId)
-{
-    char tl[128];
-    FS3ENetTimelineReq *req;
-
-    if (!statusId || !statusId[0]) return;
-    if (!app->accountApiBaseUrl) return;
-
-    if (app->searchDiscussionStatusId) { FreeVec(app->searchDiscussionStatusId); app->searchDiscussionStatusId = NULL; }
-    app->searchDiscussionStatusId = NetStrDup(statusId);
-    app->searchMode = FS3ESEARCH_DISCUSSION;
-
-    fs3e_setViewMode(VIEWMODE_Search);
-
-    if (app->tootTimeline)
-        SetAttrs(app->tootTimeline, TTIMELINE_ClearPosts, TRUE, TAG_DONE);
-
-    if (!app->searchDiscussionStatusId) return;
-
-    snprintf(tl, sizeof(tl), "statuses/%s", app->searchDiscussionStatusId);
-    req = FS3ENetTimelineReq_Alloc(VIEWMODE_Search, FS3ENETPAGE_INITIAL,
-              app->accountGeneration, FS3ENET_TLSHAPE_SINGLE,
-              app->accountApiBaseUrl,
-              app->accountAccessToken ? app->accountAccessToken : "",
-              tl, "", "", NULL);
-    if (req) FS3EApp_NetSend(FS3ENETQ_TIMELINE, req, sizeof(*req));
-
-    snprintf(tl, sizeof(tl), "statuses/%s/context", app->searchDiscussionStatusId);
-    req = FS3ENetTimelineReq_Alloc(VIEWMODE_Search, FS3ENETPAGE_OLDER,
-              app->accountGeneration, FS3ENET_TLSHAPE_CONTEXT_DESCENDANTS,
-              app->accountApiBaseUrl,
-              app->accountAccessToken ? app->accountAccessToken : "",
-              tl, "", "", NULL);
-    if (req) FS3EApp_NetSend(FS3ENETQ_TIMELINE, req, sizeof(*req));
-}
-
-/* Word/hashtag search -- the Enter-pressed handler on the search line (see
- * GID_SEARCH_WORD_EDITOR in the main event loop) calls this for any query
- * that doesn't look like a "name@server" user handle. Mirrors
- * FS3EApp_OpenDiscussion() exactly: clears the Search channel synchronously
- * (no profile header, just a flat status list, same as discussion mode),
- * then fires one FS3ENETQ_TIMELINE request through the
- * FS3ENET_TLSHAPE_SEARCH_STATUSES shape (GET /api/v2/search, see
- * FS3EMastodon_GetTimeline). query is raw UTF-8 text, NOT URL-encoded --
- * FS3ENet_HandleTimeline (network process) does that itself from
- * fs3et_SearchQuery. No pagination yet (single page, FS3ENETPAGE_INITIAL
- * only): TTL_HOT_LOAD_OLDER/NEWER route through ViewModeTimeline(), which
- * has no FS3ESEARCH_WORD case, so they're a harmless no-op for now. */
-static void FS3EApp_SearchWord(const char *query)
-{
-    char tl[64];
-    FS3ENetTimelineReq *req;
-
-    if (!query || !query[0]) return;
-    if (!app->accountApiBaseUrl) return;
-
-    if (app->searchProfileAcct)        { FreeVec(app->searchProfileAcct);        app->searchProfileAcct        = NULL; }
-    if (app->searchProfileAccountId)   { FreeVec(app->searchProfileAccountId);   app->searchProfileAccountId   = NULL; }
-    if (app->searchDiscussionStatusId) { FreeVec(app->searchDiscussionStatusId); app->searchDiscussionStatusId = NULL; }
-    app->searchMode = FS3ESEARCH_WORD;
-
-    fs3e_setViewMode(VIEWMODE_Search);
-
-    if (app->tootTimeline)
-        SetAttrs(app->tootTimeline, TTIMELINE_ClearPosts, TRUE, TAG_DONE);
-
-    snprintf(tl, sizeof(tl), "search?type=statuses&limit=20");
-    req = FS3ENetTimelineReq_Alloc(VIEWMODE_Search, FS3ENETPAGE_INITIAL,
-              app->accountGeneration, FS3ENET_TLSHAPE_SEARCH_STATUSES,
-              app->accountApiBaseUrl,
-              app->accountAccessToken ? app->accountAccessToken : "",
-              tl, "", "", query);
-    if (req && FS3EApp_NetSend(FS3ENETQ_TIMELINE, req, sizeof(*req))) {
-        /* Marks the Search channel "fetching" so
-         * FS3EApp_CheckConnectionState shows one of the search wait
-         * messages instead of "Updating..." -- cleared the same way every
-         * other channel's INITIAL fetch already is, in the generic
-         * FS3ENETQ_TIMELINE reply handler. */
-        app->timelineFetchedMask |= (1UL << VIEWMODE_Search);
-        s_searchWaitMsgIdx++;
-        FS3EApp_CheckConnectionState();
-    }
-}
 
 /* Visibility index (from FS3ETootView) → Mastodon API string. */
 static const char *VisibilityString(LONG idx)
@@ -1358,908 +342,6 @@ static const char *VisibilityString(LONG idx)
     static const char *const s[] = { "public", "unlisted", "private", "direct" };
     if (idx < 0 || idx > 3) return "public";
     return s[(ULONG)idx];
-}
-
-/* Handle one reply message from the network process. */
-static void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
-{
-    switch (msg->fs3em_Type)
-    {
-    case FS3ENETQ_LOGIN_START:
-        if (msg->fs3em_Result == FS3ENETR_OK) {
-            FS3ENetLoginStartReply *reply = (FS3ENetLoginStartReply *)msg->fs3em_Data;
-            /* Save client credentials for phase 2 */
-            if (app->loginClientId)     FreeVec(app->loginClientId);
-            if (app->loginClientSecret) FreeVec(app->loginClientSecret);
-            app->loginClientId     = NetStrDup(reply->fs3enl_ClientId);
-            app->loginClientSecret = NetStrDup(reply->fs3enl_ClientSecret);
-            app->loginPhase = FS3ELOGIN_WAITING_CODE;
-
-            printf("login reply: LOGIN_START ok, clientId=%s url=%s\n",
-                   reply->fs3enl_ClientId, reply->fs3enl_AuthorizeUrl);
-
-            /* Show the URL in the login window and enable phase-2 widgets. */
-            FS3ELoginView_SetAuthorizeUrl(&app->loginView, reply->fs3enl_AuthorizeUrl);
-        } else {
-            printf("login reply: LOGIN_START FAILED result=%u\n", (unsigned)msg->fs3em_Result);
-            FS3EApp_FreeLoginState();
-        }
-        break;
-
-    case FS3ENETQ_LOGIN_FINISH:
-        if (msg->fs3em_Result == FS3ENETR_OK) {
-            FS3ENetLoginFinishReply *reply = (FS3ENetLoginFinishReply *)msg->fs3em_Data;
-            printf("login reply: LOGIN_FINISH ok, acct=%s displayName=%s\n",
-                   reply->fs3enl_Account.fma_Acct    ? reply->fs3enl_Account.fma_Acct    : "?",
-                   reply->fs3enl_Account.fma_DisplayName ? reply->fs3enl_Account.fma_DisplayName : "?");
-            FS3EApp_SetAccount(app->loginApiBaseUrl,
-                               reply->fs3enl_AccessToken,
-                               reply->fs3enl_Account.fma_DisplayName,
-                               reply->fs3enl_Account.fma_Acct,
-                               reply->fs3enl_Account.fma_AvatarURL,
-                               reply->fs3enl_Account.fma_Id);
-            FS3EApp_SaveAccount();
-            FS3EApp_FreeLoginState();
-            app->loginPhase = FS3ELOGIN_DONE;
-            /* Fetch the current view mode timeline */
-            app->timelineFetchedMask  = 0; /* reset so new account fetches fresh */
-            app->channelPopulatedMask = 0;
-            FS3EApp_FetchTimeline(app->viewMode);
-            /* Credentials just confirmed -- empty the fields so there's
-             * nothing to accidentally resubmit later (see the matching
-             * clear at startup, right after FS3ELoginView_Create). */
-            FS3ELoginView_ClearFields(&app->loginView);
-            FS3EApp_RefreshLoginAccountsList(); /* new/refreshed row, mark current */
-            FS3ELoginView_Close(&app->loginView);
-        } else {
-            struct EasyStruct es = {
-                sizeof(struct EasyStruct), 0,
-                (UBYTE *)"FriendSh3ep - Login Error",
-                (UBYTE *)"Could not exchange the authorization code.\nCheck the code and try again.",
-                (UBYTE *)"OK"
-            };
-            printf("login reply: LOGIN_FINISH FAILED result=%u\n", (unsigned)msg->fs3em_Result);
-            EasyRequestArgs(CurrentMainWindow, &es, NULL, NULL);
-            app->loginPhase = FS3ELOGIN_WAITING_CODE; /* let user retry code */
-        }
-        break;
-
-    case FS3ENETQ_VERIFY_ACCOUNT:
-        /* Backfill for an account.dat saved before accountId existed (see
-         * FS3EApp_BackfillAccountId()). Re-runs the same "resync from
-         * server" FS3EApp_SetAccount() does at login, just without a fresh
-         * access token -- apiBaseUrl/accessToken are unchanged, only the
-         * account fields (chiefly fma_Id) are new. */
-        if (msg->fs3em_Result == FS3ENETR_OK) {
-            FS3ENetVerifyAccountReply *reply = (FS3ENetVerifyAccountReply *)msg->fs3em_Data;
-            printf("verify-account reply: ok, acct=%s id=%s\n",
-                   reply->fs3eva_Account.fma_Acct ? reply->fs3eva_Account.fma_Acct : "?",
-                   reply->fs3eva_Account.fma_Id   ? reply->fs3eva_Account.fma_Id   : "?");
-            FS3EApp_SetAccount(app->accountApiBaseUrl,
-                               app->accountAccessToken,
-                               reply->fs3eva_Account.fma_DisplayName,
-                               reply->fs3eva_Account.fma_Acct,
-                               reply->fs3eva_Account.fma_AvatarURL,
-                               reply->fs3eva_Account.fma_Id);
-            FS3EApp_SaveAccount();
-            FS3EApp_RefreshLoginAccountsList();
-            /* In case the user is already sitting on a channel that
-             * couldn't fetch without an id (VIEWMODE_User). */
-            FS3EApp_FetchTimeline(app->viewMode);
-        } else {
-            printf("verify-account reply: FAILED result=%u (keeping existing account fields)\n",
-                   (unsigned)msg->fs3em_Result);
-        }
-        break;
-
-    case FS3ENETQ_INSTANCE_INFO:
-        /* Always OK (see FS3ENet_HandleInstanceInfo -- a fetch failure on
-         * the network side is reported via fs3eii_Known, not fs3em_Result),
-         * but guard anyway rather than assume. Only a server-confirmed
-         * value (fs3eii_Known) is shown -- a failed fetch leaves
-         * accountMaxChars at 0 ("Max: -"), never presenting
-         * FS3EMastodon_GetInstanceInfo's internal fallback guess as fact. */
-        if (msg->fs3em_Result == FS3ENETR_OK) {
-            FS3ENetInstanceInfoReply *reply = (FS3ENetInstanceInfoReply *)msg->fs3em_Data;
-            printf("instance-info reply: ok, maxChars=%lu known=%d\n",
-                   (unsigned long)reply->fs3eii_MaxChars, (int)reply->fs3eii_Known);
-            if (reply->fs3eii_Known) {
-                app->accountMaxChars = reply->fs3eii_MaxChars;
-                FS3ETootView_UpdateCharCount(&app->tootView);
-            }
-        } else {
-            printf("instance-info reply: FAILED result=%u (keeping previous limit)\n",
-                   (unsigned)msg->fs3em_Result);
-        }
-        break;
-
-    case FS3ENETQ_TIMELINE:
-        if (msg->fs3em_Result == FS3ENETR_OK && app->tootTimeline) {
-            FS3ENetTimelineReply *reply = (FS3ENetTimelineReply *)msg->fs3em_Data;
-            FS3ENetStatus *statuses = (FS3ENetStatus *)(reply + 1);
-            BOOL  older = (reply->fs3et_PageDirection == FS3ENETPAGE_OLDER);
-            ULONG addAttr = older ? TTIMELINE_AppendPost : TTIMELINE_AddPost;
-            ULONG i;
-
-            /* This request was sent for whichever account was active back
-             * when it went out -- the network process is one serialized
-             * task, so it can still reply after the user has since
-             * switched accounts (see accountGeneration's comment in
-             * friendsh3ep.h). Applying it now would splice a stale
-             * account's posts into the *new* account's channel and/or
-             * re-clear timelineFetchedMask, restarting a fetch that
-             * belongs to no one currently active -- discard outright
-             * without touching any mask, exactly as if it was never sent;
-             * the request that actually matches the current account
-             * (fired by FS3EApp_SwitchAccount/SetAccount) owns this
-             * channel's bookkeeping instead. */
-            if (reply->fs3et_AccountGeneration != app->accountGeneration) {
-                printf("timeline reply: stale generation (got %u, current %u) — discarded\n",
-                       (unsigned)reply->fs3et_AccountGeneration,
-                       (unsigned)app->accountGeneration);
-                break;
-            }
-
-            printf("timeline reply: viewMode=%u dir=%u count=%u\n",
-                   (unsigned)reply->fs3et_ViewModeBit,
-                   (unsigned)reply->fs3et_PageDirection, (unsigned)reply->fs3et_Count);
-
-            switch (reply->fs3et_PageDirection) {
-                case FS3ENETPAGE_OLDER:
-                    app->olderPageInFlightMask &= ~(1UL << reply->fs3et_ViewModeBit);
-                    break;
-                case FS3ENETPAGE_NEWER:
-                    app->newerPageInFlightMask &= ~(1UL << reply->fs3et_ViewModeBit);
-                    break;
-                default:
-                    /* Fetch is complete — clear the in-flight bit so
-                     * CheckConnectionState can show the "connected" idle
-                     * message instead of "Updating…", AND mark the channel
-                     * as populated so FS3EApp_FetchTimeline won't fire
-                     * another INITIAL fetch (and re-insert a duplicate
-                     * first page) next time this channel is entered --
-                     * see channelPopulatedMask's doc comment for the bug
-                     * this fixes. */
-                    app->timelineFetchedMask   &= ~(1UL << reply->fs3et_ViewModeBit);
-                    app->channelPopulatedMask  |=  (1UL << reply->fs3et_ViewModeBit);
-                    break;
-            }
-
-            /* A profile can be replaced (see FS3EApp_OpenProfile) while an
-             * older/newer page fetched for the PREVIOUS profile is still
-             * in flight -- this reply has no field saying "which profile"
-             * it was for beyond the statuses themselves, so for Search
-             * specifically, cross-check the first status's own OWNER
-             * against whichever profile is CURRENTLY loaded and discard
-             * the whole page if it doesn't match. accounts/{id}/statuses
-             * only ever returns that one account's own statuses, so this
-             * is a reliable check, not a heuristic -- but "own statuses"
-             * includes boosts, and fmas_Acct is always the CONTENT's
-             * author (src), not who posted it into this timeline -- for a
-             * boost those differ (fmas_Acct is the ORIGINAL author,
-             * fmas_BoostByAcct is the booster). Using fmas_Acct alone here
-             * made every reply for a boost-only profile look "stale" and
-             * get silently discarded, even on the very first, entirely
-             * legitimate page -- see fmas_BoostByAcct's own comment in
-             * fs3enet.h. This is exactly the kind of stale transient data
-             * (a pointer into a reply block for a profile the user already
-             * navigated away from) that must never be applied to whatever
-             * now-different content actually occupies the Search channel,
-             * so the check itself still needs to stay -- it just needs
-             * the right field. The in-flight bookkeeping above still runs
-             * unconditionally either way, so a stale reply doesn't leave
-             * olderPageInFlightMask/etc. permanently stuck for the new
-             * profile. Gated on FS3ESEARCH_USER_PROFILE specifically --
-             * discussion mode (see FS3EApp_OpenDiscussion) also uses the
-             * Search channel but never sets searchProfileAcct, so without
-             * this guard every discussion-mode reply would look "stale"
-             * (searchProfileAcct NULL) and get discarded outright. */
-            if (reply->fs3et_ViewModeBit == VIEWMODE_Search &&
-                app->searchMode == FS3ESEARCH_USER_PROFILE) {
-                const char *statusOwnerAcct = NULL;
-                if (reply->fs3et_Count > 0) {
-                    statusOwnerAcct = (statuses[0].fmas_BoostByAcct && statuses[0].fmas_BoostByAcct[0])
-                                    ? statuses[0].fmas_BoostByAcct : statuses[0].fmas_Acct;
-                }
-                if (!app->searchProfileAcct ||
-                    (reply->fs3et_Count > 0 &&
-                     (!statusOwnerAcct || strcmp(statusOwnerAcct, app->searchProfileAcct) != 0)))
-                {
-                    printf("timeline reply: stale Search page discarded (acct=%s current=%s)\n",
-                           statusOwnerAcct ? statusOwnerAcct : "?",
-                           app->searchProfileAcct ? app->searchProfileAcct : "(none)");
-                    break;
-                }
-            }
-
-            /* Mastodon always returns each page newest-first. An older
-             * page (max_id) is appended below existing content, so it
-             * must walk forward (newest-of-page lands right below what's
-             * already there, oldest-of-page ends up at the very bottom).
-             * An initial/newer page is prepended above existing content,
-             * so it walks in reverse (oldest-of-page first, so the
-             * overall newest -- index 0 -- ends up prepended last, at the
-             * very top) -- see TTIMELINE_AddPost/AppendPost. */
-            for (i = 0; i < reply->fs3et_Count; i++) {
-                ULONG idx = older ? i : (reply->fs3et_Count - 1 - i);
-                TTLPostSetup post;
-                memset(&post, 0, sizeof(post));
-                post.username    = statuses[idx].fmas_DisplayName[0]
-                                   ? statuses[idx].fmas_DisplayName
-                                   : statuses[idx].fmas_Acct;
-                post.acct        = statuses[idx].fmas_Acct;
-                /* Compares the ORIGINAL author's acct, not the booster's
-                 * (fmas_BoostByAcct) -- boosting someone else's toot must
-                 * not grant Modify/Delete on it. See TTLPostSetup.isOwn. */
-                post.isOwn       = (statuses[idx].fmas_Acct && app->accountAcct &&
-                                     !strcmp(statuses[idx].fmas_Acct, app->accountAcct));
-                /* Every status in a CONTEXT_DESCENDANTS reply is, by
-                 * definition, one of the discussion's replies -- see
-                 * TTLPostSetup.isThreadReply / FS3EApp_OpenDiscussion. */
-                post.isThreadReply = (reply->fs3et_ResponseShape == FS3ENET_TLSHAPE_CONTEXT_DESCENDANTS);
-                post.body        = statuses[idx].fmas_Content;
-                post.timestamp   = statuses[idx].fmas_CreatedAt;
-                post.boostBy     = statuses[idx].fmas_BoostBy;
-                post.boostByAcct = statuses[idx].fmas_BoostByAcct;
-                post.avatarURL   = statuses[idx].fmas_AvatarURL;
-                post.postId      = statuses[idx].fmas_Id;
-                post.repliesCount    = statuses[idx].fmas_RepliesCount;
-                post.reblogsCount    = statuses[idx].fmas_ReblogsCount;
-                post.favouritesCount = statuses[idx].fmas_FavouritesCount;
-                post.favourited      = statuses[idx].fmas_Favourited;
-                post.reblogged       = statuses[idx].fmas_Reblogged;
-                {
-                    ULONG mi;
-                    for (mi = 0; mi < statuses[idx].fmas_MediaCount && mi < TTL_POST_MAX_MEDIA; mi++) {
-                        post.mediaUrls[mi] = statuses[idx].fmas_MediaUrls[mi];
-                        post.mediaIds[mi]  = statuses[idx].fmas_MediaIds[mi];
-                        switch (statuses[idx].fmas_MediaKind[mi]) {
-                            case FS3ENET_MEDIAKIND_IMAGE: post.mediaKinds[mi] = TTL_MEDIA_KIND_IMAGE; break;
-                            case FS3ENET_MEDIAKIND_VIDEO: post.mediaKinds[mi] = TTL_MEDIA_KIND_VIDEO; break;
-                            case FS3ENET_MEDIAKIND_GIFV:  post.mediaKinds[mi] = TTL_MEDIA_KIND_GIFV;  break;
-                            case FS3ENET_MEDIAKIND_AUDIO: post.mediaKinds[mi] = TTL_MEDIA_KIND_AUDIO; break;
-                            default:                       post.mediaKinds[mi] = TTL_MEDIA_KIND_UNKNOWN; break;
-                        }
-                    }
-                    post.mediaCount = statuses[idx].fmas_MediaCount;
-                }
-                {
-                    ULONG oi;
-                    for (oi = 0; oi < statuses[idx].fmas_PollOptionCount && oi < TTL_POST_MAX_POLL_OPTIONS; oi++) {
-                        post.pollOptionTitles[oi] = statuses[idx].fmas_PollOptionTitles[oi];
-                        post.pollOptionVotes[oi]  = statuses[idx].fmas_PollOptionVotes[oi];
-                    }
-                    post.pollOptionCount = statuses[idx].fmas_PollOptionCount;
-                    post.pollVotesCount  = statuses[idx].fmas_PollVotesCount;
-                    post.pollExpired     = statuses[idx].fmas_PollExpired;
-                    post.pollMultiple    = statuses[idx].fmas_PollMultiple;
-                }
-
-                /* Trigger avatar download for this user if not already requested. */
-                if (app->avatarImages &&
-                    statuses[idx].fmas_AvatarURL &&
-                    statuses[idx].fmas_AvatarURL[0] &&
-                    statuses[idx].fmas_Acct &&
-                    !AvatarImages_IsRequested(app->avatarImages,
-                                              statuses[idx].fmas_Acct))
-                {
-                    ULONG reqSize = sizeof(FS3ENetFetchImageReq)
-                                  + strlen(statuses[idx].fmas_AvatarURL) + 1
-                                  + strlen(statuses[idx].fmas_Acct) + 1
-                                  + strlen(FS3E_CACHE_SUBDIR_USERICONS) + 1;
-                    FS3ENetFetchImageReq *req =
-                        FS3ENetFetchImageReq_Alloc(statuses[idx].fmas_AvatarURL,
-                                                   statuses[idx].fmas_Acct,
-                                                   FS3E_CACHE_SUBDIR_USERICONS,
-                                                   (BOOL)app->settings.keepBigUserIcons);
-                    if (req) {
-                        if (FS3EApp_NetSend(FS3ENETQ_FETCH_IMAGE, req, reqSize))
-                            AvatarImages_MarkRequested(app->avatarImages,
-                                                       statuses[idx].fmas_Acct);
-                        else
-                            FreeVec(req);
-                    }
-                }
-
-                /* Trigger a thumbnail download for each attachment not
-                 * already requested -- same pipeline as avatars above,
-                 * just a different cache subdir/pool (see
-                 * AvatarImages_IsMediaRequested and the file header
-                 * comment in avatarimages.h). */
-                if (app->avatarImages) {
-                    ULONG mi;
-                    for (mi = 0; mi < statuses[idx].fmas_MediaCount && mi < TTL_POST_MAX_MEDIA; mi++) {
-                        const char *url = statuses[idx].fmas_MediaUrls[mi];
-                        if (!url || !url[0]) continue;
-                        /* Audio has no thumbnail to fetch -- TootTimeline
-                         * draws a play button for it instead (see
-                         * TTL_HOT_PLAY_AUDIO); its (fallback, no-preview)
-                         * URL here is the actual media file, not a
-                         * picture. */
-                        if (statuses[idx].fmas_MediaKind[mi] == FS3ENET_MEDIAKIND_AUDIO) continue;
-                        if (AvatarImages_IsMediaRequested(app->avatarImages, url)) continue;
-                        {
-                            ULONG reqSize = sizeof(FS3ENetFetchImageReq)
-                                          + strlen(url) + 1
-                                          + strlen(url) + 1
-                                          + strlen(FS3E_CACHE_SUBDIR_THUMBNAILS) + 1;
-                            FS3ENetFetchImageReq *req =
-                                FS3ENetFetchImageReq_Alloc(url, url,
-                                                           FS3E_CACHE_SUBDIR_THUMBNAILS,
-                                                           (BOOL)app->settings.keepBigThumbnails);
-                            if (req) {
-                                if (FS3EApp_NetSend(FS3ENETQ_FETCH_IMAGE, req, reqSize))
-                                    AvatarImages_MarkMediaRequested(app->avatarImages, url);
-                                else
-                                    FreeVec(req);
-                            }
-                        }
-                    }
-                }
-                post.viewModeBits = (1UL << reply->fs3et_ViewModeBit);
-                SetAttrs(app->tootTimeline, addAttr, (ULONG)&post, TAG_DONE);
-            }
-
-            /* Open a channel scrolled to its newest post, not wherever it
-             * happened to be after AddHead's "scrollY stays fixed"
-             * behavior -- only for the very first page, pagination must
-             * never move the user's scroll position. */
-            if (reply->fs3et_PageDirection == FS3ENETPAGE_INITIAL)
-                SetAttrs(app->tootTimeline, TTIMELINE_ScrollToNewest, TRUE, TAG_DONE);
-
-            if (CurrentMainWindow)
-                RefreshGList((struct Gadget *)app->tootTimeline,
-                             CurrentMainWindow, NULL, 1);
-        } else if (msg->fs3em_Result != FS3ENETR_OK) {
-            FS3ENetTimelineReq *req = (FS3ENetTimelineReq *)msg->fs3em_Data;
-            ULONG bit = req ? (1UL << req->fs3et_ViewModeBit) : 0;
-
-            /* Same stale-generation guard as the success branch above --
-             * a failure for an account we've since switched away from
-             * must not touch the current account's in-flight/error masks
-             * (see accountGeneration's comment in friendsh3ep.h). */
-            if (req && req->fs3et_AccountGeneration != app->accountGeneration) {
-                printf("timeline reply: FAILED for stale generation (got %u, current %u) — ignored\n",
-                       (unsigned)req->fs3et_AccountGeneration,
-                       (unsigned)app->accountGeneration);
-                break;
-            }
-
-            if (req && req->fs3et_PageDirection == FS3ENETPAGE_OLDER) {
-                app->olderPageInFlightMask &= ~bit; /* allow retry next time the user hits bottom */
-            } else if (req && req->fs3et_PageDirection == FS3ENETPAGE_NEWER) {
-                app->newerPageInFlightMask &= ~bit; /* allow retry on next click */
-            } else {
-                app->timelineErrorMask   |= bit;
-                app->timelineFetchedMask &= ~bit; /* allow retry on next view switch */
-                app->lastTimelineResult   = msg->fs3em_Result;
-            }
-            printf("timeline reply: FAILED viewMode=%u dir=%u result=%u\n",
-                   req ? (unsigned)req->fs3et_ViewModeBit : 0,
-                   req ? (unsigned)req->fs3et_PageDirection : 0,
-                   (unsigned)msg->fs3em_Result);
-        }
-        break;
-
-    case FS3ENETQ_NOTIFICATIONS:
-        /* Mirrors FS3ENETQ_TIMELINE's reply handling closely (same
-         * accountGeneration staleness guard, same older/AddPost-vs-
-         * AppendPost dispatch, same avatar/thumbnail prefetch pipeline) --
-         * see that case's comments for the reasoning, not repeated here.
-         * Genuinely different: no fs3et_ViewModeBit to read (this queue
-         * only ever targets VIEWMODE_Notifs, see FS3ENetNotificationsReq's
-         * doc comment), and each entry is a Notification, not a bare
-         * Status -- FOLLOW/FOLLOW_REQUEST carry no status at all
-         * (fen_HasStatus FALSE), routed to TTLNotifFollow_Class purely by
-         * TTLPostSetup.notifType (see fs3etoottimeline_attribs.c's
-         * TTIMELINE_AddPost/AppendPost). */
-        if (msg->fs3em_Result == FS3ENETR_OK && app->tootTimeline) {
-            FS3ENetNotificationsReply *reply = (FS3ENetNotificationsReply *)msg->fs3em_Data;
-            FS3ENetNotification *notifs = (FS3ENetNotification *)(reply + 1);
-            BOOL  older = (reply->fs3en_PageDirection == FS3ENETPAGE_OLDER);
-            ULONG addAttr = older ? TTIMELINE_AppendPost : TTIMELINE_AddPost;
-            ULONG bit = (1UL << VIEWMODE_Notifs);
-            ULONG i;
-
-            if (reply->fs3en_AccountGeneration != app->accountGeneration) {
-                printf("notifications reply: stale generation (got %u, current %u) — discarded\n",
-                       (unsigned)reply->fs3en_AccountGeneration,
-                       (unsigned)app->accountGeneration);
-                break;
-            }
-
-            printf("notifications reply: dir=%u count=%u\n",
-                   (unsigned)reply->fs3en_PageDirection, (unsigned)reply->fs3en_Count);
-
-            switch (reply->fs3en_PageDirection) {
-                case FS3ENETPAGE_OLDER:
-                    app->olderPageInFlightMask &= ~bit;
-                    break;
-                case FS3ENETPAGE_NEWER:
-                    app->newerPageInFlightMask &= ~bit;
-                    break;
-                default:
-                    /* See channelPopulatedMask's doc comment -- same fix
-                     * as FS3ENETQ_TIMELINE's equivalent switch. */
-                    app->timelineFetchedMask  &= ~bit;
-                    app->channelPopulatedMask |=  bit;
-                    break;
-            }
-
-            /* Same walk-order reasoning as FS3ENETQ_TIMELINE -- see its
-             * comment just above its own equivalent loop. */
-            for (i = 0; i < reply->fs3en_Count; i++) {
-                ULONG idx = older ? i : (reply->fs3en_Count - 1 - i);
-                FS3ENetNotification *n = &notifs[idx];
-                TTLPostSetup post;
-                memset(&post, 0, sizeof(post));
-
-                switch (n->fen_Type) {
-                    case FS3ENOTIF_MENTION:        post.notifType = TTL_NOTIF_MENTION;        break;
-                    case FS3ENOTIF_REBLOG:         post.notifType = TTL_NOTIF_REBLOG;         break;
-                    case FS3ENOTIF_FAVOURITE:      post.notifType = TTL_NOTIF_FAVOURITE;      break;
-                    case FS3ENOTIF_FOLLOW:         post.notifType = TTL_NOTIF_FOLLOW;         break;
-                    case FS3ENOTIF_FOLLOW_REQUEST: post.notifType = TTL_NOTIF_FOLLOW_REQUEST; break;
-                    case FS3ENOTIF_POLL:           post.notifType = TTL_NOTIF_POLL;           break;
-                    case FS3ENOTIF_UPDATE:         post.notifType = TTL_NOTIF_UPDATE;         break;
-                    default:
-                        /* Admin-only types (sign-up, report, severed
-                         * relationships, moderation warning) and anything
-                         * else this app doesn't specifically handle --
-                         * skip rather than render a broken row (see
-                         * FS3ENetNotifType's comment in fs3enet.h). */
-                        continue;
-                }
-                /* The NOTIFICATION's own id, NOT the embedded status' --
-                 * see TTLPostSetup.notifStatusId's comment on why this
-                 * distinction matters for pagination. */
-                post.postId = n->fen_Id;
-
-                if (!n->fen_HasStatus) {
-                    post.username  = n->fen_ActorDisplayName[0] ? n->fen_ActorDisplayName : n->fen_ActorAcct;
-                    post.acct      = n->fen_ActorAcct;
-                    post.avatarURL = n->fen_ActorAvatarURL;
-                } else {
-                    FS3ENetStatus *st = &n->fen_Status;
-                    post.username = st->fmas_DisplayName[0] ? st->fmas_DisplayName : st->fmas_Acct;
-                    post.acct      = st->fmas_Acct;
-                    post.isOwn     = (st->fmas_Acct && app->accountAcct &&
-                                       !strcmp(st->fmas_Acct, app->accountAcct));
-                    post.body      = st->fmas_Content;
-                    post.timestamp = st->fmas_CreatedAt;
-                    post.avatarURL = st->fmas_AvatarURL;
-                    post.repliesCount    = st->fmas_RepliesCount;
-                    post.reblogsCount    = st->fmas_ReblogsCount;
-                    post.favouritesCount = st->fmas_FavouritesCount;
-                    post.favourited      = st->fmas_Favourited;
-                    post.reblogged       = st->fmas_Reblogged;
-                    post.notifActorName  = n->fen_ActorDisplayName;
-                    post.notifActorAcct  = n->fen_ActorAcct;
-                    post.notifStatusId   = st->fmas_Id;
-                    {
-                        ULONG mi;
-                        for (mi = 0; mi < st->fmas_MediaCount && mi < TTL_POST_MAX_MEDIA; mi++) {
-                            post.mediaUrls[mi] = st->fmas_MediaUrls[mi];
-                            post.mediaIds[mi]  = st->fmas_MediaIds[mi];
-                            switch (st->fmas_MediaKind[mi]) {
-                                case FS3ENET_MEDIAKIND_IMAGE: post.mediaKinds[mi] = TTL_MEDIA_KIND_IMAGE; break;
-                                case FS3ENET_MEDIAKIND_VIDEO: post.mediaKinds[mi] = TTL_MEDIA_KIND_VIDEO; break;
-                                case FS3ENET_MEDIAKIND_GIFV:  post.mediaKinds[mi] = TTL_MEDIA_KIND_GIFV;  break;
-                                case FS3ENET_MEDIAKIND_AUDIO: post.mediaKinds[mi] = TTL_MEDIA_KIND_AUDIO; break;
-                                default:                       post.mediaKinds[mi] = TTL_MEDIA_KIND_UNKNOWN; break;
-                            }
-                        }
-                        post.mediaCount = st->fmas_MediaCount;
-                    }
-                    {
-                        ULONG oi;
-                        for (oi = 0; oi < st->fmas_PollOptionCount && oi < TTL_POST_MAX_POLL_OPTIONS; oi++) {
-                            post.pollOptionTitles[oi] = st->fmas_PollOptionTitles[oi];
-                            post.pollOptionVotes[oi]  = st->fmas_PollOptionVotes[oi];
-                        }
-                        post.pollOptionCount = st->fmas_PollOptionCount;
-                        post.pollVotesCount  = st->fmas_PollVotesCount;
-                        post.pollExpired     = st->fmas_PollExpired;
-                        post.pollMultiple    = st->fmas_PollMultiple;
-                    }
-
-                    /* Media thumbnail prefetch -- same pipeline as
-                     * FS3ENETQ_TIMELINE's. */
-                    if (app->avatarImages) {
-                        ULONG mi;
-                        for (mi = 0; mi < st->fmas_MediaCount && mi < TTL_POST_MAX_MEDIA; mi++) {
-                            const char *url = st->fmas_MediaUrls[mi];
-                            if (!url || !url[0]) continue;
-                            if (st->fmas_MediaKind[mi] == FS3ENET_MEDIAKIND_AUDIO) continue;
-                            if (AvatarImages_IsMediaRequested(app->avatarImages, url)) continue;
-                            {
-                                ULONG reqSize = sizeof(FS3ENetFetchImageReq)
-                                              + strlen(url) + 1 + strlen(url) + 1
-                                              + strlen(FS3E_CACHE_SUBDIR_THUMBNAILS) + 1;
-                                FS3ENetFetchImageReq *req =
-                                    FS3ENetFetchImageReq_Alloc(url, url,
-                                                               FS3E_CACHE_SUBDIR_THUMBNAILS,
-                                                               (BOOL)app->settings.keepBigThumbnails);
-                                if (req) {
-                                    if (FS3EApp_NetSend(FS3ENETQ_FETCH_IMAGE, req, reqSize))
-                                        AvatarImages_MarkMediaRequested(app->avatarImages, url);
-                                    else
-                                        FreeVec(req);
-                                }
-                            }
-                        }
-                    }
-                }
-
-                /* Avatar download prefetch, keyed by post.acct regardless
-                 * of which branch set it (toot author for status-bearing
-                 * rows, the actor themselves for follow rows) -- same
-                 * pipeline as FS3ENETQ_TIMELINE's. */
-                if (app->avatarImages && post.avatarURL && post.avatarURL[0] &&
-                    post.acct && post.acct[0] &&
-                    !AvatarImages_IsRequested(app->avatarImages, post.acct))
-                {
-                    ULONG reqSize = sizeof(FS3ENetFetchImageReq)
-                                  + strlen(post.avatarURL) + 1
-                                  + strlen(post.acct) + 1
-                                  + strlen(FS3E_CACHE_SUBDIR_USERICONS) + 1;
-                    FS3ENetFetchImageReq *req =
-                        FS3ENetFetchImageReq_Alloc(post.avatarURL, post.acct,
-                                                   FS3E_CACHE_SUBDIR_USERICONS,
-                                                   (BOOL)app->settings.keepBigUserIcons);
-                    if (req) {
-                        if (FS3EApp_NetSend(FS3ENETQ_FETCH_IMAGE, req, reqSize))
-                            AvatarImages_MarkRequested(app->avatarImages, post.acct);
-                        else
-                            FreeVec(req);
-                    }
-                }
-
-                post.viewModeBits = bit;
-                SetAttrs(app->tootTimeline, addAttr, (ULONG)&post, TAG_DONE);
-            }
-
-            if (reply->fs3en_PageDirection == FS3ENETPAGE_INITIAL)
-                SetAttrs(app->tootTimeline, TTIMELINE_ScrollToNewest, TRUE, TAG_DONE);
-
-            if (CurrentMainWindow)
-                RefreshGList((struct Gadget *)app->tootTimeline,
-                             CurrentMainWindow, NULL, 1);
-        } else if (msg->fs3em_Result != FS3ENETR_OK) {
-            FS3ENetNotificationsReq *req = (FS3ENetNotificationsReq *)msg->fs3em_Data;
-            ULONG bit = (1UL << VIEWMODE_Notifs);
-
-            if (req && req->fs3en_AccountGeneration != app->accountGeneration) {
-                printf("notifications reply: FAILED for stale generation (got %u, current %u) — ignored\n",
-                       (unsigned)req->fs3en_AccountGeneration,
-                       (unsigned)app->accountGeneration);
-                break;
-            }
-
-            if (req && req->fs3en_PageDirection == FS3ENETPAGE_OLDER) {
-                app->olderPageInFlightMask &= ~bit;
-            } else if (req && req->fs3en_PageDirection == FS3ENETPAGE_NEWER) {
-                app->newerPageInFlightMask &= ~bit;
-            } else {
-                app->timelineErrorMask   |= bit;
-                app->timelineFetchedMask &= ~bit;
-                app->lastTimelineResult   = msg->fs3em_Result;
-            }
-            printf("notifications reply: FAILED dir=%u result=%u\n",
-                   req ? (unsigned)req->fs3en_PageDirection : 0,
-                   (unsigned)msg->fs3em_Result);
-        }
-        break;
-
-    case FS3ENETQ_FETCH_IMAGE:
-        if (msg->fs3em_Result == FS3ENETR_OK && app->avatarImages) {
-            FS3ENetFetchImageReply *reply = (FS3ENetFetchImageReply *)msg->fs3em_Data;
-            BOOL isMedia = reply && reply->fs3enf_Subdir &&
-                           strcmp(reply->fs3enf_Subdir, FS3E_CACHE_SUBDIR_THUMBNAILS) == 0;
-
-            if (reply && reply->fs3enf_Key && reply->fs3enf_LocalPath &&
-                app->thumbRequestPort && app->thumbReplyPort)
-            {
-                /* Hand the (possibly large, original-size) downloaded file
-                 * to the thumbnail process instead of decoding/scaling it
-                 * here -- see fs3ethumb.h. Its reply lands in
-                 * FS3EApp_HandleThumbReply(), which uses fs3etm_Kind to
-                 * tell the two apart again. fs3enf_CachePath/IsTemp (see
-                 * their doc comments in fs3enet.h) make sure the resized
-                 * thumbnail always lands under a name stable across runs
-                 * and that a RAM:T download gets cleaned up afterwards,
-                 * regardless of whether the original itself was kept. */
-                if (isMedia) {
-                    if (!AvatarImages_IsMediaThumbRequested(app->avatarImages, reply->fs3enf_Key) &&
-                        FS3EThumb_Request(app->thumbRequestPort, app->thumbReplyPort,
-                            reply->fs3enf_LocalPath, reply->fs3enf_Key, FS3ETHUMB_KIND_MEDIA,
-                            reply->fs3enf_CachePath, reply->fs3enf_IsTemp,
-                            FS3ETHUMB_MEDIA_WIDTH, FS3ETHUMB_MEDIA_HEIGHT_CAP))
-                        AvatarImages_MarkMediaThumbRequested(app->avatarImages, reply->fs3enf_Key);
-                } else {
-                    if (!AvatarImages_IsThumbRequested(app->avatarImages, reply->fs3enf_Key) &&
-                        FS3EThumb_Request(app->thumbRequestPort, app->thumbReplyPort,
-                            reply->fs3enf_LocalPath, reply->fs3enf_Key, FS3ETHUMB_KIND_AVATAR,
-                            reply->fs3enf_CachePath, reply->fs3enf_IsTemp,
-                            FS3ETHUMB_AVATAR_SIZE, FS3ETHUMB_AVATAR_SIZE))
-                        AvatarImages_MarkThumbRequested(app->avatarImages, reply->fs3enf_Key);
-                }
-            }
-        }
-
-        /* Same reply, independent consumer: FS3EMediaView_ShowUrl() may be
-         * waiting on this exact URL (see fs3emediaview.h) -- ignores it if
-         * not. No-op on failure beyond clearing its own pending/loading
-         * state (msg->fs3em_Data on failure is the original request block,
-         * not a reply -- fs3enf_Key sits at the same offset in both, see
-         * FS3ENetFetchImageReq/Reply in fs3enet.h, so this is still safe). */
-        FS3EMediaView_OnFetchReply(&app->mediaView, msg->fs3em_Result,
-                                    (const FS3ENetFetchImageReply *)msg->fs3em_Data);
-        break;
-
-    case FS3ENETQ_POST_STATUS:
-        if (msg->fs3em_Result == FS3ENETR_OK) {
-            printf("post reply: POST_STATUS ok\n");
-            FS3ETootView_Close(&app->tootView);
-        } else {
-            printf("post reply: POST_STATUS FAILED result=%u\n", (unsigned)msg->fs3em_Result);
-        }
-        break;
-
-    case FS3ENETQ_EDIT_STATUS:
-        /* Mirrors POST_STATUS's reply handling exactly -- deliberately not
-         * patching the edited text into the live timeline in place (see
-         * fs3etoottimeline.h's TTLPostUpdate, which only carries
-         * favourited/reblogged today, no body/content field); the edited
-         * text will just show correctly whenever the timeline next
-         * naturally refreshes, same as a freshly-POSTed toot already
-         * behaves (no local insert either). */
-        if (msg->fs3em_Result == FS3ENETR_OK) {
-            printf("post reply: EDIT_STATUS ok\n");
-            FS3ETootView_Close(&app->tootView);
-        } else {
-            printf("post reply: EDIT_STATUS FAILED result=%u\n", (unsigned)msg->fs3em_Result);
-        }
-        break;
-
-    case FS3ENETQ_DELETE_STATUS:
-        /* Unlike EDIT_STATUS, a delete's effect on the timeline IS worth
-         * reflecting immediately -- the toot is simply gone, no relayout-
-         * height-cascade risk the way patching edited body text in place
-         * would have (see EDIT_STATUS's comment above): TTIMELINE_RemovePost
-         * unlinks+frees the post and rebuilds Y positions itself. Same
-         * "may have already scrolled out of every channel" race as
-         * FS3ENETQ_FAVORITE -- silently a no-op then. */
-        if (msg->fs3em_Result == FS3ENETR_OK && app->tootTimeline) {
-            FS3ENetDeleteStatusReply *reply = (FS3ENetDeleteStatusReply *)msg->fs3em_Data;
-            printf("post reply: DELETE_STATUS ok statusId=%s\n",
-                   reply && reply->fs3ed_StatusId ? reply->fs3ed_StatusId : "?");
-            if (reply && reply->fs3ed_StatusId) {
-                SetAttrs(app->tootTimeline, TTIMELINE_RemovePost,
-                         (ULONG)reply->fs3ed_StatusId, TAG_DONE);
-                if (CurrentMainWindow)
-                    RefreshGList((struct Gadget *)app->tootTimeline,
-                                 CurrentMainWindow, NULL, 1);
-            }
-        } else if (msg->fs3em_Result != FS3ENETR_OK) {
-            printf("post reply: DELETE_STATUS FAILED result=%u\n", (unsigned)msg->fs3em_Result);
-        }
-        break;
-
-    case FS3ENETQ_FAVORITE:
-        /* The toot may have scrolled out of every channel (evicted, or the
-         * user cleared/switched away) by the time this reply lands --
-         * TTIMELINE_UpdatePost is a silent no-op in that case, same as any
-         * other async reply racing a list change. */
-        if (msg->fs3em_Result == FS3ENETR_OK && app->tootTimeline) {
-            FS3ENetFavouriteReply *reply = (FS3ENetFavouriteReply *)msg->fs3em_Data;
-            TTLPostUpdate upd;
-            memset(&upd, 0, sizeof(upd));
-            upd.postId     = reply->fs3efa_StatusId;
-            upd.flags      = TTL_POSTUPD_FAVOURITED;
-            upd.favourited = reply->fs3efa_Favourited;
-            SetAttrs(app->tootTimeline, TTIMELINE_UpdatePost, (ULONG)&upd, TAG_DONE);
-            if (CurrentMainWindow)
-                RefreshGList((struct Gadget *)app->tootTimeline,
-                             CurrentMainWindow, NULL, 1);
-            printf("favorite reply: ok, statusId=%s favourited=%ld\n",
-                   upd.postId ? upd.postId : "?", (long)upd.favourited);
-        } else if (msg->fs3em_Result != FS3ENETR_OK) {
-            printf("favorite reply: FAILED result=%u\n", (unsigned)msg->fs3em_Result);
-        }
-        break;
-
-    case FS3ENETQ_ACCOUNT_LOOKUP:
-        /* Stale-reply guard: the user may have clicked a second
-         * avatar/mention before this lookup came back for the first
-         * one -- only apply it if it's still the profile we last asked
-         * for. */
-        if (msg->fs3em_Result == FS3ENETR_OK && app->tootTimeline &&
-            app->searchProfileAcct)
-        {
-            FS3ENetAccountLookupReply *reply = (FS3ENetAccountLookupReply *)msg->fs3em_Data;
-            FS3EMastodonAccount *acc = &reply->fs3eal_Account;
-
-            if (strcmp(app->searchProfileAcct, acc->fma_Acct) == 0) {
-                TTLProfileHeaderSetup setup;
-                BOOL isSelf = (app->accountId && acc->fma_Id[0] &&
-                               strcmp(app->accountId, acc->fma_Id) == 0);
-
-                if (app->searchProfileAccountId) FreeVec(app->searchProfileAccountId);
-                app->searchProfileAccountId = NetStrDup(acc->fma_Id);
-
-                memset(&setup, 0, sizeof(setup));
-                setup.accountId      = acc->fma_Id;
-                setup.username       = acc->fma_DisplayName[0] ? acc->fma_DisplayName : acc->fma_Acct;
-                setup.acct           = acc->fma_Acct;
-                setup.avatarURL      = acc->fma_AvatarURL;
-                setup.bio            = acc->fma_Note;
-                setup.followersCount = acc->fma_FollowersCount;
-                setup.followingCount = acc->fma_FollowingCount;
-                setup.following      = FALSE; /* unknown until the FS3ENETQ_RELATIONSHIP reply */
-                setup.showFollow     = !isSelf;
-
-                SetAttrs(app->tootTimeline, TTIMELINE_ShowProfile, (ULONG)&setup, TAG_DONE);
-
-                /* Avatar fetch -- same cache/pipeline as a toot's own
-                 * avatar, mirrors FS3EApp_SetAccount's own-avatar fetch
-                 * block; a transparent cache hit if this acct's avatar
-                 * was already fetched while scrolling a timeline. */
-                if (app->avatarImages && acc->fma_Acct[0] &&
-                    acc->fma_AvatarURL[0] &&
-                    !AvatarImages_IsRequested(app->avatarImages, acc->fma_Acct))
-                {
-                    ULONG reqSize = sizeof(FS3ENetFetchImageReq)
-                                  + strlen(acc->fma_AvatarURL) + 1
-                                  + strlen(acc->fma_Acct) + 1
-                                  + strlen(FS3E_CACHE_SUBDIR_USERICONS) + 1;
-                    FS3ENetFetchImageReq *imgReq =
-                        FS3ENetFetchImageReq_Alloc(acc->fma_AvatarURL, acc->fma_Acct,
-                                                   FS3E_CACHE_SUBDIR_USERICONS,
-                                                   (BOOL)app->settings.keepBigUserIcons);
-                    if (imgReq) {
-                        if (FS3EApp_NetSend(FS3ENETQ_FETCH_IMAGE, imgReq, reqSize))
-                            AvatarImages_MarkRequested(app->avatarImages, acc->fma_Acct);
-                        else
-                            FreeVec(imgReq);
-                    }
-                }
-
-                /* Relationship (skipped for a self-profile -- you can't
-                 * follow yourself) + the profile's first toot page,
-                 * always requested as an "older" page (even though it's
-                 * the first one) so it lands via TTIMELINE_AppendPost
-                 * below the header instead of the AddPost/prepend path
-                 * FS3ENETPAGE_INITIAL would take -- see
-                 * TTIMELINE_ShowProfile's comment in fs3etoottimeline.h. */
-                if (!isSelf && app->accountAccessToken && app->accountAccessToken[0]) {
-                    FS3ENetRelationshipReq *relReq = FS3ENetRelationshipReq_Alloc(
-                        app->accountApiBaseUrl, app->accountAccessToken,
-                        app->searchProfileAccountId);
-                    if (relReq)
-                        FS3EApp_NetSend(FS3ENETQ_RELATIONSHIP, relReq, sizeof(*relReq));
-                }
-                {
-                    char tl[128];
-                    if (ViewModeTimeline(VIEWMODE_Search, tl, sizeof(tl))) {
-                        FS3ENetTimelineReq *tlReq = FS3ENetTimelineReq_Alloc(
-                            VIEWMODE_Search, FS3ENETPAGE_OLDER,
-                            app->accountGeneration, FS3ENET_TLSHAPE_ARRAY,
-                            app->accountApiBaseUrl,
-                            app->accountAccessToken ? app->accountAccessToken : "",
-                            tl, "", "", NULL);
-                        if (tlReq)
-                            FS3EApp_NetSend(FS3ENETQ_TIMELINE, tlReq, sizeof(FS3ENetTimelineReq));
-                    }
-                }
-
-                if (CurrentMainWindow)
-                    RefreshGList((struct Gadget *)app->tootTimeline,
-                                 CurrentMainWindow, NULL, 1);
-                printf("account lookup reply: ok, id=%s acct=%s\n", acc->fma_Id, acc->fma_Acct);
-            }
-        } else if (msg->fs3em_Result != FS3ENETR_OK) {
-            printf("account lookup reply: FAILED result=%u\n", (unsigned)msg->fs3em_Result);
-        }
-        break;
-
-    case FS3ENETQ_RELATIONSHIP:
-        if (msg->fs3em_Result == FS3ENETR_OK && app->tootTimeline &&
-            app->searchProfileAccountId)
-        {
-            FS3ENetRelationshipReply *reply = (FS3ENetRelationshipReply *)msg->fs3em_Data;
-            if (strcmp(app->searchProfileAccountId, reply->fs3erl_AccountId) == 0) {
-                TTLProfileFollowUpdate upd;
-                upd.accountId = reply->fs3erl_AccountId;
-                upd.following = reply->fs3erl_Following;
-                SetAttrs(app->tootTimeline, TTIMELINE_UpdateProfileFollow, (ULONG)&upd, TAG_DONE);
-                if (CurrentMainWindow)
-                    RefreshGList((struct Gadget *)app->tootTimeline,
-                                 CurrentMainWindow, NULL, 1);
-            }
-        }
-        break;
-
-    case FS3ENETQ_FOLLOW:
-        if (msg->fs3em_Result == FS3ENETR_OK && app->tootTimeline &&
-            app->searchProfileAccountId)
-        {
-            FS3ENetFollowReply *reply = (FS3ENetFollowReply *)msg->fs3em_Data;
-            if (strcmp(app->searchProfileAccountId, reply->fs3efo_AccountId) == 0) {
-                TTLProfileFollowUpdate upd;
-                upd.accountId = reply->fs3efo_AccountId;
-                upd.following = reply->fs3efo_Following;
-                SetAttrs(app->tootTimeline, TTIMELINE_UpdateProfileFollow, (ULONG)&upd, TAG_DONE);
-                if (CurrentMainWindow)
-                    RefreshGList((struct Gadget *)app->tootTimeline,
-                                 CurrentMainWindow, NULL, 1);
-            }
-        } else if (msg->fs3em_Result != FS3ENETR_OK) {
-            printf("follow reply: FAILED result=%u\n", (unsigned)msg->fs3em_Result);
-        }
-        break;
-
-    default:
-        break;
-    }
-
-    FS3EApp_CheckConnectionState();
-}
-
-/* FS3ETHUMBQ_MAKE reply -- the thumbnail process has finished decoding and
- * box-fit-scaling one avatar's or media attachment's original download
- * down to a small BMP (see fs3ethumb.h); fs3etm_Kind says which. All that
- * remains on the GUI task is a cheap direct read of that already-small
- * file's pixels; scaling to the live display size happens at draw time
- * (RgbImage_DrawScaled), not here. */
-static void FS3EApp_HandleThumbReply(FS3EThumbMessage *msg)
-{
-    if (msg->fs3etm_Result == FS3ETHUMBR_OK && app->avatarImages &&
-        msg->fs3etm_Key[0] && msg->fs3etm_ThumbPath[0])
-    {
-        if (msg->fs3etm_Kind == FS3ETHUMB_KIND_MEDIA) {
-            AvatarImages_MediaThumbReady(app->avatarImages, msg->fs3etm_Key,
-                                          msg->fs3etm_ThumbPath);
-        } else {
-            AvatarImages_ThumbReady(app->avatarImages, msg->fs3etm_Key,
-                                     msg->fs3etm_ThumbPath);
-            if (app->accountAcct && strcmp(msg->fs3etm_Key, app->accountAcct) == 0)
-                FS3EApp_UpdateUserIcon();
-        }
-        if (app->tootTimeline) {
-            /* This image just became available in the cache -- one-shot
-             * event, not a poll: tell the timeline to invalidate its
-             * currently rendered tiles so whichever of them drew a
-             * placeholder for this avatar/thumbnail get redrawn with the
-             * real image on the next render (see TTIMELINE_InvalidateImages). */
-            SetAttrs(app->tootTimeline, TTIMELINE_InvalidateImages, TRUE, TAG_DONE);
-        }
-        if (CurrentMainWindow)
-            RefreshGList((struct Gadget *)app->tootTimeline,
-                         CurrentMainWindow, NULL, 1);
-    }
-    else if (msg->fs3etm_Result == FS3ETHUMBR_ERROR && app->avatarImages &&
-             msg->fs3etm_Key[0])
-    {
-        /* Previously silently dropped: a failed decode left the entry's
-         * .requested flag latched forever with no distinction from
-         * "still pending", so AvatarImages_Get(Media)() returned NULL
-         * forever and the placeholder redrew with nothing to explain why.
-         * Latch it explicitly instead, with the sniffed format (see
-         * FS3EThumb_HandleMake/BmImage_SniffFormat) so the tile renderer
-         * can show e.g. "webp" instead of a bare box. */
-        UBYTE fmt = (UBYTE)msg->fs3etm_DetectedFormat;
-        if (msg->fs3etm_Kind == FS3ETHUMB_KIND_MEDIA)
-            AvatarImages_MarkMediaFailed(app->avatarImages, msg->fs3etm_Key, fmt);
-        else
-            AvatarImages_MarkFailed(app->avatarImages, msg->fs3etm_Key, fmt);
-
-        if (app->tootTimeline)
-            SetAttrs(app->tootTimeline, TTIMELINE_InvalidateImages, TRUE, TAG_DONE);
-        if (CurrentMainWindow)
-            RefreshGList((struct Gadget *)app->tootTimeline,
-                         CurrentMainWindow, NULL, 1);
-    }
 }
 
 /* - - - - - - - - - - - - - - - - - - - HELPERS - - - - - - - - - - - - - */
@@ -2280,7 +362,6 @@ static ULONG IDCMPDispatch(
     }/* else
     if(IMsg->Class == IDCMP_RAWKEY)
     {
-        printf("rk\n");
     }*/
 
     return 0;
@@ -2332,7 +413,7 @@ static void FS3EApp_SetButtonFontSize(ULONG pointSize)
 #define RESIZE_P9_BTN(o) if (o) SetAttrs((Object *)(o), \
             UBTP9_PointSize, pointSize, TAG_DONE)
         for (i = 0; i < 8; i++) RESIZE_BGBM_BTN(app->nav_btns[i]);
-        RESIZE_P9_BTN(app->titlebar_settingsBtn);
+    //olde    RESIZE_P9_BTN(app->titlebar_settingsBtn);
         RESIZE_P9_BTN(app->titlebar_accountBtn);
         RESIZE_P9_BTN(app->titlebar_newtootBtn);
 #undef RESIZE_BGBM_BTN
@@ -2387,6 +468,7 @@ void FS3EApp_ApplyFontSettings_Delayed(void)
     ULONG prefFlags;
     if (!app || !app->window_obj || !app->buttonDC) return;
 
+
     /* --- Button bar DC (nav bar, title bar) --- */
     prefFlags = URP_PREF_CLUTMODE_NOMASK;
     if (app->settings.antialias)    prefFlags |= URP_PREF_ANTIALIAS;
@@ -2421,6 +503,106 @@ void FS3EApp_ApplyFontSettings_Delayed(void)
         FS3EApp_UpdateUserIcon();
 
     delayApplyFontSettings = FALSE;
+}
+
+/* avoid tearing down/reloading every theme image and doing a synchronous
+ * WM_RETHINK on every single chooser click -- two fast clicks on the theme
+ * chooser (GID_THEMEV_THEME_CHOOSER, fs3ethemeview.c) each called the old
+ * unconditional FS3EApp_LoadTheme() body directly and re-entrantly from
+ * inside WM_HANDLEINPUT dispatch, which crashed. Same debounce shape as
+ * delayApplyFontSettings above: coalesce to the last-requested theme and
+ * do the real work once, on the next Wait() wakeup. */
+static int delayLoadTheme = FALSE;
+
+/* Public, debounced trigger. Every caller (fs3ethemeview.c's chooser
+ * handler, and this file's own startup call below) already writes the
+ * requested theme name into app->settings.themeName before calling this,
+ * so themeName here is only a reminder of that contract, not a value this
+ * function itself needs to store anywhere. */
+void FS3EApp_LoadTheme(const char *themeName)
+{
+    (void)themeName;
+    if (!delayLoadTheme)
+    {
+        delayLoadTheme = TRUE;
+        if (myTask) Signal(myTask, SIGBREAKF_CTRL_F);
+    }
+}
+
+/* Private, does the real work -- see FS3EApp_ApplyFontSettings_Delayed's
+ * doc comment just above for why this is split from the public trigger.
+ * Not static: none needed yet, but kept a plain function (not inlined
+ * into main()) so it mirrors FS3EApp_ApplyFontSettings_Delayed's shape. */
+static void FS3EApp_LoadTheme_Delayed(void)
+{
+    const char *themeName = app ? app->settings.themeName : NULL;
+
+    if (!app) return;
+
+    /* Detach GA_Image on the 4 title bar buttons first thing, before
+     * anything below disposes whatever they're currently pointing at --
+     * otherwise there's a brief window where a live gadget still
+     * references a just-freed bitmap, and a redraw landing in it blits
+     * freed memory (visible as a "trashed" button image for a frame when
+     * switching away from a theme with button images, e.g. mouton, to
+     * "-"). FS3EStyle_SyncTitleBarButtons() below re-attaches a new
+     * theme's images if one gets loaded. */
+    if (app->titlebar_closeBtn)   SetAttrs(app->titlebar_closeBtn,   GA_Image, 0UL, TAG_END);
+    if (app->titlebar_iconifyBtn) SetAttrs(app->titlebar_iconifyBtn, GA_Image, 0UL, TAG_END);
+    if (app->titlebar_altposBtn)  SetAttrs(app->titlebar_altposBtn,  GA_Image, 0UL, TAG_END);
+    if (app->titlebar_depthBtn)   SetAttrs(app->titlebar_depthBtn,   GA_Image, 0UL, TAG_END);
+
+    /* Dispose whatever the previously active theme (or nothing, if none
+     * was active) loaded, before deciding what replaces it.
+     * FS3EStyle_LoadThemeImages() below would do this itself, but the "no
+     * theme" branch skips that call entirely, so it has to happen
+     * unconditionally here instead. Gadgets that reference these images
+     * (title bar buttons, patch9-skinned buttons) already degrade to a
+     * flat colour fill when the image is missing -- see
+     * FS3EStyle_SyncTitleBarButtons and Patch9_IsLoaded -- so closing them
+     * here with nothing to replace them is a fully supported end state,
+     * not a transient one. */
+    FS3EStyle_UnloadThemeImages(&app->style);
+
+    if (themeName && themeName[0]) {
+        char path[300];
+        snprintf(path, sizeof(path), "%s/%s", FS3ESTYLE_THEMES_ROOT, themeName);
+        FS3EStyle_SetThemePath(&app->style, path);
+        FS3EStyle_LoadThemeImages(&app->style, CurrentMainScreen);
+    } else {
+        /* "-" in the theme chooser, or nothing ever activated -- no
+         * theme: no images (already closed above, and deliberately not
+         * reloaded), every managed colour (FS3EColorRole roles and both
+         * Patch9 skins' bgcolors/textcolors) back to hardcoded defaults.
+         * Clearing themePath to NULL, not just leaving it stale, matters:
+         * GenericOpenWindow (fs3eboopsimainwindow.c) re-runs on every
+         * uniconize/reopen and only reloads theme images when themePath
+         * is actually set -- leaving a previous theme's path here would
+         * make it come back on the next uniconize regardless of this
+         * "no theme" choice. */
+        FS3EStyle_SetThemePath(&app->style, NULL);
+        FS3EStyle_ResetColors(&app->style);
+        FS3EStyle_ResetPatch9Colors(&app->style);
+    }
+
+    FS3EStyle_ApplyColors(&app->style, CurrentMainScreen);
+
+    /* Propagates the (re)loaded/reset style onto every widget that caches
+     * its own rendering from it -- title bar buttons, patch9-skinned
+     * buttons, the toot timeline's colors, nav bar buttons. Same function
+     * GenericOpenWindow (fs3eboopsimainwindow.c) uses on every window
+     * open/uniconize, so a live theme switch here can't drift out of sync
+     * with what a fresh open already does correctly. */
+    FS3EMain_SyncStyleToWidgets();
+
+    /* Recompute minimum gadget sizes and relayout the whole main window --
+     * same call main()'s own font-size-change handling uses (see
+     * delayApplyFontSettings below). Themeview/fs3ethemeview.h's own doc
+     * comment: this affects the main window only, not the theme settings
+     * window itself. */
+    if (app->window_obj) DoMethod(app->window_obj, WM_RETHINK);
+
+    delayLoadTheme = FALSE;
 }
 
 /* Create one UniButtonBGBM (flat-colour, cached-by-state), click arrives
@@ -2593,7 +775,6 @@ void StartSearchFromLine()
          * search: a different kind of request,
          * returning an account instead of a
          * list of toots. Not wired up yet. */
-        printf("search line: user search (TODO): %s\n", text);
     } else if (text && text[0]) {
         /* Hashtag ("#tag", '#' kept as typed/
          * prefilled -- see TTL_HOT_HASHTAG
@@ -2682,36 +863,42 @@ int main(int argc, char **argv)
     */
     FS3EStyle_InitDefaults(&app->style);
 
+ printf("FS3EStyle_InitDefaults done\n");
+
     app->avatarImages = AvatarImages_Create();
+
 
  printf("FS3ENet_Start\n");
     /* --- Network process ------------------------------------------------ */
     app->netReplyPort = CreateMsgPort();
     if (!app->netReplyPort) cleanexit("Can't create network reply port");
 
-    app->netRequestPort = FS3ENet_Start(app->settings.cachePath);
-    if (!app->netRequestPort)
-        printf("FriendSh3ep: network process failed - continuing without\n");
+    app->netRequestPort = FS3ENet_Start(app->settings.cachePath,
+                                         (ULONG)app->settings.maxCacheSizeMB);
 
+ printf("FS3EThumb_Start\n");
     /* --- Thumbnail process ------------------------------------------------ */
     app->thumbReplyPort = CreateMsgPort();
     if (!app->thumbReplyPort) cleanexit("Can't create thumbnail reply port");
 
     app->thumbRequestPort = FS3EThumb_Start();
-    if (!app->thumbRequestPort)
-        printf("FriendSh3ep: thumbnail process failed - continuing without\n");
 
+ printf("FS3EApp_MachineKey\n");
     /* Debug: print the derived machine key unconditionally, even before any
      * account.dat exists to trigger it lazily via FS3EApp_MachineKey() --
      * so it's visible on every launch for comparing across machines. */
     FS3EApp_MachineKey();
 
+
+ printf("FS3EApp_LoadAccount\n");
     /* Try to load saved credentials (and the rest of the accounts list --
      * see FS3EApp_LoadAccount); timeline fetch fires later in setViewMode */
     FS3EApp_LoadAccount();
     FS3EApp_BackfillAccountId();
- printf("FS3ENet_Start end\n");
- printf("windows creates\n");
+
+
+
+ printf("FS3ELoginView_Create\n");
     /* --- Classic BOOPSI sub-windows ------------------------------------- */
     if (!FS3ELoginView_Create(&app->loginView,  app->style.dcNormal))
         cleanexit("Can't create login view");
@@ -2723,10 +910,11 @@ int main(int argc, char **argv)
     if (app->accountApiBaseUrl)
         FS3ELoginView_ClearFields(&app->loginView);
 
+ printf("FS3EApp_RefreshLoginAccountsList\n");
     FS3EApp_RefreshLoginAccountsList();
+ printf("FS3EApp_RefreshLoginAccountsList done\n");
 
-
-
+ printf(" FS3ETootView_Create\n");
     if (!FS3ETootView_Create(&app->tootView, app->style.dcNormal))
         cleanexit("Can't create toot view");
 
@@ -2741,7 +929,7 @@ int main(int argc, char **argv)
 
     FS3EMediaView_Init(&app->mediaView);
 
-
+ printf(" ext window created\n");
     /* ================================================================== */
     /* Part A: title bar children (7 gadgets)                              */
     /* ================================================================== */
@@ -2770,7 +958,7 @@ int main(int argc, char **argv)
         //GA_Text, "^",
         GA_RelVerify, TRUE,
          TAG_DONE);
- //printf("p9bm:%08x\n",(int)app->style.bt1Patch9.img.bitmap);
+         /*olde
     app->titlebar_settingsBtn = (Object *)NewObject(UniButtonP9Class, NULL,
         ICA_TARGET, (ULONG)TargetInstance,
         GA_ID,                  GID_TITLEBAR_SETTINGS,
@@ -2778,7 +966,7 @@ int main(int argc, char **argv)
         UBTP9_URPDrawContext,   (ULONG)app->buttonDC,
         UBTP9_BevelStyle,       BVS_NONE, //BVS_NONE,
         TAG_END);
-
+    */
     app->titlebar_accountBtn = (Object *)NewObject(UniButtonP9Class, NULL,
         ICA_TARGET, (ULONG)TargetInstance,
         GA_ID,                  GID_TITLEBAR_ACCOUNTS,
@@ -2829,7 +1017,7 @@ int main(int argc, char **argv)
         LAYOUT_AddChild, (ULONG)app->titlebar_altposBtn,
         LAYOUT_AddChild, (ULONG)app->titlebar_depthBtn,
 
-        LAYOUT_AddChild, (ULONG)app->titlebar_settingsBtn,
+    /*olde    LAYOUT_AddChild, (ULONG)app->titlebar_settingsBtn,*/
         LAYOUT_AddChild, (ULONG)app->titlebar_accountBtn,
         LAYOUT_AddChild, (ULONG)app->titlebar_newtootBtn,
         /* titlebar_postsLabel and titlebar_newPostsLabel disabled */
@@ -2884,7 +1072,6 @@ int main(int argc, char **argv)
     /* ================================================================== */
     /* Part C: toot timeline                                               */
     /* ================================================================== */
- printf("create ttl &app->style:%08x\n",(int)&app->style);
     app->tootTimeline = (Object *)NewObject(TootTimelineClass, NULL,
         TTIMELINE_Style, (ULONG)(&app->style),
         TTIMELINE_DpiHeight, (ULONG)dpiH,
@@ -2892,7 +1079,6 @@ int main(int argc, char **argv)
         GA_ID,      GID_TTIMELINE,
         GA_BackFill, NULL,
         TAG_END);
- printf("end create ttl\n");
     if (!app->tootTimeline) cleanexit("Can't create toot timeline");
 
     if (app->avatarImages)
@@ -2996,10 +1182,10 @@ int main(int argc, char **argv)
 
         TAG_END);
     if (!app->window_obj) cleanexit("Can't create window");
-
+ printf("FS3EApp_ApplyFontSettings_Delayed\n");
     /* synchronize fonts against settings before first layout */
     FS3EApp_ApplyFontSettings_Delayed();
-
+ printf("fs3e_setViewMode\n");
     /* home by default ? */
     fs3e_setViewMode(VIEWMODE_Home);
 
@@ -3009,13 +1195,23 @@ int main(int argc, char **argv)
 /*---*/
 
 
-
+ printf("FS3EMain_Show\n");
 
     FS3EMain_Show(&app->mainwindow, app->window_obj);
     if (!CurrentMainWindow) cleanexit("Can't open window");
 
-    FS3EMenu_Create(&app->menu, CurrentMainScreen, CurrentMainWindow);
+    /* Restore the last activated theme (app->settings.themeName, NULL/""
+     * = no theme) now that a real screen is bound -- GenericOpenWindow
+     * already loaded the startup-default theme path moments earlier
+     * inside FS3EMain_Show(), this overrides it with the user's actual
+     * persisted choice. See FS3EApp_LoadTheme's doc comment. Calls the
+     * _Delayed worker directly (like FS3EApp_ApplyFontSettings_Delayed()
+     * above) rather than through the debounced public trigger, since
+     * there's no event loop running yet to deliver the deferred signal. */
+    FS3EApp_LoadTheme_Delayed();
 
+    FS3EMenu_Create(&app->menu, CurrentMainScreen, CurrentMainWindow);
+ printf("loop\n");
     /* - - - Input Event Loop - - - */
     {
         ULONG winsignal;
@@ -3349,7 +1545,6 @@ int main(int argc, char **argv)
                             }
                             break;
                         case GID_TITLEBAR_NEWTOOT:
-                        printf("GID_TITLEBAR_NEWTOOT\n");
                             ptag = FindTagItem(GA_Selected, msg);
                             if (ptag /*&& ptag->ti_Data*/)  /* when push button down (selected true) */
                             {
@@ -3377,36 +1572,7 @@ int main(int argc, char **argv)
                         {
                             ptag = FindTagItem(GA_Selected, msg);
                             if (ptag && ptag->ti_Data)  /* when push button down (selected true) */
-                            {
-                                char serverBuf[256];
-
-                                printf(" **** GOT GID_LOGIN_LOGIN_BUTTON\n");
-                                const char *server = NormalizeServerUrl(
-                                    FS3ELoginView_GetANSIServer(&app->loginView),
-                                    serverBuf, sizeof(serverBuf));
-                                /* Starting a fresh OAuth flow -- with multi-account
-                                 * support this means "add another account", not
-                                 * "log out of the current one", so only the interim
-                                 * login state (any half-finished previous flow) is
-                                 * discarded here; the currently active account
-                                 * (app->accountXXX) is left untouched. Switching to
-                                 * an already-known account is the acclistGroup
-                                 * listbrowser's job (FS3EApp_SwitchAccount), not
-                                 * this button. */
-                                FS3EApp_FreeLoginState(); /* also sets loginPhase = IDLE */
-                                if (server && server[0]) {
-                                    FS3ENetLoginStartReq *req = FS3ENetLoginStartReq_Alloc(server);
-                                    if (req) {
-                                        printf("login: phase IDLE, sending LOGIN_START server=%s\n", server);
-                                        if (app->loginApiBaseUrl) FreeVec(app->loginApiBaseUrl);
-                                        app->loginApiBaseUrl = NetStrDup(server);
-                                        if (FS3EApp_NetSend(FS3ENETQ_LOGIN_START, req, sizeof(*req))) {
-                                            app->loginPhase = FS3ELOGIN_WAITING_START;
-                                            FS3EApp_CheckConnectionState();
-                                        }
-                                    }
-                                }
-                            }
+                                FS3EApp_LoginStart();
                             break;
                         }
 
@@ -3415,28 +1581,7 @@ int main(int argc, char **argv)
                         {
                             ptag = FindTagItem(GA_Selected, msg);
                             if (ptag && ptag->ti_Data)  /* when push button down (selected true) */
-                            {
-                                const char *code = FS3ELoginView_GetANSICode(&app->loginView);
-                                if (app->loginPhase == FS3ELOGIN_WAITING_CODE &&
-                                    code && code[0] &&
-                                    app->loginApiBaseUrl &&
-                                    app->loginClientId && app->loginClientSecret)
-                                {
-                                    FS3ENetLoginFinishReq *req =
-                                        FS3ENetLoginFinishReq_Alloc(
-                                            app->loginApiBaseUrl,
-                                            app->loginClientId,
-                                            app->loginClientSecret,
-                                            code);
-                                    if (req) {
-                                        printf("login: phase WAITING_CODE, sending LOGIN_FINISH\n");
-                                        if (FS3EApp_NetSend(FS3ENETQ_LOGIN_FINISH, req, sizeof(*req))) {
-                                            app->loginPhase = FS3ELOGIN_WAITING_FINISH;
-                                            FS3EApp_CheckConnectionState();
-                                        }
-                                    }
-                                }
-                            }
+                                FS3EApp_LoginSubmitCode();
                             break;
                         }
 
@@ -3607,10 +1752,6 @@ int main(int argc, char **argv)
                                     ptag = FindTagItem(TTIMELINE_LastHotSpotFollowing, msg);
                                     if(ptag) hotSpotFollowing = (BOOL)ptag->ti_Data;
 
-                                 printf("Main process TTL_HotSpotNotify type:%lu str=%s id=%s\n",
-                                        hotSpotType,
-                                        hotSpotString ? hotSpotString : "(null)",
-                                        hotSpotId     ? hotSpotId     : "(null)");
 
                                     switch (hotSpotType)
                                     {
@@ -3730,8 +1871,6 @@ int main(int argc, char **argv)
                                              * just surface the click.
                                              * hotSpotString carries the
                                              * attachment URL. */
-                                            printf("Play audio requested: %s\n",
-                                                   hotSpotString ? hotSpotString : "(null)");
                                             break;
 
                                         case TTL_HOT_FAVORITE:
@@ -3760,8 +1899,6 @@ int main(int argc, char **argv)
                                              * a future edit-submit can resend
                                              * the same media_ids and not lose
                                              * the attachments. */
-                                            printf("main: TTL_HOT_MODIFY hotSpotMediaIds=%s\n",
-                                                   hotSpotMediaIds ? hotSpotMediaIds : "(null)");
                                             {
                                                 FS3ETootComposeParams params;
                                                 char mediaIdsBuf[96];
@@ -3890,6 +2027,12 @@ int main(int argc, char **argv)
                 /* Recompute minimum gadget sizes and relayout the whole window */
                 DoMethod(app->window_obj, WM_RETHINK);
             }
+
+            if(delayLoadTheme)
+            {
+                /* does its own WM_RETHINK internally -- see its doc comment */
+                FS3EApp_LoadTheme_Delayed();
+            }
         }  // ed while events
     }// end paragraph
 
@@ -3900,7 +2043,6 @@ int main(int argc, char **argv)
 
 void exitclose(void)
 {
- printf("exitclose\n");
     if (SIPCPort)
     {
         RemPort(SIPCPort);
@@ -3916,7 +2058,6 @@ void exitclose(void)
         FS3ESettingsView_Dispose(&app->settingsView);
         FS3EEmojiBoxWindow_Dispose(&app->emojiBoxWindow);
         FS3EMediaView_Dispose(&app->mediaView);
- printf("exitclose2\n");
         if (app->window_obj)
         {
             FS3EMenu_Close(&app->menu, CurrentMainWindow);
@@ -3926,7 +2067,6 @@ void exitclose(void)
              * → all UniButtonP9 children. */
             DisposeObject(app->window_obj);
         }
- printf("exitclose3\n");
         /* Free private classes AFTER all objects using them are disposed. */
         TootTimeline_Exit();
         SearchBarLayout_Exit();
@@ -3934,7 +2074,6 @@ void exitclose(void)
         TitleBarLayout_Exit();
         UniButtonP9_Exit();
         UniButtonBGBM_Exit();
- printf("exitclose4\n");
         /* Release shared DCs after all gadgets using them are disposed. */
         if (app->buttonDC) { URPDC_Release(app->buttonDC); app->buttonDC = NULL; }
 
@@ -3943,15 +2082,12 @@ void exitclose(void)
             app->avatarImages = NULL;
         }
 
- printf("exitclose5\n");
         FS3EStyle_ReleaseDrawContexts(&app->style);
         FS3EStyle_FreeThemeImages(&app->style);
- printf("exitclose6\n");
 wait2sec();
         if (BevelBase)  { CloseLibrary(BevelBase);  BevelBase  = NULL; }
         if (BitMapBase) { CloseLibrary(BitMapBase); BitMapBase = NULL; }
 
- printf("exitclose: about to FS3ENet_Stop, netRequestPort=%08lx\n", (unsigned long)app->netRequestPort);
 wait2sec();
         if (app->netRequestPort)
         {
@@ -3970,15 +2106,12 @@ wait2sec();
              * handshake ever touches makes the ambiguity impossible. */
             struct MsgPort *stopReplyPort = CreateMsgPort();
             if (stopReplyPort) {
- printf("exitclose: calling FS3ENet_Stop (blocks until net process replies shutdown)...\n");
 wait2sec();
                 FS3ENet_Stop(app->netRequestPort, stopReplyPort);
- printf("exitclose: FS3ENet_Stop returned\n");
 wait2sec();
                 DeleteMsgPort(stopReplyPort);
             }
         }
- printf("exitclose: draining netReplyPort...\n");
 wait2sec();
         /* Drain and free any remaining async replies -- safe now: the
          * network process only replies to the dedicated port above once
@@ -3995,23 +2128,18 @@ wait2sec();
             DeleteMsgPort(app->netReplyPort);
             app->netReplyPort = NULL;
         }
- printf("exitclose: net side done, about to FS3EThumb_Stop, thumbRequestPort=%08lx\n",
-        (unsigned long)app->thumbRequestPort);
 wait2sec();
         if (app->thumbRequestPort)
         {
             /* Same dedicated-port reasoning as netRequestPort above. */
             struct MsgPort *stopReplyPort = CreateMsgPort();
             if (stopReplyPort) {
- printf("exitclose: calling FS3EThumb_Stop (blocks until thumb process replies shutdown)...\n");
 wait2sec();
                 FS3EThumb_Stop(app->thumbRequestPort, stopReplyPort);
- printf("exitclose: FS3EThumb_Stop returned\n");
 wait2sec();
                 DeleteMsgPort(stopReplyPort);
             }
         }
- printf("exitclose: draining thumbReplyPort...\n");
 wait2sec();
         /* Drain and free any remaining async replies */
         if (app->thumbReplyPort) {
@@ -4022,7 +2150,6 @@ wait2sec();
             DeleteMsgPort(app->thumbReplyPort);
             app->thumbReplyPort = NULL;
         }
- printf("exitclose: thumb side done\n");
 wait2sec();
         FS3EApp_FreeLoginState();
         FS3EApp_FreeAccount();
@@ -4030,10 +2157,8 @@ wait2sec();
         if (app->searchProfileAccountId) { FreeVec(app->searchProfileAccountId); app->searchProfileAccountId = NULL; }
         if (app->searchDiscussionStatusId) { FreeVec(app->searchDiscussionStatusId); app->searchDiscussionStatusId = NULL; }
 
- printf("exitclose7\n");
 wait2sec();
         FS3EMsg_Close();
- printf("exitclose8: FS3EMsg_Close returned\n");
 wait2sec();
         if (app->app_port)
             DeleteMsgPort(app->app_port);
@@ -4042,7 +2167,6 @@ wait2sec();
         FreeVec(app);
         app = NULL;
     }
- printf("exitclose9: leaving the if(app) block\n");
 wait2sec();
     FS3ELocale_Close();
     if (LocaleBase) {

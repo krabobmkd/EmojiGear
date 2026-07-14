@@ -162,8 +162,8 @@ BOOL FS3ESettingsView_Create(FS3ESettingsView *sv, const char *title)
         GA_ID,           GID_SETTINGSV_MAX_CACHE_SIZE,
         GA_RelVerify,    TRUE,
         INTEGER_Number,  (ULONG)app->settings.maxCacheSizeMB,
-        INTEGER_Minimum, 1L,
-        INTEGER_Maximum, 4096L,
+        INTEGER_Minimum, 20L,
+        INTEGER_Maximum, 120L,
         INTEGER_Arrows,  TRUE,
         TAG_END);
     if (!sv->maxCacheSizeInt) return FALSE;

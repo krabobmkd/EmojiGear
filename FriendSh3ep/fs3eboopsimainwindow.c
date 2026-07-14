@@ -64,63 +64,28 @@ void FS3EMain_GetWindowPos(FS3EMainWindow *mw, Object *window_obj)
     if (mw->height < 64)  mw->height = 64;
 }
 
-/* WM_OPEN the persistent window object on CurrentMainScreen. */
-static void GenericOpenWindow(FS3EMainWindow *mw, Object *window_obj)
+/* Propagates app->style onto every widget that caches its own rendering
+ * from it -- see the doc comment in fs3eboopsimainwindow.h. */
+void FS3EMain_SyncStyleToWidgets(void)
 {
-
-    if (CurrentMainWindow) return;  /* already open */
-    if (!CurrentMainScreen) return; /* need an active screen */
-
-
-
-    /* Load title bar button images for this screen and push them onto the
-     * (already created, still un-opened) title bar gadgets. Button cell
-     * size may have changed (theme-dependent), so ask for a full relayout.
-     * The title bar background (tbbg.png) is handled separately: its
-     * GA_BackFill hook was installed once at titleBarLayout's creation
-     * (see friendsh3ep.c) and re-reads the freshly loaded state itself. */
-    FS3EStyle_LoadThemeImages(&app->style, CurrentMainScreen);
     FS3EStyle_SyncTitleBarButtons(&app->style,
         app->titlebar_closeBtn, app->titlebar_iconifyBtn,
         app->titlebar_altposBtn, app->titlebar_depthBtn);
 
-    /* Synchronize screen palette colors.
-     * must be done before opening window, and when screen is known.
-     * note: as datatype image reading in FS3EStyle_LoadThemeImages can realloc colors,
-     * better do this after for 8bit indexed palette modes:
-     */
-    FS3EStyle_ApplyColors(&app->style, CurrentMainScreen);
-
     /* Re-derive style's font-size-dependent layout (avatarSize and friends)
-     * now that a real screen is bound to the draw contexts -- the first
-     * pass (main(), before any screen exists) computes it wrong (avatar
-     * thumbnails render far too big until the user manually changes a font
-     * setting, which is the only other thing that re-triggers this). See
-     * FS3EApp_ApplyFontSettings_Delayed's comment in friendsh3ep.c. */
+     * and push TTIMELINE_Style so the toot timeline re-reads app->style's
+     * (possibly just-changed) colors -- see FS3EApp_ApplyFontSettings_
+     * Delayed's own doc comment for why this also needs a real screen
+     * bound to the draw contexts, not just a colour change. */
     FS3EApp_ApplyFontSettings_Delayed();
 
-    if(app->titlebar_settingsBtn)
-    {
+    /* account/newtoot are UniButtonP9 skinned from a Patch9 slot, not a
+     * plain GA_Image -- see FS3EStyle_SyncPatch9Buttons's doc comment for
+     * why this needs its own sync step distinct from
+     * FS3EStyle_SyncTitleBarButtons above. */
+    FS3EStyle_SyncPatch9Buttons(&app->style,
+        app->titlebar_accountBtn, app->titlebar_newtootBtn);
 
-        SetGdAttrs(app->titlebar_settingsBtn,
-            UBTP9_Patch9,
-             (app->style.patch9[FS3ESTYLE_PATCH9_BT1].img.bitmap)?
-            (ULONG)&app->style.patch9[FS3ESTYLE_PATCH9_BT1]:NULL,TAG_END);
-    }
-    if(app->titlebar_accountBtn)
-    {
-        SetGdAttrs(app->titlebar_accountBtn,
-            UBTP9_Patch9,
-             (app->style.patch9[FS3ESTYLE_PATCH9_BT1].img.bitmap)?
-            (ULONG)&app->style.patch9[FS3ESTYLE_PATCH9_BT1]:NULL,TAG_END);
-    }
-    if(app->titlebar_newtootBtn)
-    {
-        SetGdAttrs(app->titlebar_newtootBtn,
-            UBTP9_Patch9,
-             (app->style.patch9[FS3ESTYLE_PATCH9_BT2].img.bitmap)?
-            (ULONG)&app->style.patch9[FS3ESTYLE_PATCH9_BT2]:NULL,TAG_END);
-    }
     /* nav_btns[] are UniButtonBGBM: always pass &app->style -- unlike
      * UBTP9_Patch9 above, there's no need to gate this on any one image
      * having loaded, since UniButtonBGBM checks style->btbgbmBitmap[state]
@@ -134,6 +99,48 @@ static void GenericOpenWindow(FS3EMainWindow *mw, Object *window_obj)
                     UBGBM_Style, (ULONG)&app->style, TAG_END);
         }
     }
+}
+
+/* WM_OPEN the persistent window object on CurrentMainScreen. */
+static void GenericOpenWindow(FS3EMainWindow *mw, Object *window_obj)
+{
+
+    if (CurrentMainWindow) return;  /* already open */
+    if (!CurrentMainScreen) return; /* need an active screen */
+
+
+
+    /* Load title bar button images for this screen. The title bar
+     * background (tbbg.png) is handled separately: its GA_BackFill hook
+     * was installed once at titleBarLayout's creation (see friendsh3ep.c)
+     * and re-reads the freshly loaded state itself.
+     *
+     * Only reloads images when a theme is actually active (app->
+     * style.themePath set -- see FS3EApp_LoadTheme in friendsh3ep.c,
+     * which is what sets or clears it); "no theme" resets colors instead.
+     * This matters because GenericOpenWindow runs on EVERY reopen, not
+     * just the first: WM_ICONIFY/WM_UNICONIFY tear down and recreate the
+     * Intuition-level Window (see this file's header comment), so without
+     * this check "no theme" selected via the chooser would keep coming
+     * back with whatever the last loaded theme's images were the moment
+     * the app got uniconized and restored -- confirmed as a real bug. */
+    if (app->style.themePath && app->style.themePath[0]) {
+        FS3EStyle_LoadThemeImages(&app->style, CurrentMainScreen);
+    } else {
+        FS3EStyle_ResetColors(&app->style);
+        FS3EStyle_ResetPatch9Colors(&app->style);
+    }
+
+    /* Synchronize screen palette colors.
+     * must be done before opening window, and when screen is known.
+     * note: as datatype image reading in FS3EStyle_LoadThemeImages can realloc colors,
+     * better do this after for 8bit indexed palette modes:
+     */
+    FS3EStyle_ApplyColors(&app->style, CurrentMainScreen);
+
+    /* Button cell size may have changed (theme-dependent), so this is
+     * followed by a full relayout (WM_RETHINK below). */
+    FS3EMain_SyncStyleToWidgets();
 
     DoMethod(window_obj, WM_RETHINK);
 

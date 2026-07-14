@@ -135,7 +135,8 @@ typedef struct {
     struct AvatarImages *avatarImages;   /* not owned */
     char                 *accountAcct;   /* AllocVec'd copy; NULL = no account */
     WORD                  avatarX, avatarY, avatarSize;
-//    struct Task *allowedProcess;
+
+    struct Task *allowedTask;
 } TitleBarLayoutData;
 
 /* AllocVec'd copy of s, or NULL for NULL/"" (matches dup_str() elsewhere
@@ -209,6 +210,7 @@ static ULONG TitleBarLayout_OnNew(Class *cl, Object *o, struct opSet *msg)
     }
 
 //    inst->allowedProcess = FindTask(NULL);
+    inst->allowedTask =  FindTask(NULL);
 
     return (ULONG)newObj;
 }
@@ -353,27 +355,22 @@ static ULONG TitleBarLayout_OnLayout(Class *cl, Object *o, struct gpLayout *msg)
     inst->avatarSize = iconSz;
 
     /* settings and account buttons */
-    if (inst->childCount > 6)
+    if (inst->childCount > 5)
     {
 
-        struct Gadget *gsettingsbt = (struct Gadget *) inst->children[4];
-        struct Gadget *gaccbt = (struct Gadget *) inst->children[5];
-        struct Gadget *gnewtbt = (struct Gadget *) inst->children[6];
-        struct gpDomain dmsettingsBt,dmAccountBt,dmntbt;
-
+       /*olde struct Gadget *gsettingsbt = (struct Gadget *) inst->children[4];*/
+        struct Gadget *gaccbt = (struct Gadget *) inst->children[4];
+        struct Gadget *gnewtbt = (struct Gadget *) inst->children[5];
+        struct gpDomain dmAccountBt,dmntbt; // dmsettingsBt
+/* olde
         prepDomain(&dmsettingsBt,msg->gpl_GInfo);
         DoMethodA(inst->children[4], (Msg)&dmsettingsBt);
-
+*/
         prepDomain(&dmAccountBt,msg->gpl_GInfo);
-        DoMethodA(inst->children[5], (Msg)&dmAccountBt);
+        DoMethodA(inst->children[4], (Msg)&dmAccountBt);
 
         prepDomain(&dmntbt,msg->gpl_GInfo);
-        DoMethodA(inst->children[6], (Msg)&dmntbt);
-        // gsettingsbt->Width = dmAccountBt.gpd_Domain.Width;
-        // gsettingsbt->Height = dmAccountBt.gpd_Domain.Height;
-        // gsettingsbt->TopEdge = G(o)->TopEdge + G(o)->Height - gsettingsbt->Height - inst->style->avatarGap;
-        // gsettingsbt->TopEdge =
-        //     G(o)->LeftEdge + G(o)->Width - gsettingsbt->Height - inst->style->avatarGap;
+        DoMethodA(inst->children[5], (Msg)&dmntbt);
 
         gnewtbt->Width = dmntbt.gpd_Domain.Width;
         gnewtbt->Height = dmntbt.gpd_Domain.Height;
@@ -386,13 +383,13 @@ static ULONG TitleBarLayout_OnLayout(Class *cl, Object *o, struct gpLayout *msg)
         gaccbt->TopEdge = G(o)->TopEdge + G(o)->Height - gaccbt->Height - inst->style->avatarGap;
         gaccbt->LeftEdge =
             gnewtbt->LeftEdge - gaccbt->Width - inst->style->avatarGap;
-
+/* olde
         gsettingsbt->Width = dmsettingsBt.gpd_Domain.Width;
         gsettingsbt->Height = dmsettingsBt.gpd_Domain.Height;
         gsettingsbt->TopEdge = G(o)->TopEdge + G(o)->Height - gsettingsbt->Height - inst->style->avatarGap;
         gsettingsbt->LeftEdge =
             gaccbt->LeftEdge - gsettingsbt->Width - inst->style->avatarGap;
-
+*/
     }
 
     /* Recurse into each child so nested layout.gadgets re-layout too */
@@ -458,12 +455,13 @@ static ULONG TitleBarLayout_OnHitTest(Class *cl, Object *o, struct gpHitTest *ms
 
 /* myTask is declared in friendsh3ep.c */
 extern struct Task *myTask;
-int refreshTitleBarLayout=0;
+//int refreshTitleBarLayout=0;
 
 static ULONG TitleBarLayout_OnRender(Class *cl, Object *o, struct gpRender *msg)
 {
     TitleBarLayoutData *inst = (TitleBarLayoutData *)INST_DATA(cl, o);
     struct RastPort     *rp  = msg->gpr_RPort;
+    struct Screen *screen = msg->gpr_GInfo ? msg->gpr_GInfo->gi_Screen : NULL;
     WORD  left = G(o)->LeftEdge;
     WORD  top  = G(o)->TopEdge;
     WORD  w    = G(o)->Width;
@@ -471,9 +469,7 @@ static ULONG TitleBarLayout_OnRender(Class *cl, Object *o, struct gpRender *msg)
     struct gpRender childMsg;
     UWORD i;
 
-    (void)cl;
-
-    // if(inst->allowedProcess != FindTask(NULL))
+    // if(inst->allowedTask != FindTask(NULL))
     // {
     //     /* ask correct draw from correct process */
     //     refreshTitleBarLayout = 1;
@@ -481,7 +477,7 @@ static ULONG TitleBarLayout_OnRender(Class *cl, Object *o, struct gpRender *msg)
     //     return 1;
     // }
 
-    if (rp && rp->Layer && rp->Layer->BackFill == NULL) {
+    if (rp && rp->Layer && rp->Layer->BackFill == NULL && inst->style->tbBg.bitmap) {
         struct Hook *backFill = NULL;
         GetAttr(GA_BackFill, o, (ULONG *)&backFill);
         if (backFill)
@@ -491,12 +487,26 @@ static ULONG TitleBarLayout_OnRender(Class *cl, Object *o, struct gpRender *msg)
     if (rp && w > 0 && h > 0)
         EraseRect(rp, left, top, left + w - 1, top + h - 1);
 
+    if(rp->Layer->BackFill == NULL || !inst->style->tbBg.bitmap)
+    {
+        /* no background pattern, would need some borders at least -  */
+        // right bd
+        SetAPen(rp, 1);
+        Move(rp, left+w-2, top+h-1);
+        Draw(rp, left+w-2,top);
+
+        SetAPen(rp, 2);
+        Draw(rp, left, top);
+        Draw(rp, left, top+h-1);
+    }
+
+
     /* Row-2 user icon: drawn directly, not a child gadget (see the file
      * header comment) -- same cache, same box-fit-and-centre rule, same
      * RgbImage_DrawScaled() call TootTimeline uses for toot avatars, read
      * fresh every render so there's no stale-image lifecycle to manage. */
     if (rp && inst->accountAcct && inst->avatarSize > 0) {
-        struct Screen *screen = msg->gpr_GInfo ? msg->gpr_GInfo->gi_Screen : NULL;
+
         RgbImage *avImg = inst->avatarImages
                          ? AvatarImages_Get(inst->avatarImages, inst->accountAcct)
                          : NULL;
@@ -551,19 +561,29 @@ static ULONG TitleBarLayout_OnRender(Class *cl, Object *o, struct gpRender *msg)
         }
     } else
     {
-        if(inst->style && inst->style->dcUsername)
+        if(inst->style && inst->style->dcUsername && screen)
         {
             struct URPTextMetric tm;
             struct URPTextPos tpos;
-            const char *ptext = "FriendSh3eep";
+            struct URPTextPos tpos2;
+            const char *ptext = "FriendSh3ep";
             tpos.x = left+50;
-            tpos.y = top+2;
+            tpos.y = top;
+
             if(inst->style->titlebarTitleX>0)  tpos.x = left + inst->style->titlebarTitleX;
             if(inst->style->titlebarTitleY>0)  tpos.y = top  + inst->style->titlebarTitleY;
+
+            URPDC_SetDrawColorFromPen(inst->style->dcUsername,screen,1,rp->BgPen);
     // VOID URPDrawTextUTF8(struct RastPort * rp, struct URPDrawContext * dc, struct URPTextPos * pos, CONST STRPTR utf8, ULONG maxChars);
             URPDC_TextSizeUTF8(inst->style->dcUsername,ptext,-1,&tm);
             tpos.y += tm.baseY;
+            tpos2 = tpos;
             URPDrawTextUTF8(rp, inst->style->dcUsername,&tpos,ptext,-1);
+
+            tpos2.x -=1;
+            tpos2.y -=1;
+            URPDC_SetDrawColorFromPen(inst->style->dcUsername,screen,2,rp->BgPen);
+            URPDrawTextUTF8(rp, inst->style->dcUsername,&tpos2,ptext,-1);
         }
     }
 

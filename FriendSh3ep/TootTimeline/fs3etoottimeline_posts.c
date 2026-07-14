@@ -961,13 +961,10 @@ void ttl_clear_channel(TTLData *inst, ULONG ch)
         ttl_post_free(inst, (TTLPost *)node);
         freedCount++;
     }
-    bdbprintf_now("ttl_clear_channel: ch=%lu freed %lu list posts\n", ch, freedCount);
     /* Profile header (see TTLChannel.headerPost) is outside `posts`, so
      * the loop above never frees it -- guarded/no-op for every channel
      * without one. */
     if (channel->headerPost) {
-        bdbprintf_now("ttl_clear_channel: ch=%lu freeing headerPost=%08lx bucket=%d\n",
-                  ch, (unsigned long)channel->headerPost, (int)channel->headerPost->hotSpotBucket);
         ttl_post_free(inst, channel->headerPost);
         channel->headerPost = NULL;
     }

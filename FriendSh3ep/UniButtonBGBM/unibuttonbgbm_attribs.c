@@ -283,7 +283,6 @@ fail:
 ULONG UniButtonBGBM_OnDispose(Class *cl, Object *o, Msg msg)
 {
     UniButtonBGBMData *inst = UBGBM_DATA(cl, o);
-    bdbprintf("UniButtonBGBM_OnDispose\n");
     ubgbm_free_cache(inst);
     if (inst->text)  { FreeVec(inst->text);        inst->text  = NULL; }
     if (inst->bevel) { DisposeObject(inst->bevel);  inst->bevel = NULL; }

@@ -15,6 +15,7 @@
  *   Presets group (horizontal):
  *     [Low quality]  [High quality]  [Monospace]
  *   Theme group (vertical):
+ *     [Scan Themes]
  *     Theme: [chooser▼]
  *
  * Uses getfile.gadget (GetFileBase must be open) and chooser.gadget
@@ -53,10 +54,22 @@ typedef struct FS3EThemeView {
     Object *presetHQBtn;
     Object *presetMonoBtn;
 
-    /* Theme chooser */
+    /* Theme chooser -- index 0 is always "-" (no theme); indices 1.. are
+     * subdirectories of PROGDIR:themes/ (fs3estyle.h's
+     * FS3ESTYLE_THEMES_ROOT) found by FS3EThemeView_ScanThemes()
+     * (scanThemesBtn) to contain a style.txt. themeNames[] mirrors
+     * themeNodes[] 1-for-1: themeNames[0] is always NULL (no theme),
+     * themeNames[i>0] is the AllocVec'd subdirectory name (also what
+     * themeNodes[i]'s CNA_Text displays -- no separate prettification).
+     * Selecting an entry sets app->settings.themeName from themeNames[]
+     * and calls FS3EApp_LoadTheme() (friendsh3ep.c/.h) to apply it to the
+     * main window right away -- see GID_THEMEV_THEME_CHOOSER in
+     * FS3EThemeView_HandleInput. */
+    Object *scanThemesBtn;
     Object     *themeChooser;
     struct List themeList;
     struct Node *themeNodes[FS3ETHEMEVIEW_MAX_THEMES];
+    char        *themeNames[FS3ETHEMEVIEW_MAX_THEMES];
     int          themeCount;
 
 } FS3EThemeView;

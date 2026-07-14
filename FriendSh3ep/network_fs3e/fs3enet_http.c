@@ -311,8 +311,6 @@ static BOOL FS3EHttp_DoRequest(const char *url, const FS3EHttpHeader *extraHeade
          * AmiSSL error queue (DNS failure, connection refused, TLS
          * handshake failure, etc.) so a bare "GET failed" printf isn't the
          * only clue when this happens. */
-        printf("net: HTTP transfer failed for %s://%s:%s%s\n",
-               useSSL ? "https" : "http", host ? host : "?", port, pathBuf);
         FS3EHttp_PrintErrors();
     }
 
@@ -409,8 +407,6 @@ static BOOL FS3EHttp_DoRawRequest(const char *method, const char *url,
 
     if (!bio || BIO_do_connect(bio) <= 0)
     {
-        printf("net: HTTP %s raw connect failed for %s://%s\n",
-               method, useSSL ? "https" : "http", hostPort);
         FS3EHttp_PrintErrors();
         goto out_free_bio;
     }

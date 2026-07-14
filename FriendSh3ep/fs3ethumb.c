@@ -19,6 +19,9 @@
 #include <string.h>
 #include <stdio.h>
 
+#include "compilers.h"
+#include "bdbprintf.h"
+
 #define FS3ETHUMB_PROC_NAME  "FriendSh3ep_thumbnail"
 #define FS3ETHUMB_STACK_SIZE 32768
 
@@ -154,6 +157,21 @@ BOOL FS3EThumb_Request(struct MsgPort *requestPort, struct MsgPort *replyPort,
     return TRUE;
 }
 
+/* Debug: human-readable name for a sniffed/detected BmImageFormat, purely
+ * for bdbprintf_now() tracing below -- not the format-guessing logic
+ * itself (see BmImage_SniffFormat in bmimage.c for that). */
+static const char *FS3EThumb_FormatName(BmImageFormat fmt)
+{
+    switch (fmt) {
+        case BMFMT_PNG:  return "png";
+        case BMFMT_JPEG: return "jpeg";
+        case BMFMT_GIF:  return "gif";
+        case BMFMT_WEBP: return "webp";
+        case BMFMT_BMP:  return "bmp";
+        default:         return "unknown";
+    }
+}
+
 /* FS3ETHUMBQ_MAKE - decode + box-fit-scale one image to a BMP thumbnail. */
 static void FS3EThumb_HandleMake(FS3EThumbMessage *msg)
 {
@@ -162,16 +180,27 @@ static void FS3EThumb_HandleMake(FS3EThumbMessage *msg)
 
     msg->fs3etm_DetectedFormat = (ULONG)BMFMT_UNKNOWN;
 
+    /* Sniffed proactively here (not just on BMIMAGE_ERR_OPEN_FAILED below)
+     * purely so the trace line below can show it -- picture.datatype does
+     * its own, separate format detection once BmImage_GenerateScaledBmp
+     * actually opens the file. */
+    bdbprintf_now("FS3EThumb: entering MAKE key=%s src=%s kind=%s fmt=%s target=%lux%lu\n",
+                  msg->fs3etm_Key[0] ? msg->fs3etm_Key : "?",
+                  msg->fs3etm_SrcPath,
+                  (msg->fs3etm_Kind == FS3ETHUMB_KIND_MEDIA) ? "media" : "avatar",
+                  FS3EThumb_FormatName(BmImage_SniffFormat(msg->fs3etm_SrcPath)),
+                  (unsigned long)msg->fs3etm_TargetW, (unsigned long)msg->fs3etm_TargetH);
+
     if (BmImage_GenerateScaledBmp(msg->fs3etm_SrcPath, keyPath,
             msg->fs3etm_TargetW, msg->fs3etm_TargetH,
             msg->fs3etm_ThumbPath, sizeof(msg->fs3etm_ThumbPath), &err))
     {
         msg->fs3etm_Result = FS3ETHUMBR_OK;
+        bdbprintf_now("FS3EThumb: MAKE done key=%s -> OK thumb=%s\n",
+                      msg->fs3etm_Key[0] ? msg->fs3etm_Key : "?", msg->fs3etm_ThumbPath);
     }
     else
     {
-        printf("thumb: MAKE failed for %s (err=%d)\n",
-               msg->fs3etm_SrcPath, (int)err);
         /* Only NewDTObject-couldn't-even-open-it is a "what format is
          * this really" question -- NO_MEMORY/NO_BITMAP/WRITE_FAILED are
          * different failure classes, sniffing wouldn't explain those. */
@@ -179,12 +208,33 @@ static void FS3EThumb_HandleMake(FS3EThumbMessage *msg)
             msg->fs3etm_DetectedFormat = (ULONG)BmImage_SniffFormat(msg->fs3etm_SrcPath);
         msg->fs3etm_ThumbPath[0] = '\0';
         msg->fs3etm_Result = FS3ETHUMBR_ERROR;
+        bdbprintf_now("FS3EThumb: MAKE done key=%s -> ERROR err=%ld fmt=%s\n",
+                      msg->fs3etm_Key[0] ? msg->fs3etm_Key : "?", (long)err,
+                      FS3EThumb_FormatName((BmImageFormat)msg->fs3etm_DetectedFormat));
     }
 
     /* Clean up the RAM:T download regardless of success/failure -- see
      * fs3etm_DeleteSrcAfter's doc comment. */
     if (msg->fs3etm_DeleteSrcAfter && msg->fs3etm_SrcPath[0])
         DeleteFile((STRPTR)msg->fs3etm_SrcPath);
+}
+
+/* Debug: peek how many requests are queued on requestPort without removing
+ * any of them -- see the matching FS3ENet_CountPending comment in
+ * network_fs3e/fs3enet.c for why Disable()/Enable() brackets the walk.
+ * Only used for the bdbprintf_now() backlog tracing in
+ * FS3EThumb_ProcEntry below. */
+static ULONG FS3EThumb_CountPending(struct MsgPort *port)
+{
+    struct Node *n;
+    ULONG        count = 0;
+
+    Disable();
+    for (n = port->mp_MsgList.lh_Head; n->ln_Succ; n = n->ln_Succ)
+        count++;
+    Enable();
+
+    return count;
 }
 
 /* Entry point of the thumbnail process, running as its own AmigaDOS task. */
@@ -212,6 +262,9 @@ static void FS3EThumb_ProcEntry(void)
         FS3EThumbMessage *msg;
 
         WaitPort(requestPort);
+
+        bdbprintf_now("FS3EThumb: woke up, %lu request(s) waiting\n",
+                      (unsigned long)FS3EThumb_CountPending(requestPort));
 
         if (!stopping && FS3ETHUMB_STOP_SIGMASK &&
             (SetSignal(0, FS3ETHUMB_STOP_SIGMASK) & FS3ETHUMB_STOP_SIGMASK))

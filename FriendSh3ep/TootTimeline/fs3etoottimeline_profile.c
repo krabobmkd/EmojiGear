@@ -99,15 +99,11 @@ TTLPost *ttl_profile_header_alloc(const TTLProfileHeaderSetup *setup)
         post->mediaCount = setup->showFollow ? 1 : 0;
     }
 
-    bdbprintf_now("ttl_profile_header_alloc: post=%08lx acct=%s\n",
-              (unsigned long)post, post->acct ? post->acct : "?");
     return post;
 }
 
 static void ttl_profile_header_dispose(TTLPost *post)
 {
-    bdbprintf_now("ttl_profile_header_dispose: post=%08lx acct=%08lx body=%08lx\n",
-              (unsigned long)post, (unsigned long)post->acct, (unsigned long)post->body);
     if (post->postId)    FreeVec(post->postId);
     if (post->username)  FreeVec(post->username);
     if (post->acct)      FreeVec(post->acct);

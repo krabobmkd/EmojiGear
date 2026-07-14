@@ -69,6 +69,7 @@
 #define GID_THEMEV_PRESET_HQ          213
 #define GID_THEMEV_PRESET_MONO        214
 #define GID_THEMEV_THEME_CHOOSER      215
+#define GID_THEMEV_SCAN_THEMES        216
 
 /* General settings window (fs3esettingsview.c) */
 #define GID_SETTINGSV_CACHE_PATH      300

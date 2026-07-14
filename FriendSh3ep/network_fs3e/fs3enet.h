@@ -253,11 +253,12 @@ typedef struct FS3ENetFetchImageReply
 } FS3ENetFetchImageReply;
 
 /*
- * Start the network process. cacheDir is the path passed to FS3ECache_Init()
- * inside the new process; pass NULL to use FS3ECACHE_DEFAULT_DIR.
+ * Start the network process. cacheDir and maxCacheSizeMB are passed straight
+ * to FS3ECache_Init() inside the new process; pass NULL for cacheDir to use
+ * FS3ECACHE_DEFAULT_DIR, 0 for maxCacheSizeMB for an unbounded cache.
  * Returns the request MsgPort, or NULL on failure.
  */
-struct MsgPort *FS3ENet_Start(const char *cacheDir);
+struct MsgPort *FS3ENet_Start(const char *cacheDir, ULONG maxCacheSizeMB);
 
 /*
  * Ask the network process to shut down and wait for it to exit.

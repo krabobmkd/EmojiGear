@@ -76,12 +76,10 @@ static BOOL FS3E_FindBootDevice(char *nameBuf, ULONG nameBufSize, ULONG *unitOut
 
     sysLock = Lock((STRPTR)"SYS:", ACCESS_READ);
     if (!sysLock) {
-        printf("FS3EMachineId: Lock(\"SYS:\") failed\n");
         return FALSE;
     }
     handlerTask = ((struct FileLock *)BADDR(sysLock))->fl_Task;
     UnLock(sysLock);
-    printf("FS3EMachineId: SYS: handler task=%08lx\n", (unsigned long)handlerTask);
 
     dol = LockDosList(LDF_DEVICES | LDF_READ);
     while ((dol = NextDosEntry(dol, LDF_DEVICES)) != NULL) {
@@ -92,12 +90,9 @@ static BOOL FS3E_FindBootDevice(char *nameBuf, ULONG nameBufSize, ULONG *unitOut
     }
 
     if (!dn) {
-        printf("FS3EMachineId: no LDF_DEVICES entry shares SYS:'s handler task\n");
         UnLockDosList(LDF_DEVICES | LDF_READ);
         return FALSE;
     }
-    printf("FS3EMachineId: matched device node, dn_Startup=%08lx\n",
-           (unsigned long)dn->dn_Startup);
 
     if ((ULONG)dn->dn_Startup > 1024 && IS_VALID_BPTR_ADDRESS(dn->dn_Startup))
         fssm = (struct FileSysStartupMsg *)BADDR(dn->dn_Startup);
@@ -117,8 +112,6 @@ static BOOL FS3E_FindBootDevice(char *nameBuf, ULONG nameBufSize, ULONG *unitOut
         ok = TRUE;
     }
 
-    printf("FS3EMachineId: resolved device=\"%s\" unit=%lu\n",
-           ok ? nameBuf : "(none)", ok ? (unsigned long)*unitOut : 0UL);
 
     UnLockDosList(LDF_DEVICES | LDF_READ);
     return ok;
@@ -138,18 +131,15 @@ void FS3EMachineId_GetKey(UBYTE key[FS3EMACHINEID_KEYLEN])
         return;
 
     port = CreateMsgPort();
-    if (!port) { printf("FS3EMachineId: CreateMsgPort failed\n"); return; }
+    if (!port) return;
 
     io = (struct IOExtTD *)CreateIORequest(port, sizeof(struct IOExtTD));
     if (!io) {
-        printf("FS3EMachineId: CreateIORequest failed\n");
         DeleteMsgPort(port);
         return;
     }
 
     if (OpenDevice((STRPTR)deviceName, unit, (struct IORequest *)io, 0) != 0) {
-        printf("FS3EMachineId: OpenDevice(\"%s\", %lu) failed\n",
-               deviceName, (unsigned long)unit);
         DeleteIORequest((struct IORequest *)io);
         DeleteMsgPort(port);
         return;
@@ -165,10 +155,6 @@ void FS3EMachineId_GetKey(UBYTE key[FS3EMACHINEID_KEYLEN])
         io->iotd_Req.io_Length  = sizeof(geom);
         err = DoIO((struct IORequest *)io);
         if (err == 0) {
-            printf("FS3EMachineId: TD_GETGEOMETRY ok: sectorsize=%lu cyl=%lu heads=%lu\n",
-                   (unsigned long)geom.dg_SectorSize,
-                   (unsigned long)geom.dg_Cylinders,
-                   (unsigned long)geom.dg_Heads);
             FoldBytes(key, &pos, (UBYTE *)&geom.dg_SectorSize,   sizeof(ULONG));
             FoldBytes(key, &pos, (UBYTE *)&geom.dg_TotalSectors, sizeof(ULONG));
             FoldBytes(key, &pos, (UBYTE *)&geom.dg_Cylinders,    sizeof(ULONG));
@@ -176,8 +162,6 @@ void FS3EMachineId_GetKey(UBYTE key[FS3EMACHINEID_KEYLEN])
             FoldBytes(key, &pos, (UBYTE *)&geom.dg_Heads,        sizeof(ULONG));
             FoldBytes(key, &pos, (UBYTE *)&geom.dg_TrackSectors, sizeof(ULONG));
             FoldBytes(key, &pos, &geom.dg_DeviceType, sizeof(UBYTE));
-        } else {
-            printf("FS3EMachineId: TD_GETGEOMETRY failed, io_Error=%d\n", (int)err);
         }
     }
 
@@ -194,8 +178,6 @@ void FS3EMachineId_GetKey(UBYTE key[FS3EMACHINEID_KEYLEN])
         err = DoIO((struct IORequest *)io);
         if (err == 0) {
             struct RigidDiskBlock *rdb = (struct RigidDiskBlock *)block0;
-            printf("FS3EMachineId: CMD_READ block0 ok, rdb_ID=%08lx (want %08lx)\n",
-                   (unsigned long)rdb->rdb_ID, (unsigned long)IDNAME_RIGIDDISK);
             if (rdb->rdb_ID == IDNAME_RIGIDDISK) {
                 FoldBytes(key, &pos, (UBYTE *)rdb->rdb_DiskVendor,
                           sizeof(rdb->rdb_DiskVendor));
@@ -204,8 +186,6 @@ void FS3EMachineId_GetKey(UBYTE key[FS3EMACHINEID_KEYLEN])
                 FoldBytes(key, &pos, (UBYTE *)rdb->rdb_DiskRevision,
                           sizeof(rdb->rdb_DiskRevision));
             }
-        } else {
-            printf("FS3EMachineId: CMD_READ block0 failed, io_Error=%d\n", (int)err);
         }
     }
 

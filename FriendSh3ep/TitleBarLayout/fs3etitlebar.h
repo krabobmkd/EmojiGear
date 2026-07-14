@@ -6,16 +6,19 @@
  * main window.  Always two rows of height dpiHeight each:
  *
  *   Row 1: [X]  ...drag area...  [-][=][^]
- *   Row 2: [icon]  ...  [settings][accounts][toot+]
+ *   Row 2: [icon]  ...  [accounts][toot+]
  *
- * Children MUST be added via LAYOUT_AddChild in this exact order:
+ * Children MUST be added via LAYOUT_AddChild in this exact order (the
+ * settings button that used to sit at slot 4 was removed -- see
+ * TitleBarLayout_OnLayout's "settings and account buttons" block in
+ * fs3etitlebar.c, which indexes children[4]/children[5] directly and must
+ * be kept in sync with this order):
  *   0  close button
  *   1  iconify button
  *   2  altpos button
  *   3  depth button
- *   4  settings button
- *   5  accounts button
- *   6  new-toot button
+ *   4  accounts button
+ *   5  new-toot button
  *
  * The row-2 user icon is NOT a child gadget: it's drawn directly by
  * TitleBarLayout_OnRender() from TBLAYOUT_AvatarImages/TBLAYOUT_AccountAcct,
@@ -28,7 +31,7 @@
 #include <intuition/classusr.h>
 #include "../fs3estyle.h"
 
-#define TBLAYOUT_NUMCHILDREN  7
+#define TBLAYOUT_NUMCHILDREN  6
 
 #define TBLAYOUT_Base         (TAG_USER | 0x53510UL)
 #define TBLAYOUT_DpiHeight    (TBLAYOUT_Base + 0)  /* UWORD: row height in pixels */

@@ -122,7 +122,6 @@ BOOL FS3EMastodon_CreateApp(const char *apiBaseUrl, const char *clientName,
         encName, encRedirect, encScopes);
 
     snprintf(url, sizeof(url), "%s/api/v1/apps", apiBaseUrl);
- printf("url:%s\n",url);
     if (!FS3EHttp_Post(url, NULL, "application/x-www-form-urlencoded",
                      body, strlen(body), &resp))
         return FALSE;
@@ -343,14 +342,11 @@ BOOL FS3EMastodon_GetTimeline(const char *apiBaseUrl, const char *accessToken,
         headers[0].fhh_Value = NULL;
     }
 
-    printf("net: GetTimeline GET %s\n", url);
 
     if (!FS3EHttp_Get(url, headers, &resp)) {
-        printf("net: GetTimeline HTTP GET failed\n");
         return FALSE;
     }
 
-    printf("net: GetTimeline response %lu bytes\n", resp.fhr_BodyLen);
 
     json = cJSON_Parse((char *)resp.fhr_Body);
 
@@ -385,11 +381,7 @@ BOOL FS3EMastodon_GetTimeline(const char *apiBaseUrl, const char *accessToken,
     {
         if (!json) {
             const char *errptr = cJSON_GetErrorPtr();
-            printf("net: GetTimeline cJSON_Parse failed near: %.80s\n",
-                   errptr ? errptr : "(null)");
         } else {
-            printf("net: GetTimeline parsed ok but not an array (type=%d)\n",
-                   json->type);
             cJSON_Delete(json);
             json = NULL;
         }
@@ -399,7 +391,6 @@ BOOL FS3EMastodon_GetTimeline(const char *apiBaseUrl, const char *accessToken,
             ULONG plen = resp.fhr_BodyLen < 200 ? resp.fhr_BodyLen : 200;
             CopyMem(resp.fhr_Body, preview, plen);
             preview[plen] = '\0';
-            printf("net: GetTimeline body start: %s\n", preview);
         }
         FS3EHttp_FreeResponse(&resp);
         return FALSE;

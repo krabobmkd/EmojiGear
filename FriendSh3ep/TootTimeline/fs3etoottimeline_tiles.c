@@ -407,6 +407,10 @@ void ttl_toot_render(TTLData *inst, struct RastPort *rp, TTLPost *post, LONG til
                 RgbImage_DrawScaled(avImg, rp, inst->screen, inst->style->dcNormal,
                                      bx, by, (UWORD)dw, (UWORD)dh);
             } else {
+                UBYTE fmt = BMFMT_UNKNOWN;
+                BOOL  failed = (inst->avatarImages && post->acct)
+                             && AvatarImages_Failed(inst->avatarImages, post->acct, &fmt);
+
                 /* Placeholder: filled rectangle with cross */
                 SetAPen(rp, (LONG)FS3E_PEN(inst->style, FS3E_COLOR_ACCENT));
                 RectFill(rp, ax, ay, ax + as - 1, ay + as - 1);
@@ -415,6 +419,25 @@ void ttl_toot_render(TTLData *inst, struct RastPort *rp, TTLPost *post, LONG til
                 Draw(rp, ax + as - 1, ay + as/2);
                 Move(rp, ax + as/2,   ay);
                 Draw(rp, ax + as/2,   ay + as - 1);
+
+                /* Decode failed and the source sniffed as WebP -- same
+                 * "say so instead of a bare box" treatment as a failed
+                 * media thumbnail below (see the TTL_HOT_IMAGE case in
+                 * this same function). */
+                if (failed && fmt == BMFMT_WEBP && inst->style && inst->style->dcNormal) {
+                    struct URPDrawContext *dcBody = inst->style->dcNormal;
+                    const char *label = "webp";
+                    struct URPTextMetric m;
+                    struct URPTextPos    pos;
+                    LONG nc = utf8_codepoints_range(label, label + strlen(label));
+
+                    URPDC_SetDrawColorFromPen(dcBody, inst->screen,
+                        (LONG)FS3E_PEN(inst->style, FS3E_COLOR_ACTION_TEXT), bgpen);
+                    URPDC_TextSizeUTF8(dcBody, label, nc, &m);
+                    pos.x = (WORD)(ax + (as - m.width) / 2);
+                    pos.y = (WORD)(ay + (as - inst->lineHeight) / 2 + inst->lineAscent);
+                    URPDrawTextUTF8(rp, dcBody, &pos, label, (ULONG)nc);
+                }
             }
         }
 

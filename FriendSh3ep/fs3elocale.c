@@ -146,8 +146,10 @@ static const char *defaultStrings[MSG_COUNT] = {
     "Theme",
     /* MSG_THEMEV_THEME_NAME */
     "Theme",
-    /* MSG_THEMEV_THEME_DEFAULT */
-    "Default",
+    /* MSG_THEMEV_THEME_NONE */
+    "-",
+    /* MSG_THEMEV_SCAN_THEMES */
+    "Scan Themes",
 
     /* MSG_SETTINGSV_TITLE */
     "General Settings",

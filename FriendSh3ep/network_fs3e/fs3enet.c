@@ -18,6 +18,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "bdbprintf.h"
+
 #define FS3ENET_STACK_SIZE 65536
 #define FS3ENET_PROC_NAME  "FriendSh3ep-net"
 
@@ -400,6 +402,7 @@ struct FS3ENetStartup
     struct Message  fs3ess_Msg;
     struct MsgPort  *fs3ess_RequestPort;
     const char      *fs3ess_CacheDir;
+    ULONG            fs3ess_MaxCacheSizeMB;  /* see FS3ECache_Init's maxSizeMB */
 };
 
 /* The OS3 NDK has no NP_UserData tag for CreateNewProc(), so the startup
@@ -429,7 +432,7 @@ static LONG g_FS3ENetStopSigBit = -1;
 static void FS3ENet_ProcEntry(void);
 static void FS3ENet_Dispatch(FS3ENetMessage *fs3em);
 
-struct MsgPort *FS3ENet_Start(const char *cacheDir)
+struct MsgPort *FS3ENet_Start(const char *cacheDir, ULONG maxCacheSizeMB)
 {
     struct MsgPort     *replyPort;
     struct FS3ENetStartup startup;
@@ -443,6 +446,7 @@ struct MsgPort *FS3ENet_Start(const char *cacheDir)
     startup.fs3ess_Msg.mn_Length    = sizeof(startup);
     startup.fs3ess_RequestPort      = NULL;
     startup.fs3ess_CacheDir         = cacheDir;  /* may be NULL → default */
+    startup.fs3ess_MaxCacheSizeMB   = maxCacheSizeMB;
 
     g_FS3ENetStartup = &startup;
 
@@ -518,6 +522,24 @@ BOOL FS3ENet_FlushCache(struct MsgPort *requestPort, struct MsgPort *replyPort)
     return (msg.fs3em_Result == FS3ENETR_OK);
 }
 
+/* Debug: peek how many requests are queued on requestPort without removing
+ * any of them. Disable()/Enable() brackets the walk against a concurrent
+ * PutMsg() from the main process (Exec's documented safe way to inspect a
+ * MsgPort's message list without taking it off). Only used for the
+ * bdbprintf_now() backlog tracing in FS3ENet_ProcEntry below. */
+static ULONG FS3ENet_CountPending(struct MsgPort *port)
+{
+    struct Node *n;
+    ULONG        count = 0;
+
+    Disable();
+    for (n = port->mp_MsgList.lh_Head; n->ln_Succ; n = n->ln_Succ)
+        count++;
+    Enable();
+
+    return count;
+}
+
 /* Entry point of the network process, running as its own AmigaDOS task. */
 static void FS3ENet_ProcEntry(void)
 {
@@ -543,7 +565,7 @@ static void FS3ENet_ProcEntry(void)
     /* Disk cache — non-fatal: image fetches will return HTTP_ERROR if the
      * cache dir cannot be created, but login and timeline fetches still work. */
     if (requestPort)
-        FS3ECache_Init(startup->fs3ess_CacheDir);
+        FS3ECache_Init(startup->fs3ess_CacheDir, startup->fs3ess_MaxCacheSizeMB);
 
     /* Hand the request port (or NULL on failure) back to FS3ENet_Start(). */
     startup->fs3ess_RequestPort = requestPort;
@@ -557,6 +579,9 @@ static void FS3ENet_ProcEntry(void)
         FS3ENetMessage *fs3em;
 
         WaitPort(requestPort);
+
+        bdbprintf_now("FS3ENet: woke up, %lu request(s) waiting\n",
+                      (unsigned long)FS3ENet_CountPending(requestPort));
 
         /* FS3ENet_Stop() Signal()s this before the shutdown message even
          * reaches the queue -- once noticed, every message still queued
@@ -629,23 +654,19 @@ static void FS3ENet_HandleLoginStart(FS3ENetMessage *fs3em)
 
     if (!req || fs3em->fs3em_DataLen < sizeof(*req))
     {
-        printf("net: LOGIN_START parse error\n");
         fs3em->fs3em_Result = FS3ENETR_PARSE_ERROR;
         return;
     }
 
-    printf("net: LOGIN_START server=%s\n", req->fs3enl_ApiBaseUrl ? req->fs3enl_ApiBaseUrl : "NULL");
 
     if (!FS3EMastodon_CreateApp(req->fs3enl_ApiBaseUrl, FS3ENET_CLIENT_NAME,
             clientId, sizeof(clientId),
             clientSecret, sizeof(clientSecret)))
     {
-        printf("net: LOGIN_START CreateApp failed\n");
         fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
         return;
     }
 
-    printf("net: LOGIN_START app registered, clientId=%s\n", clientId);
 
     FS3EMastodon_BuildAuthorizeURL(req->fs3enl_ApiBaseUrl, clientId,
         authorizeUrl, sizeof(authorizeUrl));
@@ -671,7 +692,6 @@ static void FS3ENet_HandleLoginStart(FS3ENetMessage *fs3em)
     fs3em->fs3em_Data    = reply;
     fs3em->fs3em_DataLen = total;
     fs3em->fs3em_Result  = FS3ENETR_OK;
-    printf("net: LOGIN_START done, url=%s\n", authorizeUrl);
 }
 
 /* FS3ENETQ_LOGIN_FINISH - exchange the OOB code for an access token and
@@ -687,27 +707,22 @@ static void FS3ENet_HandleLoginFinish(FS3ENetMessage *fs3em)
 
     if (!req || fs3em->fs3em_DataLen < sizeof(*req))
     {
-        printf("net: LOGIN_FINISH parse error\n");
         fs3em->fs3em_Result = FS3ENETR_PARSE_ERROR;
         return;
     }
 
-    printf("net: LOGIN_FINISH server=%s\n", req->fs3enl_ApiBaseUrl ? req->fs3enl_ApiBaseUrl : "NULL");
 
     if (!FS3EMastodon_ExchangeCode(req->fs3enl_ApiBaseUrl, req->fs3enl_ClientId,
             req->fs3enl_ClientSecret, req->fs3enl_Code,
             accessToken, sizeof(accessToken)))
     {
-        printf("net: LOGIN_FINISH ExchangeCode failed\n");
         fs3em->fs3em_Result = FS3ENETR_AUTH_ERROR;
         return;
     }
 
-    printf("net: LOGIN_FINISH token obtained, verifying credentials\n");
 
     if (!FS3EMastodon_VerifyCredentials(req->fs3enl_ApiBaseUrl, accessToken, &tmpAcc))
     {
-        printf("net: LOGIN_FINISH VerifyCredentials failed\n");
         FS3EMastodonAccount_Free(&tmpAcc);
         fs3em->fs3em_Result = FS3ENETR_AUTH_ERROR;
         return;
@@ -739,7 +754,6 @@ static void FS3ENet_HandleLoginFinish(FS3ENetMessage *fs3em)
 
     FS3EMastodonAccount_Free(&tmpAcc);
 
-    printf("net: LOGIN_FINISH done, acct=%s\n", reply->fs3enl_Account.fma_Acct ? reply->fs3enl_Account.fma_Acct : "?");
     FreeVec(fs3em->fs3em_Data);
     fs3em->fs3em_Data    = reply;
     fs3em->fs3em_DataLen = total;
@@ -759,16 +773,13 @@ static void FS3ENet_HandleVerifyAccount(FS3ENetMessage *fs3em)
 
     if (!req || fs3em->fs3em_DataLen < sizeof(*req))
     {
-        printf("net: VERIFY_ACCOUNT parse error\n");
         fs3em->fs3em_Result = FS3ENETR_PARSE_ERROR;
         return;
     }
 
-    printf("net: VERIFY_ACCOUNT server=%s\n", req->fs3eva_ApiBaseUrl ? req->fs3eva_ApiBaseUrl : "NULL");
 
     if (!FS3EMastodon_VerifyCredentials(req->fs3eva_ApiBaseUrl, req->fs3eva_AccessToken, &tmpAcc))
     {
-        printf("net: VERIFY_ACCOUNT VerifyCredentials failed\n");
         FS3EMastodonAccount_Free(&tmpAcc);
         fs3em->fs3em_Result = FS3ENETR_AUTH_ERROR;
         return;
@@ -798,7 +809,6 @@ static void FS3ENet_HandleVerifyAccount(FS3ENetMessage *fs3em)
 
     FS3EMastodonAccount_Free(&tmpAcc);
 
-    printf("net: VERIFY_ACCOUNT done, acct=%s\n", reply->fs3eva_Account.fma_Acct ? reply->fs3eva_Account.fma_Acct : "?");
     FreeVec(fs3em->fs3em_Data);
     fs3em->fs3em_Data    = reply;
     fs3em->fs3em_DataLen = total;
@@ -815,12 +825,10 @@ static void FS3ENet_HandleInstanceInfo(FS3ENetMessage *fs3em)
 
     if (!req || fs3em->fs3em_DataLen < sizeof(*req))
     {
-        printf("net: INSTANCE_INFO parse error\n");
         fs3em->fs3em_Result = FS3ENETR_PARSE_ERROR;
         return;
     }
 
-    printf("net: INSTANCE_INFO server=%s\n", req->fs3eii_ApiBaseUrl ? req->fs3eii_ApiBaseUrl : "NULL");
 
     /* Always fills maxChars with *some* usable value (falls back to
      * FS3EMASTODON_DEFAULT_MAX_CHARS) so a network hiccup here never
@@ -840,8 +848,6 @@ static void FS3ENet_HandleInstanceInfo(FS3ENetMessage *fs3em)
     reply->fs3eii_MaxChars = maxChars;
     reply->fs3eii_Known    = known;
 
-    printf("net: INSTANCE_INFO done, maxChars=%lu known=%d\n",
-           (unsigned long)maxChars, (int)known);
     FreeVec(fs3em->fs3em_Data);
     fs3em->fs3em_Data    = reply;
     fs3em->fs3em_DataLen = sizeof(*reply);
@@ -1243,11 +1249,6 @@ static void FS3ENet_FillStatusFields(const cJSON *item, const cJSON *src,
             dst->fmas_MediaKind[mi] = FS3ENET_MEDIAKIND_UNKNOWN;
         }
         dst->fmas_MediaCount = (ULONG)mCount;
-        if (mCount > 0)
-            printf("net: status id=%s mediaCount=%d mediaIds[0]=%s\n",
-                   dst->fmas_Id ? dst->fmas_Id : "?",
-                   mCount,
-                   dst->fmas_MediaIds[0] ? dst->fmas_MediaIds[0] : "(null)");
     }
 
     /* Poll -- see the matching block in FS3ENet_SizeStatusFields. */
@@ -1316,16 +1317,10 @@ static void FS3ENet_HandleTimeline(FS3ENetMessage *fs3em)
     char stripped[2048];
 
     if (!req || fs3em->fs3em_DataLen < sizeof(*req)) {
-        printf("net: TIMELINE parse error\n");
         fs3em->fs3em_Result = FS3ENETR_PARSE_ERROR;
         return;
     }
 
-    printf("net: TIMELINE viewMode=%lu timeline=%s maxId=%s minId=%s\n",
-           req->fs3et_ViewModeBit,
-           req->fs3et_Timeline ? req->fs3et_Timeline : "NULL",
-           (req->fs3et_MaxId && req->fs3et_MaxId[0]) ? req->fs3et_MaxId : "(none)",
-           (req->fs3et_MinId && req->fs3et_MinId[0]) ? req->fs3et_MinId : "(none)");
 
     /* Fold max_id/min_id onto the already-built timeline query string (see
      * ViewModeTimeline() in friendsh3ep.c, which already does the same for
@@ -1367,7 +1362,6 @@ static void FS3ENet_HandleTimeline(FS3ENetMessage *fs3em)
         if (!FS3EMastodon_GetTimeline(req->fs3et_ApiBaseUrl,
                 req->fs3et_AccessToken,
                 finalTimeline, req->fs3et_ResponseShape, &json)) {
-            printf("net: TIMELINE GetTimeline failed\n");
             fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
             return;
         }
@@ -1461,8 +1455,6 @@ static void FS3ENet_HandleTimeline(FS3ENetMessage *fs3em)
     fs3em->fs3em_Data    = reply;
     fs3em->fs3em_DataLen = total;
     fs3em->fs3em_Result  = FS3ENETR_OK;
-    printf("net: TIMELINE done, count=%lu viewMode=%lu\n",
-           (unsigned long)count, (unsigned long)reply->fs3et_ViewModeBit);
 }
 
 /* FS3ENETQ_NOTIFICATIONS — fetch a page of notifications. Reuses
@@ -1487,14 +1479,10 @@ static void FS3ENet_HandleNotifications(FS3ENetMessage *fs3em)
     char stripped[2048];
 
     if (!req || fs3em->fs3em_DataLen < sizeof(*req)) {
-        printf("net: NOTIFICATIONS parse error\n");
         fs3em->fs3em_Result = FS3ENETR_PARSE_ERROR;
         return;
     }
 
-    printf("net: NOTIFICATIONS maxId=%s minId=%s\n",
-           (req->fs3en_MaxId && req->fs3en_MaxId[0]) ? req->fs3en_MaxId : "(none)",
-           (req->fs3en_MinId && req->fs3en_MinId[0]) ? req->fs3en_MinId : "(none)");
 
     {
         char pathWithPage[300];
@@ -1508,7 +1496,6 @@ static void FS3ENet_HandleNotifications(FS3ENetMessage *fs3em)
 
         if (!FS3EMastodon_GetTimeline(req->fs3en_ApiBaseUrl, req->fs3en_AccessToken,
                 pathWithPage, FS3ENET_TLSHAPE_ARRAY, &json)) {
-            printf("net: NOTIFICATIONS GetTimeline failed\n");
             fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
             return;
         }
@@ -1610,7 +1597,6 @@ static void FS3ENet_HandleNotifications(FS3ENetMessage *fs3em)
     fs3em->fs3em_Data    = reply;
     fs3em->fs3em_DataLen = total;
     fs3em->fs3em_Result  = FS3ENETR_OK;
-    printf("net: NOTIFICATIONS done, count=%lu\n", (unsigned long)count);
 }
 
 /* FS3ENETQ_POST_STATUS — publish a toot and return its id. */
@@ -1623,20 +1609,15 @@ static void FS3ENet_HandlePostStatus(FS3ENetMessage *fs3em)
     char *p;
 
     if (!req || fs3em->fs3em_DataLen < sizeof(*req)) {
-        printf("net: POST_STATUS parse error\n");
         fs3em->fs3em_Result = FS3ENETR_PARSE_ERROR;
         return;
     }
 
-    printf("net: POST_STATUS visibility=%s inReplyToId=%s\n",
-           req->fs3ep_Visibility ? req->fs3ep_Visibility : "public",
-           (req->fs3ep_InReplyToId && req->fs3ep_InReplyToId[0]) ? req->fs3ep_InReplyToId : "(none)");
 
     if (!FS3EMastodon_PostStatus(req->fs3ep_ApiBaseUrl, req->fs3ep_AccessToken,
             req->fs3ep_Content, req->fs3ep_Visibility, req->fs3ep_InReplyToId,
             statusId, sizeof(statusId)))
     {
-        printf("net: POST_STATUS PostStatus failed\n");
         fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
         return;
     }
@@ -1652,7 +1633,6 @@ static void FS3ENet_HandlePostStatus(FS3ENetMessage *fs3em)
     fs3em->fs3em_Data    = reply;
     fs3em->fs3em_DataLen = total;
     fs3em->fs3em_Result  = FS3ENETR_OK;
-    printf("net: POST_STATUS done, statusId=%s\n", statusId);
 }
 
 /* FS3ENETQ_EDIT_STATUS — edit an existing status' text (own toots only). */
@@ -1664,20 +1644,15 @@ static void FS3ENet_HandleEditStatus(FS3ENetMessage *fs3em)
     char *p;
 
     if (!req || fs3em->fs3em_DataLen < sizeof(*req)) {
-        printf("net: EDIT_STATUS parse error\n");
         fs3em->fs3em_Result = FS3ENETR_PARSE_ERROR;
         return;
     }
 
-    printf("net: EDIT_STATUS statusId=%s mediaCount=%lu\n",
-           req->fs3ee_StatusId ? req->fs3ee_StatusId : "?",
-           (unsigned long)req->fs3ee_MediaCount);
 
     if (!FS3EMastodon_EditStatus(req->fs3ee_ApiBaseUrl, req->fs3ee_AccessToken,
             req->fs3ee_StatusId, req->fs3ee_Content,
             (const char *const *)req->fs3ee_MediaIds, req->fs3ee_MediaCount))
     {
-        printf("net: EDIT_STATUS EditStatus failed\n");
         fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
         return;
     }
@@ -1693,7 +1668,6 @@ static void FS3ENet_HandleEditStatus(FS3ENetMessage *fs3em)
     fs3em->fs3em_Data    = reply;
     fs3em->fs3em_DataLen = total;
     fs3em->fs3em_Result  = FS3ENETR_OK;
-    printf("net: EDIT_STATUS done\n");
 }
 
 /* FS3ENETQ_DELETE_STATUS — delete an existing status (own toots only). */
@@ -1705,18 +1679,14 @@ static void FS3ENet_HandleDeleteStatus(FS3ENetMessage *fs3em)
     char *p;
 
     if (!req || fs3em->fs3em_DataLen < sizeof(*req)) {
-        printf("net: DELETE_STATUS parse error\n");
         fs3em->fs3em_Result = FS3ENETR_PARSE_ERROR;
         return;
     }
 
-    printf("net: DELETE_STATUS statusId=%s\n",
-           req->fs3ed_StatusId ? req->fs3ed_StatusId : "?");
 
     if (!FS3EMastodon_DeleteStatus(req->fs3ed_ApiBaseUrl, req->fs3ed_AccessToken,
             req->fs3ed_StatusId))
     {
-        printf("net: DELETE_STATUS DeleteStatus failed\n");
         fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
         return;
     }
@@ -1732,7 +1702,6 @@ static void FS3ENet_HandleDeleteStatus(FS3ENetMessage *fs3em)
     fs3em->fs3em_Data    = reply;
     fs3em->fs3em_DataLen = total;
     fs3em->fs3em_Result  = FS3ENETR_OK;
-    printf("net: DELETE_STATUS done\n");
 }
 
 /* FS3ENETQ_FAVORITE — toggle favourite/unfavourite on a status, returning
@@ -1748,19 +1717,14 @@ static void FS3ENet_HandleFavourite(FS3ENetMessage *fs3em)
     char *p;
 
     if (!req || fs3em->fs3em_DataLen < sizeof(*req)) {
-        printf("net: FAVORITE parse error\n");
         fs3em->fs3em_Result = FS3ENETR_PARSE_ERROR;
         return;
     }
 
-    printf("net: FAVORITE statusId=%s favourite=%ld\n",
-           req->fs3efa_StatusId ? req->fs3efa_StatusId : "?",
-           (long)req->fs3efa_Favourite);
 
     if (!FS3EMastodon_Favourite(req->fs3efa_ApiBaseUrl, req->fs3efa_AccessToken,
             req->fs3efa_StatusId, req->fs3efa_Favourite, &favourited))
     {
-        printf("net: FAVORITE Favourite failed\n");
         fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
         return;
     }
@@ -1777,7 +1741,6 @@ static void FS3ENet_HandleFavourite(FS3ENetMessage *fs3em)
     fs3em->fs3em_Data    = reply;
     fs3em->fs3em_DataLen = total;
     fs3em->fs3em_Result  = FS3ENETR_OK;
-    printf("net: FAVORITE done, favourited=%ld\n", (long)favourited);
 }
 
 /* FS3ENETQ_ACCOUNT_LOOKUP — resolve an acct string to a full account
@@ -1792,17 +1755,14 @@ static void FS3ENet_HandleAccountLookup(FS3ENetMessage *fs3em)
     char *p;
 
     if (!req || fs3em->fs3em_DataLen < sizeof(*req)) {
-        printf("net: ACCOUNT_LOOKUP parse error\n");
         fs3em->fs3em_Result = FS3ENETR_PARSE_ERROR;
         return;
     }
 
-    printf("net: ACCOUNT_LOOKUP acct=%s\n", req->fs3eal_Acct ? req->fs3eal_Acct : "?");
 
     if (!FS3EMastodon_LookupAccount(req->fs3eal_ApiBaseUrl, req->fs3eal_AccessToken,
             req->fs3eal_Acct, &tmpAcc))
     {
-        printf("net: ACCOUNT_LOOKUP LookupAccount failed\n");
         FS3EMastodonAccount_Free(&tmpAcc);
         fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
         return;
@@ -1841,9 +1801,6 @@ static void FS3ENet_HandleAccountLookup(FS3ENetMessage *fs3em)
     fs3em->fs3em_Data    = reply;
     fs3em->fs3em_DataLen = total;
     fs3em->fs3em_Result  = FS3ENETR_OK;
-    printf("net: ACCOUNT_LOOKUP done, id=%s acct=%s\n",
-           reply->fs3eal_Account.fma_Id ? reply->fs3eal_Account.fma_Id : "?",
-           reply->fs3eal_Account.fma_Acct ? reply->fs3eal_Account.fma_Acct : "?");
 }
 
 /* FS3ENETQ_RELATIONSHIP — fetch following state for an account id. */
@@ -1856,17 +1813,14 @@ static void FS3ENet_HandleRelationship(FS3ENetMessage *fs3em)
     char *p;
 
     if (!req || fs3em->fs3em_DataLen < sizeof(*req)) {
-        printf("net: RELATIONSHIP parse error\n");
         fs3em->fs3em_Result = FS3ENETR_PARSE_ERROR;
         return;
     }
 
-    printf("net: RELATIONSHIP accountId=%s\n", req->fs3erl_AccountId ? req->fs3erl_AccountId : "?");
 
     if (!FS3EMastodon_GetRelationship(req->fs3erl_ApiBaseUrl, req->fs3erl_AccessToken,
             req->fs3erl_AccountId, &following))
     {
-        printf("net: RELATIONSHIP GetRelationship failed\n");
         fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
         return;
     }
@@ -1883,7 +1837,6 @@ static void FS3ENet_HandleRelationship(FS3ENetMessage *fs3em)
     fs3em->fs3em_Data    = reply;
     fs3em->fs3em_DataLen = total;
     fs3em->fs3em_Result  = FS3ENETR_OK;
-    printf("net: RELATIONSHIP done, following=%ld\n", (long)following);
 }
 
 /* FS3ENETQ_FOLLOW — toggle follow/unfollow on an account, returning the
@@ -1898,18 +1851,14 @@ static void FS3ENet_HandleFollow(FS3ENetMessage *fs3em)
     char *p;
 
     if (!req || fs3em->fs3em_DataLen < sizeof(*req)) {
-        printf("net: FOLLOW parse error\n");
         fs3em->fs3em_Result = FS3ENETR_PARSE_ERROR;
         return;
     }
 
-    printf("net: FOLLOW accountId=%s follow=%ld\n",
-           req->fs3efo_AccountId ? req->fs3efo_AccountId : "?", (long)req->fs3efo_Follow);
 
     if (!FS3EMastodon_Follow(req->fs3efo_ApiBaseUrl, req->fs3efo_AccessToken,
             req->fs3efo_AccountId, req->fs3efo_Follow, &following))
     {
-        printf("net: FOLLOW Follow failed\n");
         fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
         return;
     }
@@ -1926,7 +1875,6 @@ static void FS3ENet_HandleFollow(FS3ENetMessage *fs3em)
     fs3em->fs3em_Data    = reply;
     fs3em->fs3em_DataLen = total;
     fs3em->fs3em_Result  = FS3ENETR_OK;
-    printf("net: FOLLOW done, following=%ld\n", (long)following);
 }
 
 /* FS3ENETQ_FLUSH_CACHE — delete every file in the disk cache directory. */

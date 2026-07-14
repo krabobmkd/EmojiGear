@@ -205,7 +205,6 @@ fail:
 ULONG UniButtonP9_OnDispose(Class *cl, Object *o, Msg msg)
 {
     UniButtonP9Data *inst = UBTP9_DATA(cl, o);
-    bdbprintf("UniButtonP9_OnDispose\n");
     if (inst->text)  { FreeVec(inst->text);        inst->text  = NULL; }
     if (inst->bevel) { DisposeObject(inst->bevel);  inst->bevel = NULL; }
     if (inst->dc)    { URPDC_Release(inst->dc);     inst->dc    = NULL; }

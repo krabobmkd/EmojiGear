@@ -335,25 +335,18 @@ ULONG ttl_apply_tags(Class *cl, Object *o, struct opSet *msg, int couldRefreshDr
 
             case TTIMELINE_ShowProfile: {
                 const TTLProfileHeaderSetup *setup = (const TTLProfileHeaderSetup *)tag->ti_Data;
-                bdbprintf_now("ShowProfile: enter setup=%08lx acct=%s\n",
-                          (unsigned long)setup, (setup && setup->acct) ? setup->acct : "?");
                 if (setup) {
                     TTLChannel *channel = &inst->channels[TTL_SEARCH_CHANNEL];
                     TTLPost    *header;
 
-                    bdbprintf_now("ShowProfile: clearing channel, old headerPost=%08lx\n",
-                              (unsigned long)channel->headerPost);
                     ttl_clear_channel(inst, TTL_SEARCH_CHANNEL);
-                    bdbprintf_now("ShowProfile: cleared\n");
 
                     header = ttl_profile_header_alloc(setup);
-                    bdbprintf_now("ShowProfile: alloc'd header=%08lx\n", (unsigned long)header);
                     if (header) {
                         TTLPost *loadOlder;
 
                         if (header->cls && header->cls->layout)
                             header->cls->layout(inst, header);
-                        bdbprintf_now("ShowProfile: header laid out, height=%ld\n", (long)header->height);
 
                         /* The header is NEVER linked into channel->posts
                          * -- it lives only via channel->headerPost (see
@@ -412,15 +405,11 @@ ULONG ttl_apply_tags(Class *cl, Object *o, struct opSet *msg, int couldRefreshDr
                             AddTail((struct List *)&channel->posts, (struct Node *)&loadOlder->node);
                             channel->contentBottomY += loadOlder->height;
                         }
-                        bdbprintf_now("ShowProfile: loadOlder=%08lx inserted, headerPost was %08lx\n",
-                                  (unsigned long)loadOlder, (unsigned long)channel->headerPost);
 
                         if (TTL_SEARCH_CHANNEL == inst->viewMode)
                             ttl_tiles_invalidate_all(inst);
                         redraw = TRUE;
                     }
-                    bdbprintf_now("ShowProfile: done, channel->headerPost=%08lx\n",
-                              (unsigned long)channel->headerPost);
                     used = 1;
                 }
                 break;

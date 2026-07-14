@@ -20,6 +20,7 @@
 #include "stylefile.h"
 #include "bdbprintf.h"
 #include "friendsh3ep.h"
+#include "UniButtonP9/unibuttonp9.h"
 /* Opened optionally in friendsh3ep.c, mirroring BevelBase: if the class
  * isn't available, FS3EStyle_LoadThemeImages() fails gracefully and title
  * bar buttons simply keep whatever image (none) they had. */
@@ -255,13 +256,21 @@ void FS3EStyle_SetFontSize(FS3EStyle *st, int baseSize,
     compute_layout(st);
 }
 
+void FS3EStyle_ResetColors(FS3EStyle *st)
+{
+    int i;
+    if (!st) return;
+    for (i = 0; i < FS3E_COLOR_COUNT; i++)
+        st->colors[i].rgbcolor = defaultColors[i];
+}
+
 void FS3EStyle_InitDefaults(FS3EStyle *st)
 {
     int i;
     if (!st) return;
-    printf("FS3EStyle_InitDefaults\n");
+
+    FS3EStyle_ResetColors(st);
     for (i = 0; i < FS3E_COLOR_COUNT; i++) {
-        st->colors[i].rgbcolor = defaultColors[i];
         st->colors[i].pen      = 0;   /* safe fallback until ApplyColors */
         st->colors[i].allocated = 0;
     }
@@ -418,21 +427,18 @@ static void ASM SAVEDS FS3EStyle_TitleBarBackFillFunc(
 
 void FS3EStyle_SetThemePath(FS3EStyle *st, const char *path)
 {
-    ULONG len;
-    char *copy;
+    char *copy = NULL;
 
     if (!st) return;
 
-    if (!path || path[0] == '\0')
-        path = FS3ESTYLE_THEME_DEFAULT_PATH;
-
-    len  = (ULONG)strlen(path) + 1;
-    copy = (char *)AllocVec(len, MEMF_ANY);
-    if (!copy) return;
-    strcpy(copy, path);
+    if (path && path[0]) {
+        ULONG len = (ULONG)strlen(path) + 1;
+        copy = (char *)AllocVec(len, MEMF_ANY);
+        if (copy) strcpy(copy, path);
+    }
 
     if (st->themePath) FreeVec(st->themePath);
-    st->themePath = copy;
+    st->themePath = copy;   /* NULL = no theme */
 }
 
 /* One style.txt-driven Patch9 skin slot: "<prefix>.image" / "<prefix>.cornersize",
@@ -466,6 +472,19 @@ static const char *patch9StateSuffix[PATCH9_NUM_STATES] = {
     "hover",     /* PATCH9_HOVER */
 };
 
+void FS3EStyle_ResetPatch9Colors(FS3EStyle *st)
+{
+    int slot, state;
+    if (!st) return;
+    for (slot = 0; slot < FS3ESTYLE_PATCH9_COUNT; slot++) {
+        const FS3EPatch9SlotDef *def = &patch9Slots[slot];
+        for (state = 0; state < PATCH9_NUM_STATES; state++) {
+            st->patch9[slot].bgcolors[state].rgbcolor   = def->defaultBgColor[state];
+            st->patch9[slot].textcolors[state].rgbcolor = def->defaultTextColor[state];
+        }
+    }
+}
+
 /* Load one Patch9 slot from style.txt (see patch9Slots[] above), falling
  * back to defaultFile/defaultCorner/defaultBgColor/defaultTextColor if
  * style.txt or the key is missing. Image load is optional/non-fatal -- a
@@ -493,8 +512,6 @@ static void fs3estyle_load_patch9_slot(FS3EStyle *st, const StyleFile *sf, int s
     if (!Patch9_Init(p9, path,
                      (WORD)StyleFile_GetInt(sf, key, def->defaultCorner)) ||
         !Patch9_Load(p9, scr)) {
-        printf("FS3EStyle_LoadThemeImages: %s image not loaded (%s)\n",
-               def->prefix, path);
     }
 
     for (state = 0; state < PATCH9_NUM_STATES; state++) {
@@ -519,7 +536,10 @@ BOOL FS3EStyle_LoadThemeImages(FS3EStyle *st, struct Screen *scr)
 
     FS3EStyle_UnloadThemeImages(st);
 
-    if (!st->themePath) FS3EStyle_SetThemePath(st, NULL);
+    /* No theme set -- nothing to load. Not an error: FS3EApp_LoadTheme's
+     * "no theme" case (friendsh3ep.c) relies on this to be a clean no-op,
+     * distinct from the unload just above (which it still wants). */
+    if (!st->themePath || !st->themePath[0]) return FALSE;
 
     /* style.txt names the actual asset files/metrics below -- see
      * themes/mouton/style.txt. Missing file/keys just fall back to the
@@ -527,18 +547,25 @@ BOOL FS3EStyle_LoadThemeImages(FS3EStyle *st, struct Screen *scr)
     snprintf(stylePath, sizeof(stylePath), "%s/style.txt", st->themePath);
     StyleFile_Load(&sf, stylePath);
 
+    /* Reset every role to its hardcoded default first -- otherwise a role
+     * a *previous* theme's style.txt set (this function is also called on
+     * a live theme switch, not just once at startup -- see
+     * FS3EApp_LoadTheme in friendsh3ep.c) would keep bleeding through for
+     * any key the *new* theme's style.txt doesn't happen to mention,
+     * instead of falling back to the default like a fresh load would. */
+    FS3EStyle_ResetColors(st);
+
     /* Override every FS3EColorRole's RGB value from its style.txt key (see
-     * colorStyleKeys[] above), falling back to whatever rgbcolor already
-     * holds (the FS3EStyle_InitDefaults() value, or a previous load's) if
-     * the file or key is missing. Must run before FS3EStyle_ApplyColors(),
-     * which resolves rgbcolor -> screen pen for every role -- the caller
-     * (GenericOpenWindow) already calls them in that order. */
+     * colorStyleKeys[] above), falling back to the default (just reset
+     * above) if the file or key is missing. Must run before
+     * FS3EStyle_ApplyColors(), which resolves rgbcolor -> screen pen for
+     * every role -- the caller (GenericOpenWindow) already calls them in
+     * that order. */
     for (i = 0; i < FS3E_COLOR_COUNT; i++)
         st->colors[i].rgbcolor = StyleFile_GetColor(&sf, colorStyleKeys[i],
                                                     st->colors[i].rgbcolor);
 
     if (!BitMapBase) {
-        printf("FS3EStyle_LoadThemeImages: images/bitmap.image not open, skipping\n");
         return FALSE;
     }
 
@@ -546,12 +573,9 @@ BOOL FS3EStyle_LoadThemeImages(FS3EStyle *st, struct Screen *scr)
              StyleFile_GetString(&sf, "titlebar.buttons", "tbbuttons.iff"));
 
     if (!BmImage_Init(&st->tbButtons, path)) {
-        printf("FS3EStyle_LoadThemeImages: BmImage_Init failed for %s\n", path);
         return FALSE;
     }
     if (!BmImage_Load(&st->tbButtons, scr)) {
-        printf("FS3EStyle_LoadThemeImages: BmImage_Load failed for %s (error %d)\n",
-               path, (int)st->tbButtons.error);
         return FALSE;
     }
 
@@ -604,8 +628,6 @@ BOOL FS3EStyle_LoadThemeImages(FS3EStyle *st, struct Screen *scr)
         tbBgWidth  = st->tbBg.width;
         tbBgHeight = st->tbBg.height;
     } else {
-        printf("FS3EStyle_LoadThemeImages: %s not loaded (%s)\n",
-               StyleFile_GetString(&sf, "titlebar.bg", "tbbg.png"), path);
     }
 
     /* Title bar title/logo image: titlebar.title in style.txt, blitted
@@ -617,7 +639,6 @@ BOOL FS3EStyle_LoadThemeImages(FS3EStyle *st, struct Screen *scr)
              StyleFile_GetString(&sf, "titlebar.title", "title.iff"));
     if (!BmImage_Init(&st->titlebarTitle, path) ||
         !BmImage_Load(&st->titlebarTitle, scr)) {
-        printf("FS3EStyle_LoadThemeImages: titlebar.title not loaded (%s)\n", path);
     }
     st->titlebarTitleX = (WORD)StyleFile_GetInt(&sf, "titlebar.title.x", 0);
     st->titlebarTitleY = (WORD)StyleFile_GetInt(&sf, "titlebar.title.y", 0);
@@ -650,7 +671,6 @@ BOOL FS3EStyle_LoadThemeImages(FS3EStyle *st, struct Screen *scr)
                      StyleFile_GetString(&sf, btbgbmKeys[i], btbgbmDefaults[i]));
             if (!BmImage_Init(&st->btbgbmBitmap[i], path) ||
                 !BmImage_Load(&st->btbgbmBitmap[i], scr)) {
-                printf("FS3EStyle_LoadThemeImages: btbgbm bitmap not loaded (%s)\n", path);
             }
         }
     }
@@ -662,43 +682,87 @@ BOOL FS3EStyle_LoadThemeImages(FS3EStyle *st, struct Screen *scr)
              StyleFile_GetString(&sf, "timeline.waitimage", "waitimage.png"));
     if (!BmImage_Init(&st->waitImage, path) ||
         !BmImage_Load(&st->waitImage, scr)) {
-        printf("FS3EStyle_LoadThemeImages: timeline.waitimage not loaded (%s)\n", path);
     }
 
     return TRUE;
 }
 
+/* Always acts, whether or not st->tbImages[N] is currently loaded --
+ * unlike an earlier version of this function, which only ever attached an
+ * image and left a button's GA_Image/BUTTON_Transparent/BUTTON_BevelStyle
+ * untouched when there wasn't one. That left a button holding GA_Image
+ * pointing at whatever FS3EStyle_UnloadThemeImages() had just disposed
+ * the moment "no theme" was selected (see FS3EApp_LoadTheme in
+ * friendsh3ep.c) -- a live dangling pointer on an already-open gadget.
+ * When tbImages[N] is NULL, this detaches to a plain BVS_BUTTON bevel
+ * (button.gadget's own normal look) instead, matching how these buttons
+ * render before any theme is ever loaded (see their creation in
+ * friendsh3ep.c: no GA_Image, no GA_Text). */
 void FS3EStyle_SyncTitleBarButtons(FS3EStyle *st,
                                     Object *closeBtn, Object *iconifyBtn,
                                     Object *altposBtn, Object *depthBtn)
 {
     if (!st) return;
 
-    if (closeBtn && st->tbImages[0])
+    if (closeBtn)
         SetGdAttrs(closeBtn,
             GA_Image, (ULONG)st->tbImages[0],
-            BUTTON_BevelStyle, BVS_NONE,
-            BUTTON_Transparent, TRUE, TAG_DONE);
+            BUTTON_BevelStyle, (ULONG)(st->tbImages[0] ? BVS_NONE : BVS_BUTTON),
+            BUTTON_Transparent, (ULONG)(st->tbImages[0] ? TRUE : FALSE), TAG_DONE);
 
-    if (iconifyBtn && st->tbImages[1])
+    if (iconifyBtn)
         SetGdAttrs(iconifyBtn,
             GA_Image, (ULONG)st->tbImages[1],
-            BUTTON_BevelStyle, BVS_NONE,
-            BUTTON_Transparent, TRUE, TAG_DONE);
+            BUTTON_BevelStyle, (ULONG)(st->tbImages[1] ? BVS_NONE : BVS_BUTTON),
+            BUTTON_Transparent, (ULONG)(st->tbImages[1] ? TRUE : FALSE), TAG_DONE);
 
-    if (altposBtn && st->tbImages[2])
+    if (altposBtn)
         SetGdAttrs(altposBtn,
             GA_Image, (ULONG)st->tbImages[2],
-            BUTTON_BevelStyle, BVS_NONE,
-            BUTTON_Transparent, TRUE, TAG_DONE);
+            BUTTON_BevelStyle, (ULONG)(st->tbImages[2] ? BVS_NONE : BVS_BUTTON),
+            BUTTON_Transparent, (ULONG)(st->tbImages[2] ? TRUE : FALSE), TAG_DONE);
 
-    if (depthBtn && st->tbImages[3])
+    if (depthBtn)
         SetGdAttrs(depthBtn,
             GA_Image, (ULONG)st->tbImages[3],
-            BUTTON_BevelStyle, BVS_NONE,
-            BUTTON_Transparent, TRUE, TAG_DONE);
+            BUTTON_BevelStyle, (ULONG)(st->tbImages[3] ? BVS_NONE : BVS_BUTTON),
+            BUTTON_Transparent, (ULONG)(st->tbImages[3] ? TRUE : FALSE), TAG_DONE);
 
 
+}
+
+/* Push UBTP9_Patch9 onto accountBtn (FS3ESTYLE_PATCH9_BT1) and newtootBtn
+ * (FS3ESTYLE_PATCH9_BT2) -- the two UniButtonP9 gadgets skinned from a
+ * Patch9 slot instead of a plain GA_Image (see FS3EStyle_SyncTitleBarButtons
+ * just above, for those). Explicitly sets NULL when that slot's image
+ * isn't loaded (Patch9_IsLoaded false), not just when it IS -- unlike
+ * FS3EStyle_SyncTitleBarButtons's tbImages[] check, this must also be able
+ * to *clear* a button back to its flat colour fill, since it's called
+ * again on every theme (re)load or unload, not just once at window-open
+ * time. UBTP9_Patch9 is a plain pointer into st->patch9[slot]; a button
+ * left holding a stale one never notices st->patch9[slot] changing
+ * underneath it on its own -- confirmed bug this fixes: loading a theme
+ * live (FS3EApp_LoadTheme in friendsh3ep.c) decoded bt1patch9.iff/
+ * bt2patch9.iff into st->patch9[] correctly, but without this, nothing
+ * ever told the already-created account/newtoot buttons about it, so they
+ * kept showing their flat-colour fallback regardless. Uses SetGdAttrs()
+ * (targets CurrentMainWindow when open, plain SetAttrs() otherwise), same
+ * as FS3EStyle_SyncTitleBarButtons. */
+void FS3EStyle_SyncPatch9Buttons(FS3EStyle *st, Object *accountBtn, Object *newtootBtn)
+{
+    if (!st) return;
+
+    if (accountBtn)
+        SetGdAttrs(accountBtn, UBTP9_Patch9,
+            Patch9_IsLoaded(&st->patch9[FS3ESTYLE_PATCH9_BT1])
+                ? (ULONG)&st->patch9[FS3ESTYLE_PATCH9_BT1] : 0UL,
+            TAG_DONE);
+
+    if (newtootBtn)
+        SetGdAttrs(newtootBtn, UBTP9_Patch9,
+            Patch9_IsLoaded(&st->patch9[FS3ESTYLE_PATCH9_BT2])
+                ? (ULONG)&st->patch9[FS3ESTYLE_PATCH9_BT2] : 0UL,
+            TAG_DONE);
 }
 
 void FS3EStyle_UnloadThemeImages(FS3EStyle *st)
