@@ -184,20 +184,20 @@ static void FS3EThumb_HandleMake(FS3EThumbMessage *msg)
      * purely so the trace line below can show it -- picture.datatype does
      * its own, separate format detection once BmImage_GenerateScaledBmp
      * actually opens the file. */
-    bdbprintf_now("FS3EThumb: entering MAKE key=%s src=%s kind=%s fmt=%s target=%lux%lu\n",
-                  msg->fs3etm_Key[0] ? msg->fs3etm_Key : "?",
-                  msg->fs3etm_SrcPath,
-                  (msg->fs3etm_Kind == FS3ETHUMB_KIND_MEDIA) ? "media" : "avatar",
-                  FS3EThumb_FormatName(BmImage_SniffFormat(msg->fs3etm_SrcPath)),
-                  (unsigned long)msg->fs3etm_TargetW, (unsigned long)msg->fs3etm_TargetH);
+    // bdbprintf_now("FS3EThumb: entering MAKE key=%s src=%s kind=%s fmt=%s target=%lux%lu\n",
+    //               msg->fs3etm_Key[0] ? msg->fs3etm_Key : "?",
+    //               msg->fs3etm_SrcPath,
+    //               (msg->fs3etm_Kind == FS3ETHUMB_KIND_MEDIA) ? "media" : "avatar",
+    //               FS3EThumb_FormatName(BmImage_SniffFormat(msg->fs3etm_SrcPath)),
+    //               (unsigned long)msg->fs3etm_TargetW, (unsigned long)msg->fs3etm_TargetH);
 
     if (BmImage_GenerateScaledBmp(msg->fs3etm_SrcPath, keyPath,
             msg->fs3etm_TargetW, msg->fs3etm_TargetH,
             msg->fs3etm_ThumbPath, sizeof(msg->fs3etm_ThumbPath), &err))
     {
         msg->fs3etm_Result = FS3ETHUMBR_OK;
-        bdbprintf_now("FS3EThumb: MAKE done key=%s -> OK thumb=%s\n",
-                      msg->fs3etm_Key[0] ? msg->fs3etm_Key : "?", msg->fs3etm_ThumbPath);
+        // bdbprintf_now("FS3EThumb: MAKE done key=%s -> OK thumb=%s\n",
+        //               msg->fs3etm_Key[0] ? msg->fs3etm_Key : "?", msg->fs3etm_ThumbPath);
     }
     else
     {
@@ -263,8 +263,8 @@ static void FS3EThumb_ProcEntry(void)
 
         WaitPort(requestPort);
 
-        bdbprintf_now("FS3EThumb: woke up, %lu request(s) waiting\n",
-                      (unsigned long)FS3EThumb_CountPending(requestPort));
+        // bdbprintf_now("FS3EThumb: woke up, %lu request(s) waiting\n",
+        //               (unsigned long)FS3EThumb_CountPending(requestPort));
 
         if (!stopping && FS3ETHUMB_STOP_SIGMASK &&
             (SetSignal(0, FS3ETHUMB_STOP_SIGMASK) & FS3ETHUMB_STOP_SIGMASK))

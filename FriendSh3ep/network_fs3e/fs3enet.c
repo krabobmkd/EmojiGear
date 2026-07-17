@@ -580,8 +580,8 @@ static void FS3ENet_ProcEntry(void)
 
         WaitPort(requestPort);
 
-        bdbprintf_now("FS3ENet: woke up, %lu request(s) waiting\n",
-                      (unsigned long)FS3ENet_CountPending(requestPort));
+        // bdbprintf_now("FS3ENet: woke up, %lu request(s) waiting\n",
+        //               (unsigned long)FS3ENet_CountPending(requestPort));
 
         /* FS3ENet_Stop() Signal()s this before the shutdown message even
          * reaches the queue -- once noticed, every message still queued

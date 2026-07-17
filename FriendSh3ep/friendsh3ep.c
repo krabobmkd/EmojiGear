@@ -529,6 +529,18 @@ void FS3EApp_LoadTheme(const char *themeName)
     }
 }
 
+void free_tb_images(FS3EStyle *st);
+/* need to be done more early */
+void flushThemeImagesFromButtons()
+{
+    if (app->titlebar_closeBtn)   SetGdAttrs(app->titlebar_closeBtn,   GA_Image, 0UL,BUTTON_BevelStyle,BVS_BUTTON,BUTTON_Transparent,FALSE, TAG_END);
+    if (app->titlebar_iconifyBtn) SetGdAttrs(app->titlebar_iconifyBtn, GA_Image, 0UL,BUTTON_BevelStyle,BVS_BUTTON,BUTTON_Transparent,FALSE, TAG_END);
+    if (app->titlebar_altposBtn)  SetGdAttrs(app->titlebar_altposBtn,  GA_Image, 0UL,BUTTON_BevelStyle,BVS_BUTTON,BUTTON_Transparent,FALSE, TAG_END);
+    if (app->titlebar_depthBtn)   SetGdAttrs(app->titlebar_depthBtn,   GA_Image, 0UL,BUTTON_BevelStyle,BVS_BUTTON,BUTTON_Transparent,FALSE, TAG_END);
+
+    // NO free_tb_images(&app->style);
+
+}
 /* Private, does the real work -- see FS3EApp_ApplyFontSettings_Delayed's
  * doc comment just above for why this is split from the public trigger.
  * Not static: none needed yet, but kept a plain function (not inlined
@@ -547,10 +559,8 @@ static void FS3EApp_LoadTheme_Delayed(void)
      * switching away from a theme with button images, e.g. mouton, to
      * "-"). FS3EStyle_SyncTitleBarButtons() below re-attaches a new
      * theme's images if one gets loaded. */
-    if (app->titlebar_closeBtn)   SetAttrs(app->titlebar_closeBtn,   GA_Image, 0UL, TAG_END);
-    if (app->titlebar_iconifyBtn) SetAttrs(app->titlebar_iconifyBtn, GA_Image, 0UL, TAG_END);
-    if (app->titlebar_altposBtn)  SetAttrs(app->titlebar_altposBtn,  GA_Image, 0UL, TAG_END);
-    if (app->titlebar_depthBtn)   SetAttrs(app->titlebar_depthBtn,   GA_Image, 0UL, TAG_END);
+     //test flushThemeImagesFromButtons();
+
 
     /* Dispose whatever the previously active theme (or nothing, if none
      * was active) loaded, before deciding what replaces it.

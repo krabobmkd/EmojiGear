@@ -355,7 +355,7 @@ void FS3EStyle_ReleasePens(FS3EStyle *st)
 /* Image theme                                                          */
 /* ------------------------------------------------------------------ */
 
-static void free_tb_images(FS3EStyle *st)
+void free_tb_images(FS3EStyle *st)
 {
     int i;
     for (i = 0; i < FS3ESTYLE_TBBUTTON_COUNT; i++) {

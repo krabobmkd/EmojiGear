@@ -305,4 +305,5 @@ void FS3EApp_ApplyFontSettings_Delayed(void);
  * selection changes. */
 void FS3EApp_LoadTheme(const char *themeName);
 
+void flushThemeImagesFromButtons();
 #endif /* FRIENDSH3EP_H */

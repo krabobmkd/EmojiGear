@@ -818,6 +818,8 @@ BOOL FS3EThemeView_HandleInput(FS3EThemeView *tv)
 
                     FreeVec(app->settings.themeName);
                     app->settings.themeName = name ? ThemeStrDup(name) : NULL;
+
+                   //was test flushThemeImagesFromButtons();
                     FS3EApp_LoadTheme(app->settings.themeName);
                 }
                 break;
