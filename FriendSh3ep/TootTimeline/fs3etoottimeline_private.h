@@ -490,6 +490,8 @@ typedef struct TTLData {
     char   lastHotSpotMediaIds[96]; /* comma-joined, see TTIMELINE_LastHotSpotMediaIds --
                                       * 96 bytes comfortably covers TTL_POST_MAX_MEDIA (4)
                                       * ids at Mastodon's usual ~20-digit snowflake length */
+    char   lastHotSpotAcct[128];    /* @user@instance, see TTIMELINE_LastHotSpotAcct --
+                                      * same size as AVATAR_ACCT_SIZE (avatarimages.h) */
 
     /* ---- TTIMELINE_OldestPostId/NewestPostId (see TTL_OnGet) ----
      * Same "owned copy, not a borrowed pointer" reasoning as
@@ -750,11 +752,16 @@ void     ttl_notify       (Class *cl, Object *o, struct GadgetInfo *gi,
  * on a profile header -- pass FALSE for every other item kind. mediaIds is
  * copied into lastHotSpotMediaIds and carried as
  * TTIMELINE_LastHotSpotMediaIds the same way as data/postId -- NULL for
- * every item kind but a toot (see TTLPost.mediaIdsJoined). */
+ * every item kind but a toot (see TTLPost.mediaIdsJoined). acct is copied
+ * into lastHotSpotAcct and carried as TTIMELINE_LastHotSpotAcct the same
+ * way -- the owning post's original author @user@instance (TTLPost.acct),
+ * or NULL/"" if unknown; currently only meaningful for TTL_HOT_IMAGE (see
+ * fs3emediaview.c's "Save Media..." filename), but populated for every
+ * item kind that has a post since it costs nothing extra. */
 void     ttl_notify_hotspot(Class *cl, Object *o, struct GadgetInfo *gi,
                              UBYTE type, const char *data, ULONG dataLen,
                              const char *postId, BOOL favourited, BOOL following,
-                             const char *mediaIds);
+                             const char *mediaIds, const char *acct);
 /* only process have right to send render, ask with notify ProcessREfresh
  * void     ttl_render_self  (Class *cl, Object *o, struct GadgetInfo *gi);
 */

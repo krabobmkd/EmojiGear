@@ -161,6 +161,16 @@ typedef struct {
      * only image button.gadget needs (assigned to GA_Image). */
     struct Image *tbImages[FS3ESTYLE_TBBUTTON_COUNT];
 
+    /* The 4 built-in penmap.image glyphs used for whichever tbImages[]
+     * slot(s) aren't loaded from a theme -- i.e. the "no theme" state, and
+     * any slot a theme's tbbuttons.png doesn't cover. Unlike tbImages[],
+     * these are created once (FS3EStyle_CreateDefaultButtonImages, called
+     * from GenericOpenWindow) and persist for the whole app run, disposed
+     * only by FS3EStyle_FreeThemeImages() at final teardown -- see
+     * fs3etbdefaultbtn.h for why button.gadget needs a real image here
+     * instead of a literal NULL GA_Image. */
+    struct Image *tbDefaultImages[FS3ESTYLE_TBBUTTON_COUNT];
+
     /* Title bar button cell size, derived from tbbuttons.png as
      * (width / 2, height / FS3ESTYLE_TBBUTTON_COUNT) by
      * FS3EStyle_LoadThemeImages.  0 when no theme image is loaded --
@@ -309,15 +319,27 @@ void FS3EStyle_SetThemePath(FS3EStyle *st, const char *path);
  * whatever image they had before. */
 BOOL FS3EStyle_LoadThemeImages(FS3EStyle *st, struct Screen *scr);
 
-/* Push st->tbImages[] (GA_Image) plus BUTTON_Transparent onto the four
- * title bar button.gadget objects, in GID_TITLEBAR_CLOSE, ICONIFY, ALTPOS,
- * DEPTH order. A NULL gadget pointer is skipped, but otherwise this always
- * acts, whether or not that slot's image is currently loaded: NULL image
- * detaches GA_Image and falls back to a plain BVS_BUTTON bevel, not just
- * "leave whatever was there before" -- see the .c file's doc comment for
- * the dangling-pointer bug that was. Uses SetGdAttrs() (see
- * fs3eboopsimainwindow.h), which targets CurrentMainWindow when open or
- * falls back to a plain SetAttrs() otherwise. */
+/* Build the 4 built-in title bar button glyphs (st->tbDefaultImages[]) used
+ * whenever tbImages[] is unset, from the fixed pixel table in
+ * fs3etbdefaultbtn.c. Idempotent -- already-built slots are left alone, so
+ * this is safe to call on every window (re)open, not just the first; call
+ * it once a real screen is available (GenericOpenWindow), before
+ * FS3EStyle_SyncTitleBarButtons(). No-op if images/penmap.image isn't open
+ * or scr is NULL -- see fs3etbdefaultbtn.h. */
+void FS3EStyle_CreateDefaultButtonImages(FS3EStyle *st, struct Screen *scr);
+
+/* Push GA_Image plus BUTTON_Transparent onto the four title bar
+ * button.gadget objects, in GID_TITLEBAR_CLOSE, ICONIFY, ALTPOS, DEPTH
+ * order. A NULL gadget pointer is skipped, but otherwise this always acts,
+ * whether or not that slot has a theme image loaded: picks tbImages[N] if
+ * set, else falls back to tbDefaultImages[N] (see
+ * FS3EStyle_CreateDefaultButtonImages) -- never a literal NULL GA_Image on
+ * a gadget that has already had one attached, since button.gadget does not
+ * tolerate that transition (see fs3etbdefaultbtn.h). Only reverts to a
+ * plain BVS_BUTTON bevel with no image at all if tbDefaultImages[N] itself
+ * hasn't been built yet (e.g. images/penmap.image isn't open). Uses
+ * SetGdAttrs() (see fs3eboopsimainwindow.h), which targets CurrentMainWindow
+ * when open or falls back to a plain SetAttrs() otherwise. */
 void FS3EStyle_SyncTitleBarButtons(FS3EStyle *st,
                                     Object *closeBtn, Object *iconifyBtn,
                                     Object *altposBtn, Object *depthBtn);

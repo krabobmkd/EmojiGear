@@ -990,10 +990,10 @@ void ttl_notify(Class *cl, Object *o, struct GadgetInfo *gi,
 void ttl_notify_hotspot(Class *cl, Object *o, struct GadgetInfo *gi,
                          UBYTE type, const char *data, ULONG dataLen,
                          const char *postId, BOOL favourited, BOOL following,
-                         const char *mediaIds)
+                         const char *mediaIds, const char *acct)
 {
     TTLData         *inst = TTL_DATA(cl, o);
-    struct TagItem  tags[8];
+    struct TagItem  tags[9];
     struct opUpdate nmsg;
 
     /* Copy into the gadget-owned buffers first -- see the TTLData comment
@@ -1026,6 +1026,15 @@ void ttl_notify_hotspot(Class *cl, Object *o, struct GadgetInfo *gi,
         inst->lastHotSpotMediaIds[0] = '\0';
     }
 
+    if (acct && acct[0]) {
+        ULONG n = (ULONG)strlen(acct);
+        if (n >= sizeof(inst->lastHotSpotAcct)) n = sizeof(inst->lastHotSpotAcct) - 1;
+        CopyMem((APTR)acct, inst->lastHotSpotAcct, n);
+        inst->lastHotSpotAcct[n] = '\0';
+    } else {
+        inst->lastHotSpotAcct[0] = '\0';
+    }
+
     if (!inst->target) return;
 
     tags[0].ti_Tag  = GA_ID;
@@ -1042,7 +1051,9 @@ void ttl_notify_hotspot(Class *cl, Object *o, struct GadgetInfo *gi,
     tags[5].ti_Data = (ULONG)following;
     tags[6].ti_Tag  = TTIMELINE_LastHotSpotMediaIds;
     tags[6].ti_Data = inst->lastHotSpotMediaIds[0] ? (ULONG)inst->lastHotSpotMediaIds : 0;
-    tags[7].ti_Tag  = TAG_DONE;
+    tags[7].ti_Tag  = TTIMELINE_LastHotSpotAcct;
+    tags[7].ti_Data = inst->lastHotSpotAcct[0] ? (ULONG)inst->lastHotSpotAcct : 0;
+    tags[8].ti_Tag  = TAG_DONE;
 
     nmsg.MethodID     = OM_UPDATE;
     nmsg.opu_AttrList = (struct TagItem *)tags;

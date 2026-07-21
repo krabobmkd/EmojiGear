@@ -4,14 +4,26 @@
 /*
  * fs3emediaview.h - "FriendSh3ep Media" full-size attachment viewer.
  *
- * $VER: fs3emediaview.h 1.0 (13.07.2026)
+ * $VER: fs3emediaview.h 3.0 (17.07.2026)
  * Copyright (C) 2026 FriendSh3ep contributors. All rights reserved.
  *
  * Opened by clicking a toot's media preview rectangle (TTL_HOT_IMAGE --
- * see friendsh3ep.c's TTIMELINE_HotSpotNotify switch). Unlike every other
- * sub-window in this app (window.class + layout.gadget), this is a bare
- * Intuition window: there's nothing to lay out, just one picture.datatype
- * image blitted at its natural size -- no scale treatment, see bmimage.h.
+ * see friendsh3ep.c's TTIMELINE_HotSpotNotify switch). A classic BOOPSI
+ * window.class + layout.gadget sub-window, like every other sub-window in
+ * this app (fs3eloginview.c, fs3etootview.c, fs3eemojibox.c, ...).
+ *
+ * Rendering: a private "FS3EMediaPic" gadgetclass (MakeClass'd once,
+ * pattern copied from fs3eemojibox.c's FSEBGrid class), one persistent
+ * instance added ONCE to the mother layout via LAYOUT_AddChild and never
+ * removed for the life of the window. Showing a new attachment is just an
+ * attribute update (MEDIAPIC_BitMap/MaskPlane/Width/Height/Message,
+ * see fs3emediaview.c) that repaints the same gadget in place -- earlier
+ * attempts to represent the picture as a swappable layout child (a
+ * picture.datatype object detached/reattached via LAYOUT_ModifyChild +
+ * CHILD_ReplaceObject on every new URL) did not work reliably in practice,
+ * which is why this went back to a plain decoded BitMap (bmimage.h,
+ * picture.datatype used only as the decoder, same as every other themed
+ * image in this app) blitted by hand in GM_RENDER.
  *
  * The image shown is the same URL TootTimeline already displays a small
  * on-screen thumbnail of (TTLPost.mediaUrls[], Mastodon's "preview_url") --
@@ -25,29 +37,69 @@
  * fs3emediaview.c for the fetch/cache-hit details.
  *
  * Single reusable window instance: a second click while one is already
- * open reuses it (brought to front, image replaced) instead of opening a
+ * open reuses it (brought to front, picture replaced) instead of opening a
  * new one each time.
+ *
+ * A "Close" / "Save Media..." menu is attached the first time the window
+ * opens (classic GadTools menu strip, same pattern as fs3etootview.c's
+ * window-local "Toot" menu). "Save Media..." copies the already-downloaded
+ * cache file straight to disk (no re-fetch) under an ASL file requester
+ * defaulting to RAM: and a meaningful name: the poster's @user@instance if
+ * FS3EMediaView_ShowUrl() was given one, else the cache's hash-id
+ * filename, with the correct extension always appended from the file's
+ * own magic bytes (BmImage_SniffFormat) rather than trusted from the URL.
  */
 
 #include <exec/types.h>
 #include <intuition/intuition.h>
+#include <intuition/classusr.h>
+#include <intuition/classes.h>
 
 #include "bmimage.h"
 #include "network_fs3e/fs3enet.h"
 
 typedef struct FS3EMediaView {
-    struct Window *window;
-    BmImage        image;
-    char          *pendingUrl; /* AllocVec'd; NULL when nothing in flight */
-    BOOL           loading;
-    LONG           left, top;  /* remembered across closes (not persisted to disk) */
+    Object        *windowObj;  /* BOOPSI window object (persistent) */
+    struct Window *window;     /* Intuition window, valid while open */
+
+    LONG left, top; /* remembered across closes (not persisted to disk) */
+
+    /* Rendering: layout -> picGadget is the one and only child, for the
+     * whole life of the window (built once by mediaview_ensure_window(),
+     * never removed/replaced -- see the header comment above for why).
+     * picClass is MakeClass'd once and FreeClass'd in Dispose(), same
+     * lifecycle as fs3eemojibox.c's gridClass. */
+    Object *layout;
+    Class  *picClass;
+    Object *picGadget;
+
+    /* Currently decoded/remapped picture, if any (see bmimage.h).
+     * picGadget's MEDIAPIC_* attributes are pushed from this struct's
+     * bitmap/mask/width/height fields every time it (re)loads or is
+     * unloaded -- see fs3emediaview.c's mediaview_push_picture(). */
+    BmImage image;
+
+    char *pendingUrl; /* AllocVec'd; NULL when nothing in flight */
+    BOOL  loading;
+
+    /* "Close"/"Save Media..." menu -- built once, the first time the
+     * window opens (mediaview_create_menu), torn down in
+     * FS3EMediaView_Close (menu strips don't survive WM_CLOSE). */
+    struct Menu *menu;
+    APTR         menuVisualInfo;
+
+    /* Poster's @user@instance for the currently shown attachment, as
+     * passed to FS3EMediaView_ShowUrl(); "" if the caller didn't have one.
+     * Used by "Save Media..." to build a meaningful default filename --
+     * see fs3emediaview.c's mediaview_build_default_name(). */
+    char poster[128];
 } FS3EMediaView;
 
-/* Zeroes mv. Nothing to allocate up front -- the window and image are
- * created lazily by the first FS3EMediaView_ShowUrl() call. */
+/* Zeroes mv. Nothing to allocate up front -- the window/layout/picClass
+ * are created lazily by the first FS3EMediaView_ShowUrl() call. */
 void FS3EMediaView_Init(FS3EMediaView *mv);
 
-/* Frees the loaded image (if any) and closes the window if still open.
+/* Frees everything and closes the window if still open.
  * Call once at app teardown. */
 void FS3EMediaView_Dispose(FS3EMediaView *mv);
 
@@ -55,10 +107,15 @@ void FS3EMediaView_Dispose(FS3EMediaView *mv);
  * Opens (or brings to front) the "FriendSh3ep Media" window and starts
  * loading url's image -- see the header comment above for what "url"
  * means and the cache-hit/re-fetch behaviour. Returns immediately; the
- * image itself appears once FS3EMediaView_OnFetchReply() delivers it.
+ * picture itself appears once FS3EMediaView_OnFetchReply() delivers it.
  * No-op if url is NULL/empty.
+ *
+ * posterAcct is the attachment's poster @user@instance if the caller has
+ * one (see TTIMELINE_LastHotSpotAcct), copied into mv->poster for "Save
+ * Media..." to use as the default filename -- NULL/"" is fine, Save falls
+ * back to the cache's hash-id filename in that case.
  */
-void FS3EMediaView_ShowUrl(FS3EMediaView *mv, const char *url);
+void FS3EMediaView_ShowUrl(FS3EMediaView *mv, const char *url, const char *posterAcct);
 
 /*
  * Feed every FS3ENETQ_FETCH_IMAGE reply through here from friendsh3ep.c's

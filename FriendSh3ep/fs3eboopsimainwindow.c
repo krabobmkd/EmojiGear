@@ -138,6 +138,14 @@ static void GenericOpenWindow(FS3EMainWindow *mw, Object *window_obj)
      */
     FS3EStyle_ApplyColors(&app->style, CurrentMainScreen);
 
+    /* Build the 4 built-in title bar button glyphs (idempotent -- a no-op
+     * past the very first successful call) so FS3EStyle_SyncTitleBarButtons
+     * below never has to fall back to a literal NULL GA_Image for "no
+     * theme" -- see FS3EStyle_CreateDefaultButtonImages' doc comment for
+     * why button.gadget doesn't tolerate that once an image has been
+     * attached at least once. */
+    FS3EStyle_CreateDefaultButtonImages(&app->style, CurrentMainScreen);
+
     /* Button cell size may have changed (theme-dependent), so this is
      * followed by a full relayout (WM_RETHINK below). */
     FS3EMain_SyncStyleToWidgets();

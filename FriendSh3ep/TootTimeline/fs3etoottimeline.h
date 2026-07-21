@@ -91,6 +91,13 @@
  * needs these ids to resend as media_ids[] on a PUT edit so existing
  * attachments survive a text-only edit (see FS3ENetStatus.fmas_MediaIds). */
 #define TTIMELINE_LastHotSpotMediaIds (TTIMELINE_Base + 30)
+/* [G] STRPTR: original author @user@instance (see TTLPostSetup.acct) of
+ * the post the most recently activated hot-spot belongs to, or NULL/"" if
+ * unknown. Same buffer/pointer as the accompanying TTIMELINE_HotSpotNotify
+ * notification's tag of the same name -- currently only read for
+ * TTL_HOT_IMAGE, to build a meaningful default filename for "Save
+ * Media..." (see fs3emediaview.c). */
+#define TTIMELINE_LastHotSpotAcct     (TTIMELINE_Base + 32)
 /* [G] STRPTR: Mastodon status id (see TTLPostSetup.postId) of the active
  * channel's newest real post -- skips any non-toot pinned boundary row
  * (e.g. a "look for something new" item, which has no postId; see
@@ -176,10 +183,11 @@
  * OM_NOTIFY's tag list also carries TTIMELINE_LastHotSpotString (the
  * hot-spot's data string, e.g. an @handle/#tag/URL, or NULL),
  * TTIMELINE_LastHotSpotPostId (that post's Mastodon status id, or NULL),
- * and TTIMELINE_LastHotSpotMediaIds (that post's comma-joined attachment
- * ids, or NULL) -- read them via FindTagItem on the notify message rather
- * than a separate GetAttr call. See ttl_notify_hotspot() in
- * fs3etoottimeline_tiles.c. */
+ * TTIMELINE_LastHotSpotMediaIds (that post's comma-joined attachment
+ * ids, or NULL), and TTIMELINE_LastHotSpotAcct (that post's original
+ * author @user@instance, or NULL) -- read them via FindTagItem on the
+ * notify message rather than a separate GetAttr call. See
+ * ttl_notify_hotspot() in fs3etoottimeline_tiles.c. */
 #define TTIMELINE_HotSpotNotify       (TTIMELINE_Base + 24)
 /* [G] BOOL: same OM_NOTIFY tag list as TTIMELINE_HotSpotNotify above --
  * TRUE if the post the just-activated hot-spot belongs to is currently

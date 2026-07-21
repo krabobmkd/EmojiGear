@@ -15,6 +15,7 @@
 
 #include "compilers.h"
 #include "fs3estyle.h"
+#include "fs3etbdefaultbtn.h"
 #include "patch9.h"
 #include "fs3eboopsimainwindow.h"
 #include "stylefile.h"
@@ -290,6 +291,7 @@ void FS3EStyle_InitDefaults(FS3EStyle *st)
      * available (FS3EStyle_LoadThemeImages, called from GenericOpenWindow). */
     memset(&st->tbButtons, 0, sizeof(st->tbButtons));
     memset(st->tbImages, 0, sizeof(st->tbImages));
+    memset(st->tbDefaultImages, 0, sizeof(st->tbDefaultImages));
     st->tbButtonWidth  = 0;
     st->tbButtonHeight = 0;
     st->themePath = NULL;
@@ -687,6 +689,12 @@ BOOL FS3EStyle_LoadThemeImages(FS3EStyle *st, struct Screen *scr)
     return TRUE;
 }
 
+void FS3EStyle_CreateDefaultButtonImages(FS3EStyle *st, struct Screen *scr)
+{
+    if (!st) return;
+    FS3ETBDefaultBtn_Create(st->tbDefaultImages, scr);
+}
+
 /* Always acts, whether or not st->tbImages[N] is currently loaded --
  * unlike an earlier version of this function, which only ever attached an
  * image and left a button's GA_Image/BUTTON_Transparent/BUTTON_BevelStyle
@@ -694,41 +702,54 @@ BOOL FS3EStyle_LoadThemeImages(FS3EStyle *st, struct Screen *scr)
  * pointing at whatever FS3EStyle_UnloadThemeImages() had just disposed
  * the moment "no theme" was selected (see FS3EApp_LoadTheme in
  * friendsh3ep.c) -- a live dangling pointer on an already-open gadget.
- * When tbImages[N] is NULL, this detaches to a plain BVS_BUTTON bevel
- * (button.gadget's own normal look) instead, matching how these buttons
- * render before any theme is ever loaded (see their creation in
- * friendsh3ep.c: no GA_Image, no GA_Text). */
+ * When tbImages[N] is NULL, this now falls back to tbDefaultImages[N]
+ * instead of a literal NULL GA_Image -- button.gadget does not tolerate
+ * going from a real image back to NULL on an already-live gadget (see
+ * fs3etbdefaultbtn.h). Only when tbDefaultImages[N] itself hasn't been
+ * built yet (FS3EStyle_CreateDefaultButtonImages not called yet, or
+ * images/penmap.image unavailable) does this fall all the way back to a
+ * plain BVS_BUTTON bevel with no image, matching how these buttons render
+ * before any image is ever attached (see their creation in friendsh3ep.c:
+ * no GA_Image, no GA_Text). */
 void FS3EStyle_SyncTitleBarButtons(FS3EStyle *st,
                                     Object *closeBtn, Object *iconifyBtn,
                                     Object *altposBtn, Object *depthBtn)
 {
+    struct Image *img;
+
     if (!st) return;
 
-    if (closeBtn)
+    if (closeBtn) {
+        img = st->tbImages[0] ? st->tbImages[0] : st->tbDefaultImages[0];
         SetGdAttrs(closeBtn,
-            GA_Image, (ULONG)st->tbImages[0],
-            BUTTON_BevelStyle, (ULONG)(st->tbImages[0] ? BVS_NONE : BVS_BUTTON),
-            BUTTON_Transparent, (ULONG)(st->tbImages[0] ? TRUE : FALSE), TAG_DONE);
+            GA_Image, (ULONG)img,
+            BUTTON_BevelStyle, (ULONG)(img ? BVS_NONE : BVS_BUTTON),
+            BUTTON_Transparent, (ULONG)(img ? TRUE : FALSE), TAG_DONE);
+    }
 
-    if (iconifyBtn)
+    if (iconifyBtn) {
+        img = st->tbImages[1] ? st->tbImages[1] : st->tbDefaultImages[1];
         SetGdAttrs(iconifyBtn,
-            GA_Image, (ULONG)st->tbImages[1],
-            BUTTON_BevelStyle, (ULONG)(st->tbImages[1] ? BVS_NONE : BVS_BUTTON),
-            BUTTON_Transparent, (ULONG)(st->tbImages[1] ? TRUE : FALSE), TAG_DONE);
+            GA_Image, (ULONG)img,
+            BUTTON_BevelStyle, (ULONG)(img ? BVS_NONE : BVS_BUTTON),
+            BUTTON_Transparent, (ULONG)(img ? TRUE : FALSE), TAG_DONE);
+    }
 
-    if (altposBtn)
+    if (altposBtn) {
+        img = st->tbImages[2] ? st->tbImages[2] : st->tbDefaultImages[2];
         SetGdAttrs(altposBtn,
-            GA_Image, (ULONG)st->tbImages[2],
-            BUTTON_BevelStyle, (ULONG)(st->tbImages[2] ? BVS_NONE : BVS_BUTTON),
-            BUTTON_Transparent, (ULONG)(st->tbImages[2] ? TRUE : FALSE), TAG_DONE);
+            GA_Image, (ULONG)img,
+            BUTTON_BevelStyle, (ULONG)(img ? BVS_NONE : BVS_BUTTON),
+            BUTTON_Transparent, (ULONG)(img ? TRUE : FALSE), TAG_DONE);
+    }
 
-    if (depthBtn)
+    if (depthBtn) {
+        img = st->tbImages[3] ? st->tbImages[3] : st->tbDefaultImages[3];
         SetGdAttrs(depthBtn,
-            GA_Image, (ULONG)st->tbImages[3],
-            BUTTON_BevelStyle, (ULONG)(st->tbImages[3] ? BVS_NONE : BVS_BUTTON),
-            BUTTON_Transparent, (ULONG)(st->tbImages[3] ? TRUE : FALSE), TAG_DONE);
-
-
+            GA_Image, (ULONG)img,
+            BUTTON_BevelStyle, (ULONG)(img ? BVS_NONE : BVS_BUTTON),
+            BUTTON_Transparent, (ULONG)(img ? TRUE : FALSE), TAG_DONE);
+    }
 }
 
 /* Push UBTP9_Patch9 onto accountBtn (FS3ESTYLE_PATCH9_BT1) and newtootBtn
@@ -791,6 +812,11 @@ void FS3EStyle_FreeThemeImages(FS3EStyle *st)
     int i;
     if (!st) return;
     FS3EStyle_UnloadThemeImages(st);
+    /* tbDefaultImages[] (the built-in title bar glyphs from
+     * FS3EStyle_CreateDefaultButtonImages) are NOT touched by
+     * FS3EStyle_UnloadThemeImages() above -- they must survive every theme
+     * switch and only go away here, at final app exit. */
+    FS3ETBDefaultBtn_Dispose(st->tbDefaultImages);
     BmImage_Free(&st->tbButtons);
     BmImage_Free(&st->tbBg);
     BmImage_Free(&st->titlebarTitle);

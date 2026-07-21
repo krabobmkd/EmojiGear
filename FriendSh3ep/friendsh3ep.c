@@ -118,6 +118,7 @@
 
 #include "network_fs3e/fs3enet.h"
 #include "fs3ethumb.h"
+#include "fs3eaudio.h"
 
 const char *pVersion = "$VER: FriendSh3ep " FRIENDSH3EP_VERSION;
 
@@ -191,6 +192,9 @@ struct Library *BevelBase = NULL;
 /* images/bitmap.image – optional, used by fs3estyle.c for themed title bar
  * button images (see FS3EStyle_LoadThemeImages) */
 struct Library *BitMapBase = NULL;
+/* images/penmap.image – optional, used by fs3etbdefaultbtn.c for the 4
+ * built-in title bar button glyphs (see FS3EStyle_CreateDefaultButtonImages) */
+struct Library *PenMapBase = NULL;
 
 /* this one is optional and can be NULL */
 struct Library *CyberGfxBase = NULL;
@@ -218,6 +222,7 @@ static LibraryEntry libraryTable[] = {
     {"gadgets/string.gadget",       42, &StringBase},
     {"gadgets/texteditor.gadget",   15, &TextFieldBase}, /* os3.9 is 15 */
     {"images/label.image",          42, &LabelBase},
+    {"images/penmap.image",          42, &PenMapBase},
     {"gadgets/checkbox.gadget",      42, &CheckboxBase},
     {"gadgets/chooser.gadget",       44, &ChooserBase},
     {"gadgets/getfile.gadget",       42, &GetFileBase},
@@ -893,6 +898,13 @@ int main(int argc, char **argv)
 
     app->thumbRequestPort = FS3EThumb_Start();
 
+ printf("FS3EAudio_Start\n");
+    /* --- Audio (MP3/AHI) process ------------------------------------------ */
+    app->audioReplyPort = CreateMsgPort();
+    if (!app->audioReplyPort) cleanexit("Can't create audio reply port");
+
+    app->audioRequestPort = FS3EAudio_Start();
+
  printf("FS3EApp_MachineKey\n");
     /* Debug: print the derived machine key unconditionally, even before any
      * account.dat exists to trigger it lazily via FS3EApp_MachineKey() --
@@ -1251,6 +1263,7 @@ int main(int argc, char **argv)
                 (1L << app->app_port->mp_SigBit) |
                 (app->netReplyPort ? (1L << app->netReplyPort->mp_SigBit) : 0) |
                 (app->thumbReplyPort ? (1L << app->thumbReplyPort->mp_SigBit) : 0) |
+                (app->audioReplyPort ? (1L << app->audioReplyPort->mp_SigBit) : 0) |
                 (SIPCPort ? (1L << SIPCPort->mp_SigBit) : 0) |
                 SIGBREAKF_CTRL_C |
                 SIGBREAKF_CTRL_F;
@@ -1437,6 +1450,20 @@ int main(int argc, char **argv)
                 while ((thumbMsg = (FS3EThumbMessage *)GetMsg(app->thumbReplyPort)) != NULL) {
                     FS3EApp_HandleThumbReply(thumbMsg);
                     FreeVec(thumbMsg);
+                }
+            }
+
+            /* Drain audio-process replies/notifies -- generic player only
+             * for now (see fs3eaudio.h), nothing sends FS3EAUDIOQ_PLAY yet,
+             * so there is nothing to act on here besides not leaking the
+             * message; still drained unconditionally the same way the other
+             * processes' reply ports are, ready for toot-audio wiring later. */
+            if (app->audioReplyPort &&
+                (currentSignals & (1L << app->audioReplyPort->mp_SigBit)))
+            {
+                FS3EAudioMessage *audioMsg;
+                while ((audioMsg = (FS3EAudioMessage *)GetMsg(app->audioReplyPort)) != NULL) {
+                    FreeVec(audioMsg);
                 }
             }
 
@@ -1744,6 +1771,7 @@ int main(int argc, char **argv)
                                     ULONG hotSpotType = ptag->ti_Data;
                                     const char *hotSpotString =NULL,*hotSpotId=NULL;
                                     const char *hotSpotMediaIds = NULL;
+                                    const char *hotSpotAcct = NULL;
                                     BOOL hotSpotFavourited = FALSE;
                                     BOOL hotSpotFollowing = FALSE;
 
@@ -1755,6 +1783,9 @@ int main(int argc, char **argv)
 
                                     ptag = FindTagItem(TTIMELINE_LastHotSpotMediaIds, msg);
                                     if(ptag) hotSpotMediaIds = (const char *)ptag->ti_Data;
+
+                                    ptag = FindTagItem(TTIMELINE_LastHotSpotAcct, msg);
+                                    if(ptag) hotSpotAcct = (const char *)ptag->ti_Data;
 
                                     ptag = FindTagItem(TTIMELINE_LastHotSpotFavourited, msg);
                                     if(ptag) hotSpotFavourited = (BOOL)ptag->ti_Data;
@@ -1854,9 +1885,14 @@ int main(int argc, char **argv)
                                              * attachment's URL (see
                                              * ttl_hs_add's TTL_HOT_IMAGE
                                              * call in fs3etoottimeline_posts.c).
-                                             * Opens/reuses the "FriendSh3ep
+                                             * hotSpotAcct (TTIMELINE_LastHotSpotAcct)
+                                             * is the poster's @user@instance,
+                                             * used by "Save Media..." to
+                                             * build a meaningful filename --
+                                             * see fs3emediaview.c. Opens/
+                                             * reuses the "FriendSh3ep
                                              * Media" viewer window. */
-                                            FS3EMediaView_ShowUrl(&app->mediaView, hotSpotString);
+                                            FS3EMediaView_ShowUrl(&app->mediaView, hotSpotString, hotSpotAcct);
                                             break;
 
                                         case TTL_HOT_LOAD_NEWER:
@@ -2094,9 +2130,6 @@ void exitclose(void)
 
         FS3EStyle_ReleaseDrawContexts(&app->style);
         FS3EStyle_FreeThemeImages(&app->style);
-wait2sec();
-        if (BevelBase)  { CloseLibrary(BevelBase);  BevelBase  = NULL; }
-        if (BitMapBase) { CloseLibrary(BitMapBase); BitMapBase = NULL; }
 
 wait2sec();
         if (app->netRequestPort)
@@ -2161,6 +2194,31 @@ wait2sec();
             app->thumbReplyPort = NULL;
         }
 wait2sec();
+        if (app->audioRequestPort)
+        {
+            /* Same dedicated-port reasoning as netRequestPort/thumbRequestPort
+             * above -- FS3EAudio_Stop() also stops any in-progress playback
+             * before the process actually exits (see FS3EAudio_ProcEntry's
+             * FS3EAUDIOQ_SHUTDOWN case). */
+            struct MsgPort *stopReplyPort = CreateMsgPort();
+            if (stopReplyPort) {
+wait2sec();
+                FS3EAudio_Stop(app->audioRequestPort, stopReplyPort);
+wait2sec();
+                DeleteMsgPort(stopReplyPort);
+            }
+        }
+wait2sec();
+        /* Drain and free any remaining async replies */
+        if (app->audioReplyPort) {
+            FS3EAudioMessage *audioMsg;
+            while ((audioMsg = (FS3EAudioMessage *)GetMsg(app->audioReplyPort)) != NULL) {
+                FreeVec(audioMsg);
+            }
+            DeleteMsgPort(app->audioReplyPort);
+            app->audioReplyPort = NULL;
+        }
+wait2sec();
         FS3EApp_FreeLoginState();
         FS3EApp_FreeAccount();
         if (app->searchProfileAcct)      { FreeVec(app->searchProfileAcct);      app->searchProfileAcct      = NULL; }
@@ -2183,6 +2241,9 @@ wait2sec();
         CloseLibrary((struct Library *)LocaleBase);
         LocaleBase = NULL;
     }
+
+    if (BevelBase)  { CloseLibrary(BevelBase);  BevelBase  = NULL; }
+    if (BitMapBase) { CloseLibrary(BitMapBase); BitMapBase = NULL; }
 
     {
         LibraryEntry *entry;

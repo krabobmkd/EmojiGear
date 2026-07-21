@@ -140,8 +140,8 @@ struct App {
     FS3ESettingsView settingsView;
     FS3EEmojiBoxWindow emojiBoxWindow;
 
-    /* Bare-Intuition-window full-size media viewer (see fs3emediaview.h),
-     * opened by clicking a toot's media preview. */
+    /* window.class/layout.gadget full-size media viewer (see
+     * fs3emediaview.h), opened by clicking a toot's media preview. */
     FS3EMediaView  mediaView;
 
     /* fs3enet ports: requestPort send-only; replyPort receives async replies */
@@ -153,6 +153,13 @@ struct App {
      * process. */
     struct MsgPort *thumbRequestPort;
     struct MsgPort *thumbReplyPort;
+
+    /* fs3eaudio ports: same shape again, talking to the MP3/AHI playback
+     * process (see fs3eaudio.h). Generic player only for now -- nothing
+     * yet requests FS3EAUDIOQ_PLAY (no toot-audio UI wiring), so
+     * audioReplyPort is only drained to avoid leaking messages. */
+    struct MsgPort *audioRequestPort;
+    struct MsgPort *audioReplyPort;
 
     /* Login two-phase state machine (FS3ELoginPhase) */
     ULONG  loginPhase;

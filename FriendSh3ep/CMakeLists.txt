@@ -30,6 +30,7 @@ set(FRIENDSH3EP_SOURCES
     clipboard.c
     patch9.c
     stylefile.c
+    fs3etbdefaultbtn.c
     friendsh3ep.c
     fs3erequests.c
     fs3eaccounts.c
@@ -48,6 +49,7 @@ set(FRIENDSH3EP_SOURCES
     fs3eaction.c
     fs3esettings.c
     fs3emachineid.c
+    fs3eaudio.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../EmojiGear/tooltypepref.c
     UniButtonP9/unibuttonp9.c
     UniButtonP9/unibuttonp9_dispatch.c
@@ -80,6 +82,7 @@ set(FRIENDSH3EP_HEADERS
     clipboard.h
     patch9.h
     stylefile.h
+    fs3etbdefaultbtn.h
     friendsh3ep.h
     fs3erequests.h
     fs3eaccounts.h
@@ -98,6 +101,7 @@ set(FRIENDSH3EP_HEADERS
     fs3eaction.h
     fs3esettings.h
     fs3emachineid.h
+    fs3eaudio.h
     fs3egadgetid.h
     compilers.h
     bdbprintf.h

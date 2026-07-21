@@ -139,7 +139,8 @@ static void ttl_activate_hotspot(TTLData *inst, Class *cl, Object *o,
                                   TTLPost *post, TTLHotSpot *hs)
 {
     ttl_notify_hotspot(cl, o, gi, hs->type, hs->data, hs->dataLen, post->postId,
-                        post->favourited, post->following, post->mediaIdsJoined);
+                        post->favourited, post->following, post->mediaIdsJoined,
+                        post->acct);
 
     if (post->cls && post->cls->activate)
         post->cls->activate(inst, cl, o, gi, post, hs);
