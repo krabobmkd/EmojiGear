@@ -166,6 +166,24 @@
  * Silently a no-op if no channel currently has that postId (already
  * evicted, or the reply raced a ClearPosts) -- see TTL_HOT_DELETE. */
 #define TTIMELINE_RemovePost          (TTIMELINE_Base + 31)
+/* [S] TTLVisiblePosts*: fills in (caller-owned, AllocVec'd copies -- see
+ * TTLVisiblePostEntry below) the ids of every post currently on-screen
+ * (scrollY..scrollY+gadHeight) in the ACTIVE channel only, up to
+ * TTL_VISIBLE_POSTS_MAX. Read-only query, doesn't mutate anything -- see
+ * FS3EApp_RefreshVisibleToots(), the F5 "refresh what's on screen" feature. */
+#define TTIMELINE_GetVisiblePosts     (TTIMELINE_Base + 33)
+/* [S] TTLPostSetup*: an already-displayed post's data was just re-fetched
+ * from the server (F5 refresh) -- every channel's copy of the post with a
+ * matching postId is patched from setup's status-derived fields (content,
+ * author display, avatar, media, counts, poll), NOT its notification-
+ * specific fields (notifType/notifActorName/notifActorAcct/notifStatusId
+ * are left untouched -- a plain status refetch carries none of that) or
+ * isThreadReply/viewModeBits (placement, not content). Forces a full
+ * relayout (content/media changes can grow or shrink height, unlike
+ * TTIMELINE_UpdatePost's small deltas) -- see ttl_post_refresh_fields().
+ * Silently a no-op if no channel currently has that postId, same as
+ * TTIMELINE_UpdatePost/RemovePost. */
+#define TTIMELINE_RefreshPost         (TTIMELINE_Base + 34)
 
 /* ------------------------------------------------------------------ */
 /* Notification tags  (sent to ICA_TARGET via OM_NOTIFY)               */
@@ -300,6 +318,30 @@ typedef struct TTLPostSetup {
                                 * added to more than one channel at once,
                                 * as an independent copy per channel. */
 
+    /* TRUE: this is an account row (search results, followers/following
+     * list), not a toot -- TTIMELINE_AddPost/AppendPost dispatch to
+     * ttl_account_row_alloc() instead of ttl_post_alloc()/
+     * ttl_notif_follow_alloc(), checked before notifType. Only username/
+     * acct/postId are read; every other TTLPostSetup field is ignored for
+     * this kind of row (no avatar, no body, no counts, no action bar --
+     * see TTLAccountRow_Class in fs3etoottimeline_accountrow.c). postId
+     * doubles as this row's Mastodon *account* id here (same convention
+     * TTLProfileHeaderSetup.accountId/TTLPost.postId already use on the
+     * profile header) -- it's the match key TTL_POSTUPD_RELATIONSHIP
+     * uses to patch in the "Follows you" badge once a batch relationship
+     * fetch replies. */
+    BOOL        isAccountRow;
+
+    /* TRUE: this is a plain informational title row (e.g. "Followers for
+     * @user"), pinned as the topmost element of a followers/following
+     * list so it's clear whose list is being shown -- checked BEFORE
+     * isAccountRow, dispatches to ttl_list_title_alloc() instead. Only
+     * `body` is read (the already-formatted title text); every other
+     * TTLPostSetup field is ignored, same "wholly different kind of row"
+     * treatment isAccountRow gets. Not interactive (no hot-spot), not
+     * an account row -- see TTLListTitle_Class in fs3etoottimeline_posts.c. */
+    BOOL        isListTitle;
+
     /* Action-bar counts/state, shown next to the Reply/Boost/Fave buttons
      * and (favourited) toggling the Fave glyph between empty/full star --
      * see ttl_build_action_labels() in fs3etoottimeline_tiles.c. */
@@ -352,6 +394,17 @@ typedef struct TTLPostSetup {
     ULONG       pollVotesCount;
     BOOL        pollExpired;
     BOOL        pollMultiple;
+
+    /* Link preview card -- server-generated (see FS3ENetStatus.fmas_HasCard's
+     * doc comment in fs3enet.h), independent of mediaCount/pollOptionCount
+     * above -- NOT mutually exclusive with either. hasCard==FALSE means the
+     * other cardXxx fields below are unused. */
+    BOOL        hasCard;
+    const char *cardUrl;          /* the linked article's own URL */
+    const char *cardTitle;
+    const char *cardDescription;
+    const char *cardProviderName; /* site name, e.g. "The Verge" */
+    const char *cardImageUrl;     /* "" if the card has no image */
 } TTLPostSetup;
 
 /* ------------------------------------------------------------------ */
@@ -375,13 +428,52 @@ typedef struct TTLPostSetup {
 
 #define TTL_POSTUPD_FAVOURITED (1UL << 0) /* apply favourited + delta favouritesCount by ±1 */
 #define TTL_POSTUPD_REBLOGGED  (1UL << 1) /* apply reblogged  + delta reblogsCount  by ±1 */
+#define TTL_POSTUPD_REPLIES    (1UL << 2) /* bump repliesCount by +1 -- a reply to this post
+                                            * was just successfully posted. Unlike the two
+                                            * flags above, this can change the post's height
+                                            * (repliesCount 0->1 reserves the thread-indicator
+                                            * row, see TTL_HOT_THREAD/threadRowY), so it forces
+                                            * a full relayout rather than an in-place patch --
+                                            * see this flag's handling in TTIMELINE_UpdatePost. */
+#define TTL_POSTUPD_RELATIONSHIP (1UL << 3) /* apply following + followedBy -- postId here is
+                                            * an *account* id, not a status id (see
+                                            * TTLAccountRow_Class's postId doubling as account
+                                            * id). Used to patch in the "Follows you" badge on
+                                            * an account-row list item once a batch
+                                            * FS3ENETQ_RELATIONSHIPS reply lands; doesn't affect
+                                            * row height, only a redraw. */
 
 typedef struct TTLPostUpdate {
     const char *postId;      /* which post (every channel's copy is updated) */
     ULONG       flags;       /* TTL_POSTUPD_* -- which fields below to apply */
     BOOL        favourited;  /* new state; used iff flags & TTL_POSTUPD_FAVOURITED */
     BOOL        reblogged;   /* new state; used iff flags & TTL_POSTUPD_REBLOGGED */
+    BOOL        following;   /* new state; used iff flags & TTL_POSTUPD_RELATIONSHIP */
+    BOOL        followedBy;  /* new state; used iff flags & TTL_POSTUPD_RELATIONSHIP */
 } TTLPostUpdate;
+
+/* ------------------------------------------------------------------ */
+/* Visible-posts query descriptor (passed via TTIMELINE_GetVisiblePosts) */
+/* Caller zeroes the struct, gadget fills entries[]/count in place; the  */
+/* gadget AllocVec's a copy of each id string, so the caller must        */
+/* FreeVec() every non-NULL postId/statusId once done with them -- unlike*/
+/* every other tag in this file, data flows gadget -> caller here.       */
+/* ------------------------------------------------------------------ */
+
+#define TTL_VISIBLE_POSTS_MAX 24 /* generous cap for one screen's worth of visible toots */
+
+typedef struct TTLVisiblePostEntry {
+    char *postId;   /* TTLPost.postId -- match key for a later TTIMELINE_RefreshPost */
+    char *statusId; /* actual Mastodon status id to GET -- same as postId except in the
+                      * notifications view (see TTLPostSetup.notifStatusId); NULL/""
+                      * if this row has no status to refresh (e.g. a bare follow
+                      * notification) -- such rows are simply not added to entries[]. */
+} TTLVisiblePostEntry;
+
+typedef struct TTLVisiblePosts {
+    TTLVisiblePostEntry entries[TTL_VISIBLE_POSTS_MAX];
+    ULONG               count;
+} TTLVisiblePosts;
 
 /* ------------------------------------------------------------------ */
 /* Profile header descriptor (passed via TTIMELINE_ShowProfile)        */
@@ -473,6 +565,16 @@ typedef struct TTLProfileFollowUpdate {
                                  * table). Account-only (follow/follow_request) notification rows
                                  * are a different item
                                  * class (TTLNotifFollow_Class) and reuse TTL_HOT_AVATAR instead. */
+#define TTL_HOT_CARD         18 /* link-preview card rectangle (see TTLPostSetup.hasCard/cardXxx) --
+                                 * data = cardUrl. Currently a no-op on activation -- opening the
+                                 * linked URL (clipboard copy / optional browser-launch library) is
+                                 * deferred to a later session, same as TTL_HOT_PLAY_AUDIO's stub. */
+#define TTL_HOT_FOLLOWERS_LIST 19 /* profile header's "N Followers" half of its counts line
+                                 * (see ttl_profile_header_build_hotspots) -- data/postId are
+                                 * NULL, the handler reads app->searchProfileAccountId
+                                 * app-side (same as TTL_HOT_FOLLOW) and calls
+                                 * FS3EApp_ShowFollowers(). */
+#define TTL_HOT_FOLLOWING_LIST 20 /* same line's "N Following" half; calls FS3EApp_ShowFollowing(). */
 
 /* Opaque handle; cast to TTLHotSpot* from private header if needed */
 typedef struct TTLHotSpot TTLHotSpot;

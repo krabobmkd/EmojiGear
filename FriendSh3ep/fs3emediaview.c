@@ -582,6 +582,8 @@ void FS3EMediaView_ShowUrl(FS3EMediaView *mv, const char *url, const char *poste
 
     if (mv->pendingUrl) { FreeVec(mv->pendingUrl); mv->pendingUrl = NULL; }
     mv->pendingUrl = mediaview_strdup(url);
+    mv->progressBytesSoFar = 0;
+    mv->progressTotalBytes = 0;
 
     BmImage_Free(&mv->image);
     mv->loading = TRUE;
@@ -590,7 +592,7 @@ void FS3EMediaView_ShowUrl(FS3EMediaView *mv, const char *url, const char *poste
     /* keepOriginal=TRUE: an explicit click means the user wants this image,
      * worth persisting from now on even if "Keep big thumbnails" is off --
      * see fs3emediaview.h's header comment. */
-    req = FS3ENetFetchImageReq_Alloc(url, url, FS3E_CACHE_SUBDIR_THUMBNAILS, TRUE);
+    req = FS3ENetFetchImageReq_Alloc(url, url, FS3E_CACHE_SUBDIR_THUMBNAILS, TRUE, TRUE);
     if (req) FS3EApp_NetSend(FS3ENETQ_FETCH_IMAGE, req, sizeof(*req));
 }
 
@@ -625,6 +627,16 @@ void FS3EMediaView_OnFetchReply(FS3EMediaView *mv, ULONG result,
         BmImage_Free(&mv->image);
         mediaview_push_picture(mv, "Couldn't load media.");
     }
+}
+
+void FS3EMediaView_OnFetchProgress(FS3EMediaView *mv, const char *key,
+                                    ULONG bytesSoFar, ULONG totalBytes)
+{
+    if (!mv || !mv->pendingUrl || !key) return;
+    if (strcmp(key, mv->pendingUrl) != 0) return;
+
+    mv->progressBytesSoFar = bytesSoFar;
+    mv->progressTotalBytes = totalBytes;
 }
 
 void FS3EMediaView_Close(FS3EMediaView *mv)

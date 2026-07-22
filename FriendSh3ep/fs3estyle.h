@@ -82,6 +82,11 @@ typedef enum {
     FS3E_COLOR_TEXT,                /* main body text */
     FS3E_COLOR_TEXT_DIM,            /* secondary text: @acct, timestamps */
     FS3E_COLOR_ACTION_TEXT,         /* Reply / Boost / Fave button labels */
+    FS3E_COLOR_CARD_BG,             /* link preview card panel background (see TTL_HOT_CARD) --
+                                      * own role, deliberately not reusing PROFILE_HEADER_BG,
+                                      * so a theme can tune the two independently even though
+                                      * they default to the same look */
+    FS3E_COLOR_CARD_BORDER,         /* link preview card's 1px border */
 
     /* UniButtonBGBM image-backed nav buttons (btbgbm.* in style.txt) --
      * not wired to any gadget yet, see FS3EStyle_LoadThemeImages(). */

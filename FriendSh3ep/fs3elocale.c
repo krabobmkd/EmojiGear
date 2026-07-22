@@ -200,6 +200,11 @@ static const char *defaultStrings[MSG_COUNT] = {
     "Searching the elephant's memory...",
     /* MSG_SEARCHV_WAIT4 */
     "Combing timelines, one toot at a time...",
+
+    /* MSG_SEARCH_TYPE_WORD */
+    "Word",
+    /* MSG_SEARCH_TYPE_PEOPLE */
+    "People",
 };
 
 /* LocaleBase declared in friendsh3ep.c */

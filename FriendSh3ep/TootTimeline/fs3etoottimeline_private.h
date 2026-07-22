@@ -99,6 +99,20 @@ extern WORD windowResizeLastTargetH;  /* last height sent to SizeWindow */
 #define TTL_PREVIEW_BASE_H      150
 #define TTL_AVATAR_BASE_SIZE     35
 
+/* Link preview card box: same width scale as the media preview rect above
+ * (TTL_CARD_BASE_W == TTL_PREVIEW_BASE_W, deliberately) so a thumbnail
+ * stacked above a card in the side-by-side right column never needs
+ * independent width reconciliation -- only heights differ. Height is NOT
+ * a fixed constant (unlike the preview rect): it's computed dynamically in
+ * ttl_toot_layout from the image strip (scaled by TTL_CARD_IMAGE_BASE_H,
+ * same ratio as the avatar/preview) plus however many real wrapped text
+ * rows the title/description actually need, capped at
+ * TTL_CARD_TITLE_MAX_ROWS/TTL_CARD_DESC_MAX_ROWS. */
+#define TTL_CARD_BASE_W          TTL_PREVIEW_BASE_W
+#define TTL_CARD_IMAGE_BASE_H     90
+#define TTL_CARD_TITLE_MAX_ROWS    2
+#define TTL_CARD_DESC_MAX_ROWS     2
+
 /* Poll ("survey") results block: fixed pixel height for each option's
  * proportional result bar (drawn below its title/percentage text row)
  * and the gap before the next option -- not font-dependent, same
@@ -329,21 +343,67 @@ typedef struct TTLPost {
     char  *notifActorAcct; /* AllocVec'd copy */
     char  *notifStatusId;  /* AllocVec'd copy */
 
-    /* TTLProfileHeader_Class only: follower/following counts and the
-     * connected user's own following state (see TTLProfileHeaderSetup).
-     * Unused (FALSE/0) on a toot. postId doubles as this row's Mastodon
-     * *account* id for the header -- a different ID namespace than a
-     * toot's status id, but the same "identifying string for this row"
-     * role, and nothing that searches posts by postId (TTLPostUpdate) ever
-     * walks a profile header, so there's no ambiguity in practice. */
+    /* followersCount/followingCount/countsRowY: TTLProfileHeader_Class
+     * only, unused (0) on every other row kind. following/followedBy are
+     * shared with TTLAccountRow_Class too (see below). postId doubles as
+     * this row's Mastodon *account* id on both of these row kinds -- a
+     * different ID namespace than a toot's status id, but the same
+     * "identifying string for this row" role. TTLPostUpdate/
+     * TTIMELINE_UpdatePost only ever searches channel->posts, never
+     * channel->headerPost, so a profile header's postId can never be
+     * accidentally matched/patched by a TTL_POSTUPD_RELATIONSHIP update
+     * meant for an account-row list item, even if the two ids coincide. */
     ULONG  followersCount;
     ULONG  followingCount;
-    BOOL   following;
+    BOOL   following;   /* TTLProfileHeader_Class: connected user follows this
+                          * account. TTLAccountRow_Class: connected user follows
+                          * this row's account (currently unused by the
+                          * "Follows you" badge, which only reads followedBy --
+                          * see ttl_account_row_layout -- but patched in by
+                          * TTL_POSTUPD_RELATIONSHIP regardless, for parity
+                          * with followedBy and any future use). */
+    BOOL   followedBy;  /* TTLAccountRow_Class only: this row's account follows
+                          * the connected user -- drives the "Follows you"
+                          * badge. Always FALSE on a profile header row (never
+                          * patched there; the header uses its own singular
+                          * FS3ENETQ_RELATIONSHIP/TTIMELINE_UpdateProfileFollow
+                          * path instead). */
+    WORD   countsRowY;     /* post-relative Y of the "N Followers   N Following" line,
+                             * computed once by ttl_profile_header_layout and reused
+                             * as-is by build_hotspots -- never re-derived, same
+                             * "store once" rule as pollBlockY/threadRowY. */
 
     /* Media preview rect, in the same post-relative coordinates as
      * TTLTextSpan.postRelY; computed by ttl_post_layout. previewW==0 means
      * "no preview to draw" (mediaCount==0, or it didn't fit). */
     WORD   previewX, previewY, previewW, previewH;
+
+    /* Link preview card -- see TTLPostSetup.hasCard's doc comment.
+     * Independent of the media preview above (NOT mutually exclusive);
+     * both can be present and stack in the same right-hand column (thumb
+     * over card) when side-by-side, or one after another when stacked
+     * narrow -- see ttl_toot_layout. cardW==0 means "no card to draw"
+     * (hasCard FALSE). cardImgH is the image strip's own height within
+     * the box (0 if the card has no image); computed once by
+     * ttl_toot_layout, reused as-is by render/build_hotspots, same
+     * "store once, never re-derive" rule as previewX/Y/W/H above. */
+    BOOL   hasCard;
+    char  *cardUrl, *cardTitle, *cardDescription, *cardProviderName, *cardImageUrl;
+    WORD   cardX, cardY, cardW, cardH;
+    WORD   cardImgH;
+
+    /* Word-wrapped title/description, computed once by ttl_toot_layout via
+     * FS3ETextWrap (same tool the toot body already uses) against cardW,
+     * capped at TTL_CARD_TITLE_MAX_ROWS/TTL_CARD_DESC_MAX_ROWS rows -- any
+     * further wrapped rows are simply not kept (truncation, not ellipsis).
+     * Each entry is its own AllocVec'd, NUL-terminated copy (NOT a
+     * TTLTextSpan/textSpans entry: card text isn't selectable, just drawn
+     * directly by ttl_render_tile, so it doesn't need the hit-testing
+     * machinery that list exists for). NULL past *LineCount. */
+    char  *cardTitleLines[TTL_CARD_TITLE_MAX_ROWS];
+    ULONG  cardTitleLineCount;
+    char  *cardDescLines[TTL_CARD_DESC_MAX_ROWS];
+    ULONG  cardDescLineCount;
 
     /* Poll ("survey"), closed/result rendering only -- see
      * TTLPostSetup.pollOptionTitles. pollOptionCount==0 means no poll on
@@ -647,6 +707,7 @@ ULONG TTL_OnGoInactive (Class *cl, Object *o, struct gpGoInactive *msg);
 TTLPost *ttl_post_alloc        (const TTLPostSetup *setup);
 TTLPost *ttl_pseudo_post_alloc (const TTLItemClass *cls, const char *label);
 void     ttl_post_free         (TTLData *inst, TTLPost *post);
+void     ttl_post_refresh_fields(TTLPost *post, const TTLPostSetup *setup);
 void     ttl_layout_all_posts  (TTLData *inst);
 void     ttl_clear_channel     (TTLData *inst, ULONG ch);
 void     ttl_clear_posts       (TTLData *inst);
@@ -727,6 +788,19 @@ TTLPost *ttl_profile_header_alloc(const TTLProfileHeaderSetup *setup); /* fs3eto
  * TTLToot_Class. Defined in the new fs3etoottimeline_notif.c. */
 extern const TTLItemClass TTLNotifFollow_Class;
 TTLPost *ttl_notif_follow_alloc(const TTLPostSetup *setup); /* fs3etoottimeline_notif.c */
+
+extern const TTLItemClass TTLAccountRow_Class;
+TTLPost *ttl_account_row_alloc(const TTLPostSetup *setup); /* fs3etoottimeline_accountrow.c */
+
+/* Pinned "Followers for @user" / "Followed by @user" title row -- see
+ * TTLPostSetup.isListTitle. IS an ordinary member of channel->posts (same
+ * as TTLNotifFollow_Class above), unlike TTLProfileHeader_Class's
+ * separate headerPost slot -- it's meant to scroll away with the list
+ * like any other row, not stay pinned outside it. Defined alongside
+ * TTLLoadNewer_Class/TTLLoadOlder_Class in fs3etoottimeline_posts.c,
+ * whose ttl_boundary_layout/render it reuses. */
+extern const TTLItemClass TTLListTitle_Class;
+TTLPost *ttl_list_title_alloc(const TTLPostSetup *setup); /* fs3etoottimeline_posts.c */
 
 /* fs3etoottimeline_tiles.c */
 BOOL     ttl_tiles_alloc  (TTLData *inst, struct RastPort *rp);

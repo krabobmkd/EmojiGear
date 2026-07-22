@@ -73,6 +73,7 @@ set(FRIENDSH3EP_SOURCES
     TootTimeline/fs3etoottimeline_input.c
     TootTimeline/fs3etoottimeline_profile.c
     TootTimeline/fs3etoottimeline_notif.c
+    TootTimeline/fs3etoottimeline_accountrow.c
 )
 
 # Listed so IDEs (Qt Creator, etc.) show them in the project tree.

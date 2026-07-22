@@ -308,6 +308,8 @@ BOOL FS3EMastodon_GetInstanceInfo(const char *apiBaseUrl, ULONG *outMaxChars)
 #define FS3ENET_TLSHAPE_SINGLE              1
 #define FS3ENET_TLSHAPE_CONTEXT_DESCENDANTS 2
 #define FS3ENET_TLSHAPE_SEARCH_STATUSES     3
+#define FS3ENET_TLSHAPE_SINGLE_REFRESH      4
+#define FS3ENET_TLSHAPE_SEARCH_ACCOUNTS     5
 
 BOOL FS3EMastodon_GetTimeline(const char *apiBaseUrl, const char *accessToken,
                              const char *timeline, ULONG responseShape,
@@ -326,7 +328,8 @@ BOOL FS3EMastodon_GetTimeline(const char *apiBaseUrl, const char *accessToken,
      * "statuses/123/context", "search?type=statuses&limit=20&q=...") --
      * callers pass whatever's needed relative to the API root, same as
      * every other shape. Search alone is a /api/v2/ endpoint, not v1. */
-    if (responseShape == FS3ENET_TLSHAPE_SEARCH_STATUSES)
+    if (responseShape == FS3ENET_TLSHAPE_SEARCH_STATUSES ||
+        responseShape == FS3ENET_TLSHAPE_SEARCH_ACCOUNTS)
         snprintf(url, sizeof(url), "%s/api/v2/%s", apiBaseUrl, timeline);
     else
         snprintf(url, sizeof(url), "%s/api/v1/%s", apiBaseUrl, timeline);
@@ -352,8 +355,13 @@ BOOL FS3EMastodon_GetTimeline(const char *apiBaseUrl, const char *accessToken,
 
     /* Normalize the two non-array shapes into a plain array before the
      * generic "!cJSON_IsArray" check below -- see this function's header
-     * comment in fs3enet_mastodon.h. */
-    if (json && cJSON_IsObject(json) && responseShape == FS3ENET_TLSHAPE_SINGLE)
+     * comment in fs3enet_mastodon.h. SINGLE_REFRESH is the exact same wire
+     * shape as SINGLE (GET .../statuses/:id, one Status object) -- only its
+     * GUI-side meaning differs (F5 refresh, patch in place, vs. a toot
+     * being newly inserted) -- so it's normalized identically here. */
+    if (json && cJSON_IsObject(json) &&
+        (responseShape == FS3ENET_TLSHAPE_SINGLE ||
+         responseShape == FS3ENET_TLSHAPE_SINGLE_REFRESH))
     {
         cJSON *wrapper = cJSON_CreateArray();
         if (wrapper && cJSON_AddItemToArray(wrapper, json)) {
@@ -375,6 +383,12 @@ BOOL FS3EMastodon_GetTimeline(const char *apiBaseUrl, const char *accessToken,
         cJSON *statuses = cJSON_DetachItemFromObjectCaseSensitive(json, "statuses");
         cJSON_Delete(json); /* frees the wrapper object + accounts/hashtags; statuses already detached, survives */
         json = statuses;
+    }
+    else if (json && cJSON_IsObject(json) && responseShape == FS3ENET_TLSHAPE_SEARCH_ACCOUNTS)
+    {
+        cJSON *accounts = cJSON_DetachItemFromObjectCaseSensitive(json, "accounts");
+        cJSON_Delete(json); /* frees the wrapper object + statuses/hashtags; accounts already detached, survives */
+        json = accounts;
     }
 
     if (!json || !cJSON_IsArray(json))
@@ -677,6 +691,68 @@ BOOL FS3EMastodon_GetRelationship(const char *apiBaseUrl, const char *accessToke
         }
     }
     if (json) cJSON_Delete(json);
+
+    FS3EHttp_FreeResponse(&resp);
+
+    return ok;
+}
+
+/* Batch counterpart of FS3EMastodon_GetRelationship above -- one
+ * repeated id[] per account instead of a single id, and the whole parsed
+ * Relationship array is handed back via outJson (not pre-extracted) since
+ * the caller (FS3ENet_HandleRelationships) needs to match each entry to
+ * its own account id, not just read one flag. URL is AllocVec'd rather
+ * than a fixed on-stack buffer -- a full page of ids (see
+ * FS3ENET_ACCLIST_FOLLOWERS/FOLLOWING's limit=40) can run well past the
+ * 256/512-byte stack buffers every other URL builder in this file gets
+ * away with. */
+BOOL FS3EMastodon_GetRelationships(const char *apiBaseUrl, const char *accessToken,
+                                   const char *const *accountIds, ULONG count,
+                                   cJSON **outJson)
+{
+    char authHeader[300];
+    FS3EHttpHeader headers[2];
+    FS3EHttpResponse resp;
+    char *url;
+    ULONG urlCap, i;
+    char *w;
+    BOOL ok = FALSE;
+
+    *outJson = NULL;
+    if (count == 0) return FALSE;
+
+    urlCap = (ULONG)strlen(apiBaseUrl) + 48; /* "/api/v1/accounts/relationships?id[]=" + slack */
+    for (i = 0; i < count; i++)
+        urlCap += (ULONG)strlen(accountIds[i]) + 8; /* "&id[]=" + id + slack */
+
+    url = (char *)AllocVec(urlCap, MEMF_ANY);
+    if (!url) return FALSE;
+
+    w  = url;
+    w += snprintf(w, urlCap, "%s/api/v1/accounts/relationships?id[]=%s",
+                  apiBaseUrl, accountIds[0]);
+    for (i = 1; i < count; i++)
+        w += snprintf(w, (ULONG)(url + urlCap - w), "&id[]=%s", accountIds[i]);
+
+    FS3EMastodon_BuildAuthHeader(authHeader, sizeof(authHeader), accessToken);
+
+    headers[0].fhh_Name  = "Authorization";
+    headers[0].fhh_Value = authHeader;
+    headers[1].fhh_Name  = NULL;
+    headers[1].fhh_Value = NULL;
+
+    if (!FS3EHttp_Get(url, headers, &resp)) {
+        FreeVec(url);
+        return FALSE;
+    }
+    FreeVec(url);
+
+    *outJson = cJSON_Parse((char *)resp.fhr_Body);
+    ok = (*outJson && cJSON_IsArray(*outJson));
+    if (!ok && *outJson) {
+        cJSON_Delete(*outJson);
+        *outJson = NULL;
+    }
 
     FS3EHttp_FreeResponse(&resp);
 

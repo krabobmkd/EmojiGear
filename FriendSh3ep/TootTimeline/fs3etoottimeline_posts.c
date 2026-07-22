@@ -42,6 +42,22 @@ static char *dup_str(const char *s)
     return copy;
 }
 
+/* Like dup_str, but for a non-NUL-terminated byte range -- used to copy an
+ * FS3ETextRow's substring (row->start/byteLen, which points into the
+ * original text FS3ETextWrap_Build was given) into its own small owned
+ * buffer before FS3ETextWrap_Free() tears down the row array. */
+static char *dup_strn(const char *s, ULONG len)
+{
+    char *copy;
+    if (!s) return NULL;
+    copy = (char *)AllocVec(len + 1, MEMF_ANY);
+    if (copy) {
+        CopyMem((APTR)s, copy, len);
+        copy[len] = '\0';
+    }
+    return copy;
+}
+
 /* Number of visual lines needed to display utf8 in a column of maxW pixels.
  * Coarse fallback for when no draw context is available yet (style not
  * set) -- ttl_post_layout uses the pixel-exact fs3etextwrap path whenever
@@ -309,9 +325,135 @@ TTLPost *ttl_post_alloc(const TTLPostSetup *setup)
         post->pollVotesCount = setup->pollVotesCount;
         post->pollExpired    = setup->pollExpired;
         post->pollMultiple   = setup->pollMultiple;
+
+        post->hasCard = setup->hasCard;
+        post->cardUrl          = (setup->cardUrl          && setup->cardUrl[0])          ? dup_str(setup->cardUrl)          : NULL;
+        post->cardTitle        = (setup->cardTitle        && setup->cardTitle[0])        ? dup_str(setup->cardTitle)        : NULL;
+        post->cardDescription  = (setup->cardDescription  && setup->cardDescription[0])  ? dup_str(setup->cardDescription)  : NULL;
+        post->cardProviderName = (setup->cardProviderName && setup->cardProviderName[0]) ? dup_str(setup->cardProviderName) : NULL;
+        post->cardImageUrl     = (setup->cardImageUrl     && setup->cardImageUrl[0])     ? dup_str(setup->cardImageUrl)     : NULL;
+        /* cardTitleLines/cardDescLines are computed by ttl_toot_layout
+         * (they depend on cardW, a layout-time value), not here. */
     }
 
     return post;
+}
+
+/* ------------------------------------------------------------------ */
+/* ttl_post_refresh_fields                                              */
+/*                                                                      */
+/* F5 "refresh visible toots" (TTIMELINE_RefreshPost): patches an        */
+/* EXISTING post's status-derived fields from a freshly re-fetched       */
+/* setup, in place -- unlike ttl_post_alloc, this never allocates a new  */
+/* TTLPost, and it deliberately does NOT touch:                          */
+/*   - postId (it's the match key the caller found this post by)        */
+/*   - notifType/notifActorName/notifActorAcct/notifStatusId (a plain    */
+/*     GET .../statuses/:id refetch carries none of this -- it's         */
+/*     notification metadata, not status content)                       */
+/*   - isThreadReply (placement within a discussion view, not content)   */
+/*   - timelineY/height (recomputed by the relayout the caller forces    */
+/*     after this call, since content/media changes can resize the post) */
+/* Every other field ttl_post_alloc copies IS overwritten here, freeing  */
+/* the old AllocVec'd value first (same frees ttl_toot_dispose already   */
+/* has for each) -- content, author display, avatar, boost-by, media,    */
+/* counts, and poll all genuinely can have changed server-side.          */
+/* ------------------------------------------------------------------ */
+
+void ttl_post_refresh_fields(TTLPost *post, const TTLPostSetup *setup)
+{
+    ULONG mi;
+
+    if (!post || !setup) return;
+
+    if (post->username)  FreeVec(post->username);
+    if (post->acct)       FreeVec(post->acct);
+    if (post->body)       FreeVec(post->body);
+    if (post->timestamp)  FreeVec(post->timestamp);
+    if (post->boostBy)    FreeVec(post->boostBy);
+    if (post->boostByAcct) FreeVec(post->boostByAcct);
+    if (post->avatarURL)  FreeVec(post->avatarURL);
+    if (post->mediaIdsJoined) FreeVec(post->mediaIdsJoined);
+    if (post->cardUrl)          FreeVec(post->cardUrl);
+    if (post->cardTitle)        FreeVec(post->cardTitle);
+    if (post->cardDescription)  FreeVec(post->cardDescription);
+    if (post->cardProviderName) FreeVec(post->cardProviderName);
+    if (post->cardImageUrl)     FreeVec(post->cardImageUrl);
+    for (mi = 0; mi < post->mediaCount; mi++)
+        if (post->mediaUrls[mi]) FreeVec(post->mediaUrls[mi]);
+    for (mi = 0; mi < post->pollOptionCount; mi++)
+        if (post->pollOptionTitles[mi]) FreeVec(post->pollOptionTitles[mi]);
+
+    post->username  = dup_str(setup->username);
+    post->acct      = dup_str(setup->acct);
+    post->body      = dup_str(setup->body);
+    post->timestamp = dup_str(setup->timestamp);
+    post->boostBy   = (setup->boostBy  && setup->boostBy[0])  ? dup_str(setup->boostBy)  : NULL;
+    post->boostByAcct = (setup->boostByAcct && setup->boostByAcct[0]) ? dup_str(setup->boostByAcct) : NULL;
+    post->avatarURL = (setup->avatarURL && setup->avatarURL[0]) ? dup_str(setup->avatarURL) : NULL;
+    post->isOwn     = setup->isOwn;
+
+    post->mediaCount = setup->mediaCount;
+    if (post->mediaCount > TTL_POST_MAX_MEDIA) post->mediaCount = TTL_POST_MAX_MEDIA;
+    for (mi = 0; mi < post->mediaCount; mi++) {
+        post->mediaUrls[mi] = (setup->mediaUrls[mi] && setup->mediaUrls[mi][0])
+                             ? dup_str(setup->mediaUrls[mi]) : NULL;
+        post->mediaKinds[mi] = setup->mediaKinds[mi];
+    }
+
+    post->mediaIdsJoined = NULL;
+    {
+        ULONG totalLen = 0, n, joinedCount = 0;
+        for (mi = 0; mi < post->mediaCount; mi++) {
+            if (setup->mediaIds[mi] && setup->mediaIds[mi][0]) {
+                totalLen += (ULONG)strlen(setup->mediaIds[mi]);
+                joinedCount++;
+            }
+        }
+        if (joinedCount > 0) {
+            totalLen += joinedCount - 1;
+            post->mediaIdsJoined = AllocVec(totalLen + 1, MEMF_ANY);
+            if (post->mediaIdsJoined) {
+                char *dst = post->mediaIdsJoined;
+                BOOL  first = TRUE;
+                for (mi = 0; mi < post->mediaCount; mi++) {
+                    if (setup->mediaIds[mi] && setup->mediaIds[mi][0]) {
+                        if (!first) *dst++ = ',';
+                        n = (ULONG)strlen(setup->mediaIds[mi]);
+                        CopyMem((APTR)setup->mediaIds[mi], dst, n);
+                        dst += n;
+                        first = FALSE;
+                    }
+                }
+                *dst = '\0';
+            }
+        }
+    }
+
+    post->repliesCount    = setup->repliesCount;
+    post->reblogsCount    = setup->reblogsCount;
+    post->favouritesCount = setup->favouritesCount;
+    post->favourited      = setup->favourited;
+    post->reblogged       = setup->reblogged;
+
+    post->pollOptionCount = setup->pollOptionCount;
+    if (post->pollOptionCount > TTL_POST_MAX_POLL_OPTIONS) post->pollOptionCount = TTL_POST_MAX_POLL_OPTIONS;
+    for (mi = 0; mi < post->pollOptionCount; mi++) {
+        post->pollOptionTitles[mi] = (setup->pollOptionTitles[mi] && setup->pollOptionTitles[mi][0])
+                                    ? dup_str(setup->pollOptionTitles[mi]) : NULL;
+        post->pollOptionVotes[mi] = setup->pollOptionVotes[mi];
+    }
+    post->pollVotesCount = setup->pollVotesCount;
+    post->pollExpired    = setup->pollExpired;
+    post->pollMultiple   = setup->pollMultiple;
+
+    post->hasCard = setup->hasCard;
+    post->cardUrl          = (setup->cardUrl          && setup->cardUrl[0])          ? dup_str(setup->cardUrl)          : NULL;
+    post->cardTitle        = (setup->cardTitle        && setup->cardTitle[0])        ? dup_str(setup->cardTitle)        : NULL;
+    post->cardDescription  = (setup->cardDescription  && setup->cardDescription[0])  ? dup_str(setup->cardDescription)  : NULL;
+    post->cardProviderName = (setup->cardProviderName && setup->cardProviderName[0]) ? dup_str(setup->cardProviderName) : NULL;
+    post->cardImageUrl     = (setup->cardImageUrl     && setup->cardImageUrl[0])     ? dup_str(setup->cardImageUrl)     : NULL;
+    /* cardTitleLines/cardDescLines are rebuilt by the forced relayout the
+     * caller (TTIMELINE_RefreshPost) triggers right after this call. */
 }
 
 /* ------------------------------------------------------------------ */
@@ -363,12 +505,21 @@ static void ttl_toot_dispose(TTLPost *post)
     if (post->notifActorName) FreeVec(post->notifActorName);
     if (post->notifActorAcct) FreeVec(post->notifActorAcct);
     if (post->notifStatusId)  FreeVec(post->notifStatusId);
+    if (post->cardUrl)          FreeVec(post->cardUrl);
+    if (post->cardTitle)        FreeVec(post->cardTitle);
+    if (post->cardDescription)  FreeVec(post->cardDescription);
+    if (post->cardProviderName) FreeVec(post->cardProviderName);
+    if (post->cardImageUrl)     FreeVec(post->cardImageUrl);
     {
         ULONG mi;
         for (mi = 0; mi < post->mediaCount; mi++)
             if (post->mediaUrls[mi]) FreeVec(post->mediaUrls[mi]);
         for (mi = 0; mi < post->pollOptionCount; mi++)
             if (post->pollOptionTitles[mi]) FreeVec(post->pollOptionTitles[mi]);
+        for (mi = 0; mi < post->cardTitleLineCount; mi++)
+            if (post->cardTitleLines[mi]) FreeVec(post->cardTitleLines[mi]);
+        for (mi = 0; mi < post->cardDescLineCount; mi++)
+            if (post->cardDescLines[mi]) FreeVec(post->cardDescLines[mi]);
     }
 }
 
@@ -403,6 +554,8 @@ static void ttl_toot_layout(TTLData *inst, TTLPost *post)
     LONG  curRelY;
     LONG  avatarH;
     WORD  previewW = 0, previewH = 0;
+    WORD  cardW = 0, cardH = 0, cardImgH = 0;
+    BOOL  hasThumb, hasCard, hasRight;
     BOOL  sideBySide = FALSE;
 
     ttl_clear_textspans(post);
@@ -422,19 +575,101 @@ static void ttl_toot_layout(TTLData *inst, TTLPost *post)
 
     avatarH = avatarW;
 
+    post->previewX = post->previewY = post->previewW = post->previewH = 0;
+    post->cardX = post->cardY = post->cardW = post->cardH = post->cardImgH = 0;
+
+    /* Free any previously wrapped card title/description lines before
+     * rebuilding below (layout can rerun on width/font change) -- same
+     * reasoning ttl_clear_textspans handles for textSpans just above. */
+    {
+        ULONG li;
+        for (li = 0; li < post->cardTitleLineCount; li++)
+            if (post->cardTitleLines[li]) { FreeVec(post->cardTitleLines[li]); post->cardTitleLines[li] = NULL; }
+        post->cardTitleLineCount = 0;
+        for (li = 0; li < post->cardDescLineCount; li++)
+            if (post->cardDescLines[li]) { FreeVec(post->cardDescLines[li]); post->cardDescLines[li] = NULL; }
+        post->cardDescLineCount = 0;
+    }
+
+    hasThumb = (post->mediaCount > 0 && post->pollOptionCount == 0);
+    hasCard  = post->hasCard;
+
     /* Media preview rectangle sizing: same scale factor as the avatar
      * (both derive from lineH via FS3EStyle's compute_layout -- see
-     * TTL_AVATAR_BASE_SIZE). Side-by-side needs the gadget wide enough
-     * both by the caller's own >800px rule and to leave a usable text
-     * column; otherwise it stacks below the text. */
-    post->previewX = post->previewY = post->previewW = post->previewH = 0;
-    if (post->mediaCount > 0 && post->pollOptionCount == 0) {
+     * TTL_AVATAR_BASE_SIZE). */
+    if (hasThumb) {
         previewW = (WORD)(((LONG)TTL_PREVIEW_BASE_W * avatarW) / TTL_AVATAR_BASE_SIZE);
         previewH = (WORD)(((LONG)TTL_PREVIEW_BASE_H * avatarW) / TTL_AVATAR_BASE_SIZE);
-        if (inst->gadWidth > 500 && (textW - previewW - avatarGap) >= 32)
+    }
+
+    /* Link preview card box sizing: same width scale as the media preview
+     * (TTL_CARD_BASE_W == TTL_PREVIEW_BASE_W, see that constant's comment),
+     * height computed dynamically from the (optional) image strip plus
+     * however many real wrapped title/description rows are actually
+     * needed, capped -- same "reserve exactly what the content needs"
+     * approach the poll block below already uses. */
+    if (hasCard) {
+        struct URPDrawContext *dcMini = inst->style ? inst->style->dcMini : NULL;
+        WORD cardPad    = 4;
+        WORD cardTextW;
+
+        cardW = (WORD)(((LONG)TTL_CARD_BASE_W * avatarW) / TTL_AVATAR_BASE_SIZE);
+        cardTextW = (WORD)(cardW - 2 * cardPad);
+        if (cardTextW < 16) cardTextW = 16;
+
+        if (post->cardImageUrl && post->cardImageUrl[0])
+            cardImgH = (WORD)(((LONG)TTL_CARD_IMAGE_BASE_H * avatarW) / TTL_AVATAR_BASE_SIZE);
+
+        cardH = cardImgH;
+        if (cardImgH > 0) cardH += avatarGap;
+        cardH += inst->miniLineHeight; /* provider name line */
+
+        if (dcMini && post->cardTitle && post->cardTitle[0]) {
+            FS3ETextWrap tw;
+            if (FS3ETextWrap_Build(&tw, dcMini, inst->miniLineHeight, post->cardTitle, cardTextW)) {
+                ULONG ri, rows = tw.rowCount;
+                if (rows > TTL_CARD_TITLE_MAX_ROWS) rows = TTL_CARD_TITLE_MAX_ROWS;
+                for (ri = 0; ri < rows; ri++) {
+                    post->cardTitleLines[ri] = dup_strn(tw.rows[ri].start, tw.rows[ri].byteLen);
+                    post->cardTitleLineCount++;
+                    cardH += inst->miniLineHeight;
+                }
+                FS3ETextWrap_Free(&tw);
+            }
+        }
+
+        if (dcMini && post->cardDescription && post->cardDescription[0]) {
+            FS3ETextWrap tw;
+            if (FS3ETextWrap_Build(&tw, dcMini, inst->miniLineHeight, post->cardDescription, cardTextW)) {
+                ULONG ri, rows = tw.rowCount;
+                if (rows > TTL_CARD_DESC_MAX_ROWS) rows = TTL_CARD_DESC_MAX_ROWS;
+                for (ri = 0; ri < rows; ri++) {
+                    post->cardDescLines[ri] = dup_strn(tw.rows[ri].start, tw.rows[ri].byteLen);
+                    post->cardDescLineCount++;
+                    cardH += inst->miniLineHeight;
+                }
+                FS3ETextWrap_Free(&tw);
+            }
+        }
+
+        cardH += 2 * cardPad;
+    }
+
+    /* Side-by-side needs the gadget wide enough both by the caller's own
+     * >500px rule and to leave a usable text column; otherwise everything
+     * (text, then thumbnail, then card) stacks vertically instead. Card
+     * and thumbnail share the same scaled width (see TTL_CARD_BASE_W), so
+     * there's one shared "right column width" regardless of which of the
+     * two (or both) are actually present. */
+    hasRight = hasThumb || hasCard;
+    if (hasRight) {
+        WORD rightW = hasThumb ? previewW : cardW;
+        if (inst->gadWidth > 500 && (textW - rightW - avatarGap) >= 32)
             sideBySide = TRUE;
-        if (!sideBySide && previewW > textW)
-            previewW = textW;
+        if (!sideBySide) {
+            if (hasThumb && previewW > textW) previewW = textW;
+            if (hasCard  && cardW    > textW) cardW    = textW;
+        }
     }
 
     curRelY = TTL_POST_PAD_TOP;
@@ -483,7 +718,8 @@ static void ttl_toot_layout(TTLData *inst, TTLPost *post)
      * pixel -- one TTL_SPAN_BODY span per visual row. ---- */
     {
         LONG bodyTopY  = curRelY;
-        WORD bodyTextW = sideBySide ? (WORD)(textW - previewW - avatarGap) : textW;
+        WORD rightW    = hasThumb ? previewW : cardW; /* equal by construction either way */
+        WORD bodyTextW = (sideBySide && hasRight) ? (WORD)(textW - rightW - avatarGap) : textW;
         struct URPDrawContext *dcBody = inst->style ? inst->style->dcNormal : NULL;
 
         if (post->body && post->body[0] && dcBody) {
@@ -502,20 +738,49 @@ static void ttl_toot_layout(TTLData *inst, TTLPost *post)
             curRelY += ttl_count_wrapped_lines(inst, post->body, bodyTextW) * inst->lineHeight;
         }
 
-        if (post->mediaCount > 0 && post->pollOptionCount == 0 && previewW > 0 && previewH > 0) {
-            if (sideBySide) {
-                post->previewX = (WORD)(textX + bodyTextW + avatarGap);
-                post->previewY = (WORD)bodyTopY;
+        /* Thumbnail/card placement: side-by-side stacks them in a shared
+         * right column (thumb above card); stacked narrow places them one
+         * after another below the body text, in the same order. Either
+         * one, both, or neither may be present -- see hasThumb/hasCard
+         * above. */
+        if (sideBySide) {
+            WORD rightX  = (WORD)(textX + bodyTextW + avatarGap);
+            LONG rightY  = bodyTopY;
+
+            if (hasThumb && previewW > 0 && previewH > 0) {
+                post->previewX = rightX;
+                post->previewY = (WORD)rightY;
                 post->previewW = previewW;
                 post->previewH = previewH;
-                if (bodyTopY + previewH > curRelY) curRelY = bodyTopY + previewH;
-            } else {
+                rightY += previewH;
+                if (hasCard) rightY += avatarGap;
+            }
+            if (hasCard && cardW > 0 && cardH > 0) {
+                post->cardX    = rightX;
+                post->cardY    = (WORD)rightY;
+                post->cardW    = cardW;
+                post->cardH    = cardH;
+                post->cardImgH = cardImgH;
+                rightY += cardH;
+            }
+            if (rightY > curRelY) curRelY = rightY;
+        } else {
+            if (hasThumb && previewW > 0 && previewH > 0) {
                 curRelY += avatarGap;
                 post->previewX = textX;
                 post->previewY = (WORD)curRelY;
                 post->previewW = previewW;
                 post->previewH = previewH;
                 curRelY += previewH;
+            }
+            if (hasCard && cardW > 0 && cardH > 0) {
+                curRelY += avatarGap;
+                post->cardX    = textX;
+                post->cardY    = (WORD)curRelY;
+                post->cardW    = cardW;
+                post->cardH    = cardH;
+                post->cardImgH = cardImgH;
+                curRelY += cardH;
             }
         }
     }
@@ -751,6 +1016,14 @@ static void ttl_toot_build_hotspots(TTLData *inst, TTLPost *post)
                        (WORD)(post->previewX + post->previewW - arrowW), post->previewY,
                        arrowW, post->previewH, NULL, 0);
         }
+    }
+
+    /* Link preview card rectangle -- see TTLPost.hasCard/cardX/Y/W/H.
+     * Currently a no-op on activation (see TTL_HOT_CARD's doc comment). */
+    if (post->hasCard && post->cardW > 0) {
+        ttl_hs_add(post, TTL_HOT_CARD, post->cardX, post->cardY,
+                   post->cardW, post->cardH,
+                   post->cardUrl, post->cardUrl ? (ULONG)strlen(post->cardUrl) : 0);
     }
 
     /* "N replies" thread-indicator row -- see TTLPost.threadRowY. Spans
@@ -1116,6 +1389,49 @@ const TTLItemClass TTLLoadOlder_Class = {
     NULL,  /* buildHotspots: no click target -- see TTL_OnRender's proximity check */
     NULL,
     NULL
+};
+
+/* ------------------------------------------------------------------ */
+/* TTLListTitle_Class -- pinned informational row ("Followers for       */
+/* @user") at the top of a followers/following list (see               */
+/* TTLPostSetup.isListTitle). Reuses ttl_boundary_layout/render verbatim */
+/* -- same single centered accent-colored line TTLLoadNewer_Class/      */
+/* TTLLoadOlder_Class already draw -- but unlike those two, this row's  */
+/* text is dynamically built per-request (which user's list this is),  */
+/* not a static literal owned by the class definition, so it needs its */
+/* own alloc (dup's the string) and dispose (frees it), instead of      */
+/* ttl_pseudo_post_alloc's borrow-a-literal contract. No hot-spot: this */
+/* row is purely informational, never clickable. */
+/* ------------------------------------------------------------------ */
+
+TTLPost *ttl_list_title_alloc(const TTLPostSetup *setup)
+{
+    TTLPost *post = (TTLPost *)AllocVec(sizeof(TTLPost), MEMF_ANY | MEMF_CLEAR);
+    if (!post) return NULL;
+
+    NewList((struct List *)&post->textSpans);
+    post->cls           = &TTLListTitle_Class;
+    post->dirty         = TRUE;
+    post->hotSpotBucket = -1;
+    post->hotSpotsDirty = TRUE;
+
+    if (setup)
+        post->body = dup_str(setup->body);
+
+    return post;
+}
+
+static void ttl_list_title_dispose(TTLPost *post)
+{
+    if (post->body) FreeVec(post->body);
+}
+
+const TTLItemClass TTLListTitle_Class = {
+    ttl_boundary_layout,
+    ttl_boundary_render,
+    NULL,  /* buildHotspots: purely informational, no click target */
+    NULL,
+    ttl_list_title_dispose
 };
 
 /* ------------------------------------------------------------------ */

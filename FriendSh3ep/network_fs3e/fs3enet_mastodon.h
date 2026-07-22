@@ -121,6 +121,19 @@ BOOL FS3EMastodon_VerifyCredentials(const char *apiBaseUrl, const char *accessTo
  *                                        shape/endpoint (Mastodon's own
  *                                        search treats a leading '#' in q
  *                                        as a hashtag match)
+ *   FS3ENET_TLSHAPE_SINGLE_REFRESH (4)  -- identical wire shape to SINGLE
+ *                                        (GET .../statuses/:id, one Status
+ *                                        object); only the GUI's reply
+ *                                        handling differs (F5 refresh patch
+ *                                        vs. new-toot insert), so it's
+ *                                        normalized the same way here
+ *   FS3ENET_TLSHAPE_SEARCH_ACCOUNTS (5) -- GET /api/v2/{timeline} (not v1);
+ *                                        same {"accounts":[...],"statuses":[...],
+ *                                        "hashtags":[...]} wrapper as
+ *                                        SEARCH_STATUSES, just unwrapping
+ *                                        "accounts" instead -- used by
+ *                                        FS3ENETQ_ACCOUNTS_LIST, not
+ *                                        FS3ENETQ_TIMELINE
  */
 BOOL FS3EMastodon_GetTimeline(const char *apiBaseUrl, const char *accessToken,
                              const char *timeline, ULONG responseShape,
@@ -209,10 +222,26 @@ BOOL FS3EMastodon_LookupAccount(const char *apiBaseUrl, const char *accessToken,
  * GET /api/v1/accounts/relationships?id[]=<accountId> -- only the
  * connected user's own "following" state is needed (profile view's
  * Follow/Unfollow button label); the rest of the Relationship object
- * (followed_by, blocking, muting, ...) isn't used yet.
+ * (blocking, muting, ...) isn't used yet. See FS3EMastodon_GetRelationships
+ * (plural) below for the batch form, which also reads followed_by.
  */
 BOOL FS3EMastodon_GetRelationship(const char *apiBaseUrl, const char *accessToken,
                                   const char *accountId, BOOL *outFollowing);
+
+/*
+ * GET /api/v1/accounts/relationships?id[]=<id>&id[]=<id>... -- batch form
+ * of FS3EMastodon_GetRelationship above, one repeated id[] per account, for
+ * badging account-row list items ("Follows you") without one HTTP round
+ * trip per row. Unlike the singular form, this one also reads followed_by
+ * -- the singular caller only ever needs the connected user's OWN following
+ * state, but a list of other accounts needs to know if THEY follow back.
+ * *outJson is the raw parsed Relationship array (caller walks it and
+ * cJSON_Delete()s it), not pre-extracted into out-params, since the caller
+ * needs to match each entry back to its account id itself.
+ */
+BOOL FS3EMastodon_GetRelationships(const char *apiBaseUrl, const char *accessToken,
+                                   const char *const *accountIds, ULONG count,
+                                   cJSON **outJson);
 
 /*
  * POST /api/v1/accounts/:id/follow or .../unfollow. On success fills

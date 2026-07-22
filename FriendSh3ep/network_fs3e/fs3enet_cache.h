@@ -137,4 +137,24 @@ BOOL FS3ECache_StoreRAM(const char *url, const void *data, ULONG dataLen,
  */
 BOOL FS3ECache_LookupRAM(const char *url, char *outPath, ULONG pathSize);
 
+/*
+ * Creates RAM:T (idempotent) if it doesn't already exist -- the same
+ * defensive check FS3ECache_StoreRAM() does internally before opening its
+ * target file, exposed for callers that write to FS3ECACHE_RAM_TEMP_DIR
+ * directly instead of through StoreRAM() (e.g. a chunked download writing
+ * incrementally -- see FS3ENetActiveDownload in fs3enet.c).
+ */
+BOOL FS3ECache_EnsureRAMTempDir(void);
+
+/*
+ * Prunes the oldest cached files (across the cache root and every immediate
+ * subdirectory) until back under the maxSizeMB budget passed to Init(), or
+ * gives up after a bounded number of attempts. No-op if unbounded (0) or
+ * Init() failed. FS3ECache_Store() already calls this after every write;
+ * exposed separately for callers that write to the persistent cache
+ * incrementally instead of through Store() (see FS3ENetActiveDownload in
+ * fs3enet.c) and so need to trigger it themselves once a download finishes.
+ */
+void FS3ECache_EnforceLimit(void);
+
 #endif /* FS3ENET_CACHE_H */

@@ -28,8 +28,10 @@ static ULONG g_MaxCacheBytes = 0;  /* 0 = unbounded; set once by FS3ECache_Init 
 
 /* Defined further down (with the rest of the size-limit enforcement code,
  * near FS3ECache_Flush()); forward-declared so FS3ECache_Init() can call
- * it to trim a pre-existing oversized cache at startup. */
-static void FS3ECache_EnforceLimit(void);
+ * it to trim a pre-existing oversized cache at startup. Public (see
+ * fs3enet_cache.h) so a caller writing to the persistent cache
+ * incrementally, outside FS3ECache_Store(), can trigger it once done. */
+void FS3ECache_EnforceLimit(void);
 
 /* -------------------------------------------------------------------------
  * Recursive directory creation (AmigaOS mkdir -p equivalent)
@@ -383,7 +385,7 @@ static BOOL FS3ECache_DeleteOldest(void)
 /* Deletes the oldest cached files until the total is back under
  * g_MaxCacheBytes, or gives up after FS3ECACHE_MAX_PRUNE_ATTEMPTS. No-op
  * if g_MaxCacheBytes is 0 (unbounded) or Init() hasn't succeeded. */
-static void FS3ECache_EnforceLimit(void)
+void FS3ECache_EnforceLimit(void)
 {
     ULONG attempts;
 
@@ -458,6 +460,11 @@ static void FS3ECache_ComputeRAMPath(const char *url, char *outPath, ULONG pathS
 {
     snprintf(outPath, (size_t)pathSize, "%s/%08lx",
              FS3ECACHE_RAM_TEMP_DIR, (unsigned long)FS3ECache_Hash(url));
+}
+
+BOOL FS3ECache_EnsureRAMTempDir(void)
+{
+    return FS3ECache_MakeDir(FS3ECACHE_RAM_TEMP_DIR);
 }
 
 BOOL FS3ECache_LookupRAM(const char *url, char *outPath, ULONG pathSize)

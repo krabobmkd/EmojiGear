@@ -54,7 +54,13 @@ enum FS3EThumbResult
 enum FS3EThumbKind
 {
     FS3ETHUMB_KIND_AVATAR = 0,  /* fs3etm_Key is an @acct */
-    FS3ETHUMB_KIND_MEDIA  = 1   /* fs3etm_Key is the attachment's preview/URL */
+    FS3ETHUMB_KIND_MEDIA  = 1,  /* fs3etm_Key is the attachment's preview/URL */
+    FS3ETHUMB_KIND_CARD   = 2   /* fs3etm_Key is a link preview card's image URL --
+                                 * this process itself never branches on fs3etm_Kind
+                                 * (width/height are separate explicit args below), it's
+                                 * purely an echo the GUI uses to route the reply to the
+                                 * right AvatarImages_*ThumbReady pool (see
+                                 * FS3EApp_HandleThumbReply) */
 };
 
 #define FS3ETHUMB_PATH_SIZE 256

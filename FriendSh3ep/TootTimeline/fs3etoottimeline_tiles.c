@@ -704,6 +704,108 @@ void ttl_toot_render(TTLData *inst, struct RastPort *rp, TTLPost *post, LONG til
                     URPDrawTextUTF8(rp, dcBody, &pos, counter, (ULONG)nc);
                 }
 
+                /* Link preview card -- see TTLPost.hasCard/cardX/Y/W/H/
+                 * cardImgH/cardTitleLines/cardDescLines, all computed once
+                 * by ttl_toot_layout. Image strip (if any) via the
+                 * identical AvatarImages_GetCard()/RgbImage_DrawScaled
+                 * pipeline the media thumbnail above already uses, just a
+                 * separate cache pool; provider/title/description are
+                 * plain text rows drawn directly (not via post->textSpans --
+                 * card text isn't selectable, unlike the toot body). */
+                if (post->hasCard && post->cardW > 0) {
+                    WORD cardPad = 4;
+                    WORD rx = post->cardX;
+                    WORD ry = (WORD)(drawY + post->cardY);
+                    WORD rowY;
+                    WORD cardRight  = (WORD)(rx + post->cardW - 1);
+                    WORD cardBottom = (WORD)(ry + post->cardH - 1);
+
+                    /* Opaque background -- without this, an unbroken long
+                     * line in the body text above (typically a URL
+                     * fs3etextwrap can't find a break point in) can run
+                     * underneath and show through the card's own text,
+                     * since nothing was ever painted behind it before. The
+                     * border is drawn last (see below), after the image/
+                     * text content, so it's never partly covered by an
+                     * image that happens to box-fit flush to an edge. */
+                    SetAPen(rp, (LONG)FS3E_PEN(inst->style, FS3E_COLOR_CARD_BG));
+                    RectFill(rp, rx, ry, cardRight, cardBottom);
+
+                    if (post->cardImgH > 0) {
+                        RgbImage *cimg = (inst->avatarImages && post->cardImageUrl)
+                                       ? AvatarImages_GetCard(inst->avatarImages, post->cardImageUrl)
+                                       : NULL;
+
+                        if (cimg && RgbImage_IsLoaded(cimg)) {
+                            ULONG dw, dh;
+                            WORD  bx, by;
+                            WORD  boxW = post->cardW, boxH = post->cardImgH;
+
+                            if ((ULONG)boxW * cimg->height <= (ULONG)boxH * cimg->width) {
+                                dw = boxW;
+                                dh = ((ULONG)cimg->height * (ULONG)boxW) / cimg->width;
+                            } else {
+                                dh = boxH;
+                                dw = ((ULONG)cimg->width * (ULONG)boxH) / cimg->height;
+                            }
+                            if (dw < 1) dw = 1;
+                            if (dh < 1) dh = 1;
+
+                            bx = (WORD)(rx + (boxW - (WORD)dw) / 2);
+                            by = (WORD)(ry + (boxH - (WORD)dh) / 2);
+
+                            RgbImage_DrawScaled(cimg, rp, inst->screen, inst->style->dcNormal,
+                                                 bx, by, (UWORD)dw, (UWORD)dh);
+                        } else {
+                            SetAPen(rp, (LONG)FS3E_PEN(inst->style, FS3E_COLOR_ACCENT));
+                            RectFill(rp, rx, ry, (WORD)(rx + post->cardW - 1), (WORD)(ry + post->cardImgH - 1));
+                        }
+                    }
+
+                    /* Text block below the image strip (or right at the
+                     * box top, padded, if there's no image at all). */
+                    rowY = (WORD)(ry + post->cardImgH + cardPad);
+
+                    if (post->cardProviderName && post->cardProviderName[0]) {
+                        URPDC_SetDrawColorFromPen(dcMini, inst->screen, dimPen, bgPen);
+                        tile_draw_text(inst, rp, (WORD)(rx + cardPad),
+                                       (WORD)(rowY + inst->miniLineAscent),
+                                       post->cardProviderName, dcMini);
+                        rowY += inst->miniLineHeight;
+                    }
+
+                    {
+                        ULONG li;
+                        URPDC_SetDrawColorFromPen(dcMini, inst->screen, txtPen, bgPen);
+                        for (li = 0; li < post->cardTitleLineCount; li++) {
+                            tile_draw_text(inst, rp, (WORD)(rx + cardPad),
+                                           (WORD)(rowY + inst->miniLineAscent),
+                                           post->cardTitleLines[li], dcMini);
+                            rowY += inst->miniLineHeight;
+                        }
+                    }
+
+                    {
+                        ULONG li;
+                        URPDC_SetDrawColorFromPen(dcMini, inst->screen, dimPen, bgPen);
+                        for (li = 0; li < post->cardDescLineCount; li++) {
+                            tile_draw_text(inst, rp, (WORD)(rx + cardPad),
+                                           (WORD)(rowY + inst->miniLineAscent),
+                                           post->cardDescLines[li], dcMini);
+                            rowY += inst->miniLineHeight;
+                        }
+                    }
+
+                    /* Thin border, drawn last so it's always crisp on top
+                     * of the fill/image/text above. */
+                    SetAPen(rp, (LONG)FS3E_PEN(inst->style, FS3E_COLOR_CARD_BORDER));
+                    Move(rp, rx, ry);
+                    Draw(rp, cardRight, ry);
+                    Draw(rp, cardRight, cardBottom);
+                    Draw(rp, rx, cardBottom);
+                    Draw(rp, rx, ry);
+                }
+
                 /* Poll ("survey") results — closed/result rendering only
                  * (see TTL_POST_MAX_POLL_OPTIONS): one title+percentage
                  * text row per option, followed by a track rect with a

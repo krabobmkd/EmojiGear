@@ -67,6 +67,8 @@ static const ULONG defaultColors[FS3E_COLOR_COUNT] = {
     0x00DADDE4,   /* FS3E_COLOR_TEXT                light gray */
     0x00707580,   /* FS3E_COLOR_TEXT_DIM            muted gray */
     0x005599EE,   /* FS3E_COLOR_ACTION_TEXT         clear blue (Reply/Boost/Fave) */
+    0x00232840,   /* FS3E_COLOR_CARD_BG             same as PROFILE_HEADER_BG by default */
+    0x00444466,   /* FS3E_COLOR_CARD_BORDER         same as ACCENT by default */
 
     0x00000000,   /* FS3E_COLOR_BTBGBM_TEXT_ENABLED */
     0x00FFFFFF,   /* FS3E_COLOR_BTBGBM_TEXT_SELECTED */
@@ -88,6 +90,8 @@ static const char *colorStyleKeys[FS3E_COLOR_COUNT] = {
     "timeline.color.text",
     "timeline.color.text_dim",
     "timeline.color.action_text",
+    "timeline.color.cardbg",
+    "timeline.color.cardborder",
 
     "btbgbm.textcolor.enabled",
     "btbgbm.textcolor.selected",

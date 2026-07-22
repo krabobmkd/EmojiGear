@@ -37,7 +37,21 @@ enum FS3ENetRequestType
     FS3ENETQ_INSTANCE_INFO,  /* fetch the server's per-toot character limit */
     FS3ENETQ_EDIT_STATUS,    /* edit an existing status' text (own toots only) */
     FS3ENETQ_DELETE_STATUS,  /* delete an existing status (own toots only) */
-    FS3ENETQ_NOTIFICATIONS   /* fetch a page of notifications */
+    FS3ENETQ_NOTIFICATIONS,  /* fetch a page of notifications */
+    FS3ENETQ_ACCOUNTS_LIST,  /* fetch a list of accounts: search results, or a
+                               * user's followers/following -- see
+                               * FS3ENetAccountsListReq/Reply below */
+    FS3ENETQ_RELATIONSHIPS,  /* batch following/followed-by state for N account
+                               * ids at once -- see FS3ENetRelationshipsReq/Reply
+                               * below; used to badge account-row list items,
+                               * unlike singular FS3ENETQ_RELATIONSHIP which only
+                               * ever targets the profile header's one account */
+    FS3ENETQ_FETCH_PROGRESS /* net-process-originated ONLY -- never sent by the GUI.
+                              * A one-way PutMsg() of an FS3ENetFetchProgress block to
+                              * app->netReplyPort while a chunked FS3ENETQ_FETCH_IMAGE
+                              * download is still in flight; no reply is expected back,
+                              * the GUI just frees it like any other FS3ENetMessage off
+                              * that port. See FS3ENetFetchProgress below. */
 };
 
 /* Result codes returned in FS3ENetMessage.fs3em_Result on reply. */
@@ -203,14 +217,30 @@ typedef struct FS3ENetInstanceInfoReply
  * FS3ENetFetchImageReq -- friendsh3ep.c's avatar/thumbnail fetches,
  * fs3emediaview.c's on-demand full-image fetch -- names the same
  * subdirectory. */
-#define FS3E_CACHE_SUBDIR_USERICONS  "usericons"
-#define FS3E_CACHE_SUBDIR_THUMBNAILS "thumbnails"
+#define FS3E_CACHE_SUBDIR_USERICONS   "usericons"
+#define FS3E_CACHE_SUBDIR_THUMBNAILS  "thumbnails"
+/* Kept distinct from THUMBNAILS (not reused) so the FS3ENETQ_FETCH_IMAGE
+ * reply handler (fs3erequests.c) can tell a card-image reply apart from a
+ * real attachment-thumbnail reply by subdir alone, and so a card's image
+ * URL can never collide with an actual attachment's cache entry. */
+#define FS3E_CACHE_SUBDIR_CARDIMAGES  "cardimages"
 
 /*
  * FS3ENETQ_FETCH_IMAGE — fetch a media URL (avatar, attachment thumbnail,
  * custom emoji) and cache it under T:FS3ECache/.  The network process serves
  * from disk cache when the file is already present; it only hits the network
  * on a cache miss.
+ *
+ * On a cache miss, the network process downloads the file in bounded chunks
+ * (see FS3ENetActiveDownload in fs3enet.c) instead of one unbounded blocking
+ * fetch, so a large/slow download can't stall other queued requests, and a
+ * dead connection times out per-chunk instead of hanging forever. This is
+ * purely an internal implementation detail: fs3em_Data/fs3em_Result still
+ * arrive exactly once, when the whole file is done or has failed, with the
+ * same shape as before chunking existed. If fs3enf_WantProgress is TRUE, the
+ * caller ALSO gets zero or more FS3ENETQ_FETCH_PROGRESS pings on
+ * app->netReplyPort while the download is in flight -- see
+ * FS3ENetFetchProgress below.
  *
  * On FS3ENETR_OK, fs3em_Data is a flat FS3ENetFetchImageReply block whose
  * fs3enf_LocalPath is a NUL-terminated AmigaOS path the GUI can open with
@@ -229,12 +259,17 @@ typedef struct FS3ENetFetchImageReq
                                 * persistent cache dir (see "Keep big user icons/thumbnails" in
                                 * Settings) -- ignored on a cache hit against an already-persisted
                                 * original from an earlier TRUE request. */
+    BOOL  fs3enf_WantProgress; /* opt in to FS3ENETQ_FETCH_PROGRESS pings for this download.
+                                 * FALSE for routine avatar/thumbnail fetches (no progress UI
+                                 * for those today) -- TRUE for the media viewer's on-demand
+                                 * full-image fetch, the case this was actually added for. */
 } FS3ENetFetchImageReq;
 
 /* Allocates a flat request block for FETCH_IMAGE. FreeVec() when done.
  * key is echoed back in the reply so the caller knows which entry to update. */
 FS3ENetFetchImageReq *FS3ENetFetchImageReq_Alloc(const char *url, const char *key,
-                                                   const char *subdir, BOOL keepOriginal);
+                                                   const char *subdir, BOOL keepOriginal,
+                                                   BOOL wantProgress);
 
 typedef struct FS3ENetFetchImageReply
 {
@@ -251,6 +286,24 @@ typedef struct FS3ENetFetchImageReply
                                * stable across runs, even when fs3enf_LocalPath itself is
                                * a transient RAM:T path. */
 } FS3ENetFetchImageReply;
+
+/*
+ * FS3ENETQ_FETCH_PROGRESS — see fs3enf_WantProgress above. Sent unsolicited
+ * by the network process, zero or more times, while a chunked FETCH_IMAGE
+ * download is in flight; correlate with the original request/final reply via
+ * fs3efp_Key (the same caller key FS3ENetFetchImageReq/Reply already carry --
+ * see e.g. fs3emediaview.c's mv->pendingUrl match against reply->fs3enf_Key).
+ * fs3efp_TotalBytes is 0 until the first chunk's response tells us the real
+ * size (Content-Range's "/TOTAL" suffix) -- some servers never do (they
+ * ignore Range entirely), in which case it stays 0 for the whole download and
+ * the caller can only show bytes-so-far, not a percentage.
+ */
+typedef struct FS3ENetFetchProgress
+{
+    char  *fs3efp_Key;
+    ULONG  fs3efp_BytesSoFar;
+    ULONG  fs3efp_TotalBytes; /* 0 = unknown */
+} FS3ENetFetchProgress;
 
 /*
  * Start the network process. cacheDir and maxCacheSizeMB are passed straight
@@ -300,12 +353,27 @@ enum FS3ENetTimelineShape
     FS3ENET_TLSHAPE_CONTEXT_DESCENDANTS, /* GET .../statuses/:id/context -- {ancestors,descendants}; only
                                           * descendants (the replies) is unwrapped and used, ancestors
                                           * discarded */
-    FS3ENET_TLSHAPE_SEARCH_STATUSES  /* GET /api/v2/search?type=statuses&q=... (note: v2, not v1) --
+    FS3ENET_TLSHAPE_SEARCH_STATUSES, /* GET /api/v2/search?type=statuses&q=... (note: v2, not v1) --
                                           * {accounts,statuses,hashtags}; only statuses is unwrapped and
                                           * used. Word and hashtag search both use this same shape/request
                                           * (see fs3et_SearchQuery below) -- Mastodon's own search treats
                                           * a leading '#' in q as a hashtag match, so there's no need for
                                           * a separate hashtag-timeline request type. */
+    FS3ENET_TLSHAPE_SINGLE_REFRESH,  /* GET .../statuses/:id, same one-Status-object wire shape as
+                                          * FS3ENET_TLSHAPE_SINGLE, but a different GUI-side meaning: an
+                                          * F5-triggered refresh of an already-displayed toot rather than
+                                          * a toot being newly inserted. fs3et_MinId is repurposed (see
+                                          * FS3ENetTimelineReq's doc comment) to carry the TTLPost.postId
+                                          * to patch, echoed back via FS3ENetTimelineReply.fs3et_RefreshPostId
+                                          * -- see FS3EApp_RefreshVisibleToots(). */
+    FS3ENET_TLSHAPE_SEARCH_ACCOUNTS  /* GET /api/v2/search?type=accounts&q=... -- same
+                                          * {accounts,statuses,hashtags} wrapper as SEARCH_STATUSES,
+                                          * just unwrapping "accounts" instead of "statuses". Not used
+                                          * by FS3ENetTimelineReq/FS3ENETQ_TIMELINE at all -- this value
+                                          * is only ever passed to FS3EMastodon_GetTimeline() directly
+                                          * by FS3ENET_HandleAccountsList() (FS3ENETQ_ACCOUNTS_LIST),
+                                          * which has its own request/reply pair and its own
+                                          * FS3ENetAccountsListKind discriminator. */
 };
 
 /*
@@ -337,6 +405,14 @@ enum FS3ENetTimelineShape
  * the raw (NOT URL-encoded) search text -- FS3ENet_HandleTimeline encodes
  * it itself and folds it onto fs3et_Timeline as "&q=...". "" for every
  * other shape.
+ *
+ * fs3et_MinId is repurposed for FS3ENET_TLSHAPE_SINGLE_REFRESH: its normal
+ * "page strictly newer than this id" pagination meaning doesn't apply to a
+ * single-status fetch, so it instead carries the TTLPost.postId the GUI
+ * should patch once the reply lands (see FS3ENetTimelineReply.fs3et_RefreshPostId) --
+ * this can differ from the refetched status's own id in the notifications
+ * view, where TTLPost.postId is the notification's own id, not the embedded
+ * status's (see TTLPostSetup.notifStatusId in fs3etoottimeline.h).
  */
 typedef struct FS3ENetTimelineReq {
     ULONG  fs3et_ViewModeBit;    /* echoed in reply */
@@ -432,6 +508,22 @@ typedef struct FS3ENetStatus {
     ULONG  fmas_PollVotesCount;   /* total votes across all options -- percentage denominator */
     BOOL   fmas_PollExpired;      /* TRUE = closed, results are final */
     BOOL   fmas_PollMultiple;     /* TRUE = multiple-choice poll (not used yet, carried for later) */
+
+    /* Link preview "card" -- server-generated (Mastodon itself fetches the
+     * linked page's OpenGraph tags when the toot is posted and caches the
+     * result), never fetched or parsed by this client. Independent of
+     * fmas_MediaCount/poll above -- NOT mutually exclusive with either,
+     * since a card comes from a URL in the text, not from what the user
+     * attached. fmas_HasCard==FALSE means every other fmas_Card* field
+     * below is "" and meaningless. Belongs to src same as content/media/
+     * poll (a reblog's card is the boosted status's own, never the outer
+     * wrapper's). */
+    BOOL  fmas_HasCard;
+    char *fmas_CardUrl;          /* the linked article's own URL */
+    char *fmas_CardTitle;
+    char *fmas_CardDescription;
+    char *fmas_CardProviderName; /* site name, e.g. "The Verge" */
+    char *fmas_CardImageUrl;     /* "" if the card has no image (some sites provide none) */
 } FS3ENetStatus;
 
 /* Header of the flat timeline reply block.
@@ -442,6 +534,10 @@ typedef struct FS3ENetTimelineReply {
     ULONG fs3et_AccountGeneration; /* echoed from request, see FS3ENetTimelineReq */
     ULONG fs3et_ResponseShape; /* echoed from request, see FS3ENetTimelineShape */
     ULONG fs3et_Count;
+    char *fs3et_RefreshPostId; /* echoes request's (repurposed) fs3et_MinId when
+                                 * fs3et_ResponseShape is FS3ENET_TLSHAPE_SINGLE_REFRESH;
+                                 * "" for every other shape. See FS3ENetTimelineReq's
+                                 * doc comment on fs3et_MinId. */
     /* FS3ENetStatus[fs3et_Count] follows immediately in memory */
 } FS3ENetTimelineReply;
 
@@ -589,6 +685,45 @@ typedef struct FS3ENetNotificationsReply {
 } FS3ENetNotificationsReply;
 
 /*
+ * FS3ENETQ_ACCOUNTS_LIST — fetch a list of accounts: fuzzy account search
+ * (GET /api/v2/search?type=accounts), or a user's followers/following
+ * (GET /api/v1/accounts/:id/followers or .../following). Unlike
+ * FS3ENETQ_TIMELINE, this is deliberately single-page only for now: real
+ * pagination for these endpoints is driven by an RFC5988 Link: response
+ * header this codebase's HTTP layer doesn't parse at all (FS3EHttpResponse
+ * only exposes body/status) -- matches the same "no pagination yet"
+ * scope FS3EApp_SearchWord's word/hashtag search already accepted.
+ */
+enum FS3ENetAccountsListKind
+{
+    FS3ENET_ACCLIST_FOLLOWERS = 0, /* fs3eal_AccountId is whose followers to list */
+    FS3ENET_ACCLIST_FOLLOWING,     /* fs3eal_AccountId is whose following to list */
+    FS3ENET_ACCLIST_SEARCH         /* fs3eal_Query is the raw (unencoded) search text */
+};
+
+typedef struct FS3ENetAccountsListReq {
+    ULONG  fs3eal_Kind;              /* FS3ENetAccountsListKind; echoed in reply */
+    ULONG  fs3eal_AccountGeneration; /* opaque caller token; echoed in reply, same
+                                       * reasoning as FS3ENetTimelineReq's own field */
+    char  *fs3eal_ApiBaseUrl;
+    char  *fs3eal_AccessToken;
+    char  *fs3eal_AccountId; /* FOLLOWERS/FOLLOWING: whose list; "" for SEARCH */
+    char  *fs3eal_Query;     /* SEARCH: raw (unencoded) query text; "" otherwise */
+} FS3ENetAccountsListReq;
+
+FS3ENetAccountsListReq *FS3ENetAccountsListReq_Alloc(ULONG kind,
+    ULONG accountGeneration, const char *apiBaseUrl, const char *accessToken,
+    const char *accountId, const char *query);
+
+/* Header of the flat accounts-list reply block.
+ * FS3EMastodonAccount[fs3eal_Count] follows immediately in memory. */
+typedef struct FS3ENetAccountsListReply {
+    ULONG fs3eal_Kind;              /* echoed from request, see FS3ENetAccountsListKind */
+    ULONG fs3eal_AccountGeneration; /* echoed from request, see FS3ENetAccountsListReq */
+    ULONG fs3eal_Count;
+} FS3ENetAccountsListReply;
+
+/*
  * FS3ENETQ_FAVORITE — POST /api/v1/statuses/:id/favourite or .../unfavourite.
  *
  * fs3efa_Favourite selects which: TRUE = favourite, FALSE = unfavourite.
@@ -658,6 +793,52 @@ typedef struct FS3ENetRelationshipReply {
     char *fs3erl_AccountId;
     BOOL  fs3erl_Following;
 } FS3ENetRelationshipReply;
+
+/*
+ * FS3ENETQ_RELATIONSHIPS — GET /api/v1/accounts/relationships?id[]=<id>&id[]=<id>...,
+ * one repeated id[] per account. Batch counterpart of FS3ENETQ_RELATIONSHIP
+ * above: fired after an FS3ENETQ_ACCOUNTS_LIST reply lands, covering every
+ * account id just added to the list (minus the connected user's own id --
+ * Mastodon's relationships endpoint has no self-relationship to report), so
+ * TTLAccountRow_Class rows can show a "Follows you" badge (see
+ * TTL_POSTUPD_RELATIONSHIP in fs3etoottimeline.h). Unlike
+ * FS3ENetRelationshipReply, this one also carries followed_by -- the
+ * singular request/reply above only ever needed the connected user's own
+ * following state for the profile header's Follow/Unfollow button, this one
+ * needs both directions to know if the OTHER account follows back.
+ *
+ * A char*[fs3erls_Count] pointer array follows the header fields
+ * immediately in memory (each entry pointing further into the same
+ * AllocVec block, at the id string bytes packed after the array itself) --
+ * same "pointer array then string bytes" layout FS3ENet_HandleAccountsList's
+ * own reply already uses for its FS3EMastodonAccount[] trailing array.
+ *
+ * On FS3ENETR_OK, fs3em_Data is replaced with an FS3ENetRelationshipsReply.
+ */
+typedef struct FS3ENetRelationshipsReq {
+    ULONG  fs3erls_AccountGeneration; /* opaque caller token; echoed in reply */
+    ULONG  fs3erls_Count;
+    char  *fs3erls_ApiBaseUrl;
+    char  *fs3erls_AccessToken;
+    /* char *fs3erls_AccountIds[fs3erls_Count] follows immediately */
+} FS3ENetRelationshipsReq;
+
+FS3ENetRelationshipsReq *FS3ENetRelationshipsReq_Alloc(
+    ULONG accountGeneration, const char *apiBaseUrl, const char *accessToken,
+    const char *const *accountIds, ULONG count);
+
+typedef struct FS3ENetRelationshipEntry {
+    char *fs3erle_AccountId;
+    BOOL  fs3erle_Following;
+    BOOL  fs3erle_FollowedBy;
+} FS3ENetRelationshipEntry;
+
+/* Header of the flat relationships reply block.
+ * FS3ENetRelationshipEntry[fs3erls_Count] follows immediately in memory. */
+typedef struct FS3ENetRelationshipsReply {
+    ULONG fs3erls_AccountGeneration; /* echoed from request */
+    ULONG fs3erls_Count;
+} FS3ENetRelationshipsReply;
 
 /*
  * FS3ENETQ_FOLLOW — POST /api/v1/accounts/:id/follow or .../unfollow.

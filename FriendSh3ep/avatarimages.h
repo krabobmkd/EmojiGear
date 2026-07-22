@@ -66,6 +66,15 @@
 #define THUMBNAIL_CACHE_MAX  32
 #define THUMBNAIL_URL_SIZE   384
 
+/* Link-preview card images: a THIRD pool, same shape/reasoning as the media
+ * thumbnail pool above, but kept separate (own subdir -- see
+ * FS3E_CACHE_SUBDIR_CARDIMAGES in fs3enet.h -- own cache pool here) so a
+ * card's image URL can never collide with or evict an actual attachment's
+ * cache entry, even though both are downloaded/decoded through the
+ * identical pipeline. */
+#define CARDIMAGE_CACHE_MAX  16
+#define CARDIMAGE_URL_SIZE   384
+
 typedef struct {
     char     acct[AVATAR_ACCT_SIZE]; /* key: @user@instance */
     RgbImage img;                    /* fixed-size RGB pixel buffer */
@@ -88,6 +97,15 @@ typedef struct {
     UBYTE    detectedFormat;
 } ThumbnailEntry;
 
+typedef struct {
+    char     url[CARDIMAGE_URL_SIZE]; /* key: card.image URL */
+    RgbImage img;
+    BOOL     requested;
+    BOOL     thumbRequested;
+    BOOL     failed;
+    UBYTE    detectedFormat;
+} CardImageEntry;
+
 typedef struct AvatarImages {
     AvatarEntry entries[AVATAR_CACHE_MAX];
     ULONG       count;            /* populated slots, <=AVATAR_CACHE_MAX */
@@ -96,6 +114,10 @@ typedef struct AvatarImages {
     ThumbnailEntry thumbs[THUMBNAIL_CACHE_MAX];
     ULONG          thumbCount;       /* populated slots, <=THUMBNAIL_CACHE_MAX */
     ULONG          thumbNextEvict;   /* round-robin cursor once full */
+
+    CardImageEntry cards[CARDIMAGE_CACHE_MAX];
+    ULONG          cardCount;        /* populated slots, <=CARDIMAGE_CACHE_MAX */
+    ULONG          cardNextEvict;    /* round-robin cursor once full */
 } AvatarImages;
 
 /* Allocate the cache.  Returns NULL on memory failure. */
@@ -156,5 +178,21 @@ void          AvatarImages_MarkMediaFailed(AvatarImages *ai, const char *url,
                                             UBYTE detectedFormat);
 BOOL          AvatarImages_MediaFailed(AvatarImages *ai, const char *url,
                                         UBYTE *outFormat);
+
+/* ---- Card image pool: same shape again, keyed by card.image URL -- see
+ * CARDIMAGE_CACHE_MAX's comment above for why it's kept separate from the
+ * media pool. ---- */
+
+RgbImage     *AvatarImages_GetCard(AvatarImages *ai, const char *url);
+BOOL          AvatarImages_IsCardRequested(AvatarImages *ai, const char *url);
+void          AvatarImages_MarkCardRequested(AvatarImages *ai, const char *url);
+BOOL          AvatarImages_IsCardThumbRequested(AvatarImages *ai, const char *url);
+void          AvatarImages_MarkCardThumbRequested(AvatarImages *ai, const char *url);
+RgbImage     *AvatarImages_CardThumbReady(AvatarImages *ai, const char *url,
+                                           const char *thumbPath);
+void          AvatarImages_MarkCardFailed(AvatarImages *ai, const char *url,
+                                           UBYTE detectedFormat);
+BOOL          AvatarImages_CardFailed(AvatarImages *ai, const char *url,
+                                       UBYTE *outFormat);
 
 #endif /* AVATARIMAGES_H */

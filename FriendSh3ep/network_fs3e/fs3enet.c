@@ -289,6 +289,30 @@ FS3ENetNotificationsReq *FS3ENetNotificationsReq_Alloc(ULONG pageDirection,
     return req;
 }
 
+FS3ENetAccountsListReq *FS3ENetAccountsListReq_Alloc(ULONG kind,
+    ULONG accountGeneration, const char *apiBaseUrl, const char *accessToken,
+    const char *accountId, const char *query)
+{
+    ULONG total = sizeof(FS3ENetAccountsListReq)
+                + FS3ENet_PackLen(apiBaseUrl)
+                + FS3ENet_PackLen(accessToken)
+                + FS3ENet_PackLen(accountId)
+                + FS3ENet_PackLen(query);
+    FS3ENetAccountsListReq *req =
+        (FS3ENetAccountsListReq *)AllocVec(total, MEMF_ANY | MEMF_PUBLIC);
+    char *p;
+
+    if (!req) return NULL;
+    req->fs3eal_Kind              = kind;
+    req->fs3eal_AccountGeneration = accountGeneration;
+    p = (char *)req + sizeof(*req);
+    FS3ENet_PackStr(&req->fs3eal_ApiBaseUrl,  &p, apiBaseUrl);
+    FS3ENet_PackStr(&req->fs3eal_AccessToken, &p, accessToken);
+    FS3ENet_PackStr(&req->fs3eal_AccountId,   &p, accountId);
+    FS3ENet_PackStr(&req->fs3eal_Query,       &p, query);
+    return req;
+}
+
 FS3ENetFavouriteReq *FS3ENetFavouriteReq_Alloc(
     const char *apiBaseUrl, const char *accessToken,
     const char *statusId, BOOL favourite)
@@ -348,6 +372,44 @@ FS3ENetRelationshipReq *FS3ENetRelationshipReq_Alloc(
     return req;
 }
 
+/* accountIds/count -- see FS3ENetRelationshipsReq's header comment for the
+ * resulting block layout: header, then a char*[count] pointer array, then
+ * the pointed-to string bytes (ApiBaseUrl/AccessToken/each id), same
+ * "pointer array right after the header" shape FS3ENet_HandleAccountsList's
+ * own reply uses for its FS3EMastodonAccount[] trailing array. */
+FS3ENetRelationshipsReq *FS3ENetRelationshipsReq_Alloc(
+    ULONG accountGeneration, const char *apiBaseUrl, const char *accessToken,
+    const char *const *accountIds, ULONG count)
+{
+    ULONG total = sizeof(FS3ENetRelationshipsReq)
+                + count * sizeof(char *)
+                + FS3ENet_PackLen(apiBaseUrl)
+                + FS3ENet_PackLen(accessToken);
+    FS3ENetRelationshipsReq *req;
+    char **ids;
+    char *p;
+    ULONG i;
+
+    for (i = 0; i < count; i++)
+        total += FS3ENet_PackLen(accountIds[i]);
+
+    req = (FS3ENetRelationshipsReq *)AllocVec(total, MEMF_ANY | MEMF_PUBLIC);
+    if (!req) return NULL;
+
+    req->fs3erls_AccountGeneration = accountGeneration;
+    req->fs3erls_Count             = count;
+
+    ids = (char **)(req + 1);
+    p   = (char *)(ids + count);
+
+    FS3ENet_PackStr(&req->fs3erls_ApiBaseUrl,  &p, apiBaseUrl);
+    FS3ENet_PackStr(&req->fs3erls_AccessToken, &p, accessToken);
+    for (i = 0; i < count; i++)
+        FS3ENet_PackStr(&ids[i], &p, accountIds[i]);
+
+    return req;
+}
+
 FS3ENetFollowReq *FS3ENetFollowReq_Alloc(
     const char *apiBaseUrl, const char *accessToken,
     const char *accountId, BOOL follow)
@@ -370,7 +432,8 @@ FS3ENetFollowReq *FS3ENetFollowReq_Alloc(
 }
 
 FS3ENetFetchImageReq *FS3ENetFetchImageReq_Alloc(const char *url, const char *key,
-                                                   const char *subdir, BOOL keepOriginal)
+                                                   const char *subdir, BOOL keepOriginal,
+                                                   BOOL wantProgress)
 {
     ULONG total = sizeof(FS3ENetFetchImageReq)
                 + FS3ENet_PackLen(url)
@@ -385,7 +448,8 @@ FS3ENetFetchImageReq *FS3ENetFetchImageReq_Alloc(const char *url, const char *ke
     FS3ENet_PackStr(&req->fs3enf_Url,    &p, url);
     FS3ENet_PackStr(&req->fs3enf_Key,    &p, key ? key : "");
     FS3ENet_PackStr(&req->fs3enf_Subdir, &p, subdir ? subdir : "");
-    req->fs3enf_KeepOriginal = keepOriginal;
+    req->fs3enf_KeepOriginal  = keepOriginal;
+    req->fs3enf_WantProgress = wantProgress;
     return req;
 }
 
@@ -430,7 +494,17 @@ static LONG g_FS3ENetStopSigBit = -1;
 #define FS3ENET_STOP_SIGMASK  ((g_FS3ENetStopSigBit >= 0) ? (1UL << g_FS3ENetStopSigBit) : 0UL)
 
 static void FS3ENet_ProcEntry(void);
-static void FS3ENet_Dispatch(FS3ENetMessage *fs3em);
+static BOOL FS3ENet_Dispatch(FS3ENetMessage *fs3em);
+static void FS3ENet_AbortAllActiveDownloads(void);
+static void FS3ENet_StepActiveDownloads(void);
+
+/* Head of the chunked-download list -- see "Chunked media downloads" above
+ * FS3ENet_HandleFetchImage() further down for the full struct definition
+ * and design. Declared here (against the incomplete struct tag) so
+ * FS3ENet_ProcEntry()'s loop, which appears before that section, can check
+ * whether any download is active without needing the full type. */
+static struct FS3ENetActiveDownload *g_FS3EActiveDownloads = NULL;
+static ULONG                         g_FS3EActiveDownloadCount = 0;
 
 struct MsgPort *FS3ENet_Start(const char *cacheDir, ULONG maxCacheSizeMB)
 {
@@ -578,11 +652,17 @@ static void FS3ENet_ProcEntry(void)
     {
         FS3ENetMessage *fs3em;
 
-        WaitPort(requestPort);
-
-        // bdbprintf_now("FS3ENet: woke up, %lu request(s) waiting\n",
-        //               (unsigned long)FS3ENet_CountPending(requestPort));
-
+        /* Only block when there's no chunked download to advance --
+         * GetMsg() below is always non-blocking regardless, so WaitPort()
+         * is the only thing that would sleep past this chunk's turn. See
+         * "Chunked media downloads" above FS3ENet_HandleFetchImage() for
+         * why a download can be sitting in g_FS3EActiveDownloads here. */
+        if (!g_FS3EActiveDownloads)
+            WaitPort(requestPort);
+#ifdef BDBTRACEMULTIPART
+         bdbprintf_now("FS3ENet: woke up, %lu request(s) waiting\n",
+                       (unsigned long)FS3ENet_CountPending(requestPort));
+#endif
         /* FS3ENet_Stop() Signal()s this before the shutdown message even
          * reaches the queue -- once noticed, every message still queued
          * behind whatever's currently dispatching gets an immediate error
@@ -590,13 +670,22 @@ static void FS3ENet_ProcEntry(void)
          * shutdown doesn't have to wait out the entire backlog in FIFO
          * order. The one thing this can't shorten is a request already
          * mid-dispatch when the signal arrives (e.g. a slow HTTP GET already
-         * under way) -- that one still runs to completion. */
+         * under way) -- that one still runs to completion. Any chunked
+         * download already registered gets the same immediate-abandon
+         * treatment via FS3ENet_AbortAllActiveDownloads() -- its held
+         * original request is replied with an error right here rather than
+         * being left to finish chunk by chunk. */
         if (!stopping && FS3ENET_STOP_SIGMASK &&
             (SetSignal(0, FS3ENET_STOP_SIGMASK) & FS3ENET_STOP_SIGMASK))
+        {
             stopping = TRUE;
+            FS3ENet_AbortAllActiveDownloads();
+        }
 
         while ((fs3em = (FS3ENetMessage *)GetMsg(requestPort)) != NULL)
         {
+            BOOL deferred = FALSE;
+
             if (fs3em->fs3em_Type == FS3ENETQ_SHUTDOWN)
             {
                 /* Hold this one instead of replying immediately: ReplyMsg()
@@ -621,14 +710,36 @@ static void FS3ENet_ProcEntry(void)
             }
             else
             {
-                FS3ENet_Dispatch(fs3em);
-                if (!stopping && FS3ENET_STOP_SIGMASK &&
+                /* FALSE means fs3em is a FETCH_IMAGE cache miss now owned by
+                 * the chunked download engine (see FS3ENet_HandleFetchImage)
+                 * -- it gets ReplyMsg()'d later, from FS3ENet_FinishDownload,
+                 * not here. */
+                deferred = !FS3ENet_Dispatch(fs3em);
+                if (!deferred && !stopping && FS3ENET_STOP_SIGMASK &&
                     (SetSignal(0, FS3ENET_STOP_SIGMASK) & FS3ENET_STOP_SIGMASK))
+                {
                     stopping = TRUE;
+                    FS3ENet_AbortAllActiveDownloads();
+                }
             }
 
-            ReplyMsg((struct Message *)fs3em);
+            if (!deferred)
+                ReplyMsg((struct Message *)fs3em);
         }
+
+        /* Advance exactly one chunk of the next active download (round
+         * robin), interleaved with the request-port drain above so a large
+         * in-flight transfer never starves other queued work. On the way
+         * out (shutdown just noticed, or the signal-based fast-path above
+         * somehow missed it -- e.g. AllocSignal() failed at startup) make
+         * sure nothing is left dangling: every held original request must
+         * be replied before this task exits and app->netReplyPort is torn
+         * down on the GUI side (see the shutdown-drain comment in
+         * friendsh3ep.c), or a late reply would land on a freed port. */
+        if (!running || stopping)
+            FS3ENet_AbortAllActiveDownloads();
+        else if (g_FS3EActiveDownloads)
+            FS3ENet_StepActiveDownloads();
     }
 
     FS3ECache_Cleanup();
@@ -854,104 +965,87 @@ static void FS3ENet_HandleInstanceInfo(FS3ENetMessage *fs3em)
     fs3em->fs3em_Result  = FS3ENETR_OK;
 }
 
-/* FS3ENETQ_FETCH_IMAGE — check disk cache, fetch on miss, reply with path.
+/* ---- Chunked media downloads --------------------------------------------
  *
- * Repeat requests for the same URL (e.g. a user double/triple-clicking the
- * same thumbnail, or a click landing on media the passive timeline-render
- * fetch already resolved earlier) are handled by the cache-lookup logic
- * below (FS3ECache_Lookup for the persistent case, FS3ECache_LookupRAM for
- * the !KeepOriginal/RAM:T case) finding the file and skipping the
- * download/write -- every repeat request still gets its own normal
- * FS3ENETR_OK reply with a real, usable path. (An earlier version of this
- * function short-circuited same-URL-as-the-previous-request here with a
- * bounce result and no data, on the theory that "the previous request will
- * deliver it" -- wrong whenever that previous request was a *different*,
- * already-finished fetch, e.g. the passive per-post thumbnail fetch: there
- * was no second in-flight reply coming, and callers like fs3emediaview.c
- * that were told "someone else has this" waited forever. Removed --
- * this is what the cache lookups below are already for.) */
-static void FS3ENet_HandleFetchImage(FS3ENetMessage *fs3em)
+ * FS3ENETQ_FETCH_IMAGE on a cache miss used to block this whole process on
+ * one unbounded FS3EHttp_Get() until the entire file arrived -- fine for a
+ * few-KB avatar, but a multi-hundred-KB/multi-MB attachment then stalled
+ * every other queued request (timeline reloads, other image fetches, login,
+ * posting) for as long as it took, with no safe way to time out (see
+ * FS3EHTTP_TIMEOUT_SECS's comment in fs3enet_http.c).
+ *
+ * Instead, a real cache miss is registered here as an FS3ENetActiveDownload
+ * and fetched a small Range chunk at a time (FS3EHttp_GetRange(),
+ * FS3ENET_CHUNK_SIZE bytes per call) -- each chunk is its own short, safely
+ * bounded HTTP exchange, and FS3ENet_ProcEntry's main loop advances exactly
+ * one chunk of one download between drains of the request port, round-robin
+ * across up to FS3ENET_MAX_ACTIVE_DOWNLOADS concurrent downloads (see
+ * FS3ENet_StepActiveDownloads()). The original FS3ENetMessage is held --
+ * NOT replied -- until the file is fully written or the download gives up;
+ * from the GUI's point of view fs3em_Data/fs3em_Result still arrive exactly
+ * once, same shape as before chunking existed.
+ *
+ * Bytes land directly on disk as each chunk arrives (Write() to a file
+ * handle opened once at registration) rather than being buffered whole in
+ * RAM first -- FS3ECache_Store()/StoreRAM() (whole-blob writes) are bypassed
+ * for this path; FS3ECache_EnforceLimit() is called by hand on a successful
+ * persistent-cache finish, mirroring what Store() would have done.
+ *
+ * Not every server honors Range: if the very first chunk request for a URL
+ * comes back 200 instead of 206, that response IS the whole file (server
+ * ignored Range and sent everything) -- the download just finishes
+ * immediately with whatever was received, same as the old single-shot
+ * behavior for that one resource.
+ *
+ * Verified against static.piaille.fr (bdbprintf_now trace, superlog.txt) --
+ * server does honor Range (206 throughout) and does split across multiple
+ * FS3ENET_CHUNK_SIZE requests once a file exceeds it, e.g.:
+ *   StepDL: .../2657ea0aa2067d98.png offset=0      status=206 totalLen=247089 gotLen=196608
+ *   StepDL: .../eb781c6399221cbc.png offset=0      status=206 totalLen=345774 gotLen=196608
+ *   StepDL: .../2657ea0aa2067d98.png offset=196608 status=206 totalLen=247089 gotLen=50481   (-> Finish, 247089 total)
+ *   StepDL: .../eb781c6399221cbc.png offset=196608 status=206 totalLen=345774 gotLen=149166  (-> Finish, 345774 total)
+ * Note the interleaving in that trace: the second file's chunk 1 lands
+ * between the first file's chunk 1 and chunk 2 -- direct confirmation of
+ * the round-robin, one-chunk-per-download-per-turn behavior described
+ * above, not just that chunking itself works. The very first fix attempt
+ * (BIO_do_connect_retry() for a bounded connect, see FS3EHttp_DoRawRequest's
+ * comment in fs3enet_http.c) made every single chunk fail outright (ok=0,
+ * status=0 on every attempt, for every URL) -- caught by this same tracing
+ * before it shipped.
+ */
+#define FS3ENET_CHUNK_SIZE            (192UL * 1024UL)  /* per Range request */
+#define FS3ENET_MAX_ACTIVE_DOWNLOADS  4
+#define FS3ENET_DOWNLOAD_MAX_RETRIES  3
+#define FS3ENET_PROGRESS_MIN_DELTA    (64UL * 1024UL)    /* throttle FETCH_PROGRESS pings */
+
+typedef struct FS3ENetActiveDownload
 {
-    FS3ENetFetchImageReq   *req = (FS3ENetFetchImageReq *)fs3em->fs3em_Data;
+    struct FS3ENetActiveDownload *fs3ead_Next;
+    FS3ENetMessage       *fs3ead_OrigMsg;  /* held -- ReplyMsg()'d only by FS3ENet_FinishDownload */
+    FS3ENetFetchImageReq *fs3ead_Req;      /* == fs3ead_OrigMsg->fs3em_Data throughout */
+    BPTR                  fs3ead_FH;       /* opened once at registration, Write() per chunk */
+    char                  fs3ead_LocalPath[FS3ECACHE_PATH_SIZE];
+    char                  fs3ead_CachePath[FS3ECACHE_PATH_SIZE];
+    BOOL                  fs3ead_IsTemp;
+    ULONG                 fs3ead_BytesSoFar;
+    ULONG                 fs3ead_TotalBytes;      /* 0 = unknown until first chunk (or never) */
+    ULONG                 fs3ead_LastProgressSent; /* fs3ead_BytesSoFar as of the last ping */
+    UWORD                 fs3ead_RetryCount;
+} FS3ENetActiveDownload;
+
+/* Builds an FS3ENetFetchImageReply for fs3em from localPath/cachePath/isTemp,
+ * freeing the original request block first and replacing fs3em_Data --
+ * same convention every other Handle* function in this file already
+ * follows. Shared by FS3ENet_HandleFetchImage()'s synchronous cache-hit
+ * path below and by FS3ENet_FinishDownload() once a chunked download
+ * completes. */
+static void FS3ENet_BuildFetchImageReply(FS3ENetMessage *fs3em, FS3ENetFetchImageReq *req,
+                                          const char *localPath, const char *cachePath,
+                                          BOOL isTemp)
+{
     FS3ENetFetchImageReply *reply;
-    char localPath[FS3ECACHE_PATH_SIZE];
-    char cachePath[FS3ECACHE_PATH_SIZE];
-    BOOL isTemp = FALSE;
     ULONG total;
     char *p;
-
-    if (!req || fs3em->fs3em_DataLen < sizeof(*req))
-    {
-        fs3em->fs3em_Result = FS3ENETR_PARSE_ERROR;
-        return;
-    }
-
-    /* Deterministic path this URL would live at if kept -- computed
-     * regardless of fs3enf_KeepOriginal so the caller always has a stable
-     * name to derive the resized thumbnail's sibling filename from, even
-     * on a run where the original itself only ever touches RAM:T. Ensure
-     * the subdir exists too: when KeepOriginal is FALSE, FS3ECache_Store
-     * (the thing that normally creates it) never runs, but the thumbnail
-     * process still needs to write the resized sibling under this same
-     * subdir a moment from now. */
-    FS3ECache_ComputePath(req->fs3enf_Url, req->fs3enf_Subdir, cachePath, sizeof(cachePath));
-    FS3ECache_EnsureSubdir(req->fs3enf_Subdir);
-
-    if (!FS3ECache_Lookup(req->fs3enf_Url, req->fs3enf_Subdir, localPath, sizeof(localPath)))
-    {
-        /* Not in the persistent cache -- but for a !KeepOriginal request,
-         * the deterministic RAM:T path FS3ECache_StoreRAM() would write to
-         * may already hold an earlier download of this exact URL (e.g.
-         * still being read by the thumbnail process, or just never
-         * cleaned up). Reuse it instead of re-downloading and re-opening
-         * with MODE_NEWFILE, which would silently truncate/replace a file
-         * another task might still have open for reading -- see
-         * FS3ECache_LookupRAM()'s doc comment for why that specific race
-         * is suspected to crash real UAE (not real hardware) setups. */
-        BOOL haveExisting = (!req->fs3enf_KeepOriginal) &&
-                             FS3ECache_LookupRAM(req->fs3enf_Url, localPath, sizeof(localPath));
-
-        if (haveExisting) isTemp = TRUE;
-
-        if (!haveExisting)
-        {
-            FS3EHttpResponse resp;
-
-            if (!FS3EHttp_Get(req->fs3enf_Url, NULL, &resp))
-            {
-                fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
-                return;
-            }
-
-            if (req->fs3enf_KeepOriginal)
-            {
-                if (!FS3ECache_Store(req->fs3enf_Url, req->fs3enf_Subdir,
-                                     resp.fhr_Body, resp.fhr_BodyLen,
-                                     localPath, sizeof(localPath)))
-                {
-                    FS3EHttp_FreeResponse(&resp);
-                    fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
-                    return;
-                }
-            }
-            else
-            {
-                if (!FS3ECache_StoreRAM(req->fs3enf_Url, resp.fhr_Body, resp.fhr_BodyLen,
-                                        localPath, sizeof(localPath)))
-                {
-                    FS3EHttp_FreeResponse(&resp);
-                    fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
-                    return;
-                }
-                isTemp = TRUE;
-            }
-
-            FS3EHttp_FreeResponse(&resp);
-        } /* !haveExisting */
-    }
-    /* else: found on disk already -- either the persistent cache, or (see
-     * haveExisting above) an already-downloaded RAM:T temp file this
-     * request is now sharing rather than re-fetching. */
 
     total = sizeof(FS3ENetFetchImageReply)
           + FS3ENet_PackLen(localPath)
@@ -977,6 +1071,370 @@ static void FS3ENet_HandleFetchImage(FS3ENetMessage *fs3em)
     fs3em->fs3em_Data    = reply;
     fs3em->fs3em_DataLen = total;
     fs3em->fs3em_Result  = FS3ENETR_OK;
+}
+
+/* Removes dl from g_FS3EActiveDownloads (wherever it is in the list) and
+ * decrements the count. Doesn't free dl or touch its file handle -- callers
+ * (FS3ENet_FinishDownload, FS3ENet_StepActiveDownloads) do that themselves. */
+static void FS3ENet_UnlinkActiveDownload(FS3ENetActiveDownload *dl)
+{
+    FS3ENetActiveDownload **link = &g_FS3EActiveDownloads;
+
+    while (*link)
+    {
+        if (*link == dl)
+        {
+            *link = dl->fs3ead_Next;
+            if (g_FS3EActiveDownloadCount > 0) g_FS3EActiveDownloadCount--;
+            return;
+        }
+        link = &(*link)->fs3ead_Next;
+    }
+}
+
+/* Sends one FS3ENETQ_FETCH_PROGRESS ping for dl to the port the original
+ * request came in on -- one-way, no reply expected; the GUI frees it like
+ * any other FS3ENetMessage off that port (see FS3ENetFetchProgress's doc
+ * comment in fs3enet.h). Best-effort: silently does nothing on an
+ * allocation failure, since a missed progress update isn't worth failing
+ * the download over. */
+static void FS3ENet_SendProgress(FS3ENetActiveDownload *dl)
+{
+    FS3ENetMessage       *msg;
+    FS3ENetFetchProgress *prog;
+    ULONG                 total;
+    char                 *p;
+    const char           *key = dl->fs3ead_Req->fs3enf_Key;
+
+    msg = (FS3ENetMessage *)AllocVec(sizeof(*msg), MEMF_ANY | MEMF_PUBLIC | MEMF_CLEAR);
+    if (!msg) return;
+
+    total = sizeof(FS3ENetFetchProgress) + FS3ENet_PackLen(key);
+    prog  = (FS3ENetFetchProgress *)AllocVec(total, MEMF_ANY | MEMF_PUBLIC);
+    if (!prog) { FreeVec(msg); return; }
+
+    p = (char *)prog + sizeof(*prog);
+    FS3ENet_PackStr(&prog->fs3efp_Key, &p, key ? key : "");
+    prog->fs3efp_BytesSoFar = dl->fs3ead_BytesSoFar;
+    prog->fs3efp_TotalBytes = dl->fs3ead_TotalBytes;
+
+    msg->fs3em_Msg.mn_Length = sizeof(*msg);
+    msg->fs3em_Type          = FS3ENETQ_FETCH_PROGRESS;
+    msg->fs3em_Result        = FS3ENETR_OK;
+    msg->fs3em_Data          = prog;
+    msg->fs3em_DataLen       = total;
+
+    PutMsg(dl->fs3ead_OrigMsg->fs3em_Msg.mn_ReplyPort, (struct Message *)msg);
+
+    dl->fs3ead_LastProgressSent = dl->fs3ead_BytesSoFar;
+}
+
+/* Completes dl -- successfully (result == FS3ENETR_OK) or not -- closing its
+ * file handle, replying its held original request, and freeing dl. A failed
+ * download's partial file is deleted, the same "never leave a truncated
+ * file behind" contract FS3ECache_Store()/StoreRAM() already have. */
+static void FS3ENet_FinishDownload(FS3ENetActiveDownload *dl, ULONG result)
+{
+    FS3ENetMessage *fs3em = dl->fs3ead_OrigMsg;
+#ifdef BDBTRACEMULTIPART
+    bdbprintf_now("FinishDL: url=%s result=%lu bytesSoFar=%lu path=%s\n",
+                   dl->fs3ead_Req->fs3enf_Url, (unsigned long)result,
+                   (unsigned long)dl->fs3ead_BytesSoFar, dl->fs3ead_LocalPath);
+#endif
+    if (dl->fs3ead_FH) Close(dl->fs3ead_FH);
+
+    if (result == FS3ENETR_OK)
+    {
+        FS3ENet_BuildFetchImageReply(fs3em, dl->fs3ead_Req,
+                                      dl->fs3ead_LocalPath, dl->fs3ead_CachePath,
+                                      dl->fs3ead_IsTemp);
+
+        /* Keep the persistent cache under budget -- Store() would have done
+         * this itself; writing incrementally here bypasses Store() entirely,
+         * so it has to be triggered by hand. Not needed for the RAM:T path,
+         * which isn't size-limited. */
+        if (!dl->fs3ead_IsTemp)
+            FS3ECache_EnforceLimit();
+    }
+    else
+    {
+        DeleteFile(dl->fs3ead_LocalPath);
+        fs3em->fs3em_Result = result;
+        /* fs3em_Data is left pointing at the original request block, same
+         * "on error, the GUI must FreeVec it" contract every other request
+         * type already documents (see FS3ENetFetchImageReq's doc comment in
+         * fs3enet.h). */
+    }
+
+    FS3ENet_UnlinkActiveDownload(dl);
+    ReplyMsg((struct Message *)fs3em);
+    FreeVec(dl);
+}
+
+/* Abandons every active download immediately, replying each held original
+ * request with FS3ENETR_NETWORK_ERROR. Used when shutdown is detected (see
+ * FS3ENet_ProcEntry's loop) so nothing is left dangling: every message this
+ * process is holding gets replied before the task exits and the GUI tears
+ * down its reply port. */
+static void FS3ENet_AbortAllActiveDownloads(void)
+{
+    while (g_FS3EActiveDownloads)
+        FS3ENet_FinishDownload(g_FS3EActiveDownloads, FS3ENETR_NETWORK_ERROR);
+}
+
+/* Advances the download at the front of g_FS3EActiveDownloads by exactly one
+ * chunk, then either finishes it (file complete, or gave up after too many
+ * failed chunks -- see FS3ENet_FinishDownload) or rotates it to the back of
+ * the list (round robin) so the next call services a different download
+ * first. Called once per FS3ENet_ProcEntry loop iteration whenever the list
+ * is non-empty -- see that loop's own comment for why this keeps a large
+ * download from starving other queued requests. */
+static void FS3ENet_StepActiveDownloads(void)
+{
+    FS3ENetActiveDownload *dl = g_FS3EActiveDownloads;
+    FS3EHttpResponse       resp;
+    ULONG                  status = 0, totalLen = 0, gotLen = 0;
+    BOOL                   ok, finished = FALSE;
+    ULONG                  finishResult = FS3ENETR_OK;
+
+    if (!dl) return;
+
+    ok = FS3EHttp_GetRange(dl->fs3ead_Req->fs3enf_Url, NULL,
+                           dl->fs3ead_BytesSoFar, FS3ENET_CHUNK_SIZE,
+                           &status, &totalLen, &resp);
+#ifdef BDBTRACEMULTIPART
+    bdbprintf_now("StepDL: url=%s offset=%lu ok=%ld status=%lu totalLen=%lu gotLen=%lu retry=%u\n",
+                   dl->fs3ead_Req->fs3enf_Url, (unsigned long)dl->fs3ead_BytesSoFar,
+                   (long)ok, (unsigned long)status, (unsigned long)totalLen,
+                   (unsigned long)(ok ? resp.fhr_BodyLen : 0), (unsigned)dl->fs3ead_RetryCount);
+#endif
+    if (!ok)
+    {
+        dl->fs3ead_RetryCount++;
+        if (dl->fs3ead_RetryCount > FS3ENET_DOWNLOAD_MAX_RETRIES)
+        {
+#ifdef BDBTRACEMULTIPART
+            bdbprintf_now("StepDL: giving up on %s after %u failed chunks\n",
+                           dl->fs3ead_Req->fs3enf_Url, (unsigned)dl->fs3ead_RetryCount);
+#endif
+            finished      = TRUE;
+            finishResult  = FS3ENETR_HTTP_ERROR;
+        }
+    }
+    else
+    {
+        dl->fs3ead_RetryCount = 0;
+        gotLen = resp.fhr_BodyLen;
+
+        if (gotLen > 0 &&
+            Write(dl->fs3ead_FH, resp.fhr_Body, (LONG)gotLen) != (LONG)gotLen)
+        {
+        #ifdef BDBTRACEMULTIPART
+            bdbprintf_now("StepDL: Write() failed for %s, IoErr=%ld\n",
+                           dl->fs3ead_Req->fs3enf_Url, (long)IoErr());
+        #endif
+            finished     = TRUE;
+            finishResult = FS3ENETR_HTTP_ERROR;
+        }
+
+        FS3EHttp_FreeResponse(&resp);
+
+        if (!finished)
+        {
+            dl->fs3ead_BytesSoFar += gotLen;
+            if (status == 206 && totalLen > 0)
+                dl->fs3ead_TotalBytes = totalLen;
+
+            /* Done when: the server ignored Range entirely (200 -- that
+             * response WAS the whole file, regardless of what we asked
+             * for), a 206 chunk that reached/exceeded the now-known total,
+             * or a chunk shorter than what was requested (server-side EOF,
+             * whether or not Content-Range gave us a total to compare
+             * against). */
+            if (status == 200 ||
+                (dl->fs3ead_TotalBytes > 0 && dl->fs3ead_BytesSoFar >= dl->fs3ead_TotalBytes) ||
+                gotLen < FS3ENET_CHUNK_SIZE)
+            {
+                finished     = TRUE;
+                finishResult = FS3ENETR_OK;
+            }
+            else if (dl->fs3ead_Req->fs3enf_WantProgress &&
+                     dl->fs3ead_BytesSoFar - dl->fs3ead_LastProgressSent >= FS3ENET_PROGRESS_MIN_DELTA)
+            {
+                FS3ENet_SendProgress(dl);
+            }
+        }
+    }
+
+    if (finished)
+    {
+        FS3ENet_FinishDownload(dl, finishResult);
+        return;
+    }
+
+    /* Still in progress (or retrying after a failed chunk) -- rotate to the
+     * back so other active downloads, and the request port, get a turn
+     * before this one is serviced again. */
+    FS3ENet_UnlinkActiveDownload(dl);
+    dl->fs3ead_Next = NULL;
+    if (!g_FS3EActiveDownloads)
+    {
+        g_FS3EActiveDownloads = dl;
+    }
+    else
+    {
+        FS3ENetActiveDownload *tail = g_FS3EActiveDownloads;
+        while (tail->fs3ead_Next) tail = tail->fs3ead_Next;
+        tail->fs3ead_Next = dl;
+    }
+    g_FS3EActiveDownloadCount++;
+}
+
+/* FS3ENETQ_FETCH_IMAGE — check disk cache, fetch on miss, reply with path.
+ *
+ * Repeat requests for the same URL (e.g. a user double/triple-clicking the
+ * same thumbnail, or a click landing on media the passive timeline-render
+ * fetch already resolved earlier) are handled by the cache-lookup logic
+ * below (FS3ECache_Lookup for the persistent case, FS3ECache_LookupRAM for
+ * the !KeepOriginal/RAM:T case) finding the file and skipping the
+ * download/write -- every repeat request still gets its own normal
+ * FS3ENETR_OK reply with a real, usable path. (An earlier version of this
+ * function short-circuited same-URL-as-the-previous-request here with a
+ * bounce result and no data, on the theory that "the previous request will
+ * deliver it" -- wrong whenever that previous request was a *different*,
+ * already-finished fetch, e.g. the passive per-post thumbnail fetch: there
+ * was no second in-flight reply coming, and callers like fs3emediaview.c
+ * that were told "someone else has this" waited forever. Removed --
+ * this is what the cache lookups below are already for.)
+ *
+ * Returns TRUE if fs3em is resolved and ready for the caller to ReplyMsg()
+ * (cache hit, RAM:T reuse, or an error), FALSE if a real cache miss was just
+ * handed off to the chunked download engine -- see "Chunked media
+ * downloads" above. */
+static BOOL FS3ENet_HandleFetchImage(FS3ENetMessage *fs3em)
+{
+    FS3ENetFetchImageReq *req = (FS3ENetFetchImageReq *)fs3em->fs3em_Data;
+    char localPath[FS3ECACHE_PATH_SIZE];
+    char cachePath[FS3ECACHE_PATH_SIZE];
+    BOOL isTemp = FALSE;
+
+    if (!req || fs3em->fs3em_DataLen < sizeof(*req))
+    {
+        fs3em->fs3em_Result = FS3ENETR_PARSE_ERROR;
+        return TRUE;
+    }
+#ifdef BDBTRACEMULTIPART
+    bdbprintf_now("FetchImage: url=%s subdir=%s keep=%ld\n",
+                   req->fs3enf_Url, req->fs3enf_Subdir, (long)req->fs3enf_KeepOriginal);
+#endif
+    /* Deterministic path this URL would live at if kept -- computed
+     * regardless of fs3enf_KeepOriginal so the caller always has a stable
+     * name to derive the resized thumbnail's sibling filename from, even
+     * on a run where the original itself only ever touches RAM:T. Ensure
+     * the subdir exists too: when KeepOriginal is FALSE, the chunked
+     * download engine's own file Open() (the thing that normally creates
+     * it) never runs against the persistent cache, but the thumbnail
+     * process still needs to write the resized sibling under this same
+     * subdir a moment from now. */
+    FS3ECache_ComputePath(req->fs3enf_Url, req->fs3enf_Subdir, cachePath, sizeof(cachePath));
+    FS3ECache_EnsureSubdir(req->fs3enf_Subdir);
+
+    if (!FS3ECache_Lookup(req->fs3enf_Url, req->fs3enf_Subdir, localPath, sizeof(localPath)))
+    {
+        /* Not in the persistent cache -- but for a !KeepOriginal request,
+         * the deterministic RAM:T path a fresh download would write to may
+         * already hold an earlier download of this exact URL (e.g. still
+         * being read by the thumbnail process, or just never cleaned up).
+         * Reuse it instead of re-downloading and re-opening with
+         * MODE_NEWFILE, which would silently truncate/replace a file
+         * another task might still have open for reading -- see
+         * FS3ECache_LookupRAM()'s doc comment for why that specific race
+         * is suspected to crash real UAE (not real hardware) setups. */
+        BOOL haveExisting = (!req->fs3enf_KeepOriginal) &&
+                             FS3ECache_LookupRAM(req->fs3enf_Url, localPath, sizeof(localPath));
+
+        if (haveExisting)
+        {
+            isTemp = TRUE;
+        }
+        else
+        {
+            /* Real cache miss -- hand off to the chunked download engine
+             * instead of blocking this whole process on one unbounded
+             * fetch. localPath is already the right target either way
+             * (persistent cache path from FS3ECache_Lookup above, or the
+             * deterministic RAM:T path FS3ECache_LookupRAM just filled in). */
+            FS3ENetActiveDownload *dl;
+            BPTR fh;
+
+            if (g_FS3EActiveDownloadCount >= FS3ENET_MAX_ACTIVE_DOWNLOADS)
+            {
+                /* At the concurrency cap -- bounce rather than queue. The
+                 * caller re-fetches naturally: avatars/thumbnails are
+                 * re-requested on every timeline render, and the media
+                 * viewer's on-demand fetch is a single explicit user
+                 * action -- hitting this cap in practice with 4 concurrent
+                 * slots is expected to be rare. */
+#ifdef BDBTRACEMULTIPART
+                bdbprintf_now("FetchImage: at concurrency cap (%lu), bouncing %s\n",
+                               (unsigned long)g_FS3EActiveDownloadCount, req->fs3enf_Url);
+#endif
+                fs3em->fs3em_Result = FS3ENETR_NETWORK_ERROR;
+                return TRUE;
+            }
+
+            if (!req->fs3enf_KeepOriginal && !FS3ECache_EnsureRAMTempDir())
+            {
+#ifdef BDBTRACEMULTIPART
+                bdbprintf_now("FetchImage: FS3ECache_EnsureRAMTempDir failed for %s\n", req->fs3enf_Url);
+#endif
+                fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
+                return TRUE;
+            }
+
+            fh = Open(localPath, MODE_NEWFILE);
+            if (!fh)
+            {
+#ifdef BDBTRACEMULTIPART
+                bdbprintf_now("FetchImage: Open(%s, MODE_NEWFILE) failed, IoErr=%ld\n",
+                               localPath, (long)IoErr());
+#endif
+                fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
+                return TRUE;
+            }
+
+            dl = (FS3ENetActiveDownload *)AllocVec(sizeof(*dl), MEMF_ANY | MEMF_CLEAR);
+            if (!dl)
+            {
+                Close(fh);
+                DeleteFile(localPath);
+                fs3em->fs3em_Result = FS3ENETR_NETWORK_ERROR;
+                return TRUE;
+            }
+
+            dl->fs3ead_OrigMsg = fs3em;
+            dl->fs3ead_Req     = req;
+            dl->fs3ead_FH      = fh;
+            strncpy(dl->fs3ead_LocalPath, localPath, sizeof(dl->fs3ead_LocalPath) - 1);
+            strncpy(dl->fs3ead_CachePath, cachePath, sizeof(dl->fs3ead_CachePath) - 1);
+            dl->fs3ead_IsTemp  = !req->fs3enf_KeepOriginal;
+
+            dl->fs3ead_Next        = g_FS3EActiveDownloads;
+            g_FS3EActiveDownloads  = dl;
+            g_FS3EActiveDownloadCount++;
+#ifdef BDBTRACEMULTIPART
+            bdbprintf_now("FetchImage: registered chunked dl for %s -> %s (count=%lu)\n",
+                           req->fs3enf_Url, localPath, (unsigned long)g_FS3EActiveDownloadCount);
+#endif
+            return FALSE; /* deferred -- FS3ENet_FinishDownload() replies later */
+        }
+    }
+    /* else: found on disk already -- either the persistent cache, or (see
+     * haveExisting above) an already-downloaded RAM:T temp file this
+     * request is now sharing rather than re-fetching. */
+
+    FS3ENet_BuildFetchImageReply(fs3em, req, localPath, cachePath, isTemp);
+    return TRUE;
 }
 
 /* Encodes Unicode code point cp as UTF-8 into out (up to 4 bytes), bounded
@@ -1166,6 +1624,27 @@ static ULONG FS3ENet_SizeStatusFields(const cJSON *item, const cJSON *src)
         }
     }
 
+    /* Link preview card -- belongs to src same as poll/media_attachments
+     * above (a reblog's card is the boosted status's own). NOT mutually
+     * exclusive with either: independent of what the user attached, since
+     * Mastodon derives it from a URL found in the text. */
+    v = cJSON_GetObjectItemCaseSensitive(src, "card");
+    if (v && !cJSON_IsNull(v)) {
+        const cJSON *f;
+        f = cJSON_GetObjectItemCaseSensitive(v, "url");
+        total += (f && cJSON_IsString(f) && f->valuestring) ? strlen(f->valuestring) + 1 : 1;
+        f = cJSON_GetObjectItemCaseSensitive(v, "title");
+        total += (f && cJSON_IsString(f) && f->valuestring) ? strlen(f->valuestring) + 1 : 1;
+        f = cJSON_GetObjectItemCaseSensitive(v, "description");
+        total += (f && cJSON_IsString(f) && f->valuestring) ? strlen(f->valuestring) + 1 : 1;
+        f = cJSON_GetObjectItemCaseSensitive(v, "provider_name");
+        total += (f && cJSON_IsString(f) && f->valuestring) ? strlen(f->valuestring) + 1 : 1;
+        f = cJSON_GetObjectItemCaseSensitive(v, "image");
+        total += (f && cJSON_IsString(f) && f->valuestring) ? strlen(f->valuestring) + 1 : 1;
+    } else {
+        total += 5; /* five empty strings -- url/title/description/provider_name/image */
+    }
+
     return total;
 }
 
@@ -1287,6 +1766,41 @@ static void FS3ENet_FillStatusFields(const cJSON *item, const cJSON *src,
         dst->fmas_PollMultiple = FALSE;
     }
 
+    /* Link preview card -- see the matching block in FS3ENet_SizeStatusFields. */
+    v = cJSON_GetObjectItemCaseSensitive(src, "card");
+    if (v && !cJSON_IsNull(v)) {
+        const cJSON *f;
+
+        dst->fmas_HasCard = TRUE;
+
+        f = cJSON_GetObjectItemCaseSensitive(v, "url");
+        str = (f && cJSON_IsString(f)) ? f->valuestring : "";
+        FS3ENet_PackStr(&dst->fmas_CardUrl, p, str);
+
+        f = cJSON_GetObjectItemCaseSensitive(v, "title");
+        str = (f && cJSON_IsString(f)) ? f->valuestring : "";
+        FS3ENet_PackStrClean(&dst->fmas_CardTitle, p, str);
+
+        f = cJSON_GetObjectItemCaseSensitive(v, "description");
+        str = (f && cJSON_IsString(f)) ? f->valuestring : "";
+        FS3ENet_PackStrClean(&dst->fmas_CardDescription, p, str);
+
+        f = cJSON_GetObjectItemCaseSensitive(v, "provider_name");
+        str = (f && cJSON_IsString(f)) ? f->valuestring : "";
+        FS3ENet_PackStrClean(&dst->fmas_CardProviderName, p, str);
+
+        f = cJSON_GetObjectItemCaseSensitive(v, "image");
+        str = (f && cJSON_IsString(f)) ? f->valuestring : "";
+        FS3ENet_PackStr(&dst->fmas_CardImageUrl, p, str);
+    } else {
+        dst->fmas_HasCard = FALSE;
+        FS3ENet_PackStr(&dst->fmas_CardUrl,          p, "");
+        FS3ENet_PackStr(&dst->fmas_CardTitle,        p, "");
+        FS3ENet_PackStr(&dst->fmas_CardDescription,  p, "");
+        FS3ENet_PackStr(&dst->fmas_CardProviderName, p, "");
+        FS3ENet_PackStr(&dst->fmas_CardImageUrl,     p, "");
+    }
+
     /* Action-bar counts/state -- read from src (see the field comment in
      * fs3enet.h: for reblogs these live on the boosted status, not the
      * outer reblog wrapper). */
@@ -1306,6 +1820,78 @@ static void FS3ENet_FillStatusFields(const cJSON *item, const cJSON *src,
     dst->fmas_Reblogged = (v && cJSON_IsTrue(v)) ? TRUE : FALSE;
 }
 
+/* Sizing pass for FS3ENET_ACCOUNTS_LIST -- mirrors FS3ENet_SizeStatusFields's
+ * shape, but item IS the account object itself (top-level id/username/acct/
+ * display_name/avatar/note/followers_count/following_count), unlike a
+ * status's nested "account" sub-object. */
+static ULONG FS3ENet_SizeAccountFields(const cJSON *item)
+{
+    ULONG total = sizeof(FS3EMastodonAccount);
+    const cJSON *v;
+
+    v = cJSON_GetObjectItemCaseSensitive(item, "id");
+    total += (v && cJSON_IsString(v) && v->valuestring) ? strlen(v->valuestring) + 1 : 1;
+
+    v = cJSON_GetObjectItemCaseSensitive(item, "username");
+    total += (v && cJSON_IsString(v) && v->valuestring) ? strlen(v->valuestring) + 1 : 1;
+
+    v = cJSON_GetObjectItemCaseSensitive(item, "acct");
+    total += (v && cJSON_IsString(v) && v->valuestring) ? strlen(v->valuestring) + 1 : 1;
+
+    v = cJSON_GetObjectItemCaseSensitive(item, "display_name");
+    total += (v && cJSON_IsString(v) && v->valuestring) ? strlen(v->valuestring) + 1 : 1;
+
+    v = cJSON_GetObjectItemCaseSensitive(item, "avatar");
+    total += (v && cJSON_IsString(v) && v->valuestring) ? strlen(v->valuestring) + 1 : 1;
+
+    /* reserve original HTML length for stripped note (stripped <= original) */
+    v = cJSON_GetObjectItemCaseSensitive(item, "note");
+    total += (v && cJSON_IsString(v) && v->valuestring) ? strlen(v->valuestring) + 1 : 1;
+
+    return total;
+}
+
+/* Fill pass matching FS3ENet_SizeAccountFields. stripped/strippedSize is
+ * caller-owned scratch space for StripHTML, same reasoning as
+ * FS3ENet_FillStatusFields's own stripped buffer. */
+static void FS3ENet_FillAccountFields(const cJSON *item, FS3EMastodonAccount *dst,
+                                       char **p, char *stripped, ULONG strippedSize)
+{
+    const cJSON *v;
+    const char  *str;
+
+    v = cJSON_GetObjectItemCaseSensitive(item, "id");
+    str = (v && cJSON_IsString(v)) ? v->valuestring : "";
+    FS3ENet_PackStr(&dst->fma_Id, p, str);
+
+    v = cJSON_GetObjectItemCaseSensitive(item, "username");
+    str = (v && cJSON_IsString(v)) ? v->valuestring : "";
+    FS3ENet_PackStr(&dst->fma_Username, p, str);
+
+    v = cJSON_GetObjectItemCaseSensitive(item, "acct");
+    str = (v && cJSON_IsString(v)) ? v->valuestring : "";
+    FS3ENet_PackStr(&dst->fma_Acct, p, str);
+
+    v = cJSON_GetObjectItemCaseSensitive(item, "display_name");
+    str = (v && cJSON_IsString(v)) ? v->valuestring : "";
+    FS3ENet_PackStrClean(&dst->fma_DisplayName, p, str);
+
+    v = cJSON_GetObjectItemCaseSensitive(item, "avatar");
+    str = (v && cJSON_IsString(v)) ? v->valuestring : "";
+    FS3ENet_PackStr(&dst->fma_AvatarURL, p, str);
+
+    v = cJSON_GetObjectItemCaseSensitive(item, "note");
+    str = (v && cJSON_IsString(v)) ? v->valuestring : "";
+    StripHTML(str, stripped, strippedSize);
+    FS3ENet_PackStr(&dst->fma_Note, p, stripped);
+
+    v = cJSON_GetObjectItemCaseSensitive(item, "followers_count");
+    dst->fma_FollowersCount = (v && cJSON_IsNumber(v)) ? (ULONG)v->valueint : 0;
+
+    v = cJSON_GetObjectItemCaseSensitive(item, "following_count");
+    dst->fma_FollowingCount = (v && cJSON_IsNumber(v)) ? (ULONG)v->valueint : 0;
+}
+
 static void FS3ENet_HandleTimeline(FS3ENetMessage *fs3em)
 {
     FS3ENetTimelineReq   *req = (FS3ENetTimelineReq *)fs3em->fs3em_Data;
@@ -1315,12 +1901,17 @@ static void FS3ENet_HandleTimeline(FS3ENetMessage *fs3em)
     ULONG count = 0, total;
     char *p;
     char stripped[2048];
+    const char *refreshPostId;
 
     if (!req || fs3em->fs3em_DataLen < sizeof(*req)) {
         fs3em->fs3em_Result = FS3ENETR_PARSE_ERROR;
         return;
     }
 
+    /* See FS3ENetTimelineReq's doc comment on fs3et_MinId: only meaningful
+     * (repurposed) for FS3ENET_TLSHAPE_SINGLE_REFRESH. */
+    refreshPostId = (req->fs3et_ResponseShape == FS3ENET_TLSHAPE_SINGLE_REFRESH &&
+                      req->fs3et_MinId) ? req->fs3et_MinId : "";
 
     /* Fold max_id/min_id onto the already-built timeline query string (see
      * ViewModeTimeline() in friendsh3ep.c, which already does the same for
@@ -1368,7 +1959,7 @@ static void FS3ENet_HandleTimeline(FS3ENetMessage *fs3em)
     }
 
     /* Pass 1: count statuses and compute flat-block size. */
-    total = sizeof(FS3ENetTimelineReply);
+    total = sizeof(FS3ENetTimelineReply) + FS3ENet_PackLen(refreshPostId);
     cJSON_ArrayForEach(item, json) {
         /* For reblogs: content lives in item.reblog; author is item.reblog.account.
          * The booster is item.account.  For original posts reblog is null/absent. */
@@ -1416,6 +2007,10 @@ static void FS3ENet_HandleTimeline(FS3ENetMessage *fs3em)
         FS3ENetStatus *statuses = (FS3ENetStatus *)(reply + 1);
         ULONG i = 0;
         p = (char *)(statuses + count);
+
+        /* Packed first, ahead of the per-status strings below -- reply's
+         * own extra field, not one of the FS3ENetStatus[] entries. */
+        FS3ENet_PackStr(&reply->fs3et_RefreshPostId, &p, refreshPostId);
 
         cJSON_ArrayForEach(item, json) {
             const cJSON *reblog, *src, *bAcct, *v;
@@ -1588,6 +2183,88 @@ static void FS3ENet_HandleNotifications(FS3ENetMessage *fs3em)
             else
                 memset(&notifs[i].fen_Status, 0, sizeof(notifs[i].fen_Status));
 
+            i++;
+        }
+    }
+
+    cJSON_Delete(json);
+    FreeVec(fs3em->fs3em_Data);
+    fs3em->fs3em_Data    = reply;
+    fs3em->fs3em_DataLen = total;
+    fs3em->fs3em_Result  = FS3ENETR_OK;
+}
+
+/* FS3ENETQ_ACCOUNTS_LIST — fetch a list of accounts: fuzzy search
+ * (type=accounts), or a user's followers/following. Followers/following
+ * already return a bare Account[] (FS3ENET_TLSHAPE_ARRAY, unchanged); search
+ * needs the {"accounts":[...],...} wrapper unwrapped, see
+ * FS3ENET_TLSHAPE_SEARCH_ACCOUNTS. Single page only -- see this request's
+ * doc comment in fs3enet.h for why. */
+static void FS3ENet_HandleAccountsList(FS3ENetMessage *fs3em)
+{
+    FS3ENetAccountsListReq   *req = (FS3ENetAccountsListReq *)fs3em->fs3em_Data;
+    FS3ENetAccountsListReply *reply;
+    cJSON *json = NULL;
+    cJSON *item;
+    ULONG count = 0, total;
+    char *p;
+    char stripped[2048];
+
+    if (!req || fs3em->fs3em_DataLen < sizeof(*req)) {
+        fs3em->fs3em_Result = FS3ENETR_PARSE_ERROR;
+        return;
+    }
+
+    {
+        char path[400];
+        ULONG shape = FS3ENET_TLSHAPE_ARRAY;
+
+        if (req->fs3eal_Kind == FS3ENET_ACCLIST_FOLLOWERS)
+            snprintf(path, sizeof(path), "accounts/%s/followers?limit=40", req->fs3eal_AccountId);
+        else if (req->fs3eal_Kind == FS3ENET_ACCLIST_FOLLOWING)
+            snprintf(path, sizeof(path), "accounts/%s/following?limit=40", req->fs3eal_AccountId);
+        else {
+            char encQuery[512];
+            FS3EMastodon_UrlEncode(req->fs3eal_Query ? req->fs3eal_Query : "",
+                                    encQuery, sizeof(encQuery));
+            snprintf(path, sizeof(path), "search?type=accounts&limit=20&q=%s", encQuery);
+            shape = FS3ENET_TLSHAPE_SEARCH_ACCOUNTS;
+        }
+
+        if (!FS3EMastodon_GetTimeline(req->fs3eal_ApiBaseUrl, req->fs3eal_AccessToken,
+                path, shape, &json)) {
+            fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
+            return;
+        }
+    }
+
+    /* Pass 1: count accounts and compute flat-block size. */
+    total = sizeof(FS3ENetAccountsListReply);
+    cJSON_ArrayForEach(item, json) {
+        if (count >= MAX_STATUSES_TIMELINE) break;
+        total += FS3ENet_SizeAccountFields(item);
+        count++;
+    }
+
+    reply = (FS3ENetAccountsListReply *)AllocVec(total, MEMF_ANY | MEMF_PUBLIC);
+    if (!reply) {
+        cJSON_Delete(json);
+        fs3em->fs3em_Result = FS3ENETR_NETWORK_ERROR;
+        return;
+    }
+    reply->fs3eal_Kind              = req->fs3eal_Kind;
+    reply->fs3eal_AccountGeneration = req->fs3eal_AccountGeneration;
+    reply->fs3eal_Count             = count;
+
+    /* Pass 2: pack accounts into the block. */
+    {
+        FS3EMastodonAccount *accounts = (FS3EMastodonAccount *)(reply + 1);
+        ULONG i = 0;
+        p = (char *)(accounts + count);
+
+        cJSON_ArrayForEach(item, json) {
+            if (i >= count) break;
+            FS3ENet_FillAccountFields(item, &accounts[i], &p, stripped, sizeof(stripped));
             i++;
         }
     }
@@ -1839,6 +2516,90 @@ static void FS3ENet_HandleRelationship(FS3ENetMessage *fs3em)
     fs3em->fs3em_Result  = FS3ENETR_OK;
 }
 
+/* FS3ENETQ_RELATIONSHIPS — batch counterpart of FS3ENETQ_RELATIONSHIP
+ * above, fetching following+followed_by for every id in req's trailing
+ * char*[] array in one call, for badging TTLAccountRow_Class list rows
+ * (see TTL_POSTUPD_RELATIONSHIP). Reply entries are built by walking the
+ * SERVER's own response array, not the request's id list -- same "trust
+ * what came back" approach FS3ENet_HandleAccountsList takes with its own
+ * array, so any ordering difference or omission in the server's reply
+ * (e.g. an id the server silently drops) never desyncs what gets packed
+ * here; the GUI side matches entries back to rows by account id anyway
+ * (TTIMELINE_UpdatePost's postId match), not by position. */
+static void FS3ENet_HandleRelationships(FS3ENetMessage *fs3em)
+{
+    FS3ENetRelationshipsReq   *req = (FS3ENetRelationshipsReq *)fs3em->fs3em_Data;
+    FS3ENetRelationshipsReply *reply;
+    cJSON *json = NULL;
+    cJSON *item;
+    char **ids;
+    ULONG count = 0, total;
+    char *p;
+
+    if (!req || fs3em->fs3em_DataLen < sizeof(*req)) {
+        fs3em->fs3em_Result = FS3ENETR_PARSE_ERROR;
+        return;
+    }
+
+    ids = (char **)(req + 1);
+
+    if (!FS3EMastodon_GetRelationships(req->fs3erls_ApiBaseUrl, req->fs3erls_AccessToken,
+            (const char *const *)ids, req->fs3erls_Count, &json))
+    {
+        fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
+        return;
+    }
+
+    /* Pass 1: count usable entries (an "id" field is the minimum to be
+     * usable -- following/followed_by simply default FALSE if somehow
+     * absent) and compute flat-block size. */
+    total = sizeof(FS3ENetRelationshipsReply);
+    cJSON_ArrayForEach(item, json) {
+        const cJSON *idv = cJSON_GetObjectItemCaseSensitive(item, "id");
+        if (!idv || !cJSON_IsString(idv)) continue;
+        total += sizeof(FS3ENetRelationshipEntry) + FS3ENet_PackLen(idv->valuestring);
+        count++;
+    }
+
+    reply = (FS3ENetRelationshipsReply *)AllocVec(total, MEMF_ANY | MEMF_PUBLIC);
+    if (!reply) {
+        cJSON_Delete(json);
+        fs3em->fs3em_Result = FS3ENETR_NETWORK_ERROR;
+        return;
+    }
+    reply->fs3erls_AccountGeneration = req->fs3erls_AccountGeneration;
+    reply->fs3erls_Count             = count;
+
+    /* Pass 2: pack entries into the block. */
+    {
+        FS3ENetRelationshipEntry *entries = (FS3ENetRelationshipEntry *)(reply + 1);
+        ULONG idx = 0;
+        p = (char *)(entries + count);
+
+        cJSON_ArrayForEach(item, json) {
+            const cJSON *idv, *followingV, *followedByV;
+            if (idx >= count) break;
+
+            idv = cJSON_GetObjectItemCaseSensitive(item, "id");
+            if (!idv || !cJSON_IsString(idv)) continue;
+
+            followingV  = cJSON_GetObjectItemCaseSensitive(item, "following");
+            followedByV = cJSON_GetObjectItemCaseSensitive(item, "followed_by");
+
+            FS3ENet_PackStr(&entries[idx].fs3erle_AccountId, &p, idv->valuestring);
+            entries[idx].fs3erle_Following  = (followingV  && cJSON_IsTrue(followingV))  ? TRUE : FALSE;
+            entries[idx].fs3erle_FollowedBy = (followedByV && cJSON_IsTrue(followedByV)) ? TRUE : FALSE;
+            idx++;
+        }
+    }
+
+    cJSON_Delete(json);
+    FreeVec(fs3em->fs3em_Data);
+    fs3em->fs3em_Data    = reply;
+    fs3em->fs3em_DataLen = total;
+    fs3em->fs3em_Result  = FS3ENETR_OK;
+}
+
 /* FS3ENETQ_FOLLOW — toggle follow/unfollow on an account, returning the
  * server-confirmed following boolean (see FS3ENetFollowReply's comment --
  * deliberately not any counts too). */
@@ -1884,8 +2645,15 @@ static void FS3ENet_HandleFlushCache(FS3ENetMessage *fs3em)
 }
 
 /* Handles one request. FS3ENETQ_TIMELINE and FS3ENETQ_POST_STATUS are
- * stubbed until Phase 2 completes the timeline/post flow. */
-static void FS3ENet_Dispatch(FS3ENetMessage *fs3em)
+ * stubbed until Phase 2 completes the timeline/post flow.
+ *
+ * Returns TRUE if fs3em is fully resolved and the caller (FS3ENet_ProcEntry)
+ * should ReplyMsg() it now, same as every request always used to work.
+ * Returns FALSE only for a FS3ENETQ_FETCH_IMAGE cache miss that's been
+ * handed off to the chunked download engine (see FS3ENet_HandleFetchImage) --
+ * that message is replied later, from FS3ENet_FinishDownload(), once the
+ * whole file has arrived or the download has given up. */
+static BOOL FS3ENet_Dispatch(FS3ENetMessage *fs3em)
 {
     switch (fs3em->fs3em_Type)
     {
@@ -1898,8 +2666,7 @@ static void FS3ENet_Dispatch(FS3ENetMessage *fs3em)
             break;
 
         case FS3ENETQ_FETCH_IMAGE:
-            FS3ENet_HandleFetchImage(fs3em);
-            break;
+            return FS3ENet_HandleFetchImage(fs3em);
 
         case FS3ENETQ_FLUSH_CACHE:
             FS3ENet_HandleFlushCache(fs3em);
@@ -1925,6 +2692,10 @@ static void FS3ENet_Dispatch(FS3ENetMessage *fs3em)
             FS3ENet_HandleNotifications(fs3em);
             break;
 
+        case FS3ENETQ_ACCOUNTS_LIST:
+            FS3ENet_HandleAccountsList(fs3em);
+            break;
+
         case FS3ENETQ_VERIFY_ACCOUNT:
             FS3ENet_HandleVerifyAccount(fs3em);
             break;
@@ -1941,6 +2712,10 @@ static void FS3ENet_Dispatch(FS3ENetMessage *fs3em)
             FS3ENet_HandleRelationship(fs3em);
             break;
 
+        case FS3ENETQ_RELATIONSHIPS:
+            FS3ENet_HandleRelationships(fs3em);
+            break;
+
         case FS3ENETQ_FOLLOW:
             FS3ENet_HandleFollow(fs3em);
             break;
@@ -1953,4 +2728,6 @@ static void FS3ENet_Dispatch(FS3ENetMessage *fs3em)
             fs3em->fs3em_Result = FS3ENETR_OK;
             break;
     }
+
+    return TRUE;
 }

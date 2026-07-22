@@ -46,7 +46,8 @@
 #define GID_NAV_NEWS             47
 
 /* Search word editor (Part C container, SearchBarLayout) */
-#define GID_SEARCH_WORD_EDITOR   90
+#define GID_SEARCH_WORD_EDITOR       90
+#define GID_SEARCH_WORD_TYPE_CHOOSER 91  /* "Word" / "People" mode picker, far right of the search row */
 
 
 /* The whole Toot TimeLine (part C) */

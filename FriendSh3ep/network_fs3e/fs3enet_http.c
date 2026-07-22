@@ -71,6 +71,23 @@
  * which of those two behaviors a given code path happens to have. */
 #define FS3EHTTP_MAX_RESP_LEN (32UL * 1024UL * 1024UL) /* 32 MiB */
 
+/* FS3EHttp_GetRange()'s per-chunk connect deadline, in seconds -- safe to
+ * bound (unlike FS3EHTTP_TIMEOUT_SECS above) because a Range chunk is small
+ * and fixed-size regardless of the resource's total length; a stalled/dead
+ * host fails one chunk instead of hanging the whole network process. Uses
+ * AmiSSL's BIO_do_connect_retry(), the same bounded-connect primitive
+ * OSSL_HTTP_open() itself uses internally -- FS3EHttp_DoRawRequest()'s plain
+ * BIO_do_connect() (used by PUT/DELETE below) has no such bound today, so
+ * this is applied there too via FS3EHTTP_RAW_TIMEOUT_SECS, a generous value
+ * for those rare/small requests. Note this only bounds the CONNECT phase --
+ * once connected, FS3EHttp_ReadBody()'s BIO_read() loop can still stall on a
+ * host that accepts the connection but never sends a response; narrowing
+ * that further would need a read-side (socket-level) timeout, not attempted
+ * here. */
+#define FS3EHTTP_CHUNK_TIMEOUT_SECS 15
+#define FS3EHTTP_RAW_TIMEOUT_SECS   30
+#define FS3EHTTP_CONNECT_NAP_MS     200 /* BIO_do_connect_retry()'s poll interval */
+
 struct Library *AmiSSLMasterBase=NULL, *SocketBase=NULL;
 struct Library *AmiSSLBase=NULL, *AmiSSLExtBase=NULL;
 
@@ -345,11 +362,21 @@ static BOOL FS3EHttp_DoRequest(const char *url, const FS3EHttpHeader *extraHeade
  * buffered this way, pulling the status code and body back out is plain
  * string scanning (find the blank line, parse the status line), not
  * protocol parsing. Trade-off: no connection reuse -- fine for this rarely-
- * used path (status edits), not meant to replace FS3EHttp_Get/Post. */
+ * used path (status edits), not meant to replace FS3EHttp_Get/Post.
+ *
+ * useRange/rangeOffset/rangeLen add a "Range: bytes=X-Y" header (see
+ * FS3EHttp_GetRange()); when useRange is set and the response carries a
+ * Content-Range header, its "/TOTAL" suffix is parsed into *outTotalLen
+ * (left at 0 if absent/unparseable, or if useRange is FALSE).
+ * connectTimeoutSecs bounds BIO_do_connect_retry()'s connect phase -- see
+ * FS3EHTTP_CHUNK_TIMEOUT_SECS/FS3EHTTP_RAW_TIMEOUT_SECS above for what each
+ * caller passes. */
 static BOOL FS3EHttp_DoRawRequest(const char *method, const char *url,
                                    const FS3EHttpHeader *extraHeaders,
                                    const char *contentType,
                                    const void *reqBody, ULONG reqBodyLen,
+                                   BOOL useRange, ULONG rangeOffset, ULONG rangeLen,
+                                   int connectTimeoutSecs, ULONG *outTotalLen,
                                    FS3EHttpResponse *out)
 {
     int    useSSL, portNum;
@@ -365,6 +392,9 @@ static BOOL FS3EHttp_DoRawRequest(const char *method, const char *url,
     out->fhr_Body       = NULL;
     out->fhr_BodyLen    = 0;
     out->fhr_StatusCode = 0;
+
+    if (outTotalLen)
+        *outTotalLen = 0;
 
     /* Defensive, same invariant as FS3EHttp_DoRequest() above. */
     if (!AmiSSLExtBase)
@@ -405,6 +435,20 @@ static BOOL FS3EHttp_DoRawRequest(const char *method, const char *url,
             BIO_set_conn_hostname(bio, hostPort);
     }
 
+    /* Plain blocking BIO_do_connect(), same call FS3EHttp_Put()/Delete()
+     * always used. A first attempt at bounding this with
+     * BIO_do_connect_retry(bio, connectTimeoutSecs, ...) -- the same
+     * primitive OSSL_HTTP_open() uses internally -- made every single
+     * FS3EHttp_GetRange() call fail outright (connect never succeeding,
+     * confirmed via bdbprintf_now tracing: ok=0/status=0 on every attempt,
+     * for every host/path), even though the round-robin chunk engine driving
+     * it was otherwise working correctly. Reverted rather than chase a
+     * non-blocking-BIO interaction blind on a cross-compiled target with no
+     * interactive debugger -- connectTimeoutSecs is consequently unused
+     * again here, same unbounded-connect risk FS3EHttp_Put()/Delete()
+     * already carried before this file existed. Revisit if AmiSSL's
+     * BIO_do_connect_retry()/nonblocking-BIO behavior on real hardware is
+     * ever confirmed working in isolation. */
     if (!bio || BIO_do_connect(bio) <= 0)
     {
         FS3EHttp_PrintErrors();
@@ -427,6 +471,10 @@ static BOOL FS3EHttp_DoRawRequest(const char *method, const char *url,
         n += snprintf(reqHead + n, sizeof(reqHead) - n, "Host: %s\r\n", host);
         n += snprintf(reqHead + n, sizeof(reqHead) - n, "User-Agent: %s\r\n", FS3EHTTP_USER_AGENT);
         n += snprintf(reqHead + n, sizeof(reqHead) - n, "Connection: close\r\n");
+
+        if (useRange)
+            n += snprintf(reqHead + n, sizeof(reqHead) - n, "Range: bytes=%lu-%lu\r\n",
+                          (unsigned long)rangeOffset, (unsigned long)(rangeOffset + rangeLen - 1));
 
         if (extraHeaders)
         {
@@ -476,6 +524,26 @@ static BOOL FS3EHttp_DoRawRequest(const char *method, const char *url,
                 sscanf(text, "HTTP/%*d.%*d %d", &code);
                 out->fhr_StatusCode = (ULONG)code;
 
+                /* "Content-Range: bytes X-Y/TOTAL" -- pull TOTAL from after
+                 * the '/'. Plain strstr, not a case-insensitive header
+                 * parser: every server we've seen (S3/nginx-backed Mastodon
+                 * media) sends canonical casing, same assumption the status
+                 * line scan above already makes. */
+                if (useRange && outTotalLen)
+                {
+                    char *cr = strstr(text, "Content-Range:");
+                    if (cr && cr < headerEnd)
+                    {
+                        char *slash = strchr(cr, '/');
+                        if (slash && slash < headerEnd)
+                        {
+                            unsigned long total = 0;
+                            if (sscanf(slash + 1, "%lu", &total) == 1)
+                                *outTotalLen = (ULONG)total;
+                        }
+                    }
+                }
+
                 {
                     char  *bodyStart = headerEnd + 4;
                     ULONG  bodyLen   = raw.fhr_BodyLen - (ULONG)(bodyStart - text);
@@ -520,12 +588,27 @@ BOOL FS3EHttp_Put(const char *url, const FS3EHttpHeader *headers,
                  const void *body, ULONG bodyLen,
                  FS3EHttpResponse *out)
 {
-    return FS3EHttp_DoRawRequest("PUT", url, headers, contentType, body, bodyLen, out);
+    return FS3EHttp_DoRawRequest("PUT", url, headers, contentType, body, bodyLen,
+                                  FALSE, 0, 0, FS3EHTTP_RAW_TIMEOUT_SECS, NULL, out);
 }
 
 BOOL FS3EHttp_Delete(const char *url, const FS3EHttpHeader *headers, FS3EHttpResponse *out)
 {
-    return FS3EHttp_DoRawRequest("DELETE", url, headers, NULL, NULL, 0, out);
+    return FS3EHttp_DoRawRequest("DELETE", url, headers, NULL, NULL, 0,
+                                  FALSE, 0, 0, FS3EHTTP_RAW_TIMEOUT_SECS, NULL, out);
+}
+
+BOOL FS3EHttp_GetRange(const char *url, const FS3EHttpHeader *extraHeaders,
+                       ULONG offset, ULONG len,
+                       ULONG *outStatus, ULONG *outTotalLen,
+                       FS3EHttpResponse *out)
+{
+    BOOL ok = FS3EHttp_DoRawRequest("GET", url, extraHeaders, NULL, NULL, 0,
+                                     TRUE, offset, len,
+                                     FS3EHTTP_CHUNK_TIMEOUT_SECS, outTotalLen, out);
+    if (ok && outStatus)
+        *outStatus = out->fhr_StatusCode;
+    return ok;
 }
 
 BOOL FS3EHttp_Get(const char *url, const FS3EHttpHeader *headers, FS3EHttpResponse *out)

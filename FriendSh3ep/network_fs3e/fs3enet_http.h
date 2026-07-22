@@ -27,10 +27,11 @@ typedef struct FS3EHttpResponse
 {
     APTR  fhr_Body;
     ULONG fhr_BodyLen;
-    /* Numeric HTTP status (e.g. 200, 404). Only FS3EHttp_Put() populates
-     * this -- FS3EHttp_Get()/Post() go through OSSL_HTTP_transfer(), whose
-     * opaque BIO return never exposes the status line, so it stays 0 for
-     * those. FS3EHttp_Put() still returns TRUE for any completed exchange
+    /* Numeric HTTP status (e.g. 200, 404). Only the raw-BIO paths --
+     * FS3EHttp_Put()/Delete() and FS3EHttp_GetRange() -- populate this;
+     * FS3EHttp_Get()/Post() go through OSSL_HTTP_transfer(), whose opaque
+     * BIO return never exposes the status line, so it stays 0 for those.
+     * The raw-BIO functions still return TRUE for any completed exchange
      * (network-level success, same contract as Get/Post); callers check
      * fhr_StatusCode themselves for HTTP-semantic success. */
     ULONG fhr_StatusCode;
@@ -73,6 +74,27 @@ BOOL FS3EHttp_Put(const char *url, const FS3EHttpHeader *headers,
  * Content-Type/Content-Length headers. */
 BOOL FS3EHttp_Delete(const char *url, const FS3EHttpHeader *headers,
                     FS3EHttpResponse *out);
+
+/* Fetches bytes [offset, offset+len) of url via a Range request, bounded by a
+ * short, fixed per-call timeout (FS3EHTTP_CHUNK_TIMEOUT_SECS in
+ * fs3enet_http.c) -- safe regardless of the resource's total size, unlike
+ * FS3EHttp_Get()'s single exchange-wide deadline problem (see the big
+ * comment on FS3EHTTP_TIMEOUT_SECS), because "the whole exchange" here is
+ * just this one small chunk. Built on the same raw-BIO request/parse
+ * approach as FS3EHttp_Put()/Delete() (not FS3EHttp_Get()'s
+ * OSSL_HTTP_transfer() path, whose returned BIO never exposes the status
+ * line we need to tell 200 from 206).
+ *
+ * On success: *outStatus is 200 (server ignored Range -- out->fhr_Body is
+ * the ENTIRE resource regardless of the requested len; caller should treat
+ * the download as complete) or 206 (out->fhr_Body is exactly the requested
+ * range, *outTotalLen filled from Content-Range's "/TOTAL" suffix, or left
+ * at 0 if that header was absent/unparseable). Returns FALSE on a
+ * connection/timeout/TLS failure, same contract as FS3EHttp_Get(). */
+BOOL FS3EHttp_GetRange(const char *url, const FS3EHttpHeader *extraHeaders,
+                       ULONG offset, ULONG len,
+                       ULONG *outStatus, ULONG *outTotalLen,
+                       FS3EHttpResponse *out);
 
 /* Frees a response filled in by FS3EHttp_Get()/FS3EHttp_Post(). */
 void FS3EHttp_FreeResponse(FS3EHttpResponse *out);

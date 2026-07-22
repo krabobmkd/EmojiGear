@@ -469,7 +469,8 @@ static ULONG TitleBarLayout_OnRender(Class *cl, Object *o, struct gpRender *msg)
     struct gpRender childMsg;
     UWORD i;
 
-    // if(inst->allowedTask != FindTask(NULL))
+    // test, doesnt work
+    // if(inst->allowedTask != FindTask(NULL) || msg->gpr_Redraw == 0)
     // {
     //     /* ask correct draw from correct process */
     //     refreshTitleBarLayout = 1;

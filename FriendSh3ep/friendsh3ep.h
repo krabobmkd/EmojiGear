@@ -61,11 +61,24 @@ typedef enum {
     FS3ESEARCH_NONE = 0,
     FS3ESEARCH_USER_PROFILE,
     FS3ESEARCH_DISCUSSION, /* see FS3EApp_OpenDiscussion(), searchDiscussionStatusId */
-    FS3ESEARCH_WORD        /* see FS3EApp_SearchWord(); word/hashtag search, both
+    FS3ESEARCH_WORD,       /* see FS3EApp_SearchWord(); word/hashtag search, both
                              * go through the same FS3ENET_TLSHAPE_SEARCH_STATUSES
                              * request -- flat status list, no profile header,
                              * same as FS3ESEARCH_DISCUSSION */
+    FS3ESEARCH_ACCOUNT,    /* see FS3EApp_SearchAccount(); fuzzy account search --
+                             * flat list of TTLAccountRow_Class rows, no profile header */
+    FS3ESEARCH_FOLLOWERS,  /* see FS3EApp_ShowFollowers(); searchProfileAccountId's
+                             * followers, same flat account-row list */
+    FS3ESEARCH_FOLLOWING   /* see FS3EApp_ShowFollowing(); same, but following */
 } FS3ESearchMode;
+
+/* searchWordTypeChooser's two entries (CHOOSER_Active), read by
+ * StartSearchFromLine() to decide whether Return dispatches a word search
+ * or an account search. */
+typedef enum {
+    FS3ESEARCHTYPE_WORD = 0,
+    FS3ESEARCHTYPE_PEOPLE
+} FS3ESearchTypeChoice;
 
 /* Max number of accounts kept in App.accounts[] / persisted to
  * accounts.dat (see FS3EApp_SwitchAccount and fs3eloginview.c's
@@ -123,11 +136,15 @@ struct App {
 
     /* Part C: search editor + toot timeline (SearchBarLayoutClass).
      * searchBarLayout wraps searchWordEditor (one-line UniTextEditor,
-     * shown only in VIEWMODE_Search -- see fs3e_setViewMode) above
-     * tootTimeline (TootTimelineClass); searchBarLayout is what actually
-     * gets added to mainlayout, not tootTimeline directly. */
+     * shown only in VIEWMODE_Search -- see fs3e_setViewMode) and
+     * searchWordTypeChooser ("Word"/"People" popup, far right of the same
+     * row) above tootTimeline (TootTimelineClass); searchBarLayout is what
+     * actually gets added to mainlayout, not tootTimeline directly. */
     Object *searchBarLayout;
     Object *searchWordEditor;
+    Object *searchWordTypeChooser;
+    struct List   searchWordTypeList;
+    struct Node  *searchWordTypeNodes[2]; /* 0="Word", 1="People" -- see FS3ESearchTypeChoice */
     Object *tootTimeline;
 
     /* Shared draw context for all UniButtonP9 buttons */

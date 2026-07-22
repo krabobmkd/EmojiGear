@@ -208,9 +208,10 @@ static void FS3EThumb_HandleMake(FS3EThumbMessage *msg)
             msg->fs3etm_DetectedFormat = (ULONG)BmImage_SniffFormat(msg->fs3etm_SrcPath);
         msg->fs3etm_ThumbPath[0] = '\0';
         msg->fs3etm_Result = FS3ETHUMBR_ERROR;
-        bdbprintf_now("FS3EThumb: MAKE done key=%s -> ERROR err=%ld fmt=%s\n",
+        /*bdbprintf_now("FS3EThumb: MAKE done key=%s -> ERROR err=%ld fmt=%s\n",
                       msg->fs3etm_Key[0] ? msg->fs3etm_Key : "?", (long)err,
                       FS3EThumb_FormatName((BmImageFormat)msg->fs3etm_DetectedFormat));
+                      */
     }
 
     /* Clean up the RAM:T download regardless of success/failure -- see

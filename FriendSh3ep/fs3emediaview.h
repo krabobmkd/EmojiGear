@@ -82,6 +82,14 @@ typedef struct FS3EMediaView {
     char *pendingUrl; /* AllocVec'd; NULL when nothing in flight */
     BOOL  loading;
 
+    /* Updated by FS3EMediaView_OnFetchProgress() while pendingUrl's chunked
+     * download is in flight (see FS3ENETQ_FETCH_PROGRESS in fs3enet.h).
+     * progressTotalBytes is 0 until/unless the server tells us the real
+     * size. Not yet drawn anywhere -- plumbing only, a progress indicator
+     * in the window is a follow-up. */
+    ULONG progressBytesSoFar;
+    ULONG progressTotalBytes;
+
     /* "Close"/"Save Media..." menu -- built once, the first time the
      * window opens (mediaview_create_menu), torn down in
      * FS3EMediaView_Close (menu strips don't survive WM_CLOSE). */
@@ -126,6 +134,17 @@ void FS3EMediaView_ShowUrl(FS3EMediaView *mv, const char *url, const char *poste
  */
 void FS3EMediaView_OnFetchReply(FS3EMediaView *mv, ULONG result,
                                  const FS3ENetFetchImageReply *reply);
+
+/*
+ * Feed every FS3ENETQ_FETCH_PROGRESS ping through here (see
+ * FS3ENetFetchProgress in fs3enet.h) -- only ever sent for a request that
+ * set fs3enf_WantProgress, which today is just FS3EMediaView_ShowUrl()'s own
+ * fetch. Ignored unless key matches the URL currently pending, same rule
+ * OnFetchReply() already applies. Just records the numbers on mv for now;
+ * no progress indicator is drawn yet.
+ */
+void FS3EMediaView_OnFetchProgress(FS3EMediaView *mv, const char *key,
+                                    ULONG bytesSoFar, ULONG totalBytes);
 
 void  FS3EMediaView_Close(FS3EMediaView *mv);
 BOOL  FS3EMediaView_HandleInput(FS3EMediaView *mv);

@@ -310,7 +310,24 @@ void FS3EApp_CheckConnectionState(void)
                     case FS3ENETR_NETWORK_ERROR:
                         text = "No internet connection.";  break;
                     case FS3ENETR_HTTP_ERROR:
-                        text = "Server error.";            break;
+                        /* This codebase's HTTP layer never exposes a real
+                         * status code for GET/POST (see FS3EHttpResponse.
+                         * fhr_StatusCode's own comment), so this can't be a
+                         * true "was it 403" check -- but a followers/
+                         * following fetch failing at all is disproportionately
+                         * likely to be exactly that (a hide_collections
+                         * account returns a JSON error object, which
+                         * FS3EMastodon_GetTimeline already treats as failure
+                         * the same as any other non-array response) rather
+                         * than a real outage, so hedge the wording instead
+                         * of asserting it as fact. */
+                        if (app->viewMode == VIEWMODE_Search &&
+                            (app->searchMode == FS3ESEARCH_FOLLOWERS ||
+                             app->searchMode == FS3ESEARCH_FOLLOWING))
+                            text = "This list may not be available (server error, or hidden by privacy settings).";
+                        else
+                            text = "Server error.";
+                        break;
                     case FS3ENETR_AUTH_ERROR:
                         text = "Authentication failed.";   break;
                     default:
@@ -779,18 +796,19 @@ static BOOL FS3E_CheckSingleInstance(void)
 void StartSearchFromLine()
 {
     const char *text = NULL;
+    ULONG active = FS3ESEARCHTYPE_WORD;
 
     if(!app || !app->searchWordEditor) return;
     SetAttrs(app->searchWordEditor, UTED_LineTextToGet, 0, TAG_END);
     GetAttr(UTED_LineUTF8TextBuffer, app->searchWordEditor, (ULONG *)&text);
     if(!text || *text == 0) return;
 
-    if (text && strchr(text, '@')) {
-        /* "name@server"-shaped text -> user
-         * search: a different kind of request,
-         * returning an account instead of a
-         * list of toots. Not wired up yet. */
-    } else if (text && text[0]) {
+    if (app->searchWordTypeChooser)
+        GetAttr(CHOOSER_Active, app->searchWordTypeChooser, &active);
+
+    if (active == FS3ESEARCHTYPE_PEOPLE) {
+        FS3EApp_SearchAccount(text);
+    } else {
         /* Hashtag ("#tag", '#' kept as typed/
          * prefilled -- see TTL_HOT_HASHTAG
          * above) and plain word searches act
@@ -1139,6 +1157,33 @@ int main(int argc, char **argv)
         TAG_END);
     if (!app->searchWordEditor) cleanexit("Can't create search word editor");
 
+    /* "Word"/"People" mode picker, far right of the search row (see
+     * StartSearchFromLine below and fs3esearchbar.h). Same
+     * AllocChooserNode/NewObject(CHOOSER_GetClass()) pattern as
+     * fs3etootview.c's visibilityChooser. */
+    NewList(&app->searchWordTypeList);
+    {
+        static const ULONG searchTypeMsgIds[2] = { MSG_SEARCH_TYPE_WORD, MSG_SEARCH_TYPE_PEOPLE };
+        int i;
+        for (i = 0; i < 2; i++) {
+            struct Node *node = NULL;
+            if (ChooserBase)
+                node = AllocChooserNode(CNA_Text, (ULONG)LOC(searchTypeMsgIds[i]), TAG_END);
+            app->searchWordTypeNodes[i] = node;
+            if (node) AddTail(&app->searchWordTypeList, node);
+        }
+    }
+
+    app->searchWordTypeChooser = (Object *)NewObject(CHOOSER_GetClass(), NULL,
+        GA_ID,          (ULONG)GID_SEARCH_WORD_TYPE_CHOOSER,
+        GA_RelVerify,   TRUE,
+        ICA_TARGET,     (ULONG)TargetInstance,
+        CHOOSER_PopUp,  TRUE,
+        CHOOSER_Labels, (ULONG)&app->searchWordTypeList,
+        CHOOSER_Active, (ULONG)FS3ESEARCHTYPE_WORD,
+        TAG_END);
+    if (!app->searchWordTypeChooser) cleanexit("Can't create search type chooser");
+
     app->searchBarLayout = (Object *)NewObject(SearchBarLayoutClass, NULL,
         LAYOUT_BevelStyle, BVS_NONE,
         LAYOUT_SpaceOuter, FALSE,
@@ -1148,6 +1193,7 @@ int main(int argc, char **argv)
         /* children in required order (see fs3esearchbar.h) */
         LAYOUT_AddChild,   (ULONG)app->searchWordEditor,
         LAYOUT_AddChild,   (ULONG)app->tootTimeline,
+        LAYOUT_AddChild,   (ULONG)app->searchWordTypeChooser,
         TAG_END);
     if (!app->searchBarLayout) cleanexit("Can't create search bar layout");
 
@@ -1349,12 +1395,19 @@ int main(int argc, char **argv)
 
                         GetAttr(WINDOW_Qualifier,app->window_obj,&qualifiers);
 
-                        /*keys F1-F8 are the view mode */
-                        if(!isUp && key >=0x50 && key<= 0x57)
+                        if(!isUp )
                         {
-                            fs3e_setViewMode((ULONG)(key-0x50));
+                            /*keys F1-F4 are the 4 view mode */
+                            if( (key >=0x50 && key<= 0x53) || (key >=0x55 && key<= 0x57))
+                            {
+                                fs3e_setViewMode((ULONG)(key-0x50));
+                            } else
+                            /* let's have F5 being "refresh" */
+                            if( key == 0x54)
+                            {
+                                FS3EApp_RefreshVisibleToots();
+                            }
                         }
-
                         /* ctrl- and ctrl+ change font size */
                         if((qualifiers & IEQUALIFIER_CONTROL) !=0 &&
                             !(qualifiers & IEQUALIFIER_REPEAT) && !isUp)
@@ -1820,7 +1873,12 @@ int main(int argc, char **argv)
                                              * the search line with it
                                              * unchanged (keep the '#'),
                                              * switch to the Search channel
-                                             * so the bar is visible, and
+                                             * so the bar is visible, force
+                                             * the type chooser back to
+                                             * "Word" (a hashtag click always
+                                             * means a word/hashtag search,
+                                             * regardless of whatever the
+                                             * user had last picked), and
                                              * fire the search right away
                                              * (StartSearchFromLine reads
                                              * the line back from
@@ -1834,6 +1892,9 @@ int main(int argc, char **argv)
                                             if (app->searchWordEditor && hotSpotString)
                                                 SetGdAttrs(app->searchWordEditor,
                                                     UTED_Text, (ULONG)hotSpotString, TAG_END);
+                                            if (app->searchWordTypeChooser)
+                                                SetGdAttrs(app->searchWordTypeChooser,
+                                                    CHOOSER_Active, (ULONG)FS3ESEARCHTYPE_WORD, TAG_END);
                                             StartSearchFromLine();
                                             break;
 
@@ -1866,6 +1927,14 @@ int main(int argc, char **argv)
                                              * menu entry, same reasoning
                                              * as Action_ToggleFavorite. */
                                             Action_ToggleFollow(app, app->searchProfileAccountId, hotSpotFollowing);
+                                            break;
+
+                                        case TTL_HOT_FOLLOWERS_LIST:
+                                            FS3EApp_ShowFollowers();
+                                            break;
+
+                                        case TTL_HOT_FOLLOWING_LIST:
+                                            FS3EApp_ShowFollowing();
                                             break;
 
                                         case TTL_HOT_MEDIA_PREV:
@@ -1917,6 +1986,15 @@ int main(int argc, char **argv)
                                              * just surface the click.
                                              * hotSpotString carries the
                                              * attachment URL. */
+                                            break;
+
+                                        case TTL_HOT_CARD:
+                                            /* TODO: clipboard copy, and
+                                             * later an optional AmigaOS
+                                             * browser-launch library --
+                                             * deferred, same as TTL_HOT_URL
+                                             * (body-text links). hotSpotString
+                                             * carries the card's article URL. */
                                             break;
 
                                         case TTL_HOT_FAVORITE:
@@ -2059,6 +2137,8 @@ int main(int argc, char **argv)
             if ((refreshFlags & reflags_tootTimeLine) && CurrentMainWindow && app->tootTimeline )
                 RefreshGList((struct Gadget *)app->tootTimeline,
                              CurrentMainWindow, NULL, 1);
+
+            // test, doesnt work:
             // if(refreshTitleBarLayout  && CurrentMainWindow)
             // {
             //     RefreshGList((struct Gadget *)app->titleBarLayout,

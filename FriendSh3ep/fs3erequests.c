@@ -371,6 +371,43 @@ void FS3EApp_OpenDiscussion(const char *statusId)
     if (req) FS3EApp_NetSend(FS3ENETQ_TIMELINE, req, sizeof(*req));
 }
 
+/* F5 -- see this function's doc comment in fs3erequests.h. One
+ * FS3ENETQ_TIMELINE/SINGLE_REFRESH request per visible toot (Mastodon has
+ * no bulk "get statuses by ids" endpoint); each queues at normal priority
+ * (see FS3EApp_NetSend's comment) behind whatever's already in flight, and
+ * its reply is patched into the timeline by FS3EApp_HandleNetReply's
+ * FS3ENET_TLSHAPE_SINGLE_REFRESH branch -- this function never touches the
+ * timeline itself, only fires the refetches. */
+void FS3EApp_RefreshVisibleToots(void)
+{
+    TTLVisiblePosts vis;
+    ULONG i;
+
+    if (!app->tootTimeline || !app->accountApiBaseUrl) return;
+
+    memset(&vis, 0, sizeof(vis));
+    SetAttrs(app->tootTimeline, TTIMELINE_GetVisiblePosts, (ULONG)&vis, TAG_DONE);
+
+    for (i = 0; i < vis.count; i++) {
+        if (vis.entries[i].statusId && vis.entries[i].statusId[0]) {
+            char tl[128];
+            FS3ENetTimelineReq *req;
+
+            snprintf(tl, sizeof(tl), "statuses/%s", vis.entries[i].statusId);
+            /* fs3et_MinId repurposed to carry the postId to patch on
+             * reply -- see FS3ENetTimelineReq's doc comment in fs3enet.h. */
+            req = FS3ENetTimelineReq_Alloc(app->viewMode, FS3ENETPAGE_INITIAL,
+                      app->accountGeneration, FS3ENET_TLSHAPE_SINGLE_REFRESH,
+                      app->accountApiBaseUrl,
+                      app->accountAccessToken ? app->accountAccessToken : "",
+                      tl, "", vis.entries[i].postId, NULL);
+            if (req) FS3EApp_NetSend(FS3ENETQ_TIMELINE, req, sizeof(*req));
+        }
+        if (vis.entries[i].postId)   FreeVec(vis.entries[i].postId);
+        if (vis.entries[i].statusId) FreeVec(vis.entries[i].statusId);
+    }
+}
+
 /* Index into the MSG_SEARCHV_WAIT1..4 rotation -- bumped once per search
  * fired below, NOT on every FS3EApp_CheckConnectionState call (that runs on
  * all sorts of unrelated state changes too, e.g. login phase or account
@@ -429,6 +466,81 @@ void FS3EApp_SearchWord(const char *query)
     }
 }
 
+/* Fuzzy account search -- "Search People" menu item, reusing whatever text
+ * is currently in the search bar (see Action_SearchPeople in fs3eaction.c).
+ * Mirrors FS3EApp_SearchWord exactly: no profile header, flat list, single
+ * page -- just a different request type (FS3ENETQ_ACCOUNTS_LIST) and result
+ * row kind (TTLAccountRow_Class instead of a toot). */
+void FS3EApp_SearchAccount(const char *query)
+{
+    FS3ENetAccountsListReq *req;
+
+    if (!query || !query[0]) return;
+    if (!app->accountApiBaseUrl) return;
+
+    if (app->searchProfileAcct)        { FreeVec(app->searchProfileAcct);        app->searchProfileAcct        = NULL; }
+    if (app->searchProfileAccountId)   { FreeVec(app->searchProfileAccountId);   app->searchProfileAccountId   = NULL; }
+    if (app->searchDiscussionStatusId) { FreeVec(app->searchDiscussionStatusId); app->searchDiscussionStatusId = NULL; }
+    app->searchMode = FS3ESEARCH_ACCOUNT;
+
+    fs3e_setViewMode(VIEWMODE_Search);
+
+    if (app->tootTimeline)
+        SetAttrs(app->tootTimeline, TTIMELINE_ClearPosts, TRUE, TAG_DONE);
+
+    req = FS3ENetAccountsListReq_Alloc(FS3ENET_ACCLIST_SEARCH,
+              app->accountGeneration, app->accountApiBaseUrl,
+              app->accountAccessToken ? app->accountAccessToken : "",
+              "", query);
+    if (req && FS3EApp_NetSend(FS3ENETQ_ACCOUNTS_LIST, req, sizeof(*req))) {
+        app->timelineFetchedMask |= (1UL << VIEWMODE_Search);
+        s_searchWaitMsgIdx++;
+        FS3EApp_CheckConnectionState();
+    }
+}
+
+/* Followers/following list for whichever profile is currently open in the
+ * Search channel (app->searchProfileAccountId) -- called from clicking "N
+ * Followers"/"N Following" there (TTL_HOT_FOLLOWERS_LIST/FOLLOWING_LIST, see
+ * ttl_profile_header_build_hotspots). Unlike FS3EApp_SearchWord/SearchAccount/
+ * OpenDiscussion, deliberately does NOT clear searchProfileAcct/AccountId --
+ * both are still needed (to build this request, and because the user is
+ * conceptually still "in" that profile, e.g. if they back out of the list). */
+static void FS3EApp_ShowAccountsList(ULONG kind, ULONG searchMode)
+{
+    FS3ENetAccountsListReq *req;
+
+    if (!app->searchProfileAccountId || !app->searchProfileAccountId[0]) return;
+    if (!app->accountApiBaseUrl) return;
+
+    app->searchMode = searchMode;
+
+    fs3e_setViewMode(VIEWMODE_Search);
+
+    if (app->tootTimeline)
+        SetAttrs(app->tootTimeline, TTIMELINE_ClearPosts, TRUE, TAG_DONE);
+
+    req = FS3ENetAccountsListReq_Alloc(kind,
+              app->accountGeneration, app->accountApiBaseUrl,
+              app->accountAccessToken ? app->accountAccessToken : "",
+              app->searchProfileAccountId, "");
+    if (req && FS3EApp_NetSend(FS3ENETQ_ACCOUNTS_LIST, req, sizeof(*req))) {
+        app->timelineFetchedMask |= (1UL << VIEWMODE_Search);
+        s_searchWaitMsgIdx++;
+        FS3EApp_CheckConnectionState();
+    }
+}
+
+void FS3EApp_ShowFollowers(void)
+{
+    FS3EApp_ShowAccountsList(FS3ENET_ACCLIST_FOLLOWERS, FS3ESEARCH_FOLLOWERS);
+}
+
+void FS3EApp_ShowFollowing(void)
+{
+    FS3EApp_ShowAccountsList(FS3ENET_ACCLIST_FOLLOWING, FS3ESEARCH_FOLLOWING);
+}
+
 /* GID_LOGIN_LOGIN_BUTTON -- start a fresh OAuth flow for whatever server is
  * typed into the login window. With multi-account support this means "add
  * another account", not "log out of the current one", so only the interim
@@ -481,6 +593,164 @@ void FS3EApp_LoginSubmitCode(void)
         }
     }
 }
+
+/* Maps one FS3ENetStatus's fields into post -- shared by FS3ENETQ_TIMELINE's
+ * normal per-status AddPost/AppendPost loop and its FS3ENET_TLSHAPE_SINGLE_REFRESH
+ * branch below, so the mapping is never hand-duplicated. Caller must
+ * memset *post to 0 first, and is responsible for post->isThreadReply and
+ * post->viewModeBits (neither is a property of the status itself) -- and,
+ * for a REFRESH reply, for overriding post->postId afterward (see
+ * FS3ENetTimelineReply.fs3et_RefreshPostId's doc comment in fs3enet.h). */
+static void FS3EApp_MapStatusToPostSetup(TTLPostSetup *post, const FS3ENetStatus *st)
+{
+    ULONG mi;
+
+    post->username = st->fmas_DisplayName[0] ? st->fmas_DisplayName : st->fmas_Acct;
+    post->acct     = st->fmas_Acct;
+    /* Compares the ORIGINAL author's acct, not the booster's
+     * (fmas_BoostByAcct) -- boosting someone else's toot must not grant
+     * Modify/Delete on it. See TTLPostSetup.isOwn. */
+    post->isOwn       = (st->fmas_Acct && app->accountAcct &&
+                          !strcmp(st->fmas_Acct, app->accountAcct));
+    post->body        = st->fmas_Content;
+    post->timestamp   = st->fmas_CreatedAt;
+    post->boostBy     = st->fmas_BoostBy;
+    post->boostByAcct = st->fmas_BoostByAcct;
+    post->avatarURL   = st->fmas_AvatarURL;
+    post->postId      = st->fmas_Id;
+    post->repliesCount    = st->fmas_RepliesCount;
+    post->reblogsCount    = st->fmas_ReblogsCount;
+    post->favouritesCount = st->fmas_FavouritesCount;
+    post->favourited      = st->fmas_Favourited;
+    post->reblogged       = st->fmas_Reblogged;
+
+    for (mi = 0; mi < st->fmas_MediaCount && mi < TTL_POST_MAX_MEDIA; mi++) {
+        post->mediaUrls[mi] = st->fmas_MediaUrls[mi];
+        post->mediaIds[mi]  = st->fmas_MediaIds[mi];
+        switch (st->fmas_MediaKind[mi]) {
+            case FS3ENET_MEDIAKIND_IMAGE: post->mediaKinds[mi] = TTL_MEDIA_KIND_IMAGE; break;
+            case FS3ENET_MEDIAKIND_VIDEO: post->mediaKinds[mi] = TTL_MEDIA_KIND_VIDEO; break;
+            case FS3ENET_MEDIAKIND_GIFV:  post->mediaKinds[mi] = TTL_MEDIA_KIND_GIFV;  break;
+            case FS3ENET_MEDIAKIND_AUDIO: post->mediaKinds[mi] = TTL_MEDIA_KIND_AUDIO; break;
+            default:                       post->mediaKinds[mi] = TTL_MEDIA_KIND_UNKNOWN; break;
+        }
+    }
+    post->mediaCount = st->fmas_MediaCount;
+
+    for (mi = 0; mi < st->fmas_PollOptionCount && mi < TTL_POST_MAX_POLL_OPTIONS; mi++) {
+        post->pollOptionTitles[mi] = st->fmas_PollOptionTitles[mi];
+        post->pollOptionVotes[mi]  = st->fmas_PollOptionVotes[mi];
+    }
+    post->pollOptionCount = st->fmas_PollOptionCount;
+    post->pollVotesCount  = st->fmas_PollVotesCount;
+    post->pollExpired     = st->fmas_PollExpired;
+    post->pollMultiple    = st->fmas_PollMultiple;
+
+    post->hasCard          = st->fmas_HasCard;
+    post->cardUrl          = st->fmas_CardUrl;
+    post->cardTitle        = st->fmas_CardTitle;
+    post->cardDescription  = st->fmas_CardDescription;
+    post->cardProviderName = st->fmas_CardProviderName;
+    post->cardImageUrl     = st->fmas_CardImageUrl;
+}
+
+/* Triggers the avatar/thumbnail FETCH_IMAGE downloads for one status, same
+ * dedup guards (AvatarImages_IsRequested/IsMediaRequested) as the normal
+ * per-status loop -- shared with FS3ENETQ_TIMELINE's SINGLE_REFRESH branch
+ * below, where it's a no-op unless the avatar/media URL actually changed. */
+static void FS3EApp_TriggerMediaFetchesForStatus(const FS3ENetStatus *st)
+{
+    /* Trigger avatar download for this user if not already requested. */
+    if (app->avatarImages &&
+        st->fmas_AvatarURL && st->fmas_AvatarURL[0] &&
+        st->fmas_Acct &&
+        !AvatarImages_IsRequested(app->avatarImages, st->fmas_Acct))
+    {
+        ULONG reqSize = sizeof(FS3ENetFetchImageReq)
+                      + strlen(st->fmas_AvatarURL) + 1
+                      + strlen(st->fmas_Acct) + 1
+                      + strlen(FS3E_CACHE_SUBDIR_USERICONS) + 1;
+        FS3ENetFetchImageReq *req =
+            FS3ENetFetchImageReq_Alloc(st->fmas_AvatarURL, st->fmas_Acct,
+                                       FS3E_CACHE_SUBDIR_USERICONS,
+                                       (BOOL)app->settings.keepBigUserIcons,
+                                       FALSE);
+        if (req) {
+            if (FS3EApp_NetSend(FS3ENETQ_FETCH_IMAGE, req, reqSize))
+                AvatarImages_MarkRequested(app->avatarImages, st->fmas_Acct);
+            else
+                FreeVec(req);
+        }
+    }
+
+    /* Trigger a thumbnail download for each attachment not already
+     * requested -- same pipeline as avatars above, just a different cache
+     * subdir/pool (see AvatarImages_IsMediaRequested and the file header
+     * comment in avatarimages.h). */
+    if (app->avatarImages) {
+        ULONG mi;
+        for (mi = 0; mi < st->fmas_MediaCount && mi < TTL_POST_MAX_MEDIA; mi++) {
+            const char *url = st->fmas_MediaUrls[mi];
+            if (!url || !url[0]) continue;
+            /* Audio has no thumbnail to fetch -- TootTimeline draws a play
+             * button for it instead (see TTL_HOT_PLAY_AUDIO); its
+             * (fallback, no-preview) URL here is the actual media file,
+             * not a picture. */
+            if (st->fmas_MediaKind[mi] == FS3ENET_MEDIAKIND_AUDIO) continue;
+            if (AvatarImages_IsMediaRequested(app->avatarImages, url)) continue;
+            {
+                ULONG reqSize = sizeof(FS3ENetFetchImageReq)
+                              + strlen(url) + 1
+                              + strlen(url) + 1
+                              + strlen(FS3E_CACHE_SUBDIR_THUMBNAILS) + 1;
+                FS3ENetFetchImageReq *req =
+                    FS3ENetFetchImageReq_Alloc(url, url,
+                                               FS3E_CACHE_SUBDIR_THUMBNAILS,
+                                               (BOOL)app->settings.keepBigThumbnails,
+                                               FALSE);
+                if (req) {
+                    if (FS3EApp_NetSend(FS3ENETQ_FETCH_IMAGE, req, reqSize))
+                        AvatarImages_MarkMediaRequested(app->avatarImages, url);
+                    else
+                        FreeVec(req);
+                }
+            }
+        }
+    }
+
+    /* Trigger the link preview card's image download, if it has one and
+     * it isn't already requested -- own cache subdir/pool (see
+     * FS3E_CACHE_SUBDIR_CARDIMAGES/AvatarImages_IsCardRequested), kept
+     * separate from real attachment thumbnails above so a card's image URL
+     * can never collide with an actual attachment's cache entry. */
+    if (app->avatarImages &&
+        st->fmas_HasCard &&
+        st->fmas_CardImageUrl && st->fmas_CardImageUrl[0] &&
+        !AvatarImages_IsCardRequested(app->avatarImages, st->fmas_CardImageUrl))
+    {
+        ULONG reqSize = sizeof(FS3ENetFetchImageReq)
+                      + strlen(st->fmas_CardImageUrl) + 1
+                      + strlen(st->fmas_CardImageUrl) + 1
+                      + strlen(FS3E_CACHE_SUBDIR_CARDIMAGES) + 1;
+        FS3ENetFetchImageReq *req =
+            FS3ENetFetchImageReq_Alloc(st->fmas_CardImageUrl, st->fmas_CardImageUrl,
+                                       FS3E_CACHE_SUBDIR_CARDIMAGES,
+                                       (BOOL)app->settings.keepBigThumbnails,
+                                       FALSE);
+        if (req) {
+            if (FS3EApp_NetSend(FS3ENETQ_FETCH_IMAGE, req, reqSize))
+                AvatarImages_MarkCardRequested(app->avatarImages, st->fmas_CardImageUrl);
+            else
+                FreeVec(req);
+        }
+    }
+}
+
+/* Mirrors fs3enet.c's own private MAX_STATUSES_TIMELINE cap on a single
+ * FS3ENETQ_ACCOUNTS_LIST page -- sized so the id array built below to fire
+ * a follow-up FS3ENETQ_RELATIONSHIPS batch can never need to truncate
+ * before the server's own page limit already did. */
+#define FS3E_RELBATCH_MAX 40
 
 /* Handle one reply message from the network process. */
 void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
@@ -610,6 +880,32 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                    (unsigned)reply->fs3et_ViewModeBit,
                    (unsigned)reply->fs3et_PageDirection, (unsigned)reply->fs3et_Count);
 */
+            /* F5 "refresh visible toots" reply for one already-displayed
+             * toot -- patch it in place via TTIMELINE_RefreshPost and stop
+             * here, before any of the paging/in-flight-mask/AddPost logic
+             * below, none of which applies to a background per-post
+             * refresh (see FS3EApp_RefreshVisibleToots()). */
+            if (reply->fs3et_ResponseShape == FS3ENET_TLSHAPE_SINGLE_REFRESH) {
+                if (reply->fs3et_Count > 0 &&
+                    reply->fs3et_RefreshPostId && reply->fs3et_RefreshPostId[0])
+                {
+                    TTLPostSetup post;
+                    memset(&post, 0, sizeof(post));
+                    FS3EApp_MapStatusToPostSetup(&post, &statuses[0]);
+                    /* Override: the match key is the ORIGINAL displayed
+                     * post's id, not statuses[0].fmas_Id -- they differ in
+                     * the notifications view (see fs3et_RefreshPostId's
+                     * doc comment in fs3enet.h). */
+                    post.postId = reply->fs3et_RefreshPostId;
+                    SetAttrs(app->tootTimeline, TTIMELINE_RefreshPost, (ULONG)&post, TAG_DONE);
+                    FS3EApp_TriggerMediaFetchesForStatus(&statuses[0]);
+                }
+                if (CurrentMainWindow)
+                    RefreshGList((struct Gadget *)app->tootTimeline,
+                                 CurrentMainWindow, NULL, 1);
+                break;
+            }
+
             switch (reply->fs3et_PageDirection) {
                 case FS3ENETPAGE_OLDER:
                     app->olderPageInFlightMask &= ~(1UL << reply->fs3et_ViewModeBit);
@@ -687,118 +983,14 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                 ULONG idx = older ? i : (reply->fs3et_Count - 1 - i);
                 TTLPostSetup post;
                 memset(&post, 0, sizeof(post));
-                post.username    = statuses[idx].fmas_DisplayName[0]
-                                   ? statuses[idx].fmas_DisplayName
-                                   : statuses[idx].fmas_Acct;
-                post.acct        = statuses[idx].fmas_Acct;
-                /* Compares the ORIGINAL author's acct, not the booster's
-                 * (fmas_BoostByAcct) -- boosting someone else's toot must
-                 * not grant Modify/Delete on it. See TTLPostSetup.isOwn. */
-                post.isOwn       = (statuses[idx].fmas_Acct && app->accountAcct &&
-                                     !strcmp(statuses[idx].fmas_Acct, app->accountAcct));
+                FS3EApp_MapStatusToPostSetup(&post, &statuses[idx]);
                 /* Every status in a CONTEXT_DESCENDANTS reply is, by
                  * definition, one of the discussion's replies -- see
                  * TTLPostSetup.isThreadReply / FS3EApp_OpenDiscussion. */
                 post.isThreadReply = (reply->fs3et_ResponseShape == FS3ENET_TLSHAPE_CONTEXT_DESCENDANTS);
-                post.body        = statuses[idx].fmas_Content;
-                post.timestamp   = statuses[idx].fmas_CreatedAt;
-                post.boostBy     = statuses[idx].fmas_BoostBy;
-                post.boostByAcct = statuses[idx].fmas_BoostByAcct;
-                post.avatarURL   = statuses[idx].fmas_AvatarURL;
-                post.postId      = statuses[idx].fmas_Id;
-                post.repliesCount    = statuses[idx].fmas_RepliesCount;
-                post.reblogsCount    = statuses[idx].fmas_ReblogsCount;
-                post.favouritesCount = statuses[idx].fmas_FavouritesCount;
-                post.favourited      = statuses[idx].fmas_Favourited;
-                post.reblogged       = statuses[idx].fmas_Reblogged;
-                {
-                    ULONG mi;
-                    for (mi = 0; mi < statuses[idx].fmas_MediaCount && mi < TTL_POST_MAX_MEDIA; mi++) {
-                        post.mediaUrls[mi] = statuses[idx].fmas_MediaUrls[mi];
-                        post.mediaIds[mi]  = statuses[idx].fmas_MediaIds[mi];
-                        switch (statuses[idx].fmas_MediaKind[mi]) {
-                            case FS3ENET_MEDIAKIND_IMAGE: post.mediaKinds[mi] = TTL_MEDIA_KIND_IMAGE; break;
-                            case FS3ENET_MEDIAKIND_VIDEO: post.mediaKinds[mi] = TTL_MEDIA_KIND_VIDEO; break;
-                            case FS3ENET_MEDIAKIND_GIFV:  post.mediaKinds[mi] = TTL_MEDIA_KIND_GIFV;  break;
-                            case FS3ENET_MEDIAKIND_AUDIO: post.mediaKinds[mi] = TTL_MEDIA_KIND_AUDIO; break;
-                            default:                       post.mediaKinds[mi] = TTL_MEDIA_KIND_UNKNOWN; break;
-                        }
-                    }
-                    post.mediaCount = statuses[idx].fmas_MediaCount;
-                }
-                {
-                    ULONG oi;
-                    for (oi = 0; oi < statuses[idx].fmas_PollOptionCount && oi < TTL_POST_MAX_POLL_OPTIONS; oi++) {
-                        post.pollOptionTitles[oi] = statuses[idx].fmas_PollOptionTitles[oi];
-                        post.pollOptionVotes[oi]  = statuses[idx].fmas_PollOptionVotes[oi];
-                    }
-                    post.pollOptionCount = statuses[idx].fmas_PollOptionCount;
-                    post.pollVotesCount  = statuses[idx].fmas_PollVotesCount;
-                    post.pollExpired     = statuses[idx].fmas_PollExpired;
-                    post.pollMultiple    = statuses[idx].fmas_PollMultiple;
-                }
 
-                /* Trigger avatar download for this user if not already requested. */
-                if (app->avatarImages &&
-                    statuses[idx].fmas_AvatarURL &&
-                    statuses[idx].fmas_AvatarURL[0] &&
-                    statuses[idx].fmas_Acct &&
-                    !AvatarImages_IsRequested(app->avatarImages,
-                                              statuses[idx].fmas_Acct))
-                {
-                    ULONG reqSize = sizeof(FS3ENetFetchImageReq)
-                                  + strlen(statuses[idx].fmas_AvatarURL) + 1
-                                  + strlen(statuses[idx].fmas_Acct) + 1
-                                  + strlen(FS3E_CACHE_SUBDIR_USERICONS) + 1;
-                    FS3ENetFetchImageReq *req =
-                        FS3ENetFetchImageReq_Alloc(statuses[idx].fmas_AvatarURL,
-                                                   statuses[idx].fmas_Acct,
-                                                   FS3E_CACHE_SUBDIR_USERICONS,
-                                                   (BOOL)app->settings.keepBigUserIcons);
-                    if (req) {
-                        if (FS3EApp_NetSend(FS3ENETQ_FETCH_IMAGE, req, reqSize))
-                            AvatarImages_MarkRequested(app->avatarImages,
-                                                       statuses[idx].fmas_Acct);
-                        else
-                            FreeVec(req);
-                    }
-                }
+                FS3EApp_TriggerMediaFetchesForStatus(&statuses[idx]);
 
-                /* Trigger a thumbnail download for each attachment not
-                 * already requested -- same pipeline as avatars above,
-                 * just a different cache subdir/pool (see
-                 * AvatarImages_IsMediaRequested and the file header
-                 * comment in avatarimages.h). */
-                if (app->avatarImages) {
-                    ULONG mi;
-                    for (mi = 0; mi < statuses[idx].fmas_MediaCount && mi < TTL_POST_MAX_MEDIA; mi++) {
-                        const char *url = statuses[idx].fmas_MediaUrls[mi];
-                        if (!url || !url[0]) continue;
-                        /* Audio has no thumbnail to fetch -- TootTimeline
-                         * draws a play button for it instead (see
-                         * TTL_HOT_PLAY_AUDIO); its (fallback, no-preview)
-                         * URL here is the actual media file, not a
-                         * picture. */
-                        if (statuses[idx].fmas_MediaKind[mi] == FS3ENET_MEDIAKIND_AUDIO) continue;
-                        if (AvatarImages_IsMediaRequested(app->avatarImages, url)) continue;
-                        {
-                            ULONG reqSize = sizeof(FS3ENetFetchImageReq)
-                                          + strlen(url) + 1
-                                          + strlen(url) + 1
-                                          + strlen(FS3E_CACHE_SUBDIR_THUMBNAILS) + 1;
-                            FS3ENetFetchImageReq *req =
-                                FS3ENetFetchImageReq_Alloc(url, url,
-                                                           FS3E_CACHE_SUBDIR_THUMBNAILS,
-                                                           (BOOL)app->settings.keepBigThumbnails);
-                            if (req) {
-                                if (FS3EApp_NetSend(FS3ENETQ_FETCH_IMAGE, req, reqSize))
-                                    AvatarImages_MarkMediaRequested(app->avatarImages, url);
-                                else
-                                    FreeVec(req);
-                            }
-                        }
-                    }
-                }
                 post.viewModeBits = (1UL << reply->fs3et_ViewModeBit);
                 SetAttrs(app->tootTimeline, addAttr, (ULONG)&post, TAG_DONE);
             }
@@ -822,6 +1014,14 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
              * must not touch the current account's in-flight/error masks
              * (see accountGeneration's comment in friendsh3ep.h). */
             if (req && req->fs3et_AccountGeneration != app->accountGeneration) {
+                break;
+            }
+
+            /* Best-effort background refresh (see the success branch's
+             * early-exit above) -- a failed chunk just means that one toot
+             * didn't update this time; no retry bookkeeping, no channel
+             * error indicator. */
+            if (req && req->fs3et_ResponseShape == FS3ENET_TLSHAPE_SINGLE_REFRESH) {
                 break;
             }
 
@@ -970,7 +1170,8 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                                 FS3ENetFetchImageReq *req =
                                     FS3ENetFetchImageReq_Alloc(url, url,
                                                                FS3E_CACHE_SUBDIR_THUMBNAILS,
-                                                               (BOOL)app->settings.keepBigThumbnails);
+                                                               (BOOL)app->settings.keepBigThumbnails,
+                                                               FALSE);
                                 if (req) {
                                     if (FS3EApp_NetSend(FS3ENETQ_FETCH_IMAGE, req, reqSize))
                                         AvatarImages_MarkMediaRequested(app->avatarImages, url);
@@ -997,7 +1198,8 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                     FS3ENetFetchImageReq *req =
                         FS3ENetFetchImageReq_Alloc(post.avatarURL, post.acct,
                                                    FS3E_CACHE_SUBDIR_USERICONS,
-                                                   (BOOL)app->settings.keepBigUserIcons);
+                                                   (BOOL)app->settings.keepBigUserIcons,
+                                                   FALSE);
                     if (req) {
                         if (FS3EApp_NetSend(FS3ENETQ_FETCH_IMAGE, req, reqSize))
                             AvatarImages_MarkRequested(app->avatarImages, post.acct);
@@ -1036,11 +1238,132 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
         }
         break;
 
+    case FS3ENETQ_ACCOUNTS_LIST:
+        /* Account search results / followers / following -- see
+         * FS3EApp_SearchAccount/ShowFollowers/ShowFollowing. Single page
+         * only (see FS3ENetAccountsListReq's doc comment in fs3enet.h), so
+         * always TTIMELINE_AddPost, never AppendPost, and no older/newer
+         * in-flight mask bookkeeping. Deliberately NO avatar/thumbnail
+         * prefetch -- see TTLAccountRow_Class's own comment on why: these
+         * lists can be long, and this is the whole point of skipping the
+         * avatar. */
+        if (msg->fs3em_Result == FS3ENETR_OK && app->tootTimeline) {
+            FS3ENetAccountsListReply *reply = (FS3ENetAccountsListReply *)msg->fs3em_Data;
+            FS3EMastodonAccount *accounts = (FS3EMastodonAccount *)(reply + 1);
+            ULONG bit = (1UL << VIEWMODE_Search);
+            ULONG i;
+
+            if (reply->fs3eal_AccountGeneration != app->accountGeneration) {
+                break;
+            }
+
+            app->timelineFetchedMask  &= ~bit;
+            app->channelPopulatedMask |=  bit;
+
+            /* The server returns these best-match/most-recent-follow
+             * first (index 0 = best), but TTIMELINE_AddPost always
+             * prepends -- walking front-to-back would prepend the LAST
+             * (least relevant) entry last, landing it at the very top.
+             * Walk in reverse instead, so index 0 is prepended last and
+             * ends up on top -- same reasoning FS3ENETQ_TIMELINE/
+             * NOTIFICATIONS's own reply handlers already apply to their
+             * own AddPost loops. */
+            for (i = 0; i < reply->fs3eal_Count; i++) {
+                ULONG idx = reply->fs3eal_Count - 1 - i;
+                TTLPostSetup post;
+                memset(&post, 0, sizeof(post));
+                post.isAccountRow = TRUE;
+                post.username = accounts[idx].fma_DisplayName[0]
+                              ? accounts[idx].fma_DisplayName : accounts[idx].fma_Acct;
+                post.acct     = accounts[idx].fma_Acct;
+                post.postId   = accounts[idx].fma_Id;
+                post.viewModeBits = bit;
+                SetAttrs(app->tootTimeline, TTIMELINE_AddPost, (ULONG)&post, TAG_DONE);
+            }
+
+            /* Pinned "Followers for @user" / "Followed by @user" title,
+             * so it's clear whose list is being shown -- searchProfileAcct
+             * is still set here (FS3EApp_ShowAccountsList deliberately
+             * never clears it, see its own comment). Deliberately the
+             * LAST AddPost of this batch: AddPost always prepends, and
+             * the loop above already lands account index 0 on top in
+             * reverse-index order, so one more AddPost after it puts this
+             * title above even that, at the very top of the list -- no
+             * special "pin above content" glue needed (contrast
+             * ttl_channel_add_boundaries), the insertion order alone does
+             * it. Not shown for plain account search (SEARCH kind) --
+             * there's no single "whose list" to name there. */
+            if ((reply->fs3eal_Kind == FS3ENET_ACCLIST_FOLLOWERS ||
+                 reply->fs3eal_Kind == FS3ENET_ACCLIST_FOLLOWING) &&
+                app->searchProfileAcct && app->searchProfileAcct[0])
+            {
+                char titleBuf[128];
+                TTLPostSetup title;
+                snprintf(titleBuf, sizeof(titleBuf),
+                    reply->fs3eal_Kind == FS3ENET_ACCLIST_FOLLOWERS
+                        ? "Followers for @%s" : "Followed by @%s",
+                    app->searchProfileAcct);
+                memset(&title, 0, sizeof(title));
+                title.isListTitle  = TRUE;
+                title.body         = titleBuf;
+                title.viewModeBits = bit;
+                SetAttrs(app->tootTimeline, TTIMELINE_AddPost, (ULONG)&title, TAG_DONE);
+            }
+
+            SetAttrs(app->tootTimeline, TTIMELINE_ScrollToNewest, TRUE, TAG_DONE);
+
+            /* Batch-fetch following/followed-by state for every row just
+             * added, so TTLAccountRow_Class can show a "Follows you"
+             * badge (see TTL_POSTUPD_RELATIONSHIP) -- skip our own
+             * account id if present, same "can't have a relationship
+             * with yourself" reasoning the profile header's own singular
+             * FS3ENETQ_RELATIONSHIP fetch already applies via its isSelf
+             * skip (FS3ENETQ_ACCOUNT_LOOKUP handler above). */
+            if (app->accountAccessToken && app->accountAccessToken[0]) {
+                char *ids[FS3E_RELBATCH_MAX];
+                ULONG idCount = 0;
+
+                for (i = 0; i < reply->fs3eal_Count && idCount < FS3E_RELBATCH_MAX; i++) {
+                    if (app->accountId && accounts[i].fma_Id[0] &&
+                        strcmp(app->accountId, accounts[i].fma_Id) == 0)
+                        continue;
+                    ids[idCount++] = accounts[i].fma_Id;
+                }
+
+                if (idCount > 0) {
+                    FS3ENetRelationshipsReq *relsReq = FS3ENetRelationshipsReq_Alloc(
+                        app->accountGeneration, app->accountApiBaseUrl,
+                        app->accountAccessToken,
+                        (const char *const *)ids, idCount);
+                    if (relsReq)
+                        FS3EApp_NetSend(FS3ENETQ_RELATIONSHIPS, relsReq, sizeof(*relsReq));
+                }
+            }
+
+            if (CurrentMainWindow)
+                RefreshGList((struct Gadget *)app->tootTimeline,
+                             CurrentMainWindow, NULL, 1);
+        } else if (msg->fs3em_Result != FS3ENETR_OK) {
+            FS3ENetAccountsListReq *req = (FS3ENetAccountsListReq *)msg->fs3em_Data;
+            ULONG bit = (1UL << VIEWMODE_Search);
+
+            if (req && req->fs3eal_AccountGeneration != app->accountGeneration) {
+                break;
+            }
+
+            app->timelineErrorMask   |= bit;
+            app->timelineFetchedMask &= ~bit;
+            app->lastTimelineResult   = msg->fs3em_Result;
+        }
+        break;
+
     case FS3ENETQ_FETCH_IMAGE:
         if (msg->fs3em_Result == FS3ENETR_OK && app->avatarImages) {
             FS3ENetFetchImageReply *reply = (FS3ENetFetchImageReply *)msg->fs3em_Data;
             BOOL isMedia = reply && reply->fs3enf_Subdir &&
                            strcmp(reply->fs3enf_Subdir, FS3E_CACHE_SUBDIR_THUMBNAILS) == 0;
+            BOOL isCard  = reply && reply->fs3enf_Subdir &&
+                           strcmp(reply->fs3enf_Subdir, FS3E_CACHE_SUBDIR_CARDIMAGES) == 0;
 
             if (reply && reply->fs3enf_Key && reply->fs3enf_LocalPath &&
                 app->thumbRequestPort && app->thumbReplyPort)
@@ -1049,7 +1372,7 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                  * to the thumbnail process instead of decoding/scaling it
                  * here -- see fs3ethumb.h. Its reply lands in
                  * FS3EApp_HandleThumbReply(), which uses fs3etm_Kind to
-                 * tell the two apart again. fs3enf_CachePath/IsTemp (see
+                 * tell the three apart again. fs3enf_CachePath/IsTemp (see
                  * their doc comments in fs3enet.h) make sure the resized
                  * thumbnail always lands under a name stable across runs
                  * and that a RAM:T download gets cleaned up afterwards,
@@ -1061,6 +1384,17 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                             reply->fs3enf_CachePath, reply->fs3enf_IsTemp,
                             FS3ETHUMB_MEDIA_WIDTH, FS3ETHUMB_MEDIA_HEIGHT_CAP))
                         AvatarImages_MarkMediaThumbRequested(app->avatarImages, reply->fs3enf_Key);
+                } else if (isCard) {
+                    /* Reuses MEDIA's box-fit size cap -- a card image is
+                     * the same kind of arbitrary-aspect photo a media
+                     * attachment is, just tracked in its own pool (see
+                     * FS3ETHUMB_KIND_CARD's doc comment). */
+                    if (!AvatarImages_IsCardThumbRequested(app->avatarImages, reply->fs3enf_Key) &&
+                        FS3EThumb_Request(app->thumbRequestPort, app->thumbReplyPort,
+                            reply->fs3enf_LocalPath, reply->fs3enf_Key, FS3ETHUMB_KIND_CARD,
+                            reply->fs3enf_CachePath, reply->fs3enf_IsTemp,
+                            FS3ETHUMB_MEDIA_WIDTH, FS3ETHUMB_MEDIA_HEIGHT_CAP))
+                        AvatarImages_MarkCardThumbRequested(app->avatarImages, reply->fs3enf_Key);
                 } else {
                     if (!AvatarImages_IsThumbRequested(app->avatarImages, reply->fs3enf_Key) &&
                         FS3EThumb_Request(app->thumbRequestPort, app->thumbReplyPort,
@@ -1082,8 +1416,42 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                                     (const FS3ENetFetchImageReply *)msg->fs3em_Data);
         break;
 
+    case FS3ENETQ_FETCH_PROGRESS:
+        /* Net-process-originated only -- never a real completed request
+         * (see its doc comment in fs3enet.h). Does NOT touch any
+         * request-completed state; the real FS3ENETQ_FETCH_IMAGE reply for
+         * this download still arrives exactly once, handled above. */
+        {
+            FS3ENetFetchProgress *prog = (FS3ENetFetchProgress *)msg->fs3em_Data;
+            if (prog && prog->fs3efp_Key)
+                FS3EMediaView_OnFetchProgress(&app->mediaView, prog->fs3efp_Key,
+                                              prog->fs3efp_BytesSoFar, prog->fs3efp_TotalBytes);
+        }
+        break;
+
     case FS3ENETQ_POST_STATUS:
         if (msg->fs3em_Result == FS3ENETR_OK) {
+            /* If this was a reply, the parent toot's thread indicator
+             * (short vertical bar + "..." -- see TTL_HOT_THREAD) should
+             * appear right away instead of only after the timeline next
+             * naturally refreshes. composeKind/composePostId are still
+             * the reply's target here -- FS3ETootView_Close() below
+             * doesn't touch either; they're only replaced by the next
+             * SetComposeContext call (see fs3etootview.h). Same
+             * "may have scrolled out of every channel by now" no-op
+             * guard as FS3ENETQ_FAVORITE. */
+            if (app->tootView.composeKind == FS3ETOOT_KIND_REPLY &&
+                app->tootView.composePostId && app->tootTimeline)
+            {
+                TTLPostUpdate upd;
+                memset(&upd, 0, sizeof(upd));
+                upd.postId = app->tootView.composePostId;
+                upd.flags  = TTL_POSTUPD_REPLIES;
+                SetAttrs(app->tootTimeline, TTIMELINE_UpdatePost, (ULONG)&upd, TAG_DONE);
+                if (CurrentMainWindow)
+                    RefreshGList((struct Gadget *)app->tootTimeline,
+                                 CurrentMainWindow, NULL, 1);
+            }
             FS3ETootView_Close(&app->tootView);
         }
         break;
@@ -1187,7 +1555,8 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                     FS3ENetFetchImageReq *imgReq =
                         FS3ENetFetchImageReq_Alloc(acc->fma_AvatarURL, acc->fma_Acct,
                                                    FS3E_CACHE_SUBDIR_USERICONS,
-                                                   (BOOL)app->settings.keepBigUserIcons);
+                                                   (BOOL)app->settings.keepBigUserIcons,
+                                                   FALSE);
                     if (imgReq) {
                         if (FS3EApp_NetSend(FS3ENETQ_FETCH_IMAGE, imgReq, reqSize))
                             AvatarImages_MarkRequested(app->avatarImages, acc->fma_Acct);
@@ -1248,6 +1617,39 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
         }
         break;
 
+    case FS3ENETQ_RELATIONSHIPS:
+        /* Batch "Follows you" badge fetch for an account-row list -- see
+         * the FS3ENETQ_ACCOUNTS_LIST case above, which fires this
+         * follow-up request. Each entry patches one row in place via
+         * TTL_POSTUPD_RELATIONSHIP, matched by postId (the row's account
+         * id) across whichever channel(s) still have it -- silently a
+         * no-op for any row that scrolled out/got replaced in the
+         * meantime, same as every other TTIMELINE_UpdatePost caller. */
+        if (msg->fs3em_Result == FS3ENETR_OK && app->tootTimeline) {
+            FS3ENetRelationshipsReply *reply = (FS3ENetRelationshipsReply *)msg->fs3em_Data;
+            FS3ENetRelationshipEntry *entries = (FS3ENetRelationshipEntry *)(reply + 1);
+            ULONG i;
+
+            if (reply->fs3erls_AccountGeneration != app->accountGeneration) {
+                break;
+            }
+
+            for (i = 0; i < reply->fs3erls_Count; i++) {
+                TTLPostUpdate upd;
+                memset(&upd, 0, sizeof(upd));
+                upd.postId     = entries[i].fs3erle_AccountId;
+                upd.flags      = TTL_POSTUPD_RELATIONSHIP;
+                upd.following  = entries[i].fs3erle_Following;
+                upd.followedBy = entries[i].fs3erle_FollowedBy;
+                SetAttrs(app->tootTimeline, TTIMELINE_UpdatePost, (ULONG)&upd, TAG_DONE);
+            }
+
+            if (CurrentMainWindow)
+                RefreshGList((struct Gadget *)app->tootTimeline,
+                             CurrentMainWindow, NULL, 1);
+        }
+        break;
+
     case FS3ENETQ_FOLLOW:
         if (msg->fs3em_Result == FS3ENETR_OK && app->tootTimeline &&
             app->searchProfileAccountId)
@@ -1286,6 +1688,9 @@ void FS3EApp_HandleThumbReply(FS3EThumbMessage *msg)
         if (msg->fs3etm_Kind == FS3ETHUMB_KIND_MEDIA) {
             AvatarImages_MediaThumbReady(app->avatarImages, msg->fs3etm_Key,
                                           msg->fs3etm_ThumbPath);
+        } else if (msg->fs3etm_Kind == FS3ETHUMB_KIND_CARD) {
+            AvatarImages_CardThumbReady(app->avatarImages, msg->fs3etm_Key,
+                                         msg->fs3etm_ThumbPath);
         } else {
             AvatarImages_ThumbReady(app->avatarImages, msg->fs3etm_Key,
                                      msg->fs3etm_ThumbPath);
@@ -1317,6 +1722,8 @@ void FS3EApp_HandleThumbReply(FS3EThumbMessage *msg)
         UBYTE fmt = (UBYTE)msg->fs3etm_DetectedFormat;
         if (msg->fs3etm_Kind == FS3ETHUMB_KIND_MEDIA)
             AvatarImages_MarkMediaFailed(app->avatarImages, msg->fs3etm_Key, fmt);
+        else if (msg->fs3etm_Kind == FS3ETHUMB_KIND_CARD)
+            AvatarImages_MarkCardFailed(app->avatarImages, msg->fs3etm_Key, fmt);
         else
             AvatarImages_MarkFailed(app->avatarImages, msg->fs3etm_Key, fmt);
 

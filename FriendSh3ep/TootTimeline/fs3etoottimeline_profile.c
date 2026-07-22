@@ -52,6 +52,55 @@ static WORD ttl_profile_button_row_height(TTLData *inst)
     return (WORD)(inst->lineHeight + TTL_PROFILE_BUTTON_PADY * 2);
 }
 
+/* Followers/Following buttons -- same "reserved row above/below other
+ * content" convention as the Follow/Unfollow button above, but dcMini
+ * sized (these are secondary/informational, not the one primary action)
+ * so they don't compete visually with Follow/Unfollow. */
+static WORD ttl_profile_counts_row_height(TTLData *inst)
+{
+    return (WORD)(inst->miniLineHeight + TTL_PROFILE_BUTTON_PADY * 2);
+}
+
+/* Computes both counts-buttons' geometry from one shared place, called
+ * identically by .layout (height only), .render (to draw), and
+ * .buildHotspots (to size the hit rects) -- unlike
+ * ttl_profile_button_row_height above, sharing just a height isn't
+ * enough here: box WIDTHS must also match exactly between .render and
+ * .buildHotspots, or a click lands on the wrong button (or nothing), the
+ * same class of bug this file's header comment already warns about for
+ * button-row Y. followersLabel/followingLabel are filled in here so
+ * .render can reuse them for drawing without a second snprintf. */
+static void ttl_profile_counts_box_layout(TTLData *inst, TTLPost *post, WORD textX,
+    char *followersLabel, ULONG followersLabelSz,
+    char *followingLabel, ULONG followingLabelSz,
+    WORD *box1X, WORD *box1W, WORD *box2X, WORD *box2W, WORD *boxH)
+{
+    snprintf(followersLabel, followersLabelSz, "%lu Followers",
+             (unsigned long)post->followersCount);
+    snprintf(followingLabel, followingLabelSz, "%lu Following",
+             (unsigned long)post->followingCount);
+
+    *boxH = ttl_profile_counts_row_height(inst);
+
+    if (inst->style && inst->style->dcMini) {
+        struct URPTextMetric m;
+        LONG nc;
+
+        nc = utf8_codepoints_range(followersLabel, followersLabel + strlen(followersLabel));
+        URPDC_TextSizeUTF8(inst->style->dcMini, followersLabel, nc, &m);
+        *box1W = (WORD)(m.width + TTL_PROFILE_BUTTON_PADX * 2);
+
+        nc = utf8_codepoints_range(followingLabel, followingLabel + strlen(followingLabel));
+        URPDC_TextSizeUTF8(inst->style->dcMini, followingLabel, nc, &m);
+        *box2W = (WORD)(m.width + TTL_PROFILE_BUTTON_PADX * 2);
+    } else {
+        *box1W = *box2W = 0;
+    }
+
+    *box1X = textX;
+    *box2X = (WORD)(textX + *box1W + TTL_PROFILE_BUTTON_GAP);
+}
+
 static char *dup_str(const char *s)
 {
     ULONG len;
@@ -119,7 +168,6 @@ static void ttl_profile_header_layout(TTLData *inst, TTLPost *post)
 {
     WORD avatarW, padLeft, avatarGap, textX, textW;
     LONG curRelY;
-    char countsBuf[64];
 
     ttl_clear_textspans(post);
 
@@ -152,14 +200,21 @@ static void ttl_profile_header_layout(TTLData *inst, TTLPost *post)
     }
     curRelY += inst->miniLineHeight;
 
-    /* Follower/following counts, plain mini text (dcMini via TTL_SPAN_TIMESTAMP) */
-    snprintf(countsBuf, sizeof(countsBuf), "%lu Followers   %lu Following",
-             (unsigned long)post->followersCount, (unsigned long)post->followingCount);
+    /* Followers/Following buttons -- drawn boxes (see .render), not a
+     * text span, same style as the Follow/Unfollow button below.
+     * countsRowY stored here as "top of this button row" and reused
+     * as-is by .render/.buildHotspots, never re-derived, same "store
+     * once" rule as pollBlockY/threadRowY elsewhere in this file. */
     {
-        TTLTextSpan *sp = ttl_span_alloc(countsBuf, TTL_SPAN_TIMESTAMP, curRelY, textX, inst);
-        if (sp) AddTail((struct List *)&post->textSpans, (struct Node *)&sp->node);
+        char followersLabel[40], followingLabel[40];
+        WORD box1X, box1W, box2X, box2W, boxH;
+        post->countsRowY = (WORD)curRelY;
+        ttl_profile_counts_box_layout(inst, post, textX,
+            followersLabel, sizeof(followersLabel),
+            followingLabel, sizeof(followingLabel),
+            &box1X, &box1W, &box2X, &box2W, &boxH);
+        curRelY += TTL_PROFILE_BUTTON_GAP + boxH;
     }
-    curRelY += inst->miniLineHeight;
 
     /* Make sure curRelY is at least below the avatar */
     {
@@ -315,6 +370,45 @@ static void ttl_profile_header_render(TTLData *inst, struct RastPort *rp,
         URPDrawTextUTF8(rp, dc, &pos, sp->utf8, (ULONG)sp->charCount);
     }
 
+    /* ---- Followers/Following buttons -- see ttl_profile_counts_box_layout
+     * for why box geometry is computed by one shared helper instead of
+     * duplicating measurements between here and .buildHotspots. Unlike
+     * the Follow/Unfollow button below, boxY is counted FORWARD from
+     * countsRowY (this row isn't last), not backward from post->height. ---- */
+    if (inst->style && inst->style->dcMini) {
+        char followersLabel[40], followingLabel[40];
+        WORD box1X, box1W, box2X, box2W, boxH, boxY;
+        WORD textX = (WORD)(padLeft + avatarW +
+                             (inst->style ? inst->style->avatarGap : 6));
+        struct URPDrawContext *dc = inst->style->dcMini;
+        struct URPTextPos pos;
+        LONG nc;
+
+        ttl_profile_counts_box_layout(inst, post, textX,
+            followersLabel, sizeof(followersLabel),
+            followingLabel, sizeof(followingLabel),
+            &box1X, &box1W, &box2X, &box2W, &boxH);
+        boxY = (WORD)(drawY + post->countsRowY);
+
+        SetAPen(rp, (LONG)FS3E_PEN(inst->style, FS3E_COLOR_BUTTON_BG));
+        RectFill(rp, box1X, boxY, (WORD)(box1X + box1W - 1), (WORD)(boxY + boxH - 1));
+        RectFill(rp, box2X, boxY, (WORD)(box2X + box2W - 1), (WORD)(boxY + boxH - 1));
+
+        URPDC_SetDrawColorFromPen(dc, inst->screen,
+            (LONG)FS3E_PEN(inst->style, FS3E_COLOR_ACTION_TEXT),
+            (LONG)FS3E_PEN(inst->style, FS3E_COLOR_BUTTON_BG));
+
+        nc = utf8_codepoints_range(followersLabel, followersLabel + strlen(followersLabel));
+        pos.x = (WORD)(box1X + TTL_PROFILE_BUTTON_PADX);
+        pos.y = (WORD)(boxY + TTL_PROFILE_BUTTON_PADY + inst->miniLineAscent);
+        URPDrawTextUTF8(rp, dc, &pos, followersLabel, (ULONG)nc);
+
+        nc = utf8_codepoints_range(followingLabel, followingLabel + strlen(followingLabel));
+        pos.x = (WORD)(box2X + TTL_PROFILE_BUTTON_PADX);
+        pos.y = (WORD)(boxY + TTL_PROFILE_BUTTON_PADY + inst->miniLineAscent);
+        URPDrawTextUTF8(rp, dc, &pos, followingLabel, (ULONG)nc);
+    }
+
     /* ---- Follow/Unfollow button -- reserved as the LAST row before the
      * separator (see .layout and ttl_profile_button_row_height's comment);
      * boxH/boxY MUST match that reservation exactly, or the button ends up
@@ -378,6 +472,23 @@ static void ttl_profile_header_build_hotspots(TTLData *inst, TTLPost *post)
     {
         if (sp->spanType == TTL_SPAN_BODY)
             ttl_scan_span_tokens(post, sp);
+    }
+
+    /* Followers/Following button hit rects -- geometry computed by the
+     * exact same shared helper .render calls, so a hotspot can never
+     * drift from the box actually drawn (see ttl_profile_counts_box_
+     * layout's own comment). */
+    if (inst->style && inst->style->dcMini) {
+        char followersLabel[40], followingLabel[40];
+        WORD box1X, box1W, box2X, box2W, boxH;
+
+        ttl_profile_counts_box_layout(inst, post, textX,
+            followersLabel, sizeof(followersLabel),
+            followingLabel, sizeof(followingLabel),
+            &box1X, &box1W, &box2X, &box2W, &boxH);
+
+        ttl_hs_add(post, TTL_HOT_FOLLOWERS_LIST, box1X, post->countsRowY, box1W, boxH, NULL, 0);
+        ttl_hs_add(post, TTL_HOT_FOLLOWING_LIST, box2X, post->countsRowY, box2W, boxH, NULL, 0);
     }
 
     /* Same row as .render draws into -- see ttl_profile_button_row_height's

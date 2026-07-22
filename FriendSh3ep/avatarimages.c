@@ -19,6 +19,8 @@ void AvatarImages_Dispose(AvatarImages *ai)
         RgbImage_Free(&ai->entries[i].img);
     for (i = 0; i < ai->thumbCount; i++)
         RgbImage_Free(&ai->thumbs[i].img);
+    for (i = 0; i < ai->cardCount; i++)
+        RgbImage_Free(&ai->cards[i].img);
     FreeVec(ai);
 }
 
@@ -249,6 +251,112 @@ void AvatarImages_MarkMediaFailed(AvatarImages *ai, const char *url, UBYTE detec
 BOOL AvatarImages_MediaFailed(AvatarImages *ai, const char *url, UBYTE *outFormat)
 {
     ThumbnailEntry *e = find_media_entry(ai, url);
+    if (!e || !e->failed) return FALSE;
+    if (outFormat) *outFormat = e->detectedFormat;
+    return TRUE;
+}
+
+/* ---- Card image pool: identical shape to the media pool above, just a
+ * separate array -- see CARDIMAGE_CACHE_MAX's comment in avatarimages.h. ---- */
+
+static CardImageEntry *find_card_entry(AvatarImages *ai, const char *url)
+{
+    ULONG i;
+    if (!ai || !url || !url[0]) return NULL;
+    for (i = 0; i < ai->cardCount; i++)
+        if (strncmp(ai->cards[i].url, url, CARDIMAGE_URL_SIZE - 1) == 0)
+            return &ai->cards[i];
+    return NULL;
+}
+
+static CardImageEntry *find_or_create_card(AvatarImages *ai, const char *url)
+{
+    CardImageEntry *e = find_card_entry(ai, url);
+    if (e) return e;
+    if (!ai || !url || !url[0]) return NULL;
+
+    if (ai->cardCount < CARDIMAGE_CACHE_MAX) {
+        e = &ai->cards[ai->cardCount++];
+    } else {
+        /* Same "never evict a slot still in flight" rule as
+         * find_or_create_media -- see its comment for the full reasoning. */
+        ULONG tries;
+        CardImageEntry *victim = NULL;
+        for (tries = 0; tries < CARDIMAGE_CACHE_MAX; tries++) {
+            ULONG idx = (ai->cardNextEvict + tries) % CARDIMAGE_CACHE_MAX;
+            CardImageEntry *cand = &ai->cards[idx];
+            if (!cand->requested || RgbImage_IsLoaded(&cand->img) || cand->failed) {
+                victim = cand;
+                ai->cardNextEvict = (idx + 1) % CARDIMAGE_CACHE_MAX;
+                break;
+            }
+        }
+        if (!victim) return NULL;
+        e = victim;
+        RgbImage_Free(&e->img);
+    }
+    memset(e, 0, sizeof(*e));
+    strncpy(e->url, url, CARDIMAGE_URL_SIZE - 1);
+    return e;
+}
+
+RgbImage *AvatarImages_GetCard(AvatarImages *ai, const char *url)
+{
+    CardImageEntry *e = find_card_entry(ai, url);
+    if (!e || !RgbImage_IsLoaded(&e->img)) return NULL;
+    return &e->img;
+}
+
+BOOL AvatarImages_IsCardRequested(AvatarImages *ai, const char *url)
+{
+    CardImageEntry *e = find_card_entry(ai, url);
+    return (e && e->requested) ? TRUE : FALSE;
+}
+
+void AvatarImages_MarkCardRequested(AvatarImages *ai, const char *url)
+{
+    CardImageEntry *e = find_or_create_card(ai, url);
+    if (e) e->requested = TRUE;
+}
+
+BOOL AvatarImages_IsCardThumbRequested(AvatarImages *ai, const char *url)
+{
+    CardImageEntry *e = find_card_entry(ai, url);
+    return (e && e->thumbRequested) ? TRUE : FALSE;
+}
+
+void AvatarImages_MarkCardThumbRequested(AvatarImages *ai, const char *url)
+{
+    CardImageEntry *e = find_or_create_card(ai, url);
+    if (e) e->thumbRequested = TRUE;
+}
+
+RgbImage *AvatarImages_CardThumbReady(AvatarImages *ai, const char *url,
+                                       const char *thumbPath)
+{
+    CardImageEntry *e;
+
+    if (!ai || !url || !url[0] || !thumbPath || !thumbPath[0]) return NULL;
+
+    e = find_or_create_card(ai, url);
+    if (!e) return NULL;
+
+    if (!RgbImage_LoadBmp(&e->img, thumbPath)) return NULL;
+
+    return &e->img;
+}
+
+void AvatarImages_MarkCardFailed(AvatarImages *ai, const char *url, UBYTE detectedFormat)
+{
+    CardImageEntry *e = find_or_create_card(ai, url);
+    if (!e) return;
+    e->failed         = TRUE;
+    e->detectedFormat = detectedFormat;
+}
+
+BOOL AvatarImages_CardFailed(AvatarImages *ai, const char *url, UBYTE *outFormat)
+{
+    CardImageEntry *e = find_card_entry(ai, url);
     if (!e || !e->failed) return FALSE;
     if (outFormat) *outFormat = e->detectedFormat;
     return TRUE;

@@ -28,8 +28,25 @@ void FS3EApp_OpenProfile(const char *acctOrHandle);
  * channel. */
 void FS3EApp_OpenDiscussion(const char *statusId);
 
+/* F5 "refresh visible toots" -- re-fetches, one at a time, every toot
+ * currently on screen in the active TootTimeline channel and patches its
+ * data in place (see TTIMELINE_GetVisiblePosts/RefreshPost). */
+void FS3EApp_RefreshVisibleToots(void);
+
 /* Word/hashtag search in the Search channel. */
 void FS3EApp_SearchWord(const char *query);
+
+/* Fuzzy account search in the Search channel (flat list of TTLAccountRow_Class
+ * rows, no profile header) -- single page only, see FS3ENETQ_ACCOUNTS_LIST's
+ * doc comment in fs3enet.h. */
+void FS3EApp_SearchAccount(const char *query);
+
+/* Show app->searchProfileAccountId's followers/following list in the Search
+ * channel, same flat account-row list as FS3EApp_SearchAccount -- called
+ * from clicking "N Followers"/"N Following" in an open profile view. No-op
+ * if no profile is currently open. */
+void FS3EApp_ShowFollowers(void);
+void FS3EApp_ShowFollowing(void);
 
 /* GID_LOGIN_LOGIN_BUTTON -- start a fresh OAuth flow for the server typed
  * into the login window. */

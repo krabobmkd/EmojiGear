@@ -138,6 +138,11 @@ enum {
     MSG_SEARCHV_WAIT3,
     MSG_SEARCHV_WAIT4,
 
+    /* searchWordTypeChooser entries (friendsh3ep.c) -- must stay in the
+     * same order as FS3ESearchTypeChoice. */
+    MSG_SEARCH_TYPE_WORD,
+    MSG_SEARCH_TYPE_PEOPLE,
+
     /* Must be last */
     MSG_COUNT
 };

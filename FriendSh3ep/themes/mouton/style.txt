@@ -79,4 +79,6 @@ timeline.color.accent = #444466
 timeline.color.text = #dadde4
 timeline.color.text_dim = #707580
 timeline.color.action_text = #5599ee
+timeline.color.cardbg = #232840
+timeline.color.cardborder = #444466
 

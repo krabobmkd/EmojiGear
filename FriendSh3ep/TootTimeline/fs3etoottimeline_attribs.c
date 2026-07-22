@@ -117,13 +117,24 @@ ULONG ttl_apply_tags(Class *cl, Object *o, struct opSet *msg, int couldRefreshDr
                         /* Independent copy per targeted channel: a post's
                          * node can only ever be linked into one list, and
                          * its timelineY is meaningless outside the
-                         * channel it was laid out for. FOLLOW/FOLLOW_REQUEST
-                         * notifications carry no status at all, so they get
-                         * TTLNotifFollow_Class's much shorter row instead of
-                         * a toot -- see TTLPostSetup.notifType. */
-                        post = (setup->notifType == TTL_NOTIF_FOLLOW ||
-                                setup->notifType == TTL_NOTIF_FOLLOW_REQUEST)
-                             ? ttl_notif_follow_alloc(setup) : ttl_post_alloc(setup);
+                         * channel it was laid out for. isListTitle/
+                         * isAccountRow (search results, followers/
+                         * following) checked first, since they're a wholly
+                         * different kind of row than a status ever is --
+                         * see TTLPostSetup.isListTitle/isAccountRow.
+                         * FOLLOW/FOLLOW_REQUEST notifications carry no
+                         * status at all, so they get TTLNotifFollow_Class's
+                         * much shorter row instead of a toot -- see
+                         * TTLPostSetup.notifType. */
+                        if (setup->isListTitle)
+                            post = ttl_list_title_alloc(setup);
+                        else if (setup->isAccountRow)
+                            post = ttl_account_row_alloc(setup);
+                        else if (setup->notifType == TTL_NOTIF_FOLLOW ||
+                                 setup->notifType == TTL_NOTIF_FOLLOW_REQUEST)
+                            post = ttl_notif_follow_alloc(setup);
+                        else
+                            post = ttl_post_alloc(setup);
                         if (!post) continue;
 
                         channel = &inst->channels[ch];
@@ -140,10 +151,17 @@ ULONG ttl_apply_tags(Class *cl, Object *o, struct opSet *msg, int couldRefreshDr
                             post->timelineY         = 0;
                             AddHead((struct List *)&channel->posts, (struct Node *)&post->node);
                             channel->postCount++;
-                            /* Now that there's real content, pin the
-                             * "look for something new" / "load more…" rows
-                             * around it. */
-                            ttl_channel_add_boundaries(inst, channel);
+                            /* Pin the "look for something new" / "load
+                             * more…" rows around real content -- but NOT
+                             * for a search-list row (account row or its
+                             * title): those are single-page, non-
+                             * paginated fetches (see FS3ENetAccountsListReq's
+                             * doc comment), so "check for newer"/"load
+                             * older" don't apply and would be misleading
+                             * pinned above/below a flat search/followers/
+                             * following list. */
+                            if (!setup->isAccountRow && !setup->isListTitle)
+                                ttl_channel_add_boundaries(inst, channel);
                         } else {
                             /* Prepend: new post goes above the current top
                              * (below a pinned "load newer" row, if any).
@@ -176,9 +194,17 @@ ULONG ttl_apply_tags(Class *cl, Object *o, struct opSet *msg, int couldRefreshDr
 
                         if (!(setup->viewModeBits & (1UL << ch))) continue;
 
-                        post = (setup->notifType == TTL_NOTIF_FOLLOW ||
-                                setup->notifType == TTL_NOTIF_FOLLOW_REQUEST)
-                             ? ttl_notif_follow_alloc(setup) : ttl_post_alloc(setup);
+                        /* Same isListTitle/isAccountRow/notifType dispatch
+                         * as TTIMELINE_AddPost above -- see its comment. */
+                        if (setup->isListTitle)
+                            post = ttl_list_title_alloc(setup);
+                        else if (setup->isAccountRow)
+                            post = ttl_account_row_alloc(setup);
+                        else if (setup->notifType == TTL_NOTIF_FOLLOW ||
+                                 setup->notifType == TTL_NOTIF_FOLLOW_REQUEST)
+                            post = ttl_notif_follow_alloc(setup);
+                        else
+                            post = ttl_post_alloc(setup);
                         if (!post) continue;
 
                         channel = &inst->channels[ch];
@@ -196,7 +222,11 @@ ULONG ttl_apply_tags(Class *cl, Object *o, struct opSet *msg, int couldRefreshDr
                             post->timelineY         = 0;
                             AddHead((struct List *)&channel->posts, (struct Node *)&post->node);
                             channel->postCount++;
-                            ttl_channel_add_boundaries(inst, channel);
+                            /* See the matching comment in TTIMELINE_AddPost
+                             * above -- search-list rows never get the
+                             * newer/older boundaries. */
+                            if (!setup->isAccountRow && !setup->isListTitle)
+                                ttl_channel_add_boundaries(inst, channel);
                         } else {
                             /* Append: new post goes below the current
                              * bottom (above a pinned "load older" row, if
@@ -242,6 +272,8 @@ ULONG ttl_apply_tags(Class *cl, Object *o, struct opSet *msg, int couldRefreshDr
                 const TTLPostUpdate *upd = (const TTLPostUpdate *)tag->ti_Data;
                 if (upd && upd->postId && upd->postId[0]) {
                     ULONG ch;
+                    BOOL  forceRelayout = FALSE;
+
                     for (ch = 0; ch < TTIMELINE_NUM_VIEWMODES; ch++) {
                         TTLChannel *channel = &inst->channels[ch];
                         TTLPost    *post;
@@ -277,6 +309,29 @@ ULONG ttl_apply_tags(Class *cl, Object *o, struct opSet *msg, int couldRefreshDr
                                 else if (post->reblogsCount > 0) post->reblogsCount--;
                                 post->reblogged = upd->reblogged;
                             }
+                            if (upd->flags & TTL_POSTUPD_REPLIES) {
+                                post->repliesCount++;
+                                /* 0->1 reserves the thread-indicator row
+                                 * (threadRowY/height), which a plain field
+                                 * patch + range-invalidate can't account
+                                 * for -- force the same full relayout path
+                                 * a font/width change already uses (see
+                                 * ttl_do_layout: lastTileWidth=-1 makes the
+                                 * next render treat this as a width change,
+                                 * freeing/rebuilding tiles and re-running
+                                 * ttl_layout_all_posts, which also rebuilds
+                                 * Y positions for every channel). */
+                                forceRelayout = TRUE;
+                            }
+                            if (upd->flags & TTL_POSTUPD_RELATIONSHIP) {
+                                /* Overwrite, not delta -- unlike favourited/
+                                 * reblogged above, this isn't a toggle the
+                                 * gadget itself drove; it's a fresh snapshot
+                                 * from the server (see FS3ENETQ_RELATIONSHIPS),
+                                 * so there's no local +1/-1 to reconcile. */
+                                post->following  = upd->following;
+                                post->followedBy = upd->followedBy;
+                            }
                             post->dirty         = TRUE;
                             post->hotSpotsDirty = TRUE; /* label widths may have changed */
 
@@ -287,6 +342,12 @@ ULONG ttl_apply_tags(Class *cl, Object *o, struct opSet *msg, int couldRefreshDr
                             break; /* unique within this channel's list */
                         }
                     }
+
+                    if (forceRelayout) {
+                        inst->lastTileWidth = -1;
+                        inst->layoutToDo    = TRUE;
+                    }
+
                     used = 1;
                 }
                 break;
@@ -327,6 +388,109 @@ ULONG ttl_apply_tags(Class *cl, Object *o, struct opSet *msg, int couldRefreshDr
                             redraw = TRUE;
                             break; /* unique within this channel's list */
                         }
+                    }
+                    used = 1;
+                }
+                break;
+            }
+
+            case TTIMELINE_GetVisiblePosts: {
+                TTLVisiblePosts *vis = (TTLVisiblePosts *)tag->ti_Data;
+                if (vis) {
+                    TTLChannel *active = ttl_active(inst);
+                    LONG        visTop = active->scrollY;
+                    LONG        visBot = active->scrollY + inst->gadHeight;
+                    TTLPost    *post;
+
+                    vis->count = 0;
+                    for (post = (TTLPost *)active->posts.mlh_Head;
+                         post->node.mln_Succ && vis->count < TTL_VISIBLE_POSTS_MAX;
+                         post = (TTLPost *)post->node.mln_Succ)
+                    {
+                        const char *statusId;
+                        ULONG       idLen, sidLen;
+                        char       *idCopy, *sidCopy;
+
+                        if (!post->postId) continue;
+
+                        /* Same [timelineY, timelineY+height) vs. viewport
+                         * overlap test the tile renderer already uses (see
+                         * ttl_render_item_in_tile in fs3etoottimeline_tiles.c),
+                         * just against the actual scroll viewport instead of
+                         * one tile's Y range. */
+                        if (post->timelineY >= visBot ||
+                            post->timelineY + post->height <= visTop)
+                            continue;
+
+                        /* Notifications view: postId is the notification's
+                         * own id (pagination), NOT the embedded status's --
+                         * see TTLPostSetup.notifStatusId's doc comment. "" for
+                         * TTL_NOTIF_FOLLOW/FOLLOW_REQUEST (no embedded status
+                         * at all) -- skip those rows, nothing to refresh. */
+                        statusId = (post->notifType == TTL_NOTIF_NONE)
+                                   ? post->postId : post->notifStatusId;
+                        if (!statusId || !statusId[0]) continue;
+
+                        idLen  = strlen(post->postId) + 1;
+                        sidLen = strlen(statusId) + 1;
+                        idCopy  = (char *)AllocVec(idLen, MEMF_ANY);
+                        sidCopy = (char *)AllocVec(sidLen, MEMF_ANY);
+                        if (idCopy && sidCopy) {
+                            CopyMem((APTR)post->postId, idCopy, idLen);
+                            CopyMem((APTR)statusId, sidCopy, sidLen);
+                            vis->entries[vis->count].postId   = idCopy;
+                            vis->entries[vis->count].statusId = sidCopy;
+                            vis->count++;
+                        } else {
+                            if (idCopy)  FreeVec(idCopy);
+                            if (sidCopy) FreeVec(sidCopy);
+                        }
+                    }
+                    used = 1;
+                }
+                break;
+            }
+
+            case TTIMELINE_RefreshPost: {
+                const TTLPostSetup *setup = (const TTLPostSetup *)tag->ti_Data;
+                if (setup && setup->postId && setup->postId[0]) {
+                    ULONG ch;
+                    BOOL  matched = FALSE;
+
+                    for (ch = 0; ch < TTIMELINE_NUM_VIEWMODES; ch++) {
+                        TTLChannel *channel = &inst->channels[ch];
+                        TTLPost    *post;
+
+                        /* Same "search every channel" reasoning as
+                         * TTIMELINE_UpdatePost/RemovePost above. */
+                        for (post = (TTLPost *)channel->posts.mlh_Head;
+                             post->node.mln_Succ;
+                             post = (TTLPost *)post->node.mln_Succ)
+                        {
+                            if (!post->postId ||
+                                strcmp(post->postId, setup->postId) != 0)
+                                continue;
+
+                            ttl_post_refresh_fields(post, setup);
+                            post->dirty         = TRUE;
+                            post->hotSpotsDirty = TRUE;
+                            matched = TRUE;
+                            break; /* unique within this channel's list */
+                        }
+                    }
+
+                    if (matched) {
+                        /* Content/media/poll changes can grow or shrink this
+                         * post's height in ways a single range-invalidate
+                         * can't account for -- force the same full-relayout
+                         * path already proven for TTL_POSTUPD_REPLIES (see
+                         * ttl_do_layout: lastTileWidth=-1 makes the next
+                         * render treat this as a width change, freeing/
+                         * rebuilding tiles and re-running ttl_layout_all_posts,
+                         * which also rebuilds Y positions for every channel). */
+                        inst->lastTileWidth = -1;
+                        inst->layoutToDo    = TRUE;
+                        redraw = TRUE;
                     }
                     used = 1;
                 }
