@@ -48,6 +48,16 @@ void FS3EApp_SearchAccount(const char *query);
 void FS3EApp_ShowFollowers(void);
 void FS3EApp_ShowFollowing(void);
 
+/* GID_SEARCH_BACK_BUTTON / Delete key -- pops and restores the most
+ * recently pushed Search view configuration (see App.searchStack in
+ * friendsh3ep.h). No-op if there's no history. */
+void FS3EApp_SearchGoBack(void);
+
+/* Frees every entry in app->searchStack and resets it empty -- same
+ * lifetime as searchProfileAcct/searchDiscussionStatusId; call alongside
+ * their own frees (account switch, app shutdown). */
+void FS3EApp_SearchStackClear(void);
+
 /* GID_LOGIN_LOGIN_BUTTON -- start a fresh OAuth flow for the server typed
  * into the login window. */
 void FS3EApp_LoginStart(void);

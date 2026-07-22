@@ -80,6 +80,25 @@ typedef enum {
     FS3ESEARCHTYPE_PEOPLE
 } FS3ESearchTypeChoice;
 
+/* One saved "search view configuration" for the Back-navigation stack
+ * (see App.searchStack/searchStackDepth and FS3EApp_SearchGoBack() in
+ * fs3erequests.c) -- a snapshot of whichever of the identity/query fields
+ * below `mode` actually needs, taken right before that mode's state gets
+ * overwritten by navigating to something else. Every field not relevant
+ * to `mode` is left NULL/0, same "not every field matters for every kind
+ * of row" convention TTLPostSetup already uses. */
+typedef struct {
+    ULONG  mode;               /* FS3ESearchMode being left */
+    char  *profileAcct;        /* NetStrDup copy, or NULL */
+    char  *profileAccountId;
+    char  *discussionStatusId;
+    char  *queryText;          /* WORD/ACCOUNT modes only */
+    ULONG  queryChooser;       /* FS3ESearchTypeChoice, WORD/ACCOUNT only */
+    LONG   scrollY;            /* TTIMELINE_ScrollY at the moment of leaving */
+} FS3ESearchStackEntry;
+
+#define FS3E_SEARCH_STACK_MAX 4
+
 /* Max number of accounts kept in App.accounts[] / persisted to
  * accounts.dat (see FS3EApp_SwitchAccount and fs3eloginview.c's
  * acclistGroup). Plenty for a personal multi-instance/multi-account
@@ -136,15 +155,17 @@ struct App {
 
     /* Part C: search editor + toot timeline (SearchBarLayoutClass).
      * searchBarLayout wraps searchWordEditor (one-line UniTextEditor,
-     * shown only in VIEWMODE_Search -- see fs3e_setViewMode) and
-     * searchWordTypeChooser ("Word"/"People" popup, far right of the same
-     * row) above tootTimeline (TootTimelineClass); searchBarLayout is what
-     * actually gets added to mainlayout, not tootTimeline directly. */
+     * shown only in VIEWMODE_Search -- see fs3e_setViewMode),
+     * searchWordTypeChooser ("Word"/"People" popup) and searchBackButton
+     * (far right of the same row, see FS3EApp_SearchGoBack) above
+     * tootTimeline (TootTimelineClass); searchBarLayout is what actually
+     * gets added to mainlayout, not tootTimeline directly. */
     Object *searchBarLayout;
     Object *searchWordEditor;
     Object *searchWordTypeChooser;
     struct List   searchWordTypeList;
     struct Node  *searchWordTypeNodes[2]; /* 0="Word", 1="People" -- see FS3ESearchTypeChoice */
+    Object *searchBackButton;
     Object *tootTimeline;
 
     /* Shared draw context for all UniButtonP9 buttons */
@@ -287,10 +308,37 @@ struct App {
     char  *searchProfileAcct;
     char  *searchProfileAccountId;
 
+    /* The query text most recently passed to FS3EApp_SearchWord/
+     * SearchAccount, valid whenever searchMode is FS3ESEARCH_WORD/
+     * ACCOUNT -- kept as its own copy (NOT re-read from searchWordEditor)
+     * specifically so searchStackPush() can snapshot the OLD query when
+     * re-searching within the same mode: by the time SearchWord/
+     * SearchAccount runs for a NEW query, the editor gadget already
+     * displays that new text (StartSearchFromLine reads-then-calls), so
+     * re-reading the live gadget at push time would wrongly capture the
+     * new query as if it were history. Which chooser selection (Word vs
+     * People) this query was searched under is NOT stored separately --
+     * it's always implied by searchMode itself (WORD vs ACCOUNT). */
+    char  *searchLastQueryText;
+
     /* Search channel (VIEWMODE_Search) discussion-view state -- see
      * FS3EApp_OpenDiscussion(). Set the moment a discussion is requested,
      * same "before either reply lands" timing as searchProfileAcct above. */
     char  *searchDiscussionStatusId;
+
+    /* Back-navigation history for the Search channel -- see
+     * FS3EApp_SearchGoBack()/searchStackPush() in fs3erequests.c. A plain
+     * fixed-depth stack (top = searchStack[searchStackDepth-1]), pushed
+     * by every FS3EApp_OpenProfile/OpenDiscussion/SearchWord/
+     * SearchAccount/ShowFollowers/ShowFollowing call right before it
+     * overwrites the fields above. searchPendingScrollY is a one-shot
+     * "restore this scroll position once the channel we just asked for
+     * actually loads" value, consumed by whichever FS3ENETQ_* reply
+     * handler next populates the Search channel; -1 means none pending
+     * (0 is a valid scroll position, so it can't double as the sentinel). */
+    FS3ESearchStackEntry searchStack[FS3E_SEARCH_STACK_MAX];
+    UBYTE  searchStackDepth;
+    LONG   searchPendingScrollY;
 };
 
 extern struct App *app;

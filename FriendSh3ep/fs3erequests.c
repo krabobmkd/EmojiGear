@@ -17,6 +17,7 @@
 #include <proto/utility.h>
 
 #include <gadgets/unitexteditor.h>
+#include <gadgets/chooser.h>
 
 #include "compilers.h"
 #include "bdbprintf.h"
@@ -262,6 +263,173 @@ void FS3EApp_FetchTimelinePage(ULONG viewMode, ULONG direction)
         *inFlightMask |= bit;
 }
 
+/* ---- Search back-navigation stack (see App.searchStack/searchStackDepth
+ * in friendsh3ep.h and FS3EApp_SearchGoBack() below) --------------------
+ *
+ * Set around FS3EApp_SearchGoBack's own re-invocation of one of the 6
+ * entry points below, so restoring a popped state doesn't immediately
+ * push it right back onto the stack it was just popped from. */
+static BOOL s_searchBackInProgress = FALSE;
+
+/* Frees one stack slot's owned strings (does NOT touch depth/array
+ * shape -- callers reposition/overwrite the slot themselves). */
+static void searchStackFreeEntry(FS3ESearchStackEntry *e)
+{
+    if (e->profileAcct)        { FreeVec(e->profileAcct);        e->profileAcct        = NULL; }
+    if (e->profileAccountId)   { FreeVec(e->profileAccountId);   e->profileAccountId   = NULL; }
+    if (e->discussionStatusId) { FreeVec(e->discussionStatusId); e->discussionStatusId = NULL; }
+    if (e->queryText)          { FreeVec(e->queryText);          e->queryText          = NULL; }
+}
+
+/* Snapshots the CURRENT (about-to-be-left) app->search* state onto the
+ * stack, called from the top of every FS3EApp_OpenProfile/OpenDiscussion/
+ * SearchWord/SearchAccount/ShowAccountsList, before any of them free/
+ * overwrite the fields being captured here. A no-op if there's nothing
+ * meaningful to save (FS3ESEARCH_NONE, i.e. Search hasn't shown anything
+ * yet) or if this push is itself part of FS3EApp_SearchGoBack restoring a
+ * previously popped entry (see s_searchBackInProgress above). */
+static void searchStackPush(void)
+{
+    FS3ESearchStackEntry entry;
+
+    if (s_searchBackInProgress || app->searchMode == FS3ESEARCH_NONE) return;
+
+    memset(&entry, 0, sizeof(entry));
+    entry.mode = app->searchMode;
+
+    switch (app->searchMode) {
+        case FS3ESEARCH_USER_PROFILE:
+        case FS3ESEARCH_FOLLOWERS:
+        case FS3ESEARCH_FOLLOWING:
+            /* FOLLOWERS/FOLLOWING share USER_PROFILE's identity fields --
+             * FS3EApp_ShowAccountsList deliberately never clears them
+             * (see its own comment), so they're still valid here too. */
+            entry.profileAcct      = NetStrDup(app->searchProfileAcct);
+            entry.profileAccountId = NetStrDup(app->searchProfileAccountId);
+            break;
+        case FS3ESEARCH_DISCUSSION:
+            entry.discussionStatusId = NetStrDup(app->searchDiscussionStatusId);
+            break;
+        case FS3ESEARCH_WORD:
+        case FS3ESEARCH_ACCOUNT:
+            /* app->searchLastQueryText, NOT a live read of searchWordEditor
+             * -- see that field's own comment in friendsh3ep.h for why the
+             * gadget can't be trusted here (it already shows the NEW query
+             * by the time this push runs, when re-searching within the
+             * same mode). Chooser selection is implied by the mode itself,
+             * not stored/read separately. */
+            entry.queryText    = NetStrDup(app->searchLastQueryText);
+            entry.queryChooser = (app->searchMode == FS3ESEARCH_ACCOUNT)
+                                ? FS3ESEARCHTYPE_PEOPLE : FS3ESEARCHTYPE_WORD;
+            break;
+        default:
+            break;
+    }
+
+    entry.scrollY = 0;
+    if (app->tootTimeline)
+        GetAttr(TTIMELINE_ScrollY, app->tootTimeline, (ULONG *)&entry.scrollY);
+
+    if (app->searchStackDepth >= FS3E_SEARCH_STACK_MAX) {
+        /* Full: drop the oldest (slot 0), shift the rest down, write the
+         * new entry at the top (index MAX-1). Plain shift, not a ring
+         * buffer -- simpler than modulo index math for only 4 slots. */
+        searchStackFreeEntry(&app->searchStack[0]);
+        memmove(&app->searchStack[0], &app->searchStack[1],
+                sizeof(FS3ESearchStackEntry) * (FS3E_SEARCH_STACK_MAX - 1));
+        app->searchStack[FS3E_SEARCH_STACK_MAX - 1] = entry;
+    } else {
+        app->searchStack[app->searchStackDepth++] = entry;
+    }
+}
+
+/* Frees every stack slot's strings and resets depth to empty -- same
+ * lifetime as searchProfileAcct/searchDiscussionStatusId (called
+ * alongside their own frees on account switch and app shutdown). */
+void FS3EApp_SearchStackClear(void)
+{
+    UBYTE i;
+    for (i = 0; i < app->searchStackDepth; i++)
+        searchStackFreeEntry(&app->searchStack[i]);
+    app->searchStackDepth    = 0;
+    app->searchPendingScrollY = -1;
+}
+
+/* Applies a pending Back-restore scroll position once the Search channel
+ * actually has content to scroll into -- see the FS3ENETQ_ACCOUNT_LOOKUP/
+ * ACCOUNTS_LIST/TIMELINE reply handlers below for the call sites.
+ * Best-effort by design (see FS3EApp_SearchGoBack's own comment): applied
+ * as soon as SOME content lands, not necessarily everything a multi-
+ * request mode like USER_PROFILE eventually fetches. */
+static void searchApplyPendingScroll(void)
+{
+    if (app->searchPendingScrollY < 0) return;
+    if (app->tootTimeline)
+        SetAttrs(app->tootTimeline, TTIMELINE_ScrollY,
+                 (ULONG)app->searchPendingScrollY, TAG_DONE);
+    app->searchPendingScrollY = -1;
+}
+
+/* Back button (GID_SEARCH_BACK_BUTTON) / Delete key -- pops the most
+ * recently pushed search configuration and re-enters it by calling
+ * straight back into whichever of the 6 entry points below made it, so
+ * all the usual clearing/fetching/view-mode logic runs unchanged. A
+ * no-op when the stack is empty (confirmed UX: Back is simply inert with
+ * no history, it does not leave the Search view). Scroll restoration is
+ * best-effort -- see searchApplyPendingScroll's comment -- "possibly,
+ * nearly the same" position, not a guarantee. */
+void FS3EApp_SearchGoBack(void)
+{
+    FS3ESearchStackEntry popped;
+
+    if (app->searchStackDepth == 0) return;
+    popped = app->searchStack[--app->searchStackDepth];
+
+    app->searchPendingScrollY = popped.scrollY;
+    s_searchBackInProgress    = TRUE;
+
+    switch (popped.mode) {
+        case FS3ESEARCH_USER_PROFILE:
+            FS3EApp_OpenProfile(popped.profileAcct);
+            break;
+        case FS3ESEARCH_DISCUSSION:
+            FS3EApp_OpenDiscussion(popped.discussionStatusId);
+            break;
+        case FS3ESEARCH_WORD:
+        case FS3ESEARCH_ACCOUNT:
+            if (app->searchWordEditor)
+                SetGdAttrs(app->searchWordEditor, UTED_Text, (ULONG)popped.queryText, TAG_END);
+            if (app->searchWordTypeChooser)
+                SetGdAttrs(app->searchWordTypeChooser, CHOOSER_Active, popped.queryChooser, TAG_END);
+            if (popped.mode == FS3ESEARCH_ACCOUNT)
+                FS3EApp_SearchAccount(popped.queryText);
+            else
+                FS3EApp_SearchWord(popped.queryText);
+            break;
+        case FS3ESEARCH_FOLLOWERS:
+        case FS3ESEARCH_FOLLOWING:
+            /* ShowFollowers/ShowFollowing take no parameters -- they read
+             * app->searchProfileAcct/AccountId directly (see
+             * FS3EApp_ShowAccountsList's own comment), so those fields
+             * must already hold the popped identity before calling
+             * either. Transfer (not copy) the popped strings' ownership
+             * straight into app-> so they aren't freed twice below. */
+            if (app->searchProfileAcct)      FreeVec(app->searchProfileAcct);
+            if (app->searchProfileAccountId) FreeVec(app->searchProfileAccountId);
+            app->searchProfileAcct      = popped.profileAcct;
+            app->searchProfileAccountId = popped.profileAccountId;
+            popped.profileAcct = popped.profileAccountId = NULL;
+            if (popped.mode == FS3ESEARCH_FOLLOWERS) FS3EApp_ShowFollowers();
+            else                                       FS3EApp_ShowFollowing();
+            break;
+        default:
+            break;
+    }
+
+    s_searchBackInProgress = FALSE;
+    searchStackFreeEntry(&popped);
+}
+
 /* Opens (or re-opens) a user's profile in the Search channel -- the
  * shared entry point for both TTL_HOT_AVATAR and TTL_HOT_MENTION clicks
  * (a toot author's avatar, or an @mention inside any toot/bio body).
@@ -282,6 +450,8 @@ void FS3EApp_OpenProfile(const char *acctOrHandle)
     if (acct[0] == '@') acct++;
     if (!acct[0]) return;
     if (!app->accountApiBaseUrl) return;
+
+    searchStackPush();
 
     if (app->searchProfileAcct)      { FreeVec(app->searchProfileAcct);      app->searchProfileAcct      = NULL; }
     if (app->searchProfileAccountId) { FreeVec(app->searchProfileAccountId); app->searchProfileAccountId = NULL; }
@@ -342,6 +512,8 @@ void FS3EApp_OpenDiscussion(const char *statusId)
 
     if (!statusId || !statusId[0]) return;
     if (!app->accountApiBaseUrl) return;
+
+    searchStackPush();
 
     if (app->searchDiscussionStatusId) { FreeVec(app->searchDiscussionStatusId); app->searchDiscussionStatusId = NULL; }
     app->searchDiscussionStatusId = NetStrDup(statusId);
@@ -438,9 +610,13 @@ void FS3EApp_SearchWord(const char *query)
     if (!query || !query[0]) return;
     if (!app->accountApiBaseUrl) return;
 
+    searchStackPush();
+
     if (app->searchProfileAcct)        { FreeVec(app->searchProfileAcct);        app->searchProfileAcct        = NULL; }
     if (app->searchProfileAccountId)   { FreeVec(app->searchProfileAccountId);   app->searchProfileAccountId   = NULL; }
     if (app->searchDiscussionStatusId) { FreeVec(app->searchDiscussionStatusId); app->searchDiscussionStatusId = NULL; }
+    if (app->searchLastQueryText)      { FreeVec(app->searchLastQueryText);      app->searchLastQueryText      = NULL; }
+    app->searchLastQueryText = NetStrDup(query);
     app->searchMode = FS3ESEARCH_WORD;
 
     fs3e_setViewMode(VIEWMODE_Search);
@@ -478,9 +654,13 @@ void FS3EApp_SearchAccount(const char *query)
     if (!query || !query[0]) return;
     if (!app->accountApiBaseUrl) return;
 
+    searchStackPush();
+
     if (app->searchProfileAcct)        { FreeVec(app->searchProfileAcct);        app->searchProfileAcct        = NULL; }
     if (app->searchProfileAccountId)   { FreeVec(app->searchProfileAccountId);   app->searchProfileAccountId   = NULL; }
     if (app->searchDiscussionStatusId) { FreeVec(app->searchDiscussionStatusId); app->searchDiscussionStatusId = NULL; }
+    if (app->searchLastQueryText)      { FreeVec(app->searchLastQueryText);      app->searchLastQueryText      = NULL; }
+    app->searchLastQueryText = NetStrDup(query);
     app->searchMode = FS3ESEARCH_ACCOUNT;
 
     fs3e_setViewMode(VIEWMODE_Search);
@@ -512,6 +692,8 @@ static void FS3EApp_ShowAccountsList(ULONG kind, ULONG searchMode)
 
     if (!app->searchProfileAccountId || !app->searchProfileAccountId[0]) return;
     if (!app->accountApiBaseUrl) return;
+
+    searchStackPush();
 
     app->searchMode = searchMode;
 
@@ -999,8 +1181,15 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
              * happened to be after AddHead's "scrollY stays fixed"
              * behavior -- only for the very first page, pagination must
              * never move the user's scroll position. */
-            if (reply->fs3et_PageDirection == FS3ENETPAGE_INITIAL)
+            if (reply->fs3et_PageDirection == FS3ENETPAGE_INITIAL) {
                 SetAttrs(app->tootTimeline, TTIMELINE_ScrollToNewest, TRUE, TAG_DONE);
+                /* Back-restore scroll position -- see FS3EApp_SearchGoBack.
+                 * Guarded to Search only so a concurrent INITIAL fetch on
+                 * another channel (e.g. Home) can never consume a pending
+                 * value meant for Search. */
+                if (reply->fs3et_ViewModeBit == VIEWMODE_Search)
+                    searchApplyPendingScroll();
+            }
 
             if (CurrentMainWindow)
                 RefreshGList((struct Gadget *)app->tootTimeline,
@@ -1311,6 +1500,7 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
             }
 
             SetAttrs(app->tootTimeline, TTIMELINE_ScrollToNewest, TRUE, TAG_DONE);
+            searchApplyPendingScroll();
 
             /* Batch-fetch following/followed-by state for every row just
              * added, so TTLAccountRow_Class can show a "Follows you"
@@ -1539,6 +1729,14 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                 setup.showFollow     = !isSelf;
 
                 SetAttrs(app->tootTimeline, TTIMELINE_ShowProfile, (ULONG)&setup, TAG_DONE);
+                /* Back-restore scroll position -- see FS3EApp_SearchGoBack.
+                 * Best-effort: applied as soon as the header exists, not
+                 * once the profile's own (separately fetched, OLDER-page)
+                 * first toot page has also landed -- that request never
+                 * touches scroll position anyway (see the "pagination must
+                 * never move scroll" comment in the FS3ENETQ_TIMELINE
+                 * handler), so there's nothing to wait for. */
+                searchApplyPendingScroll();
 
                 /* Avatar fetch -- same cache/pipeline as a toot's own
                  * avatar, mirrors FS3EApp_SetAccount's own-avatar fetch

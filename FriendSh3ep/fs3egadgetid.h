@@ -48,6 +48,7 @@
 /* Search word editor (Part C container, SearchBarLayout) */
 #define GID_SEARCH_WORD_EDITOR       90
 #define GID_SEARCH_WORD_TYPE_CHOOSER 91  /* "Word" / "People" mode picker, far right of the search row */
+#define GID_SEARCH_BACK_BUTTON       92  /* pops FS3EApp_SearchGoBack's history stack, far right of the row */
 
 
 /* The whole Toot TimeLine (part C) */

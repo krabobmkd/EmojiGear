@@ -628,7 +628,9 @@ void FS3EApp_SwitchAccount(LONG index)
     if (app->searchProfileAcct)       { FreeVec(app->searchProfileAcct);       app->searchProfileAcct       = NULL; }
     if (app->searchProfileAccountId)  { FreeVec(app->searchProfileAccountId);  app->searchProfileAccountId  = NULL; }
     if (app->searchDiscussionStatusId){ FreeVec(app->searchDiscussionStatusId);app->searchDiscussionStatusId= NULL; }
+    if (app->searchLastQueryText)     { FreeVec(app->searchLastQueryText);     app->searchLastQueryText     = NULL; }
     app->searchMode = FS3ESEARCH_NONE;
+    FS3EApp_SearchStackClear(); /* back-navigation history is account-scoped too */
 
     app->timelineFetchedMask   = 0;
     app->channelPopulatedMask  = 0;

@@ -73,6 +73,8 @@
 
 #include <proto/unitexteditor.h>
 #include <gadgets/unitexteditor.h>
+
+#include <proto/unibutton.h>
 #include <gadgets/unibutton.h>
 
 #include <libraries/utf8rastport.h>
@@ -652,9 +654,18 @@ static Object *makeBtn(ULONG gadID, const char *label, UWORD dpiH, int shiftx, i
         UBGBM_BevelStyle,       BVS_BUTTON, //BVS_NONE,
         UBGBM_BgShiftX,         shiftx,
         UBGBM_BgShiftY,         shifty,
-
-        // UBGBM_TopMargin,        0,
-        // UBGBM_BottomMargin,     0,
+        TAG_END);
+}
+static Object *makeBtnGadgetUpOnly(ULONG gadID, const char *label, UWORD dpiH, int shiftx, int shifty, int pushbutton)
+{
+    (void)dpiH;
+    return (Object *)NewObject(UNIBUTTON_GetClass(), NULL,
+        GA_ID,                  gadID,
+      //  ICA_TARGET,             (ULONG)TargetInstance,
+        GA_Text,                (ULONG)label,
+        UBT_PushButton,       pushbutton,
+        UBT_URPDrawContext,   (ULONG)app->buttonDC,
+        UBT_BevelStyle,       BVS_BUTTON, //BVS_NONE,
         TAG_END);
 }
 
@@ -868,6 +879,10 @@ int main(int argc, char **argv)
     /* app->accountMaxChars starts at 0 (MEMF_CLEAR) == "not confirmed by
      * the server yet" -- see its comment in friendsh3ep.h. */
 
+    /* -1 == "no scroll restore pending" -- MEMF_CLEAR left it 0, which is
+     * a valid scroll position, so it must be set explicitly here. */
+    app->searchPendingScrollY = -1;
+
     FS3ESettings_Load(&app->settings);
 
     if (!FS3EMsg_Init()) cleanexit("Can't create BOOPSI message target");
@@ -896,12 +911,12 @@ int main(int argc, char **argv)
     */
     FS3EStyle_InitDefaults(&app->style);
 
- printf("FS3EStyle_InitDefaults done\n");
+// printf("FS3EStyle_InitDefaults done\n");
 
     app->avatarImages = AvatarImages_Create();
 
 
- printf("FS3ENet_Start\n");
+// printf("FS3ENet_Start\n");
     /* --- Network process ------------------------------------------------ */
     app->netReplyPort = CreateMsgPort();
     if (!app->netReplyPort) cleanexit("Can't create network reply port");
@@ -909,28 +924,28 @@ int main(int argc, char **argv)
     app->netRequestPort = FS3ENet_Start(app->settings.cachePath,
                                          (ULONG)app->settings.maxCacheSizeMB);
 
- printf("FS3EThumb_Start\n");
+// printf("FS3EThumb_Start\n");
     /* --- Thumbnail process ------------------------------------------------ */
     app->thumbReplyPort = CreateMsgPort();
     if (!app->thumbReplyPort) cleanexit("Can't create thumbnail reply port");
 
     app->thumbRequestPort = FS3EThumb_Start();
 
- printf("FS3EAudio_Start\n");
+// printf("FS3EAudio_Start\n");
     /* --- Audio (MP3/AHI) process ------------------------------------------ */
     app->audioReplyPort = CreateMsgPort();
     if (!app->audioReplyPort) cleanexit("Can't create audio reply port");
 
     app->audioRequestPort = FS3EAudio_Start();
 
- printf("FS3EApp_MachineKey\n");
+// printf("FS3EApp_MachineKey\n");
     /* Debug: print the derived machine key unconditionally, even before any
      * account.dat exists to trigger it lazily via FS3EApp_MachineKey() --
      * so it's visible on every launch for comparing across machines. */
     FS3EApp_MachineKey();
 
 
- printf("FS3EApp_LoadAccount\n");
+// printf("FS3EApp_LoadAccount\n");
     /* Try to load saved credentials (and the rest of the accounts list --
      * see FS3EApp_LoadAccount); timeline fetch fires later in setViewMode */
     FS3EApp_LoadAccount();
@@ -1184,6 +1199,14 @@ int main(int argc, char **argv)
         TAG_END);
     if (!app->searchWordTypeChooser) cleanexit("Can't create search type chooser");
 
+    /* Back button, far right of the search row (see FS3EApp_SearchGoBack
+     * in fs3erequests.c and fs3esearchbar.h) -- same makeBtn() helper as
+     * every nav/titlebar button, U+1F519 BACK arrow emoji matching that
+     * house style. */
+     // \xF0\x9F\x94\x99
+    app->searchBackButton = makeBtnGadgetUpOnly(GID_SEARCH_BACK_BUTTON, " \xE2\x97\x80 ", dpiH, 0, 0, FALSE);
+    if (!app->searchBackButton) cleanexit("Can't create search back button");
+
     app->searchBarLayout = (Object *)NewObject(SearchBarLayoutClass, NULL,
         LAYOUT_BevelStyle, BVS_NONE,
         LAYOUT_SpaceOuter, FALSE,
@@ -1194,6 +1217,7 @@ int main(int argc, char **argv)
         LAYOUT_AddChild,   (ULONG)app->searchWordEditor,
         LAYOUT_AddChild,   (ULONG)app->tootTimeline,
         LAYOUT_AddChild,   (ULONG)app->searchWordTypeChooser,
+        LAYOUT_AddChild,   (ULONG)app->searchBackButton,
         TAG_END);
     if (!app->searchBarLayout) cleanexit("Can't create search bar layout");
 
@@ -1250,10 +1274,10 @@ int main(int argc, char **argv)
 
         TAG_END);
     if (!app->window_obj) cleanexit("Can't create window");
- printf("FS3EApp_ApplyFontSettings_Delayed\n");
+// printf("FS3EApp_ApplyFontSettings_Delayed\n");
     /* synchronize fonts against settings before first layout */
     FS3EApp_ApplyFontSettings_Delayed();
- printf("fs3e_setViewMode\n");
+// printf("fs3e_setViewMode\n");
     /* home by default ? */
     fs3e_setViewMode(VIEWMODE_Home);
 
@@ -1263,7 +1287,7 @@ int main(int argc, char **argv)
 /*---*/
 
 
- printf("FS3EMain_Show\n");
+// printf("FS3EMain_Show\n");
 
     FS3EMain_Show(&app->mainwindow, app->window_obj);
     if (!CurrentMainWindow) cleanexit("Can't open window");
@@ -1279,7 +1303,7 @@ int main(int argc, char **argv)
     FS3EApp_LoadTheme_Delayed();
 
     FS3EMenu_Create(&app->menu, CurrentMainScreen, CurrentMainWindow);
- printf("loop\n");
+// printf("loop\n");
     /* - - - Input Event Loop - - - */
     {
         ULONG winsignal;
@@ -1361,6 +1385,7 @@ int main(int argc, char **argv)
                         /* UniButton gadgets use GMR_VERIFY + GACT_RELVERIFY so
                          * clicks arrive here with the gadget's GA_ID. */
                         ULONG senderId = result & WMHI_GADGETMASK;
+
                         // test: do not redirect those
                         BoopsiDelay_BeginMessage(DelayQueue, senderId);
                         BoopsiDelay_AddTag(DelayQueue, GA_Selected, 0);
@@ -1406,6 +1431,21 @@ int main(int argc, char **argv)
                             if( key == 0x54)
                             {
                                 FS3EApp_RefreshVisibleToots();
+                            } else
+                            /* Delete = "back" in the Search view's history
+                             * (see FS3EApp_SearchGoBack). Like F1-F8/F5
+                             * above, this only actually fires while the
+                             * search word editor does NOT hold BOOPSI
+                             * keyboard activation -- its UKM_Internal mode
+                             * fully consumes RAWKEY (including Delete, for
+                             * its own text editing) while it's the active
+                             * gadget, so this case is simply unreached
+                             * then, same pre-existing constraint every
+                             * other shortcut here already has. No-op
+                             * itself if there's no history to go back to. */
+                            if( key == 0x46)
+                            {
+                                FS3EApp_SearchGoBack();
                             }
                         }
                         /* ctrl- and ctrl+ change font size */
@@ -1654,6 +1694,14 @@ int main(int argc, char **argv)
                             {
                                 FS3EApp_RefreshLoginAccountsList(); /* never stale when shown */
                                 FS3ELoginView_Open(&app->loginView);
+                            }
+                            break;
+
+                        case GID_SEARCH_BACK_BUTTON:
+                            ptag = FindTagItem(GA_Selected, msg);
+                            if (ptag /*&& ptag->ti_Data*/)  /* when push button down (selected true) */
+                            {
+                                FS3EApp_SearchGoBack();
                             }
                             break;
 
@@ -2304,6 +2352,8 @@ wait2sec();
         if (app->searchProfileAcct)      { FreeVec(app->searchProfileAcct);      app->searchProfileAcct      = NULL; }
         if (app->searchProfileAccountId) { FreeVec(app->searchProfileAccountId); app->searchProfileAccountId = NULL; }
         if (app->searchDiscussionStatusId) { FreeVec(app->searchDiscussionStatusId); app->searchDiscussionStatusId = NULL; }
+        if (app->searchLastQueryText)    { FreeVec(app->searchLastQueryText);    app->searchLastQueryText    = NULL; }
+        FS3EApp_SearchStackClear();
 
 wait2sec();
         FS3EMsg_Close();
