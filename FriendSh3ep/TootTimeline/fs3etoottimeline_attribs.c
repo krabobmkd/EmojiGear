@@ -58,6 +58,27 @@ ULONG ttl_apply_tags(Class *cl, Object *o, struct opSet *msg, int couldRefreshDr
                     used = 1;
                 }
                 break;
+
+            case TTIMELINE_ScrollBy: {
+                /* Relative version of TTIMELINE_ScrollY above -- based on
+                 * whatever pendingScrollY already is (not necessarily
+                 * ttl_active(inst)->scrollY, which may be stale if a
+                 * previous ScrollY/ScrollBy this same tick hasn't been
+                 * applied by GM_RENDER yet), so repeated calls accumulate
+                 * correctly. Final clamping happens at apply time, same
+                 * as TTIMELINE_ScrollY -- no need to clamp here too. */
+                LONG base  = inst->pendingScroll ? inst->pendingScrollY
+                                                  : ttl_active(inst)->scrollY;
+                LONG newY  = base + (LONG)tag->ti_Data;
+                if (!inst->pendingScroll || inst->pendingScrollY != newY)
+                {
+                    inst->pendingScroll  = TRUE;
+                    inst->pendingScrollY = newY;
+                    redraw = TRUE;
+                    used = 1;
+                }
+                break;
+            }
             // case TTIMELINE_Screen:
             // bdbprintf(" ***** set screen:%08x\n",(int)tag->ti_Data);
             //     inst->screen = (struct Screen *)tag->ti_Data;
@@ -252,11 +273,23 @@ ULONG ttl_apply_tags(Class *cl, Object *o, struct opSet *msg, int couldRefreshDr
                 TTLPost    *head   = (TTLPost *)active->posts.mlh_Head;
                 LONG        targetY = active->contentTopY;
 
-                /* Land on the newest real post, not the pinned "look for
-                 * something new" row above it (which now sits at
-                 * contentTopY once a channel has one -- see
-                 * ttl_channel_add_boundaries). */
-                if (head->node.mln_Succ && head->cls == &TTLLoadNewer_Class) {
+                if (active->headerPost) {
+                    /* A pinned header (profile bio/description, see
+                     * TTIMELINE_ShowProfile) sits above the post list in
+                     * the SAME timeline Y coordinate space, at
+                     * [0, headerPost->height) -- "top" here means showing
+                     * IT, not skipping straight past it to the first real
+                     * post below. ttl_channel_min_scroll already computes
+                     * exactly this value (0 whenever a header exists),
+                     * shared with every other scrollY clamp site so this
+                     * can't drift from what's actually reachable by
+                     * scrolling up by hand. */
+                    targetY = ttl_channel_min_scroll(active);
+                } else if (head->node.mln_Succ && head->cls == &TTLLoadNewer_Class) {
+                    /* No header: land on the newest real post instead,
+                     * not the pinned "look for something new" row above
+                     * it (which now sits at contentTopY once a channel
+                     * has one -- see ttl_channel_add_boundaries). */
                     TTLPost *next = (TTLPost *)head->node.mln_Succ;
                     if (next->node.mln_Succ) targetY = next->timelineY;
                 }
@@ -794,6 +827,37 @@ ULONG TTL_OnGet(Class *cl, Object *o, struct opGet *msg)
         case TTIMELINE_ScrollY:
             *msg->opg_Storage = (ULONG)ttl_active(inst)->scrollY;
             return 1;
+        case TTIMELINE_NextTootScrollDelta: {
+            TTLChannel *active = ttl_active(inst);
+            LONG delta = 0;
+            TTLPost *p, *firstVisible = NULL;
+
+            /* Phase 1: topmost post at least partially visible -- the
+             * first one whose bottom edge is still below scrollY (its
+             * own top may already be scrolled past). */
+            for (p = (TTLPost *)active->posts.mlh_Head;
+                 p->node.mln_Succ;
+                 p = (TTLPost *)p->node.mln_Succ)
+            {
+                if (p->timelineY + p->height > active->scrollY) {
+                    firstVisible = p;
+                    break;
+                }
+            }
+
+            /* Phase 2: its successor, if a real one exists (not the
+             * list's own tail sentinel) -- see this tag's doc comment
+             * in fs3etoottimeline.h for why the target is simply that
+             * post's own timelineY. */
+            if (firstVisible) {
+                TTLPost *next = (TTLPost *)firstVisible->node.mln_Succ;
+                if (next && next->node.mln_Succ)
+                    delta = next->timelineY - active->scrollY;
+            }
+
+            *msg->opg_Storage = (ULONG)delta;
+            return 1;
+        }
         case TTIMELINE_ContentTopY:
             *msg->opg_Storage = (ULONG)ttl_active(inst)->contentTopY;
             return 1;

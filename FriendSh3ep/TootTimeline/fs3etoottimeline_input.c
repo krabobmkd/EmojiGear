@@ -263,6 +263,8 @@ ULONG TTL_OnHandleInput(Class *cl, Object *o, struct gpInput *msg)
 
     if (!ie) return GMR_MEACTIVE;
 
+
+
     if (ie->ie_Class == IECLASS_RAWMOUSE) {
         UWORD code = ie->ie_Code & ~IECODE_UP_PREFIX;
 
@@ -323,9 +325,13 @@ ULONG TTL_OnHandleInput(Class *cl, Object *o, struct gpInput *msg)
             ReleaseSemaphore(&inst->listSem);
 
             ttl_notify(cl,o,msg->gpi_GInfo, TTIMELINE_ProcessRefresh,TRUE);
+            ttl_notify(cl,o,msg->gpi_GInfo, TTIMELINE_ScrollStarted,TRUE);
             //ttl_render_self(cl, o, msg->gpi_GInfo);
             return GMR_MEACTIVE;
         }
+    } else if (ie->ie_Class == IECLASS_RAWKEY)
+    {
+bdbprintf("ttl input c:%08x\n",ie->ie_Code);
     }
 
     return GMR_MEACTIVE;

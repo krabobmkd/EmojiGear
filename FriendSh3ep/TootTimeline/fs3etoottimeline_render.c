@@ -211,7 +211,7 @@ ULONG TTL_OnRender(Class *cl, Object *o, struct gpRender *msg)
             return TRUE;
         }
     }
-//    bdbprintf("dr2\n");
+
     /* From here on we're touching channel post lists / scroll extents
      * that GM_HANDLEINPUT's hit-testing can also touch from a different
      * task -- see the listSem comment in fs3etoottimeline_private.h.

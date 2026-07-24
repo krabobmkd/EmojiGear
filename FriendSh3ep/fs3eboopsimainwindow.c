@@ -96,7 +96,9 @@ void FS3EMain_SyncStyleToWidgets(void)
         for (i = 0; i < 8; i++) {
             if (app->nav_btns[i])
                 SetGdAttrs(app->nav_btns[i],
-                    UBGBM_Style, (ULONG)&app->style, TAG_END);
+                    UBGBM_Style, (ULONG)&app->style,
+                    UBGBM_Patch9Mode, (ULONG)app->style.btbgbmUsePatch9,
+                    TAG_END);
         }
     }
 }

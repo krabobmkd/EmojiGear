@@ -383,13 +383,7 @@ static ULONG TitleBarLayout_OnLayout(Class *cl, Object *o, struct gpLayout *msg)
         gaccbt->TopEdge = G(o)->TopEdge + G(o)->Height - gaccbt->Height - inst->style->avatarGap;
         gaccbt->LeftEdge =
             gnewtbt->LeftEdge - gaccbt->Width - inst->style->avatarGap;
-/* olde
-        gsettingsbt->Width = dmsettingsBt.gpd_Domain.Width;
-        gsettingsbt->Height = dmsettingsBt.gpd_Domain.Height;
-        gsettingsbt->TopEdge = G(o)->TopEdge + G(o)->Height - gsettingsbt->Height - inst->style->avatarGap;
-        gsettingsbt->LeftEdge =
-            gaccbt->LeftEdge - gsettingsbt->Width - inst->style->avatarGap;
-*/
+
     }
 
     /* Recurse into each child so nested layout.gadgets re-layout too */
@@ -592,8 +586,10 @@ static ULONG TitleBarLayout_OnRender(Class *cl, Object *o, struct gpRender *msg)
     childMsg.gpr_GInfo  = msg->gpr_GInfo;
     childMsg.gpr_RPort  = rp;
     childMsg.gpr_Redraw = msg->gpr_Redraw;
-    for (i = 0; i < inst->childCount; i++)
+    for (i = 0; i < inst->childCount; i++)   {
+        struct Gadget *cg = G(inst->children[i]);
         DoMethodA(inst->children[i], (Msg)&childMsg);
+    }
 
     return 0;
 }

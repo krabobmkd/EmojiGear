@@ -76,6 +76,9 @@ typedef struct UniButtonBGBMData {
     WORD    bgShiftX;
     WORD    bgShiftY;
 
+    /* See UBGBM_Patch9Mode. */
+    BOOL    patch9Mode;
+
     OffscreenBitMap cacheBm[UBGBM_NUM_STATES];
     BOOL            cacheValid;
 
@@ -112,6 +115,7 @@ void ubgbm_rebuild_cache(Class *cl, Object *o,
 void ubgbm_blit_state(UniButtonBGBMData *inst, struct Gadget *g,
                       struct RastPort *rp, int state);
 void ubgbm_notify_pressed(Class *cl, Object *o, struct GadgetInfo *gi);
+void ubgbm_notify_refresh_needed(UniButtonBGBMData *inst, struct GadgetInfo *gi);
 void ubgbm_render_self(Class *cl, Object *o, struct GadgetInfo *gi);
 
 /* =========================================================================

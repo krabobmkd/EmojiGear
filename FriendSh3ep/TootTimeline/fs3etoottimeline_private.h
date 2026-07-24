@@ -747,6 +747,13 @@ void     ttl_channel_add_boundaries(TTLData *inst, TTLChannel *channel);
 extern const TTLItemClass TTLToot_Class;
 void     ttl_toot_render  (TTLData *inst, struct RastPort *rp,
                            TTLPost *item, LONG tileBaseY);          /* fs3etoottimeline_tiles.c */
+
+/* Missing-avatar placeholder: solid accentPen square with an inset,
+ * unfilled bgPen rectangle frame -- shared by ttl_toot_render above,
+ * ttl_notif_follow_render (fs3etoottimeline_notif.c) and
+ * ttl_profile_header_render (fs3etoottimeline_profile.c). */
+void     ttl_draw_avatar_placeholder(struct RastPort *rp, WORD ax, WORD ay, WORD as,
+                                     LONG accentPen, LONG bgPen);    /* fs3etoottimeline_tiles.c */
 void     ttl_toot_activate(TTLData *inst, Class *cl, Object *o,
                            struct GadgetInfo *gi, TTLPost *item,
                            TTLHotSpot *hs);                         /* fs3etoottimeline_input.c */

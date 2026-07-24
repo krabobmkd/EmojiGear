@@ -410,9 +410,10 @@ static void ASM SAVEDS FS3EStyle_TitleBarBackFillFunc(
     srcStartX = (((dstX - rp->Layer->bounds.MinX) % tbBgWidth)  + tbBgWidth)  % tbBgWidth;
     srcStartY = (((dstY - rp->Layer->bounds.MinY) % tbBgHeight) + tbBgHeight) % tbBgHeight;
 
+    /* only tile on X axis */
     y = 0;
-    while (y < dstH) {
-        srcY   = (srcStartY + y) % tbBgHeight;
+   // while (y < dstH) {
+        srcY   = srcStartY;// (srcStartY + y) % tbBgHeight;
         chunkH = tbBgHeight - srcY;
         if (chunkH > dstH - y) chunkH = dstH - y;
 
@@ -427,8 +428,8 @@ static void ASM SAVEDS FS3EStyle_TitleBarBackFillFunc(
                       (WORD)chunkW, (WORD)chunkH, 0xC0, 0xFF, NULL);
             x += chunkW;
         }
-        y += chunkH;
-    }
+    //    y += chunkH;
+    // }
 }
 
 void FS3EStyle_SetThemePath(FS3EStyle *st, const char *path)
@@ -466,6 +467,9 @@ static const FS3EPatch9SlotDef patch9Slots[FS3ESTYLE_PATCH9_COUNT] = {
       { 0x00CCCCCC, 0x00FFFFFF, 0x00999999, 0x00EEEE44 } },
     { "bt2Patch9", "bt2patch9.iff", 8,
       { 0x0083ED60, 0x00B2FFC8, 0x00777777, 0x0083ED60 },
+      { 0x00CCCCCC, 0x00FFFFFF, 0x00999999, 0x00EEEE44 } },
+    { "btbgbmPatch9", "btbgbmpatch9.iff", 8,
+      { 0x00888888, 0x00BCBCFF, 0x00777777, 0x00888888 },
       { 0x00CCCCCC, 0x00FFFFFF, 0x00999999, 0x00EEEE44 } },
 };
 
@@ -578,48 +582,54 @@ BOOL FS3EStyle_LoadThemeImages(FS3EStyle *st, struct Screen *scr)
     snprintf(path, sizeof(path), "%s/%s", st->themePath,
              StyleFile_GetString(&sf, "titlebar.buttons", "tbbuttons.iff"));
 
-    if (!BmImage_Init(&st->tbButtons, path)) {
-        return FALSE;
-    }
-    if (!BmImage_Load(&st->tbButtons, scr)) {
-        return FALSE;
-    }
+    /* Optional, like every other theme image -- a missing/failed load just
+     * means st->tbImages[] stay NULL (already the case after
+     * FS3EStyle_UnloadThemeImages()'s free_tb_images() above) and
+     * FS3EStyle_SyncTitleBarButtons() falls back to tbDefaultImages[]. Must
+     * NOT build tbImages[] from an unloaded st->tbButtons below -- a
+     * bitmap.image over a NULL BITMAP_BitMap is a non-NULL Image object
+     * that DrawImageState() will still try to blit from, and that's how a
+     * minimal/partial style.txt used to crash. */
+    BmImage_Init(&st->tbButtons, path);
+    BmImage_Load(&st->tbButtons, scr);
 
-    bm = st->tbButtons.bitmap;
+    if (BmImage_IsLoaded(&st->tbButtons)) {
+        bm = st->tbButtons.bitmap;
 
-    /* tbbuttons.png is 2 columns (normal | selected) x FS3ESTYLE_TBBUTTON_COUNT
-     * rows; derive the per-button cell size from the actual loaded image
-     * instead of assuming a fixed pixel size. */
-    cellW = (WORD)(st->tbButtons.width  / 2);
-    cellH = (WORD)(st->tbButtons.height / FS3ESTYLE_TBBUTTON_COUNT);
-    if (cellW < 1) cellW = 1;
-    if (cellH < 1) cellH = 1;
-    st->tbButtonWidth  = cellW;
-    st->tbButtonHeight = cellH;
+        /* tbbuttons.png is 2 columns (normal | selected) x FS3ESTYLE_TBBUTTON_COUNT
+         * rows; derive the per-button cell size from the actual loaded image
+         * instead of assuming a fixed pixel size. */
+        cellW = (WORD)(st->tbButtons.width  / 2);
+        cellH = (WORD)(st->tbButtons.height / FS3ESTYLE_TBBUTTON_COUNT);
+        if (cellW < 1) cellW = 1;
+        if (cellH < 1) cellH = 1;
+        st->tbButtonWidth  = cellW;
+        st->tbButtonHeight = cellH;
 
-    /* tbbuttons.png has color index 0 marked transparent; the datatype
-     * turns that into a proper mask plane (see PDTA_MaskPlane in
-     * bmimage.c), matching the FULL loaded bitmap's coordinate space --
-     * the same plane is reused for every cropped cell below.
-     * BITMAP_Transparent is also set as a pen-0 chroma-key fallback for
-     * the (unexpected) case where the datatype produced no mask. */
-    for (i = 0; i < FS3ESTYLE_TBBUTTON_COUNT; i++) {
-        st->tbImages[i] = (struct Image *)NewObject(BITMAP_GetClass(), NULL,
-            BITMAP_BitMap,          (ULONG)bm,
-            BITMAP_Width,           cellW,
-            BITMAP_Height,          cellH,
-            BITMAP_OffsetX,         0,
-            BITMAP_OffsetY,         i * cellH,
-            BITMAP_MaskPlane,       (ULONG)st->tbButtons.mask,
-            BITMAP_SelectBitMap,    (ULONG)bm,
-            BITMAP_SelectWidth,     cellW,
-            BITMAP_SelectHeight,    cellH,
-            BITMAP_SelectOffsetX,   cellW,
-            BITMAP_SelectOffsetY,   i * cellH,
-            BITMAP_SelectMaskPlane, (ULONG)st->tbButtons.mask,
-            BITMAP_Masking,         TRUE,
-            BITMAP_Transparent,     TRUE,
-            TAG_DONE);
+        /* tbbuttons.png has color index 0 marked transparent; the datatype
+         * turns that into a proper mask plane (see PDTA_MaskPlane in
+         * bmimage.c), matching the FULL loaded bitmap's coordinate space --
+         * the same plane is reused for every cropped cell below.
+         * BITMAP_Transparent is also set as a pen-0 chroma-key fallback for
+         * the (unexpected) case where the datatype produced no mask. */
+        for (i = 0; i < FS3ESTYLE_TBBUTTON_COUNT; i++) {
+            st->tbImages[i] = (struct Image *)NewObject(BITMAP_GetClass(), NULL,
+                BITMAP_BitMap,          (ULONG)bm,
+                BITMAP_Width,           cellW,
+                BITMAP_Height,          cellH,
+                BITMAP_OffsetX,         0,
+                BITMAP_OffsetY,         i * cellH,
+                BITMAP_MaskPlane,       (ULONG)st->tbButtons.mask,
+                BITMAP_SelectBitMap,    (ULONG)bm,
+                BITMAP_SelectWidth,     cellW,
+                BITMAP_SelectHeight,    cellH,
+                BITMAP_SelectOffsetX,   cellW,
+                BITMAP_SelectOffsetY,   i * cellH,
+                BITMAP_SelectMaskPlane, (ULONG)st->tbButtons.mask,
+                BITMAP_Masking,         TRUE,
+                BITMAP_Transparent,     TRUE,
+                TAG_DONE);
+        }
     }
 
     /* Title bar background: tbbg.png, tiled by FS3EStyle_TitleBarBackFillFunc
@@ -680,6 +690,10 @@ BOOL FS3EStyle_LoadThemeImages(FS3EStyle *st, struct Screen *scr)
             }
         }
     }
+
+    /* UniButtonBGBM background render mode -- see the FS3EStyle.
+     * btbgbmUsePatch9 doc comment in fs3estyle.h. */
+    st->btbgbmUsePatch9 = StyleFile_GetInt(&sf, "btbgbm.usepatch9", 0) != 0;
 
     /* TootTimeline "waiting" screen image. Optional -- a missing file just
      * means the waiting screen shows its text alone (see ttl_render_wait
@@ -803,6 +817,7 @@ void FS3EStyle_UnloadThemeImages(FS3EStyle *st)
     for (i = 0; i < FS3ESTYLE_BTBGBM_COUNT; i++)
         BmImage_Unload(&st->btbgbmBitmap[i]);
     BmImage_Unload(&st->waitImage);
+    st->btbgbmUsePatch9 = FALSE;
     tbBgBitmap = NULL;
     tbBgWidth  = 0;
     tbBgHeight = 0;

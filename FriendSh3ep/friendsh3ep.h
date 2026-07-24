@@ -277,6 +277,20 @@ struct App {
     /* FS3ENetResult of the last timeline fetch that failed (for message text). */
     ULONG  lastTimelineResult;
 
+    /* Bitmask of channels whose last INITIAL fetch completed successfully
+     * with zero items -- lets FS3EApp_CheckConnectionState show "Nothing
+     * found." instead of the generic "Account connected." idle text,
+     * which was actively misleading for an empty word/account search
+     * (TootTimeline's own "waiting" mode -- see TTIMELINE_ViewMode's doc
+     * comment in fs3etoottimeline.h -- never clears on its own when
+     * nothing was ever added, so without this bit there was no way to
+     * tell "genuinely nothing to show" apart from "connected, idle").
+     * Set/cleared alongside channelPopulatedMask at every INITIAL-page
+     * reply (FS3ENETQ_TIMELINE/NOTIFICATIONS/ACCOUNTS_LIST); untouched by
+     * older/newer pagination pages, which don't speak to whether the
+     * channel as a whole is empty. */
+    ULONG  channelEmptyMask;
+
     /* Bitmasks of channels with an older/newer pagination page currently
      * in flight (see FS3EApp_FetchTimelinePage) -- separate from
      * timelineFetchedMask, which only ever guards the one initial fetch
@@ -339,6 +353,16 @@ struct App {
     FS3ESearchStackEntry searchStack[FS3E_SEARCH_STACK_MAX];
     UBYTE  searchStackDepth;
     LONG   searchPendingScrollY;
+
+    /* TRUE while the Timeline menu's autoscroll is (nominally) running --
+     * see Action_TimelineAutoscrollPlay/Stop in fs3eaction.c. Toggled by
+     * those two even though the actual autoscroll timer isn't implemented
+     * yet, purely so the Space key's context-dependent dispatch (Next
+     * toot when idle, Stop autoscroll when running -- see WMHI_RAWKEY in
+     * friendsh3ep.c) is already correct now; the follow-up work is
+     * filling in the real timer, not touching this flag or the key
+     * dispatch again. */
+    BOOL   timelineAutoscrollActive;
 };
 
 extern struct App *app;

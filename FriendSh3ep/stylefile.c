@@ -12,6 +12,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <proto/dos.h>
+#include <stdio.h>
 
 static char *stylefile_skip_ws(char *s)
 {
@@ -89,7 +90,9 @@ const char *StyleFile_GetString(const StyleFile *sf, const char *key,
 LONG StyleFile_GetInt(const StyleFile *sf, const char *key, LONG defaultValue)
 {
     const char *v = StyleFile_GetString(sf, key, NULL);
+
     if (!v || !v[0]) return defaultValue;
+
     return atol(v);
 }
 

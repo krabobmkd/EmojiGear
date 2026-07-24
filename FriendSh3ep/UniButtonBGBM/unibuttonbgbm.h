@@ -31,6 +31,20 @@
 #include <intuition/gadgetclass.h>
 #include <intuition/classes.h>
 #include <utility/tagitem.h>
+#include <dos/dos.h>
+
+/* Signalled at the owning task (see the callerTask comment in
+ * unibuttonbgbm_private.h) from GM_RENDER whenever UBGBM_Patch9Mode's
+ * gadget-sized cache is invalid (e.g. just resized) AND GM_RENDER is
+ * running off that task -- rebuilding calls FreeType, unsafe there, so it
+ * can only mark the cache invalid and ask the real owning task to redo a
+ * GM_RENDER pass soon. The caller must Wait() on this bit (alongside its
+ * own signals, same idiom as FS3ETIMER_SIGNAL in fs3etimer.h) and respond
+ * by forcing a real, on-task redraw of every UniButtonBGBM gadget it owns
+ * (e.g. RefreshGList() on their containing layout) -- see main()'s Wait()
+ * loop in friendsh3ep.c. CTRL_C/D/F are already claimed by this app (see
+ * main()), so this class claims CTRL_E. */
+#define UBGBM_REFRESH_SIGNAL SIGBREAKF_CTRL_E
 
 /* =========================================================================
  * Attribute tags   (base TAG_USER | 0x53550)
@@ -110,6 +124,20 @@
 
 /* [ISG] (WORD) Same as UBGBM_BgShiftX, for the Y offset / gadget height. */
 #define UBGBM_BgShiftY         (UBGBM_Dummy + 20)
+
+/* [ISG] (BOOL) Selects the Patch9 background render mode: when set (and
+ * UBGBM_Style is also set), each state's background is drawn from
+ * style->patch9[FS3ESTYLE_PATCH9_BTBGBM] (see fs3estyle.h) instead of
+ * style->btbgbmBitmap[state] -- opaque, no transparency mask (see
+ * Patch9_DrawOpaque in patch9.h), so unlike UBGBM_Style's live-drawn image
+ * mode this whole composited state (background + text) is cached like
+ * flat-colour mode is. No bevel is drawn in this mode -- the button border
+ * is expected to live in the Patch9 image itself. Mutually exclusive with
+ * plain UBGBM_Style image mode: when set, the Patch9 skin always takes
+ * priority. Default: FALSE. See unibuttonbgbm_render.c. */
+#define UBGBM_Patch9Mode       (UBGBM_Dummy + 21)
+
+#define UBGBM_RefreshNeeded (UBGBM_Dummy + 22)
 
 /* =========================================================================
  * Class management

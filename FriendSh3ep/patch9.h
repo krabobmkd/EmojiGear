@@ -74,4 +74,15 @@ BOOL Patch9_IsLoaded(const Patch9 *p9);
 void Patch9_Draw(Patch9 *p9, int state, struct RastPort *rp,
                  WORD destX, WORD destY, WORD destW, WORD destH);
 
+/*
+ * Same as Patch9_Draw(), but always blits opaquely (ignores the source
+ * image's mask, if any) -- for callers that pre-bake the result into an
+ * offscreen cache and need a fully opaque rectangle regardless of what the
+ * skin image's own transparency looks like (see UniButtonBGBM's Patch9
+ * mode, unibuttonbgbm_render.c). UniButtonP9 uses the masked Patch9_Draw
+ * above instead, since it always draws live and wants real transparency.
+ */
+void Patch9_DrawOpaque(Patch9 *p9, int state, struct RastPort *rp,
+                       WORD destX, WORD destY, WORD destW, WORD destH);
+
 #endif /* PATCH9_H */

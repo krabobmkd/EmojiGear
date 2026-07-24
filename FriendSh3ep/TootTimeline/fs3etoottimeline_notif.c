@@ -181,13 +181,8 @@ static void ttl_notif_follow_render(TTLData *inst, struct RastPort *rp,
             RgbImage_DrawScaled(avImg, rp, inst->screen, inst->style->dcNormal,
                                  bx, by, (UWORD)dw, (UWORD)dh);
         } else {
-            SetAPen(rp, (LONG)FS3E_PEN(inst->style, FS3E_COLOR_ACCENT));
-            RectFill(rp, ax, ay, ax + as - 1, ay + as - 1);
-            SetAPen(rp, bgpen);
-            Move(rp, ax,          ay + as/2);
-            Draw(rp, ax + as - 1, ay + as/2);
-            Move(rp, ax + as/2,   ay);
-            Draw(rp, ax + as/2,   ay + as - 1);
+            ttl_draw_avatar_placeholder(rp, ax, ay, as,
+                (LONG)FS3E_PEN(inst->style, FS3E_COLOR_ACCENT), bgpen);
         }
     }
 

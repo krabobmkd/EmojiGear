@@ -46,6 +46,28 @@ typedef enum {
     FS3EACTION_VIEW_BOOKMARKS,
     FS3EACTION_VIEW_NEWS,
 
+    FS3EACTION_VIEW_REFRESH,
+
+    /* Timeline menu -- see fs3elocale.h's MSG_MENU_TIMELINE comment for
+     * the Space/AUTOSCROLL_STOP-vs-NEXT_TOOT key-sharing note. */
+    FS3EACTION_TIMELINE_NEXT_TOOT,
+    FS3EACTION_TIMELINE_TOP,
+    FS3EACTION_TIMELINE_AUTOSCROLL_PLAY,
+    FS3EACTION_TIMELINE_AUTOSCROLL_STOP,
+    FS3EACTION_TIMELINE_COPY_TEXT,
+
+    /* User menu -- acts on whichever profile is open in the Search
+     * view's FS3ESEARCH_USER_PROFILE sub-mode. */
+    FS3EACTION_USER_COPY_URL,
+    FS3EACTION_USER_FOLLOW,
+    FS3EACTION_USER_UNFOLLOW,
+    FS3EACTION_USER_MASK,
+    FS3EACTION_USER_UNMASK,
+    FS3EACTION_USER_BLOCK,
+    FS3EACTION_USER_UNBLOCK,
+    FS3EACTION_USER_BLOCK_SERVER,
+    FS3EACTION_USER_UNBLOCK_SERVER,
+
     /* Settings menu */
     FS3EACTION_SETTINGS_THEME,
     FS3EACTION_SETTINGS_GENERAL,
@@ -79,6 +101,58 @@ BOOL Action_ViewSearch(struct App *ctx);
 BOOL Action_ViewNotif(struct App *ctx);
 BOOL Action_ViewBookmark(struct App *ctx);
 BOOL Action_ViewNews(struct App *ctx);
+BOOL Action_Refresh(struct App *ctx);
+
+/* Timeline menu -- see FS3EACTION_TIMELINE_* in the enum above.
+ * NEXT_TOOT is implemented (an FS3ETimer-driven animated scroll, see
+ * Action_TimelineNextToot's own comment in fs3eaction.c). TOP is
+ * implemented too (an instant TTIMELINE_ScrollToNewest jump, see
+ * Action_TimelineTop). AUTOSCROLL_PLAY/STOP ("Play mode") are
+ * implemented too (a second, independent repeating FS3ETimer that fires
+ * one Next-toot move every settings.playTootTimeSec seconds, see
+ * FS3EPlayModeAnim_Hook in fs3eaction.c). Only COPY_TEXT is still a
+ * stub (returns TRUE, no-op): it needs a "currently focused toot"
+ * concept TootTimeline doesn't have yet. Menu entries + key wiring are
+ * in place for all five either way -- TOP/COPY_TEXT (U/C) are real
+ * Amiga+Key CommKeys (see fs3emenu.c), reaching here via the normal
+ * WMHI_MENUPICK path; NEXT_TOOT/AUTOSCROLL_* (Space/P) are plain
+ * keypresses instead, wired directly in friendsh3ep.c's WMHI_RAWKEY
+ * (Space can't be a sensible CommKey, P already belongs to
+ * Settings->General). */
+BOOL Action_TimelineNextToot(struct App *ctx);
+BOOL Action_TimelineTop(struct App *ctx);
+BOOL Action_TimelineAutoscrollPlay(struct App *ctx);
+BOOL Action_TimelineAutoscrollStop(struct App *ctx);
+BOOL Action_TimelineCopyText(struct App *ctx);
+
+/* Stops whichever FS3ETimer-driven scroll animation is currently running
+ * (today: just "Next toot"'s, see s_nextTootAnim in fs3eaction.c; meant
+ * to also cover the future continuous autoscroll timer once
+ * Action_TimelineAutoscrollPlay is implemented, so callers of this
+ * function never need to know which animation(s) exist). A harmless
+ * no-op if nothing is currently animating. Call whenever the user
+ * manually scrolls by some OTHER means, so a still-running animation
+ * doesn't fight the user's own input -- see its call sites in
+ * friendsh3ep.c (Up/Down arrow keys, and TootTimeline's own
+ * TTIMELINE_ScrollStarted notification for its internal mouse-drag
+ * scroll). Not itself an FS3EActionFunc/menu entry. */
+void Action_TimelineStopScrollAnimation(void);
+
+/* User menu -- see FS3EACTION_USER_* in the enum above. Follow/Unfollow/
+ * CopyProfileURL are fully implemented (existing Action_ToggleFollow /
+ * Clipboard_WriteText plumbing, nothing new needed). Mask/Unmask/Block/
+ * Unblock (user and server) are stubs: Mastodon's mute/block/domain-block
+ * endpoints have no request/reply plumbing in network_fs3e/ yet -- that's
+ * the "following dev" work these entries are scaffolding for. */
+BOOL Action_UserCopyProfileURL(struct App *ctx);
+BOOL Action_UserFollow(struct App *ctx);
+BOOL Action_UserUnfollow(struct App *ctx);
+BOOL Action_UserMask(struct App *ctx);
+BOOL Action_UserUnmask(struct App *ctx);
+BOOL Action_UserBlock(struct App *ctx);
+BOOL Action_UserUnblock(struct App *ctx);
+BOOL Action_UserBlockServer(struct App *ctx);
+BOOL Action_UserUnblockServer(struct App *ctx);
 
 BOOL Action_SettingsTheme(struct App *ctx);
 BOOL Action_SettingsGeneral(struct App *ctx);

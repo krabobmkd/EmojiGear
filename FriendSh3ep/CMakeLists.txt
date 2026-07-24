@@ -50,6 +50,7 @@ set(FRIENDSH3EP_SOURCES
     fs3esettings.c
     fs3emachineid.c
     fs3eaudio.c
+    fs3etimer.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../EmojiGear/tooltypepref.c
     UniButtonP9/unibuttonp9.c
     UniButtonP9/unibuttonp9_dispatch.c

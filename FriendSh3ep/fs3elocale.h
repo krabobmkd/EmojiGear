@@ -78,6 +78,40 @@ enum {
     MSG_VIEW_BOOKMARK,
     MSG_VIEW_NEWS,
 
+    MSG_VIEW_REFRESH,
+
+    /* Menu: Timeline -- navigation/action shortcuts for whichever toot
+     * list is currently on screen (see FS3EACTION_TIMELINE_* in
+     * fs3eaction.h). Space is intentionally reused for two different
+     * items: NEXT_TOOT and AUTOSCROLL_STOP are mutually exclusive by
+     * runtime state (autoscroll off vs. on), same "one physical key,
+     * meaning depends on mode" convention a media player's Space/
+     * Play-Pause key uses -- not a real key-equivalent collision, see
+     * the WMHI_RAWKEY handling in friendsh3ep.c. */
+    MSG_MENU_TIMELINE,
+    MSG_TIMELINE_NEXT_TOOT,
+    MSG_TIMELINE_TOP,
+    MSG_TIMELINE_AUTOSCROLL_PLAY,
+    MSG_TIMELINE_AUTOSCROLL_STOP,
+    MSG_TIMELINE_COPY_TEXT,
+
+    /* Menu: User -- actions on whichever profile is currently open in the
+     * Search view's FS3ESEARCH_USER_PROFILE sub-mode (see
+     * FS3EACTION_USER_* in fs3eaction.h). Follow/Unfollow menu entries
+     * call into the same toggle Action_ToggleFollow already backs the
+     * profile header's own Follow/Unfollow button -- not reimplemented
+     * here. */
+    MSG_MENU_USER,
+    MSG_USER_COPY_URL,
+    MSG_USER_FOLLOW,
+    MSG_USER_UNFOLLOW,
+    MSG_USER_MASK,
+    MSG_USER_UNMASK,
+    MSG_USER_BLOCK,
+    MSG_USER_UNBLOCK,
+    MSG_USER_BLOCK_SERVER,
+    MSG_USER_UNBLOCK_SERVER,
+
     /* Menu: Settings */
     MSG_MENU_SETTINGS,
     MSG_SETTINGS_THEME,
@@ -126,6 +160,9 @@ enum {
     MSG_SETTINGSV_RGB_DRAW_FUNCTION,
     MSG_SETTINGSV_RGBDRAW_SCALEPIXELARRAY,
     MSG_SETTINGSV_RGBDRAW_INTERNAL_BILINEAR,
+    MSG_SETTINGSV_PLAYBACK_GROUP,
+    MSG_SETTINGSV_PLAY_TOOT_TIME,
+    MSG_SETTINGSV_ALLOW_NEXT_TOOT_SCROLL,
 
     /* Search channel (VIEWMODE_Search) TTIMELINE_WaitText, shown while a
      * word/hashtag search request is in flight (see

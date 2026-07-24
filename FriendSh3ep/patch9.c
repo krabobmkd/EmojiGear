@@ -88,8 +88,9 @@ static void patch9_blit_tiled(struct BitMap *srcBm, PLANEPTR mask,
     }
 }
 
-void Patch9_Draw(Patch9 *p9, int state, struct RastPort *rp,
-                 WORD destX, WORD destY, WORD destW, WORD destH)
+static void patch9_draw_ex(Patch9 *p9, int state, struct RastPort *rp,
+                           WORD destX, WORD destY, WORD destW, WORD destH,
+                           BOOL forceOpaque)
 {
     struct BitMap *srcBm;
     PLANEPTR       mask;
@@ -102,7 +103,7 @@ void Patch9_Draw(Patch9 *p9, int state, struct RastPort *rp,
     if (!Patch9_IsLoaded(p9)) return;
 
     srcBm = p9->img.bitmap;
-    mask  = p9->img.mask;
+    mask  = forceOpaque ? NULL : p9->img.mask;
     pw    = p9->patchWidth;
     ph    = p9->patchHeight;
     baseX = (WORD)(state * pw);
@@ -155,4 +156,16 @@ void Patch9_Draw(Patch9 *p9, int state, struct RastPort *rp,
         patch9_blit_tiled(srcBm, mask, baseX+cw, ch, midSrcW, midSrcH, rp,
                           destX+cw,        destY+ch,   midDstW, midDstH);
     }
+}
+
+void Patch9_Draw(Patch9 *p9, int state, struct RastPort *rp,
+                 WORD destX, WORD destY, WORD destW, WORD destH)
+{
+    patch9_draw_ex(p9, state, rp, destX, destY, destW, destH, FALSE);
+}
+
+void Patch9_DrawOpaque(Patch9 *p9, int state, struct RastPort *rp,
+                       WORD destX, WORD destY, WORD destW, WORD destH)
+{
+    patch9_draw_ex(p9, state, rp, destX, destY, destW, destH, TRUE);
 }

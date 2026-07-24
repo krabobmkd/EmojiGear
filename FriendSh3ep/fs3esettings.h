@@ -63,6 +63,17 @@ typedef struct FS3ESettings {
     /* Seconds between polling the server for new toots; default 60. */
     int   tootCheckIntervalSec;
 
+    /* Seconds to stay on a toot before Autoscroll Play (see
+     * Action_TimelineAutoscrollPlay, fs3eaction.c) moves to the next one.
+     * Minimum 3, default 10, maximum 60. */
+    int   playTootTimeSec;
+
+    /* TRUE (default) = "Next toot" (Space key/menu, see
+     * Action_TimelineNextToot) is allowed to animate-scroll at all.
+     * FALSE disables the feature entirely -- Space then does nothing
+     * while autoscroll is idle instead of starting the scroll. */
+    short allowNextTootScroll;
+
     /* FALSE (default) = discard the full-size original after generating
      * its small thumbnail (downloaded to RAM:T and deleted right after
      * use instead of the persistent cache dir) -- saves a lot of disk

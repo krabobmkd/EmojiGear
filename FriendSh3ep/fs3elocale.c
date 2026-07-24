@@ -102,6 +102,41 @@ static const char *defaultStrings[MSG_COUNT] = {
     "Notifications",
     "Bookmarks",
     "News",
+    "Refresh",
+
+    /* MSG_MENU_TIMELINE */
+    "Timeline",
+    /* MSG_TIMELINE_NEXT_TOOT */
+    "Next toot",
+    /* MSG_TIMELINE_TOP */
+    "Move to Top",
+    /* MSG_TIMELINE_AUTOSCROLL_PLAY */
+    "Autoscroll Play",
+    /* MSG_TIMELINE_AUTOSCROLL_STOP */
+    "Autoscroll Stop",
+    /* MSG_TIMELINE_COPY_TEXT */
+    "Copy Toot Text (UTF-8)",
+
+    /* MSG_MENU_USER */
+    "User",
+    /* MSG_USER_COPY_URL */
+    "Copy profile URL",
+    /* MSG_USER_FOLLOW */
+    "Follow",
+    /* MSG_USER_UNFOLLOW */
+    "Unfollow",
+    /* MSG_USER_MASK */
+    "Mask user toots",
+    /* MSG_USER_UNMASK */
+    "Unmask user toots",
+    /* MSG_USER_BLOCK */
+    "Block user",
+    /* MSG_USER_UNBLOCK */
+    "Unblock user",
+    /* MSG_USER_BLOCK_SERVER */
+    "Block server",
+    /* MSG_USER_UNBLOCK_SERVER */
+    "Unblock server",
 
     /* MSG_MENU_SETTINGS */
     "Settings",
@@ -191,6 +226,12 @@ static const char *defaultStrings[MSG_COUNT] = {
     "ScalePixelArray()",
     /* MSG_SETTINGSV_RGBDRAW_INTERNAL_BILINEAR */
     "Internal Bilinear (>=68060)",
+    /* MSG_SETTINGSV_PLAYBACK_GROUP */
+    "Playback",
+    /* MSG_SETTINGSV_PLAY_TOOT_TIME */
+    "Play toot time (seconds)",
+    /* MSG_SETTINGSV_ALLOW_NEXT_TOOT_SCROLL */
+    "Allow next toot scroll",
 
     /* MSG_SEARCHV_WAIT1 */
     "\xF0\x9F\x90\x98 Casting the net across the fediverse...",

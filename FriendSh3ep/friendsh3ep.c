@@ -105,6 +105,7 @@
 #include "fs3elocale.h"
 #include "fs3emenu.h"
 #include "fs3eaction.h"
+#include "fs3etimer.h"
 #include "fs3esettings.h"
 #include "fs3emachineid.h"
 #include "fs3erequests.h"
@@ -245,6 +246,12 @@ struct App *app = NULL;
 /* Default DPI factor: 1 row = 14 pixels. */
 #define DEFAULT_DPI_HEIGHT 14
 
+/* Pixels TTIMELINE_ScrollBy moves per wheel-mouse notch (WMHI_RAWKEY keys
+ * 0x7A/0x7B, see the main event loop below) -- a plain fixed amount, not
+ * tied to row/font height, same "good enough default" spirit as
+ * DEFAULT_DPI_HEIGHT above. */
+#define FS3E_WHEEL_SCROLL_PIXELS 48
+
 void exitclose(void);
 
 void cleanexit(const char *pmessage)
@@ -350,6 +357,13 @@ void FS3EApp_CheckConnectionState(void)
                 } else {
                     text = "Updating...";
                 }
+            } else if (app->channelEmptyMask & bit) {
+                /* See channelEmptyMask's doc comment -- a completed fetch
+                 * that genuinely returned nothing (typically a word/
+                 * account search with no matches) previously fell through
+                 * to the generic "Account connected." text below, which
+                 * read as if the search hadn't actually run. */
+                text = "Nothing found.";
             } else {
                 text = "Account connected.";
             }
@@ -357,6 +371,26 @@ void FS3EApp_CheckConnectionState(void)
     }
 
     SetGdAttrs(app->tootTimeline, TTIMELINE_WaitText, (ULONG)text, TAG_END);
+
+    /* User menu (see fs3eaction.h's FS3EACTION_USER_* group) is only
+     * meaningful while the Search view is showing SOMEONE ELSE's profile
+     * -- greyed out otherwise, including while viewing your own profile
+     * (nothing to Follow/Block/etc. about yourself). Re-derived here,
+     * the one place this function already runs after every state change
+     * that could affect the answer (view switches via fs3e_setViewMode,
+     * FS3EApp_OpenProfile, and -- critically -- the FS3ENETQ_ACCOUNT_LOOKUP
+     * reply that's the only place searchProfileAccountId/isSelf actually
+     * become known), rather than scattering this check across every
+     * individual call site. */
+    if (CurrentMainWindow) {
+        BOOL userMenuEnabled =
+            (app->viewMode == VIEWMODE_Search) &&
+            (app->searchMode == FS3ESEARCH_USER_PROFILE) &&
+            app->searchProfileAccountId && app->searchProfileAccountId[0] &&
+            app->accountId && app->accountId[0] &&
+            (strcmp(app->searchProfileAccountId, app->accountId) != 0);
+        FS3EMenu_SetUserMenuEnabled(&app->menu, CurrentMainWindow, userMenuEnabled);
+    }
 }
 
 
@@ -688,7 +722,15 @@ void fs3e_setViewMode(ULONG viewMode)
 {
     int i;
     ULONG oldViewMode;
-    if(app->viewMode == viewMode) return;
+    if(app->viewMode == viewMode)
+    {
+        /* if we jump to search view, give keyboard focus to search */
+        if(viewMode == VIEWMODE_Search && app->searchWordEditor && CurrentMainWindow)
+        {
+            ActivateGadget(app->searchWordEditor,CurrentMainWindow,NULL);
+        }
+        return;
+    }
     if(viewMode >=VIEWMODE_NumberOf) return;
     /* synchronize buttons states with no drama */
     for(i=0;i<8;i++)
@@ -886,6 +928,11 @@ int main(int argc, char **argv)
     FS3ESettings_Load(&app->settings);
 
     if (!FS3EMsg_Init()) cleanexit("Can't create BOOPSI message target");
+
+    /* Must be called from the task that will run the main Wait() loop
+     * below (FS3ETimer_Init() captures FindTask(NULL) as the task its
+     * VBlank interrupt Signal()s) -- see fs3etimer.h. */
+    if (!FS3ETimer_Init()) cleanexit("Can't install VBlank timer service");
 
     /* --- Private BOOPSI classes ---------------------------------------- */
     if (!UniButtonP9_Init())    cleanexit("Can't init UniButtonP9 class");
@@ -1308,18 +1355,18 @@ int main(int argc, char **argv)
     {
         ULONG winsignal;
         BOOL  ok = TRUE;
-        ULONG refreshFlags = 0;
 
 #define reflags_bodyEditor    2
 #define reflags_tootTimeLine    4
 #define reflags_searchworduted 8
+#define reflags_navBtns        16
         GetAttr(WINDOW_SigMask, app->window_obj, &winsignal);
 
         while (ok)
         {
             ULONG result, waitedSignals, currentSignals;
             ULONG loginSig, tootSig;
-
+            ULONG refreshFlags = 0;
             flushbdbprint();
 
             loginSig = FS3ELoginView_GetSignalMask(&app->loginView);
@@ -1336,11 +1383,15 @@ int main(int argc, char **argv)
                 (app->audioReplyPort ? (1L << app->audioReplyPort->mp_SigBit) : 0) |
                 (SIPCPort ? (1L << SIPCPort->mp_SigBit) : 0) |
                 SIGBREAKF_CTRL_C |
-                SIGBREAKF_CTRL_F;
+                SIGBREAKF_CTRL_F |
+                FS3ETIMER_SIGNAL;
 
             currentSignals = Wait(waitedSignals);
 
             if (currentSignals & SIGBREAKF_CTRL_C) exit(0);
+
+            if (currentSignals & FS3ETIMER_SIGNAL)
+                FS3ETimer_Process();
 
             /* A second FriendSh3ep launch asked us to activate -- see
              * FS3E_CheckSingleInstance(). Re-open if iconified, otherwise
@@ -1418,6 +1469,7 @@ int main(int argc, char **argv)
                         int keyUsed=0;
                         if (key == 0x45) ok = FALSE; /* Escape */
 
+// printf("WMHI_RAWKEY %08x\n",key);
                         GetAttr(WINDOW_Qualifier,app->window_obj,&qualifiers);
 
                         if(!isUp )
@@ -1447,7 +1499,59 @@ int main(int argc, char **argv)
                             {
                                 FS3EApp_SearchGoBack();
                             }
-                        }
+                            if( key == 0x7a || key == 0x4c) /* mouse wheel up / Up arrow -- scroll toward newer content */
+                            {
+                                if (app->tootTimeline)
+
+                                    SetGdAttrs(app->tootTimeline, TTIMELINE_ScrollBy,
+                                             (ULONG)(LONG)-FS3E_WHEEL_SCROLL_PIXELS, TAG_DONE);
+                                /* Manual scroll always wins over a "Next
+                                 * toot" animation still in flight from a
+                                 * previous Space press -- see this
+                                 * function's own doc comment in
+                                 * fs3eaction.h. */
+                                Action_TimelineStopScrollAnimation();
+                            }
+                            if( key == 0x7b|| key == 0x4d ) /* mouse wheel down / Down arrow -- scroll toward older content */
+                            {
+                                if (app->tootTimeline)
+                                    SetGdAttrs(app->tootTimeline, TTIMELINE_ScrollBy,
+                                             (ULONG)(LONG)FS3E_WHEEL_SCROLL_PIXELS, TAG_DONE);
+                                Action_TimelineStopScrollAnimation();
+                            }
+                            /* Timeline menu shortcuts that can't be real
+                             * GadTools CommKeys (see fs3eaction.c's
+                             * Action_Timeline* -- all stubs today, this is
+                             * just the key plumbing): Space can't
+                             * sensibly be one, and P is already Settings
+                             * -> General's CommKey, so Autoscroll Play
+                             * stays on a bare keypress instead of
+                             * colliding with it -- see fs3emenu.c's
+                             * Timeline section comment. U and C (Move to
+                             * Top / Copy Toot Text) do NOT need handling
+                             * here -- they're real Amiga+U/Amiga+C
+                             * CommKeys now, fired via the normal
+                             * WMHI_MENUPICK path instead. Same "plain
+                             * unmodified key, only reachable while no
+                             * text-entry gadget holds BOOPSI focus"
+                             * caveat as Delete/wheel above applies to
+                             * Space/P here. Space is context-dependent on
+                             * timelineAutoscrollActive (Next toot when
+                             * idle, Stop autoscroll when running) -- see
+                             * that field's comment in friendsh3ep.h. */
+                            if( key == 0x40 ) /* Space */
+                            {
+                                if (app->timelineAutoscrollActive)
+                                    Action_TimelineAutoscrollStop(app);
+                                else
+                                    Action_TimelineNextToot(app);
+                            }
+                            if( key == 0x19 ) /* P -- autoscroll play */
+                            {
+                            // printf("Action_TimelineAutoscrollPlay\n");
+                                Action_TimelineAutoscrollPlay(app);
+                            }
+                         }
                         /* ctrl- and ctrl+ change font size */
                         if((qualifiers & IEQUALIFIER_CONTROL) !=0 &&
                             !(qualifiers & IEQUALIFIER_REPEAT) && !isUp)
@@ -1564,7 +1668,7 @@ int main(int argc, char **argv)
             if (DelayQueue && BoopsiDelay_HasMessages(DelayQueue))
             {
                 struct TagItem *msg;
-                refreshFlags = 0;
+
 
                 while ((msg = BoopsiDelay_NextMessage(DelayQueue)) != NULL) {
                     struct TagItem *ptag;
@@ -1673,7 +1777,28 @@ int main(int argc, char **argv)
                                 }
 
                             }
+
+                            /* One of nav_btns[] (UniButtonBGBM) found its
+                             * UBGBM_Patch9Mode cache stale while GM_RENDER
+                             * ran off this task (e.g. Intuition driving a
+                             * live window resize) and can't safely rebuild
+                             * it there (FreeType) -- see
+                             * ubgbm_notify_refresh_needed()'s doc comment.
+                             * OR a flag instead of refreshing right here:
+                             * every one of the 8 buttons can report this
+                             * in the same drain pass, and a single
+                             * RefreshGList() of navBarLayout below (once
+                             * per loop iteration, alongside the other
+                             * reflags_* checks) already redraws all of
+                             * them -- doing it per-message would mean up
+                             * to 8 redundant full navBarLayout redraws. */
+                            ptag = FindTagItem(UBGBM_RefreshNeeded, msg);
+                            if (ptag && ptag->ti_Data)
+                            {
+                                refreshFlags |= reflags_navBtns;
+                            }
                             break;
+
                         case GID_TITLEBAR_NEWTOOT:
                             ptag = FindTagItem(GA_Selected, msg);
                             if (ptag /*&& ptag->ti_Data*/)  /* when push button down (selected true) */
@@ -1855,6 +1980,7 @@ int main(int argc, char **argv)
                             if (ptag)
                             {   /* enter pressed on the search line */
                                 StartSearchFromLine();
+
                                 /*good idea to send stop having focus to editor so usual keys works */
                                 if(CurrentMainWindow && app->tootTimeline)
                                 {
@@ -2162,6 +2288,18 @@ int main(int argc, char **argv)
 
                             }
 
+                            /* TootTimeline's own internal mouse-drag
+                             * scroll just moved scrollY (see
+                             * TTIMELINE_ScrollStarted's doc comment in
+                             * fs3etoottimeline.h) -- a manual scroll
+                             * always wins over the "Next toot" animation
+                             * still in flight from a previous Space
+                             * press, same reasoning the arrow keys below
+                             * apply. */
+                            ptag = FindTagItem(TTIMELINE_ScrollStarted, msg);
+                            if (ptag)
+                                Action_TimelineStopScrollAnimation();
+
                             break;
 
                         default:
@@ -2185,6 +2323,20 @@ int main(int argc, char **argv)
             if ((refreshFlags & reflags_tootTimeLine) && CurrentMainWindow && app->tootTimeline )
                 RefreshGList((struct Gadget *)app->tootTimeline,
                              CurrentMainWindow, NULL, 1);
+
+            /* One redraw for however many of the 8 nav_btns[] reported
+             * UBGBM_RefreshNeeded in this drain pass -- see the
+             * GID_NAV_USER..GID_NAV_NEWS case above. */
+            if ((refreshFlags & reflags_navBtns) && CurrentMainWindow )
+            {
+                int i;
+                for(i=0;i<8;i++)
+                {
+                    RefreshGList((struct Gadget *)app->nav_btns[i],
+                             CurrentMainWindow, NULL, 1);
+                }
+            }
+
 
             // test, doesnt work:
             // if(refreshTitleBarLayout  && CurrentMainWindow)
@@ -2241,6 +2393,7 @@ void exitclose(void)
              * → all UniButtonP9 children. */
             DisposeObject(app->window_obj);
         }
+        FS3ETimer_Exit();
         /* Free private classes AFTER all objects using them are disposed. */
         TootTimeline_Exit();
         SearchBarLayout_Exit();

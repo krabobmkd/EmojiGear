@@ -635,6 +635,7 @@ void FS3EApp_SwitchAccount(LONG index)
     app->timelineFetchedMask   = 0;
     app->channelPopulatedMask  = 0;
     app->timelineErrorMask     = 0;
+    app->channelEmptyMask      = 0;
     app->olderPageInFlightMask = 0;
     app->newerPageInFlightMask = 0;
     FS3EApp_FetchTimeline(app->viewMode);

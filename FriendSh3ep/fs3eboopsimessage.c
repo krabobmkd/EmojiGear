@@ -27,6 +27,7 @@
 
 #include "TitleBarLayout/fs3etitlebar.h"
 #include "TootTimeline/fs3etoottimeline.h"
+#include "UniButtonBGBM/unibuttonbgbm.h"
 
 
 /* Maximum tag entries in the queue */
@@ -128,7 +129,11 @@ static ULONG delayedAttribs[] = {
     TTIMELINE_LastHotSpotFollowing,
     TTIMELINE_HotSpotNotify,
     TTIMELINE_LastHotSpotMediaIds,
+    TTIMELINE_ScrollStarted,
 
+    /* from UniButtonBGBM (nav_btns[]) -- see ubgbm_notify_refresh_needed()
+     * in UniButtonBGBM/unibuttonbgbm_attribs.c */
+    UBGBM_RefreshNeeded,
 };
 
 #define NB_DELAYED_ATTRIBS ((ULONG)(sizeof(delayedAttribs) / sizeof(ULONG)))

@@ -29,6 +29,7 @@
 
 #include "../compilers.h"
 #include "fs3enavbar.h"
+#include "../bdbprintf.h"
 
 #ifndef G
 #define G(o) ((struct Gadget *)(o))

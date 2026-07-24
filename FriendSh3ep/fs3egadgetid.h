@@ -84,6 +84,8 @@
 #define GID_SETTINGSV_BIGGER_THUMBNAILS   307
 #define GID_SETTINGSV_SCALING_QUALITY     308
 #define GID_SETTINGSV_RGB_DRAW_FUNCTION   309
+#define GID_SETTINGSV_PLAY_TOOT_TIME      310
+#define GID_SETTINGSV_ALLOW_NEXT_TOOT_SCROLL 311
 
 /* Emoji picker window (fs3eemojibox.c), opened from GID_TOOT_EMOJI_BUTTON */
 #define GID_EMOJIBOX_CHOOSER  400  /* emoji-set popup chooser */

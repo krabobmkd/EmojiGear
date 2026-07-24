@@ -118,9 +118,10 @@ typedef enum {
  * patch9Slots[] table in fs3estyle.c), loaded into st->patch9[slot].
  * Add a new skin by adding both a slot constant here and a patch9Slots[]
  * entry there, in the same order. */
-#define FS3ESTYLE_PATCH9_BT1  0
-#define FS3ESTYLE_PATCH9_BT2  1
-#define FS3ESTYLE_PATCH9_COUNT 2
+#define FS3ESTYLE_PATCH9_BT1     0
+#define FS3ESTYLE_PATCH9_BT2     1
+#define FS3ESTYLE_PATCH9_BTBGBM  2
+#define FS3ESTYLE_PATCH9_COUNT   3
 
 /* UniButtonBGBM image-backed nav button states (btbgbm.bitmap.* in
  * style.txt) -- same order as UBGBM_STATE_NORMAL/SELECTED/DISABLED in
@@ -223,6 +224,17 @@ typedef struct {
      * via UBGBM_Style just falls back to its flat colour fill for any
      * state whose image failed to load (see BmImage_IsLoaded). */
     BmImage btbgbmBitmap[FS3ESTYLE_BTBGBM_COUNT];
+
+    /* Selects UniButtonBGBM's background render mode (btbgbm.usepatch9 in
+     * style.txt): FALSE (default) = the per-state btbgbmBitmap[] images
+     * above; TRUE = the 9-sliced patch9[FS3ESTYLE_PATCH9_BTBGBM] skin
+     * instead (drawn fully opaque, no mask -- see Patch9_DrawOpaque in
+     * patch9.h -- so it can still be cached like the flat-colour mode,
+     * unlike UniButtonP9's masked/live-drawn Patch9 skins). Read once per
+     * FS3EStyle_LoadThemeImages() call; reset to FALSE by
+     * FS3EStyle_UnloadThemeImages() for the "no theme" case, since loading
+     * early-returns before this gets read when st->themePath is unset. */
+    int    btbgbmUsePatch9;
 
     /* TootTimeline "waiting" screen image (timeline.waitimage in
      * style.txt), shown centered instead of the scrollable post list --

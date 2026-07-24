@@ -30,6 +30,7 @@
 #include <graphics/gfx.h>
 
 #include "unibuttonbgbm_private.h"
+#include "../patch9.h"
 #include "../bdbprintf.h"
 
 /* =========================================================================
@@ -96,6 +97,62 @@ static void ubgbm_build_one_state(UniButtonBGBMData *inst, WORD gadW, WORD gadH,
 
     obm->_imageState = imageState;
     obm->_bgpen      = bgPen;
+
+    /* Patch9 mode: unlike style-image mode below, this whole composited
+     * state (background + text) CAN be cached, since Patch9_DrawOpaque
+     * forces the skin fully opaque (no transparency mask to react to
+     * whatever's really behind the button) -- see UBGBM_Patch9Mode's doc
+     * comment. Cache is sized to the gadget itself (gadW/gadH), not the
+     * text bounding box, since the background must cover the whole
+     * button. */
+    if (inst->patch9Mode) {
+        Patch9 *p9 = inst->style ? &inst->style->patch9[FS3ESTYLE_PATCH9_BTBGBM] : NULL;
+
+        w = gadW > 0 ? gadW : 1;
+        h = gadH > 0 ? gadH : 1;
+
+        if (!obm->_bm || obm->_w != w || obm->_h != h) {
+            OffscreenBitMap_Close(obm);
+            OffscreenBitMap_Init(obm, w, h, 0, BMF_CLEAR,
+                                 scr ? scr->RastPort.BitMap : NULL);
+        }
+        if (!obm->_bm) return;
+        rp = &obm->_srp;
+
+        if (p9 && Patch9_IsLoaded(p9)) {
+            /* Per-state colours come from the Patch9 slot itself, same as
+             * UniButtonP9's ubtp9_state_pens -- not the dynamic disabled-
+             * dimming computed above, since the theme already authors a
+             * distinct colour for every PATCH9_* state. Also update
+             * obm->_bgpen (set above from inst->bgPen/selBgPen, the
+             * flat-mode pens) to match -- GM_RENDER's fallback path reads
+             * obm->_bgpen whenever the cache is momentarily invalid (e.g.
+             * mid-resize, before a same-task rebuild has run), and it must
+             * show the Patch9 skin's own colour there, not a leftover
+             * flat-mode one. */
+            Patch9_DrawOpaque(p9, state, rp, 0, 0, w, h);
+            bgPen  = (ULONG)p9->bgcolors[state].pen;
+            txtPen = (ULONG)p9->textcolors[state].pen;
+            obm->_bgpen = bgPen;
+        } else {
+            SetAPen(rp, (LONG)bgPen);
+            SetDrMd(rp, JAM1);
+            RectFill(rp, 0L, 0L, (LONG)(w - 1), (LONG)(h - 1));
+        }
+
+        if (inst->text && inst->text[0] && inst->dc && scr) {
+            struct URPTextPos pos;
+            pos.x = (w - inst->textWidth)  / 2;
+            pos.y = (h - inst->textHeight) / 2 + inst->fontAscent;
+
+            URPDC_SetDrawColorFromPen(inst->dc, scr, (LONG)txtPen, (LONG)bgPen);
+            SetAPen(rp, (LONG)txtPen);
+            SetBPen(rp, (LONG)bgPen);
+            SetDrMd(rp, JAM2);
+            URPDrawTextUTF8(rp, inst->dc, &pos, inst->text, (ULONG)(-1));
+        }
+        return;
+    }
 
     /* Style-image mode: no cache at all for this state -- both the
      * (non-flat) background image and text are drawn live in
@@ -165,8 +222,18 @@ void ubgbm_rebuild_cache(Class *cl, Object *o,
  */
 ULONG UniButtonBGBM_OnLayout(Class *cl, Object *o, struct gpLayout *msg)
 {
-    (void)cl; (void)o;
-    return DoSuperMethodA(cl, o, (APTR)msg);
+    UniButtonBGBMData *inst = UBGBM_DATA(cl, o);
+    ULONG rc = TRUE; // DoSuperMethodA(cl, o, (APTR)msg);
+
+    /* changing size means recomputing the image caches */
+    {
+        struct Gadget *g = G(o);
+        if (inst->cacheBm[UBGBM_STATE_NORMAL]._w != g->Width ||
+            inst->cacheBm[UBGBM_STATE_NORMAL]._h != g->Height)
+            inst->cacheValid = FALSE;
+    }
+
+    return rc;
 }
 
 /* =========================================================================
@@ -187,6 +254,12 @@ ULONG UniButtonBGBM_OnRender(Class *cl, Object *o, struct gpRender *msg)
 
     if (gadW <= 0 || gadH <= 0) return 0;
 
+    if(FindTask(NULL) != inst->callerTask)
+    {
+        ubgbm_notify_refresh_needed(inst, msg->gpr_GInfo);
+        return TRUE;
+    }
+
     if (scr) inst->screen   = scr;
     if (dri) inst->drawInfo = dri;
 
@@ -195,6 +268,8 @@ ULONG UniButtonBGBM_OnRender(Class *cl, Object *o, struct gpRender *msg)
 
     if (inst->selBgPen == 3 && dri)
         inst->selBgPen = (ULONG)dri->dri_Pens[FILLPEN];
+
+
 
     /* Only rebuild from this object's own owning task: GM_RENDER can also
      * be reached from GM_GOACTIVE/GM_HANDLEINPUT/GM_GOINACTIVE's
@@ -205,10 +280,11 @@ ULONG UniButtonBGBM_OnRender(Class *cl, Object *o, struct gpRender *msg)
      * live theme change); off-task, just fall back to the flat-fill path
      * below, same as "cache not ready yet" -- a real app-task render
      * will rebuild it properly the next time this gadget is refreshed. */
-    needRebuild = (!inst->cacheValid && FindTask(NULL) == inst->callerTask);
+    needRebuild = (!inst->cacheValid );
 
-    if (needRebuild && scr)
+    if (needRebuild && scr) {
         ubgbm_rebuild_cache(cl, o, gadW, gadH, dri, scr);
+    }
 
     if (g->Flags & GFLG_DISABLED)
         state = UBGBM_STATE_DISABLED;
@@ -222,14 +298,16 @@ ULONG UniButtonBGBM_OnRender(Class *cl, Object *o, struct gpRender *msg)
          (inst->style && BmImage_IsLoaded(&inst->style->btbgbmBitmap[state])))) {
         ubgbm_blit_state(inst, g, rp, state);
     } else {
-        SetAPen(rp, (LONG)inst->cacheBm[state]._bgpen);
-        SetDrMd(rp, JAM1);
-        RectFill(rp, (LONG)g->LeftEdge, (LONG)g->TopEdge,
-                     (LONG)(g->LeftEdge + gadW - 1),
-                     (LONG)(g->TopEdge  + gadH - 1));
+        // SetAPen(rp, (LONG)inst->cacheBm[state]._bgpen);
+        // SetDrMd(rp, JAM1);
+        // RectFill(rp, (LONG)g->LeftEdge, (LONG)g->TopEdge,
+        //              (LONG)(g->LeftEdge + gadW - 1),
+        //              (LONG)(g->TopEdge  + gadH - 1));
     }
 
-    if (inst->bevel && dri) {
+    /* No bevel in Patch9 mode -- the button border lives in the Patch9
+     * image itself (see UBGBM_Patch9Mode's doc comment). */
+    if (inst->bevel && dri && !inst->patch9Mode) {
         SetAttrs((Object *)inst->bevel,
             IA_Left,   g->LeftEdge,
             IA_Top,    g->TopEdge,

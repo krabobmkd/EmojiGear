@@ -972,6 +972,7 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
             /* Fetch the current view mode timeline */
             app->timelineFetchedMask  = 0; /* reset so new account fetches fresh */
             app->channelPopulatedMask = 0;
+            app->channelEmptyMask     = 0;
             FS3EApp_FetchTimeline(app->viewMode);
             /* Credentials just confirmed -- empty the fields so there's
              * nothing to accidentally resubmit later (see the matching
@@ -1103,9 +1104,14 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                      * another INITIAL fetch (and re-insert a duplicate
                      * first page) next time this channel is entered --
                      * see channelPopulatedMask's doc comment for the bug
-                     * this fixes. */
+                     * this fixes. Also track emptiness -- see
+                     * channelEmptyMask's own doc comment. */
                     app->timelineFetchedMask   &= ~(1UL << reply->fs3et_ViewModeBit);
                     app->channelPopulatedMask  |=  (1UL << reply->fs3et_ViewModeBit);
+                    if (reply->fs3et_Count == 0)
+                        app->channelEmptyMask  |=  (1UL << reply->fs3et_ViewModeBit);
+                    else
+                        app->channelEmptyMask  &= ~(1UL << reply->fs3et_ViewModeBit);
                     break;
             }
 
@@ -1260,9 +1266,12 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                     break;
                 default:
                     /* See channelPopulatedMask's doc comment -- same fix
-                     * as FS3ENETQ_TIMELINE's equivalent switch. */
+                     * as FS3ENETQ_TIMELINE's equivalent switch. Also
+                     * tracks emptiness -- see channelEmptyMask. */
                     app->timelineFetchedMask  &= ~bit;
                     app->channelPopulatedMask |=  bit;
+                    if (reply->fs3en_Count == 0) app->channelEmptyMask |=  bit;
+                    else                          app->channelEmptyMask &= ~bit;
                     break;
             }
 
@@ -1448,6 +1457,13 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
 
             app->timelineFetchedMask  &= ~bit;
             app->channelPopulatedMask |=  bit;
+            /* See channelEmptyMask's doc comment. Harmless/inert for a
+             * FOLLOWERS/FOLLOWING reply with zero accounts -- the "list
+             * title" row added below is real content either way, so
+             * TootTimeline's own waiting mode already clears regardless
+             * of this bit's value in that case. */
+            if (reply->fs3eal_Count == 0) app->channelEmptyMask |=  bit;
+            else                          app->channelEmptyMask &= ~bit;
 
             /* The server returns these best-match/most-recent-follow
              * first (index 0 = best), but TTIMELINE_AddPost always

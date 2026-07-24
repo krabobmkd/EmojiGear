@@ -80,6 +80,17 @@ void ubgbm_blit_state(UniButtonBGBMData *inst, struct Gadget *g,
 
     if (!inst->cacheValid) return;
 
+    if (inst->patch9Mode) {
+        /* Whole composited state (background + text) already baked into
+         * obm by ubgbm_build_one_state() -- one opaque blit, no separate
+         * fill/text steps needed (unlike either mode below). */
+        if (!obm->_bm) return;
+        BltBitMapRastPort(obm->_bm, 0, 0, rp,
+                          (LONG)g->LeftEdge, (LONG)g->TopEdge,
+                          (LONG)obm->_w, (LONG)obm->_h, 0xC0);
+        return;
+    }
+
     if (inst->style && BmImage_IsLoaded(&inst->style->btbgbmBitmap[state])) {
         BmImage *img = &inst->style->btbgbmBitmap[state];
 
@@ -168,6 +179,39 @@ void ubgbm_notify_pressed(Class *cl, Object *o, struct GadgetInfo *gi)
     GetAttr(GA_Selected,o,&tags[3]);
 
     /* Direct DoMethodA to target: avoids the OS3.9 DoSuperMethodA/OM_NOTIFY bug */
+    nmsg.MethodID     = OM_UPDATE;
+    nmsg.opu_AttrList = (struct TagItem *)tags;
+    nmsg.opu_GInfo    = gi;
+    nmsg.opu_Flags    = 0;
+    DoMethodA(inst->target, (Msg)&nmsg);
+}
+
+/* Same OM_UPDATE-to-target mechanism as ubgbm_notify_pressed() above --
+ * the standard, task-safe way any BOOPSI gadget asks the main process for
+ * something (see fs3eboopsimessage.c/.h: TargetInstance's dispatcher
+ * queues the message and Signal()s SIGBREAKF_CTRL_F itself, so nothing
+ * here needs to touch Signal() directly). Used by GM_RENDER
+ * (unibuttonbgbm_render.c) when UBGBM_Patch9Mode's gadget-sized cache is
+ * stale but this call isn't running on the object's owning task, so it
+ * can't safely rebuild it here (FreeType) -- asks the main task to force
+ * a real redraw instead. Sends this gadget's own real GA_ID (inst->ga_id)
+ * -- GA_ID identifies the gadget, same as every other notify from this
+ * class, NOT a made-up sentinel -- plus UBGBM_RefreshNeeded, TRUE (must
+ * also be listed in fs3eboopsimessage.c's delayedAttribs[] to actually
+ * reach the drained message). */
+void ubgbm_notify_refresh_needed(UniButtonBGBMData *inst, struct GadgetInfo *gi)
+{
+    struct opUpdate nmsg;
+    ULONG tags[5];
+
+    if (!inst->target || !inst->ga_id) return;
+
+    tags[0] = GA_ID;
+    tags[1] = inst->ga_id;
+    tags[2] = UBGBM_RefreshNeeded;
+    tags[3] = TRUE;
+    tags[4] = TAG_DONE;
+
     nmsg.MethodID     = OM_UPDATE;
     nmsg.opu_AttrList = (struct TagItem *)tags;
     nmsg.opu_GInfo    = gi;
@@ -432,6 +476,13 @@ ULONG UniButtonBGBM_OnSet(Class *cl, Object *o, struct opSet *msg)
             result = 1;
             break;
 
+        case UBGBM_Patch9Mode:
+            inst->patch9Mode = tag->ti_Data ? TRUE : FALSE;
+            ubgbm_free_cache(inst);
+            redraw = TRUE;
+            result = 1;
+            break;
+
         case GA_ReadOnly:
             inst->readOnly = tag->ti_Data ? TRUE : FALSE;
             result = 1;
@@ -596,6 +647,9 @@ ULONG UniButtonBGBM_OnGet(Class *cl, Object *o, struct opGet *msg)
         return TRUE;
     case UBGBM_BgShiftY:
         *msg->opg_Storage = (ULONG)(LONG)inst->bgShiftY;
+        return TRUE;
+    case UBGBM_Patch9Mode:
+        *msg->opg_Storage = (ULONG)inst->patch9Mode;
         return TRUE;
     case GA_ReadOnly:
         *msg->opg_Storage = (ULONG)inst->readOnly;

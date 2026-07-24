@@ -36,4 +36,9 @@ BOOL FS3EMenu_Rebuild(FS3EMenu *m, struct Screen *screen, struct Window *window)
  * id. Returns -1 if no valid action item was selected. */
 LONG FS3EMenu_ToActionID(FS3EMenu *m, UWORD menuCode);
 
+/* Enable/disable the whole "User" menu (see FS3EACTION_USER_* in
+ * fs3eaction.h) -- greys out the entire title, not just its items, when
+ * FALSE. Called from FS3EApp_CheckConnectionState (friendsh3ep.c). */
+void FS3EMenu_SetUserMenuEnabled(FS3EMenu *m, struct Window *window, BOOL enabled);
+
 #endif /* FS3EMENU_H */

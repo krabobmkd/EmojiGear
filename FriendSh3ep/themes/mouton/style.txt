@@ -68,6 +68,28 @@ btbgbm.textcolor.selected = #ffffff
 btbgbm.textcolor.hover = #eebb33
 btbgbm.textcolor.disabled = #999999
 
+; 0 (default) = use btbgbm.bitmap.* above; 1 = use the btbgbmPatch9.*
+; 9-slice skin below instead (opaque, no bevel drawn -- see UniButtonBGBM's
+; UBGBM_Patch9Mode).
+btbgbm.usepatch9 = 0
+
+; ---- NavBar Buttons Patch9 skin, used when btbgbm.usepatch9 = 1 ----
+; same layout as bt1Patch9.image: 4 images of same square size agregated
+; horizontally, one for each button state (normal/selected/hover/disabled)
+
+btbgbmPatch9.image = btbgbmpatch9.iff
+btbgbmPatch9.cornersize = 8
+
+btbgbmPatch9.bgcolor.enabled = #888888
+btbgbmPatch9.bgcolor.selected = #bcbcff
+btbgbmPatch9.bgcolor.hover = #888888
+btbgbmPatch9.bgcolor.disabled = #aaaaaa
+
+btbgbmPatch9.textcolor.enabled = #000000
+btbgbmPatch9.textcolor.selected = #ffffff
+btbgbmPatch9.textcolor.hover = #eebb33
+btbgbmPatch9.textcolor.disabled = #999999
+
 ; ---- TootTimeline colors (FS3EColorRole in fs3estyle.h) ----
 
 timeline.color.buttonbg = #303034

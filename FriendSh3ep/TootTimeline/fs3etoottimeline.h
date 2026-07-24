@@ -29,6 +29,37 @@
 #define TTIMELINE_DpiHeight      (TTIMELINE_Base + 0)
 /* [ISG] LONG: timeline Y currently at gadget top (scroll position) */
 #define TTIMELINE_ScrollY        (TTIMELINE_Base + 1)
+/* [S] LONG: scroll the active channel by this many pixels, relative to
+ * its current position -- negative moves up/toward newer content,
+ * positive moves down/toward older content. Meant for wheel-mouse
+ * handling (see WMHI_RAWKEY keys 0x7A/0x7B in friendsh3ep.c): each notch
+ * sends one small SetAttrs rather than the caller having to read
+ * TTIMELINE_ScrollY first and compute an absolute target itself. Shares
+ * TTIMELINE_ScrollY's deferred-apply mechanism (applied/clamped at the
+ * next GM_RENDER, see inst->pendingScrollY) and is based on whatever that
+ * pending value already is, so several ScrollBy calls in a row (a fast
+ * wheel spin, more than one notch before a render happens) accumulate
+ * correctly instead of each one reading a stale already-applied position. */
+#define TTIMELINE_ScrollBy       (TTIMELINE_Base + 35)
+/* [G] LONG: pixel scroll distance needed to bring the NEXT post (the one
+ * right after whichever post is currently first visible -- i.e. the
+ * topmost post at least partially inside the viewport, its own top may
+ * already be scrolled past) up to the very top of the gadget, its own
+ * top edge landing exactly on scrollY -- i.e. currentScrollY + this
+ * value is the target for TTIMELINE_ScrollY (and, deliberately, the
+ * new scrollY simply equals that next post's own timelineY). 0 if
+ * there's no such post (the first-visible post is already the last one,
+ * or the channel is empty). Walks the active channel's post list
+ * top-to-bottom (posts are already Y-ordered): first finds the topmost
+ * post whose bottom edge is still below scrollY (the "first visible"
+ * one, per above), then takes ITS successor -- cheap for realistic
+ * timeline lengths, and only ever queried once per "Next toot" press,
+ * not per frame. Purely a "how far" query -- TootTimeline itself never
+ * animates the scroll; see Action_TimelineNextToot (fs3eaction.c) for
+ * the external driver (an FS3ETimer, fs3etimer.h) that reads this once,
+ * then eases scrollY there over a fixed duration via repeated
+ * TTIMELINE_ScrollY sets. */
+#define TTIMELINE_NextTootScrollDelta (TTIMELINE_Base + 36)
 /* [G]  LONG: timeline Y of the top of the topmost post */
 #define TTIMELINE_ContentTopY    (TTIMELINE_Base + 2)
 /* [G]  LONG: timeline Y one pixel past the bottom of the last post */
@@ -116,12 +147,16 @@
  * older-page pagination results, which are contiguous with (i.e. arrive
  * immediately below) whatever the channel already has at its bottom. */
 #define TTIMELINE_AppendPost         (TTIMELINE_Base + 17)
-/* [S] any: jump the active channel's scroll position to its newest post
- * (scrollY = contentTopY) -- for opening a channel already showing the
- * most recent content instead of whatever it was last scrolled to.
- * Pagination (AddPost/AppendPost past the very first post) never moves
- * scrollY on its own, so callers should only send this right after a
- * channel's first-ever page of posts lands. */
+/* [S] any: jump the active channel's scroll position to the very top --
+ * scrollY = ttl_channel_min_scroll(active), i.e. 0 (showing the pinned
+ * header, see TTIMELINE_ShowProfile) if the channel has one, else
+ * contentTopY (skipping the pinned "look for something new" row, if
+ * any, straight to the newest real post) -- for opening a channel
+ * already showing the most recent content instead of whatever it was
+ * last scrolled to, or for an explicit "Move to Top" jump (see
+ * Action_TimelineTop, fs3eaction.c) once a channel is already showing
+ * content. Pagination (AddPost/AppendPost past the very first post)
+ * never moves scrollY on its own. */
 #define TTIMELINE_ScrollToNewest     (TTIMELINE_Base + 18)
 /* [S] TTLPostUpdate*: a status just changed on the server (Fave/Boost
  * toggle reply, or any future live update) -- every channel's copy of the
@@ -224,6 +259,22 @@
 #define TTIMELINE_LastHotSpotFollowing  (TTIMELINE_Base + 28)
 /* Ask full redraw from correct process */
 #define TTIMELINE_ProcessRefresh        (TTIMELINE_Base + 23)
+/* The gadget's own internal mouse-drag scroll (click+drag on the post
+ * list itself, see fs3etoottimeline_input.c's GM_HANDLEINPUT) just
+ * changed scrollY -- value is unused (always TRUE), this tag firing at
+ * all IS the notification. Sent once per drag-move sample that actually
+ * scrolls (so potentially several times over one drag gesture, not just
+ * once at its start -- any external code reacting to this must be safe
+ * to call repeatedly, e.g. FS3ETimer_Stop() is a harmless no-op on an
+ * already-stopped timer). Distinct from TTIMELINE_ProcessRefresh (fired
+ * for several unrelated "please redraw" reasons, not scroll-specific) --
+ * lets external code that manages its OWN scroll animation (see
+ * fs3eaction.c's "Next toot" FS3ETimer-driven scroll) know to cancel
+ * itself the moment the user starts scrolling by hand, so the two don't
+ * fight over scrollY. TootTimeline itself has no notion of any such
+ * external animation -- this is purely "I was just scrolled by a drag",
+ * nothing more. */
+#define TTIMELINE_ScrollStarted         (TTIMELINE_Base + 37)
 
 
 /* ------------------------------------------------------------------ */

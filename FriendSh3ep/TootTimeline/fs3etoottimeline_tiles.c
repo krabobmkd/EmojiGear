@@ -332,6 +332,37 @@ static void tile_draw_text_n(struct RastPort *rp, WORD x, WORD y,
 }
 
 /* ------------------------------------------------------------------ */
+/* ttl_draw_avatar_placeholder                                          */
+/*                                                                      */
+/* Shared by ttl_toot_render below, ttl_notif_follow_render             */
+/* (fs3etoottimeline_notif.c) and ttl_profile_header_render             */
+/* (fs3etoottimeline_profile.c) -- same as x as square, different bgPen */
+/* per caller (each draws against its own background colour). Solid    */
+/* accent square with an inset, unfilled rectangle frame -- a nested-   */
+/* rectangle "picture frame" look (same idea as a Workbench disk/drawer */
+/* icon), not a 2x2 grid: an earlier version split the square with a   */
+/* full cross, which at a glance read as the Windows logo. */
+/* ------------------------------------------------------------------ */
+void ttl_draw_avatar_placeholder(struct RastPort *rp, WORD ax, WORD ay, WORD as,
+                                 LONG accentPen, LONG bgPen)
+{
+    WORD inset = as / 5;
+    if (inset < 1) inset = 1;
+
+    SetAPen(rp, accentPen);
+    RectFill(rp, ax, ay, ax + as - 1, ay + as - 1);
+
+    if (as - inset * 2 >= 3) {
+        SetAPen(rp, bgPen);
+        Move(rp, ax + inset,          ay + inset);
+        Draw(rp, ax + as - 1 - inset, ay + inset);
+        Draw(rp, ax + as - 1 - inset, ay + as - 1 - inset);
+        Draw(rp, ax + inset,          ay + as - 1 - inset);
+        Draw(rp, ax + inset,          ay + inset);
+    }
+}
+
+/* ------------------------------------------------------------------ */
 /* ttl_toot_render -- TTLItemClass.render for TTLToot_Class             */
 /*                                                                      */
 /* Draw one toot into rp at (post->timelineY - tileBaseY). Caller       */
@@ -411,14 +442,8 @@ void ttl_toot_render(TTLData *inst, struct RastPort *rp, TTLPost *post, LONG til
                 BOOL  failed = (inst->avatarImages && post->acct)
                              && AvatarImages_Failed(inst->avatarImages, post->acct, &fmt);
 
-                /* Placeholder: filled rectangle with cross */
-                SetAPen(rp, (LONG)FS3E_PEN(inst->style, FS3E_COLOR_ACCENT));
-                RectFill(rp, ax, ay, ax + as - 1, ay + as - 1);
-                SetAPen(rp, bgpen);
-                Move(rp, ax,          ay + as/2);
-                Draw(rp, ax + as - 1, ay + as/2);
-                Move(rp, ax + as/2,   ay);
-                Draw(rp, ax + as/2,   ay + as - 1);
+                ttl_draw_avatar_placeholder(rp, ax, ay, as,
+                    (LONG)FS3E_PEN(inst->style, FS3E_COLOR_ACCENT), bgpen);
 
                 /* Decode failed and the source sniffed as WebP -- same
                  * "say so instead of a bare box" treatment as a failed

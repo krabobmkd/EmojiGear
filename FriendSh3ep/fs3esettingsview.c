@@ -116,6 +116,7 @@ BOOL FS3ESettingsView_Create(FS3ESettingsView *sv, const char *title)
     Object *cacheGroup;
     Object *serverGroup;
     Object *thumbnailsGroup;
+    Object *playbackGroup;
     Object *cachePathLabel;
     Object *userDataPathLabel;
     Object *maxCacheSizeLabel;
@@ -125,6 +126,8 @@ BOOL FS3ESettingsView_Create(FS3ESettingsView *sv, const char *title)
     Object *biggerThumbnailsLabel;
     Object *scalingQualityLabel;
     Object *rgbDrawFunctionLabel;
+    Object *playTootTimeLabel;
+    Object *allowNextTootScrollLabel;
     ULONG   i;
 
     {
@@ -321,6 +324,47 @@ BOOL FS3ESettingsView_Create(FS3ESettingsView *sv, const char *title)
         TAG_END);
     if (!thumbnailsGroup) return FALSE;
 
+    /* --- Playback group --- */
+    sv->playTootTimeInt = NewObject(INTEGER_GetClass(), NULL,
+        GA_ID,           GID_SETTINGSV_PLAY_TOOT_TIME,
+        GA_RelVerify,    TRUE,
+        INTEGER_Number,  (ULONG)app->settings.playTootTimeSec,
+        INTEGER_Minimum, 3L,
+        INTEGER_Maximum, 60L,
+        INTEGER_Arrows,  TRUE,
+        TAG_END);
+    if (!sv->playTootTimeInt) return FALSE;
+
+    playTootTimeLabel = NewObject(LABEL_GetClass(), NULL,
+        LABEL_Text, (ULONG)LOC(MSG_SETTINGSV_PLAY_TOOT_TIME), TAG_END);
+
+    sv->allowNextTootScrollCheck = NewObject(CHECKBOX_GetClass(), NULL,
+        GA_ID,        GID_SETTINGSV_ALLOW_NEXT_TOOT_SCROLL,
+        GA_RelVerify, TRUE,
+        GA_Selected,  (ULONG)app->settings.allowNextTootScroll,
+        TAG_END);
+    if (!sv->allowNextTootScrollCheck) return FALSE;
+
+    allowNextTootScrollLabel = NewObject(LABEL_GetClass(), NULL,
+        LABEL_Text, (ULONG)LOC(MSG_SETTINGSV_ALLOW_NEXT_TOOT_SCROLL), TAG_END);
+
+    playbackGroup = NewObject(LAYOUT_GetClass(), NULL,
+        LAYOUT_Orientation,   LAYOUT_ORIENT_VERT,
+        LAYOUT_BevelStyle,    BVS_GROUP,
+        LAYOUT_Label,         (ULONG)LOC(MSG_SETTINGSV_PLAYBACK_GROUP),
+        LAYOUT_BackFill,      NULL,
+        LAYOUT_SpaceOuter,    TRUE,
+        LAYOUT_SpaceInner,    TRUE,
+        LAYOUT_AddChild,      (ULONG)sv->playTootTimeInt,
+        CHILD_WeightedHeight, 0,
+        CHILD_Label,          (ULONG)playTootTimeLabel,
+        LAYOUT_AddChild,      (ULONG)sv->allowNextTootScrollCheck,
+        CHILD_WeightedWidth,  1,
+        CHILD_WeightedHeight, 0,
+        CHILD_Label,          (ULONG)allowNextTootScrollLabel,
+        TAG_END);
+    if (!playbackGroup) return FALSE;
+
     /* --- Top-level vertical layout --- */
     sv->mainLayout = NewObject(LAYOUT_GetClass(), NULL,
         LAYOUT_DeferLayout,   TRUE,
@@ -335,6 +379,8 @@ BOOL FS3ESettingsView_Create(FS3ESettingsView *sv, const char *title)
         LAYOUT_AddChild,      (ULONG)serverGroup,
         CHILD_WeightedHeight, 0,
         LAYOUT_AddChild,      (ULONG)thumbnailsGroup,
+        CHILD_WeightedHeight, 0,
+        LAYOUT_AddChild,      (ULONG)playbackGroup,
         CHILD_WeightedHeight, 0,
         TAG_END);
     if (!sv->mainLayout) return FALSE;
@@ -477,6 +523,18 @@ BOOL FS3ESettingsView_HandleInput(FS3ESettingsView *sv)
                     if ((LONG)val < 5)    val = 5;
                     if ((LONG)val > 3600) val = 3600;
                     app->settings.tootCheckIntervalSec = (int)val;
+
+                } else if (gadId == GID_SETTINGSV_PLAY_TOOT_TIME) {
+                    ULONG val = 0;
+                    GetAttr(INTEGER_Number, sv->playTootTimeInt, &val);
+                    if ((LONG)val < 3)  val = 3;
+                    if ((LONG)val > 60) val = 60;
+                    app->settings.playTootTimeSec = (int)val;
+
+                } else if (gadId == GID_SETTINGSV_ALLOW_NEXT_TOOT_SCROLL) {
+                    ULONG checked = 0;
+                    GetAttr(GA_Selected, sv->allowNextTootScrollCheck, &checked);
+                    app->settings.allowNextTootScroll = checked ? TRUE : FALSE;
 
                 } else if (gadId == GID_SETTINGSV_KEEP_BIG_USERICONS) {
                     ULONG checked = 0;

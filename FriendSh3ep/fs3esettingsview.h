@@ -23,6 +23,9 @@
  *     [x] Bigger Thumbnails
  *     Scaling Quality:   [combo: Fast linear (68020) / Quick Bilinear (68030) / Full Trilinear (>=68060)]
  *     RGB Draw function: [combo: ScalePixelArray() / Internal Bilinear (>=68060)]
+ *   Playback group (vertical):
+ *     Play toot time (seconds): [integer, 3..60]
+ *     [x] Allow next toot scroll
  *
  * Uses getfile.gadget (GETFILE_DrawersOnly) for directories and
  * integer.gadget for numeric fields -- same libraries fs3ethemeview.c and
@@ -69,6 +72,10 @@ typedef struct FS3ESettingsView {
     struct Node *scalingQualityNodes[FS3E_SCALEQ_COUNT];
     struct List  rgbDrawFunctionList;
     struct Node *rgbDrawFunctionNodes[FS3E_RGBDRAW_COUNT];
+
+    /* Playback group */
+    Object *playTootTimeInt;
+    Object *allowNextTootScrollCheck;
 
 } FS3ESettingsView;
 
