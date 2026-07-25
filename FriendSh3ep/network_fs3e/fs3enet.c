@@ -187,7 +187,7 @@ FS3ENetTimelineReq *FS3ENetTimelineReq_Alloc(ULONG viewModeBit,
 FS3ENetPostStatusReq *FS3ENetPostStatusReq_Alloc(
     const char *apiBaseUrl, const char *accessToken,
     const char *content, const char *visibility, const char *spoiler,
-    const char *inReplyToId)
+    const char *inReplyToId, const char *quoteApprovalPolicy)
 {
     ULONG total = sizeof(FS3ENetPostStatusReq)
                 + FS3ENet_PackLen(apiBaseUrl)
@@ -195,7 +195,8 @@ FS3ENetPostStatusReq *FS3ENetPostStatusReq_Alloc(
                 + FS3ENet_PackLen(content)
                 + FS3ENet_PackLen(visibility)
                 + FS3ENet_PackLen(spoiler)
-                + FS3ENet_PackLen(inReplyToId);
+                + FS3ENet_PackLen(inReplyToId)
+                + FS3ENet_PackLen(quoteApprovalPolicy);
     FS3ENetPostStatusReq *req =
         (FS3ENetPostStatusReq *)AllocVec(total, MEMF_ANY | MEMF_PUBLIC);
     char *p;
@@ -208,6 +209,7 @@ FS3ENetPostStatusReq *FS3ENetPostStatusReq_Alloc(
     FS3ENet_PackStr(&req->fs3ep_Visibility,   &p, visibility);
     FS3ENet_PackStr(&req->fs3ep_Spoiler,      &p, spoiler);
     FS3ENet_PackStr(&req->fs3ep_InReplyToId,  &p, inReplyToId);
+    FS3ENet_PackStr(&req->fs3ep_QuoteApprovalPolicy, &p, quoteApprovalPolicy);
     return req;
 }
 
@@ -2293,6 +2295,7 @@ static void FS3ENet_HandlePostStatus(FS3ENetMessage *fs3em)
 
     if (!FS3EMastodon_PostStatus(req->fs3ep_ApiBaseUrl, req->fs3ep_AccessToken,
             req->fs3ep_Content, req->fs3ep_Visibility, req->fs3ep_InReplyToId,
+            req->fs3ep_QuoteApprovalPolicy,
             statusId, sizeof(statusId)))
     {
         fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;

@@ -39,6 +39,25 @@ enum {
     MSG_TOOT_VISIBILITY_UNLISTED,
     MSG_TOOT_VISIBILITY_PRIVATE,
     MSG_TOOT_VISIBILITY_DIRECT,
+    /* tv->visibilityMeaning's text, explaining what the currently selected
+     * visibility choice means -- see FS3ETootView_UpdateVisibilityMeaning.
+     * Order must match visibilityMsgIds. */
+    MSG_TOOT_VISIBILITY_MEANING_PUBLIC,
+    MSG_TOOT_VISIBILITY_MEANING_UNLISTED,
+    MSG_TOOT_VISIBILITY_MEANING_PRIVATE,
+    MSG_TOOT_VISIBILITY_MEANING_DIRECT,
+    /* "Who can quote you" chooser -- POST .../statuses' quote_approval_policy
+     * ("public"/"followers"/"nobody"), see FS3ETootView_GetQuotePolicy. */
+    MSG_TOOT_QUOTEPOLICY_PUBLIC,
+    MSG_TOOT_QUOTEPOLICY_FOLLOWERS,
+    MSG_TOOT_QUOTEPOLICY_NOBODY,
+    /* tv->visibilityMeaning's second line, explaining what the currently
+     * selected quote-policy choice means -- see
+     * FS3ETootView_UpdateVisibilityMeaning. Order must match
+     * quotePolicyMsgIds. */
+    MSG_TOOT_QUOTEPOLICY_MEANING_PUBLIC,
+    MSG_TOOT_QUOTEPOLICY_MEANING_FOLLOWERS,
+    MSG_TOOT_QUOTEPOLICY_MEANING_NOBODY,
     MSG_TOOT_SEND,        /* tootBtn label for FS3ETOOT_KIND_NEW/POLL */
     MSG_TOOT_SEND_MODIFY, /* tootBtn label for FS3ETOOT_KIND_MODIFY */
     MSG_TOOT_SEND_REPLY,  /* tootBtn label for FS3ETOOT_KIND_REPLY */

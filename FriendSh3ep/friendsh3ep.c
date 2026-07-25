@@ -402,6 +402,15 @@ static const char *VisibilityString(LONG idx)
     return s[(ULONG)idx];
 }
 
+/* Quote-policy index (from FS3ETootView) → Mastodon quote_approval_policy
+ * API string. */
+static const char *QuotePolicyString(LONG idx)
+{
+    static const char *const s[] = { "public", "followers", "nobody" };
+    if (idx < 0 || idx > 2) return "public";
+    return s[(ULONG)idx];
+}
+
 /* - - - - - - - - - - - - - - - - - - - HELPERS - - - - - - - - - - - - - */
 /* note: this is reached when messages are not used by boopsi gadgets */
 static ULONG IDCMPDispatch(
@@ -1866,6 +1875,7 @@ int main(int argc, char **argv)
                                 /* watch out, return of FS3ETootView_GetUTF8Body() must be freevec() by us */
                                 const char *body    = FS3ETootView_GetUTF8Body(&app->tootView);
                                 LONG visibility     = FS3ETootView_GetVisibility(&app->tootView);
+                                LONG quotePolicy    = FS3ETootView_GetQuotePolicy(&app->tootView);
                                 if (body && body[0] && app->accountAccessToken) {
                                     if (app->tootView.composeKind == FS3ETOOT_KIND_MODIFY &&
                                         app->tootView.composePostId)
@@ -1907,7 +1917,8 @@ int main(int argc, char **argv)
                                                 body,
                                                 VisibilityString(visibility),
                                                 "",
-                                                inReplyToId);
+                                                inReplyToId,
+                                                QuotePolicyString(quotePolicy));
                                         if(body) FreeVec(body);
                                         FS3EApp_NetSend(FS3ENETQ_POST_STATUS, req, sizeof(*req));
                                     }
@@ -1932,6 +1943,11 @@ int main(int argc, char **argv)
                             {
                                 FS3EEmojiBox_HandleFKey(&app->emojiBoxWindow,
                                         app->tootView.bodyEditor,key, qualifiers, app->tootView.window);
+                            }
+                            /* if edidtor has focus (activation), escape key to close the window is here */
+                            if(isUp && key == 0x45)
+                            {
+                                FS3ETootView_Close(&app->tootView);
                             }
 
                          }

@@ -561,7 +561,7 @@ static ULONG TitleBarLayout_OnRender(Class *cl, Object *o, struct gpRender *msg)
             struct URPTextMetric tm;
             struct URPTextPos tpos;
             struct URPTextPos tpos2;
-            const char *ptext = "FriendSh3ep";
+            const char *ptext = "FriendSh3ep \xF0\x9F\x90\x91";
             tpos.x = left+50;
             tpos.y = top;
 

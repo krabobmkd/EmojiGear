@@ -13,8 +13,12 @@
  *     is no "subject" concept in Mastodon toots (see FS3ENetPostStatusReq,
  *     which only ever gets an empty spoiler/CW string from this window).
  *   - main body UniTextEditor (multi-line)
- *   - bottom bar: visibility chooser, char-count label, 2 emoji
- *     UniButtons (emojibox access), "Toot" button bottom-right.
+ *   - bottom bar: visibility chooser, quote-policy chooser, char-count
+ *     label, 2 emoji UniButtons (emojibox access), "Toot" button
+ *     bottom-right.
+ *   - visibilityMeaning: read-only, no-bevel UniButton below the bottom
+ *     bar, one line explaining what the currently selected visibility
+ *     choice means -- see FS3ETootView_UpdateVisibilityMeaning.
  *
  * Pattern adapted from EmojiGear/egsearchbox.c, see fs3eloginview.h for
  * the analogous login sub-window.
@@ -28,6 +32,10 @@
 
 /* Public/Unlisted/Private/Direct, matching brutaldon's PRIVACY_CHOICES. */
 #define FS3ETOOT_NUM_VISIBILITIES 4
+
+/* Everybody/Followers only/Me only -- Mastodon's quote_approval_policy
+ * ("public"/"followers"/"nobody"), added server-side in Mastodon 4.5. */
+#define FS3ETOOT_NUM_QUOTEPOLICIES 3
 
 /* What FS3ETootView_SetComposeContext configures the window to submit when
  * "Toot" is pressed. The contextMessage title text is derived from this +
@@ -75,6 +83,13 @@ typedef struct FS3ETootView {
     Object *contextMessage; /* read-only: "Creating a new toot" / "Replying to ..." */
     Object *bodyEditor;     /* main toot text, multi-line   */
 
+    /* read-only, one-line UniButton at the bottom of the outer vertical
+     * layout, below bottomBar -- shows what the currently selected
+     * visibility choice means (see FS3ETootView_UpdateVisibilityMeaning).
+     * Kept separate from contextMessage so contextMessage stays a plain
+     * "new/reply/modify/poll" label. */
+    Object *visibilityMeaning;
+
     /* What "Toot" is currently set up to submit, and which status (if any)
      * that involves -- see FS3ETootView_SetComposeContext. composePostId
      * and composeMediaIds[] are AllocVec'd copies owned by tv, replaced
@@ -87,6 +102,17 @@ typedef struct FS3ETootView {
     struct List   visibilityList;
     struct Node  *visibilityNodes[FS3ETOOT_NUM_VISIBILITIES];
     Object       *visibilityChooser;
+
+    /* "Who can quote you" -- always editable (unlike visibilityChooser,
+     * Mastodon's edit endpoint does accept quote_approval_policy), but not
+     * yet wired into MODIFY: there's no way to prefill it from the status
+     * being edited, so sending it on edit would silently reset whatever
+     * policy was set when the toot was first posted. Only read by
+     * GID_TOOT_SEND_BUTTON's NEW/POLL/REPLY (POST) path -- see
+     * friendsh3ep.c. */
+    struct List   quotePolicyList;
+    struct Node  *quotePolicyNodes[FS3ETOOT_NUM_QUOTEPOLICIES];
+    Object       *quotePolicyChooser;
 
     Object *charCountLabel;
     char    charCountText[32];
@@ -162,5 +188,8 @@ void FS3ETootView_ClearText(FS3ETootView *tv);
 
 /* 0=public, 1=unlisted, 2=private, 3=direct */
 LONG FS3ETootView_GetVisibility(FS3ETootView *tv);
+
+/* 0=public (Everybody), 1=followers (Followers only), 2=nobody (Me only) */
+LONG FS3ETootView_GetQuotePolicy(FS3ETootView *tv);
 
 #endif /* FS3ETOOTVIEW_H */

@@ -125,6 +125,11 @@ BOOL Action_Accounts(struct App *ctx)
 BOOL Action_NewToot(struct App *ctx)
 {
     if (!ctx) return FALSE;
+    /* Resets any leftover MODIFY/REPLY compose state from a previous open
+     * (postId, title) -- doesn't touch bodyEditor's text itself, so an
+     * in-progress draft still survives a close/reopen the way it always
+     * has. Mirrors GID_TITLEBAR_NEWTOOT's handling in friendsh3ep.c. */
+    FS3ETootView_SetComposeContext(&ctx->tootView, FS3ETOOT_KIND_NEW, NULL);
     FS3ETootView_Open(&ctx->tootView);
     return TRUE;
 }
@@ -479,9 +484,18 @@ BOOL Action_TimelineAutoscrollStop(struct App *ctx)
     return TRUE;
 }
 
+/* Asks TootTimeline itself to copy the "selected" toot's plain UTF-8
+ * body to the Amiga clipboard -- see TTIMELINE_CopySelectedText's own
+ * doc comment in TootTimeline/fs3etoottimeline.h for what "selected"
+ * means (last mouse-down post, or the topmost visible one before any
+ * click). Same "just SetAttrs and let the gadget do it" shape as
+ * Action_TimelineTop above; TootTimeline owns Clipboard_WriteText() call
+ * itself, there's nothing left for this function to do. */
 BOOL Action_TimelineCopyText(struct App *ctx)
 {
-    (void)ctx;
+    if (!ctx || !ctx->tootTimeline) return FALSE;
+
+    SetAttrs(ctx->tootTimeline, TTIMELINE_CopySelectedText, TRUE, TAG_DONE);
     return TRUE;
 }
 

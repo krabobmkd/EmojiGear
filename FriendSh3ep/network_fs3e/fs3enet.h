@@ -556,12 +556,13 @@ typedef struct FS3ENetPostStatusReq {
     char *fs3ep_Visibility;  /* "public", "unlisted", "private", "direct" */
     char *fs3ep_Spoiler;     /* CW text; "" = no content warning */
     char *fs3ep_InReplyToId; /* status being replied to; "" = standalone toot */
+    char *fs3ep_QuoteApprovalPolicy; /* "public", "followers", "nobody" */
 } FS3ENetPostStatusReq;
 
 FS3ENetPostStatusReq *FS3ENetPostStatusReq_Alloc(
     const char *apiBaseUrl, const char *accessToken,
     const char *content, const char *visibility, const char *spoiler,
-    const char *inReplyToId);
+    const char *inReplyToId, const char *quoteApprovalPolicy);
 
 typedef struct FS3ENetPostStatusReply {
     char *fs3ep_StatusId; /* new status id string */

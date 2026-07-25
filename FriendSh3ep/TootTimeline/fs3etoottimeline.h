@@ -276,6 +276,18 @@
  * nothing more. */
 #define TTIMELINE_ScrollStarted         (TTIMELINE_Base + 37)
 
+/* [S] (any -- setting it at all is the trigger, like
+ * TTIMELINE_ScrollToNewest) Copy the "selected" toot's plain UTF-8 body
+ * text to the Amiga clipboard (via Clipboard_WriteText(), see
+ * clipboard.h). There's no persistent multi-toot selection concept here:
+ * "selected" is just whichever post the user's last mouse-down landed on
+ * (see TTL_OnGoActive in fs3etoottimeline_input.c -- recorded on button
+ * DOWN, even if that press then turns into a drag-scroll, not just on a
+ * clean click), or, before any click has happened yet, the topmost
+ * currently visible post/header. No-op if there is nothing to copy (e.g.
+ * an empty timeline). See Action_TimelineCopyText in fs3eaction.c. */
+#define TTIMELINE_CopySelectedText      (TTIMELINE_Base + 38)
+
 
 /* ------------------------------------------------------------------ */
 /* Post content descriptor  (passed via TTIMELINE_AddPost)             */

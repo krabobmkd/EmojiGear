@@ -17,9 +17,6 @@
 #include <proto/button.h>
 #include <gadgets/button.h>
 
-#include <proto/label.h>
-#include <images/label.h>
-
 #include <proto/unitexteditor.h>
 #include <gadgets/unitexteditor.h>
 
@@ -152,6 +149,32 @@ static const ULONG visibilityMsgIds[FS3ETOOT_NUM_VISIBILITIES] = {
     MSG_TOOT_VISIBILITY_PRIVATE, MSG_TOOT_VISIBILITY_DIRECT
 };
 
+/* tv->visibilityMeaning's text -- only for kinds whose visibilityChooser is
+ * actually editable (see tootKindConfig's visibilityEditable and
+ * FS3ETootView_UpdateVisibilityMeaning). Order must match visibilityMsgIds. */
+static const ULONG visibilityMeaningMsgIds[FS3ETOOT_NUM_VISIBILITIES] = {
+    MSG_TOOT_VISIBILITY_MEANING_PUBLIC, MSG_TOOT_VISIBILITY_MEANING_UNLISTED,
+    MSG_TOOT_VISIBILITY_MEANING_PRIVATE, MSG_TOOT_VISIBILITY_MEANING_DIRECT
+};
+
+static const ULONG quotePolicyMsgIds[FS3ETOOT_NUM_QUOTEPOLICIES] = {
+    MSG_TOOT_QUOTEPOLICY_PUBLIC, MSG_TOOT_QUOTEPOLICY_FOLLOWERS,
+    MSG_TOOT_QUOTEPOLICY_NOBODY
+};
+
+/* tv->visibilityMeaning's second line, appended after the visibility
+ * meaning (see FS3ETootView_UpdateVisibilityMeaning). Order must match
+ * quotePolicyMsgIds. */
+static const ULONG quotePolicyMeaningMsgIds[FS3ETOOT_NUM_QUOTEPOLICIES] = {
+    MSG_TOOT_QUOTEPOLICY_MEANING_PUBLIC, MSG_TOOT_QUOTEPOLICY_MEANING_FOLLOWERS,
+    MSG_TOOT_QUOTEPOLICY_MEANING_NOBODY
+};
+
+/* Defined below FS3ETootKindConfig/tootKindConfig (needs both); forward-
+ * declared here since it's called from FS3ETootView_HandleInput, which
+ * comes first in the file. */
+static void FS3ETootView_UpdateVisibilityMeaning(FS3ETootView *tv);
+
 /* "-" if maxChars is 0 (not yet confirmed by the server for the active
  * account -- see App.accountMaxChars in friendsh3ep.h), else its decimal
  * string. Used by both charCountLabel sprintf call sites below. */
@@ -201,6 +224,20 @@ BOOL FS3ETootView_Create(FS3ETootView *tv, struct URPDrawContext *textDC)
     if (!tv->contextMessage) return FALSE;
 
     /* ------------------------------------------------------------------ */
+    /* Visibility meaning: one-line, read-only, no-bevel UniButton at the */
+    /* very bottom of the outer layout -- see FS3ETootView_UpdateVisibility */
+    /* Meaning. Initial text matches visibilityChooser/quotePolicyChooser's */
+    /* CHOOSER_Active default of 0 (Public). */
+    /* ------------------------------------------------------------------ */
+    tv->visibilityMeaning = (Object *)NewObject(UNIBUTTON_GetClass(), NULL,
+        UBT_URPDrawContext, (ULONG)textDC,
+        GA_ReadOnly,        TRUE,
+        UBT_BevelStyle,     BVS_NONE,
+        GA_Text,            (ULONG)LOC(MSG_TOOT_VISIBILITY_MEANING_PUBLIC),
+        TAG_END);
+    if (!tv->visibilityMeaning) return FALSE;
+
+    /* ------------------------------------------------------------------ */
     /* Main body editor - multi-line, word-wrapped, shares the font cache */
     /* ------------------------------------------------------------------ */
     tv->bodyEditor = (Object *)NewObject(UNITEXTEDITOR_GetClass(), NULL,
@@ -243,6 +280,25 @@ BOOL FS3ETootView_Create(FS3ETootView *tv, struct URPDrawContext *textDC)
         TAG_END);
     if (!tv->visibilityChooser) return FALSE;
 
+    NewList(&tv->quotePolicyList);
+    for (i = 0; i < FS3ETOOT_NUM_QUOTEPOLICIES; i++) {
+        struct Node *node = NULL;
+        if (ChooserBase)
+            node = AllocChooserNode(CNA_Text, (ULONG)LOC(quotePolicyMsgIds[i]), TAG_END);
+        tv->quotePolicyNodes[i] = node;
+        if (node) AddTail(&tv->quotePolicyList, node);
+    }
+
+    tv->quotePolicyChooser = (Object *)NewObject(CHOOSER_GetClass(), NULL,
+        GA_ID,          (ULONG)GID_TOOT_QUOTEPOLICY,
+        GA_RelVerify,   TRUE,
+        ICA_TARGET,     (ULONG)TargetInstance,
+        CHOOSER_PopUp,  TRUE,
+        CHOOSER_Labels, (ULONG)&tv->quotePolicyList,
+        CHOOSER_Active, 0UL,
+        TAG_END);
+    if (!tv->quotePolicyChooser) return FALSE;
+
     {
         char maxBuf[16];
         FormatMaxChars(app->accountMaxChars, maxBuf, sizeof(maxBuf));
@@ -284,7 +340,10 @@ BOOL FS3ETootView_Create(FS3ETootView *tv, struct URPDrawContext *textDC)
         LAYOUT_Orientation,  LAYOUT_ORIENT_HORIZ,
         LAYOUT_AddChild,     (ULONG)tv->visibilityChooser,
             CHILD_WeightedWidth, 0,
-            CHILD_MinWidth,      100,
+            CHILD_MinWidth,      130,
+        LAYOUT_AddChild,     (ULONG)tv->quotePolicyChooser,
+            CHILD_WeightedWidth, 0,
+            CHILD_MinWidth,      130,
         LAYOUT_AddChild,     (ULONG)tv->charCountLabel,
             CHILD_WeightedWidth, 0,
             CHILD_MinWidth,      130,
@@ -310,6 +369,8 @@ BOOL FS3ETootView_Create(FS3ETootView *tv, struct URPDrawContext *textDC)
             CHILD_WeightedHeight, 1,
         LAYOUT_AddChild,    (ULONG)bottomBar,
             CHILD_WeightedHeight, 0,
+        LAYOUT_AddChild,    (ULONG)tv->visibilityMeaning,
+            CHILD_WeightedHeight, 0,
 
         TAG_END);
     if (!tv->layout) return FALSE;
@@ -320,7 +381,7 @@ BOOL FS3ETootView_Create(FS3ETootView *tv, struct URPDrawContext *textDC)
         WA_Width,  420,
         WA_Height, 260,
         WA_IDCMP,  IDCMP_CLOSEWINDOW | IDCMP_GADGETUP | IDCMP_NEWSIZE |
-                   IDCMP_MENUPICK /*| IDCMP_RAWKEY*/,
+                   IDCMP_MENUPICK | IDCMP_RAWKEY,
         WA_Flags,  WFLG_DRAGBAR | WFLG_DEPTHGADGET | WFLG_CLOSEGADGET |
                    WFLG_SIZEGADGET | WFLG_SIZEBRIGHT | WFLG_SIZEBBOTTOM |
                    WFLG_ACTIVATE | WFLG_SMART_REFRESH,
@@ -367,6 +428,12 @@ void FS3ETootView_Dispose(FS3ETootView *tv)
                 tv->visibilityNodes[i] = NULL;
             }
         }
+        for (i = 0; i < FS3ETOOT_NUM_QUOTEPOLICIES; i++) {
+            if (tv->quotePolicyNodes[i]) {
+                FreeChooserNode(tv->quotePolicyNodes[i]);
+                tv->quotePolicyNodes[i] = NULL;
+            }
+        }
     }
 }
 
@@ -379,6 +446,21 @@ void FS3ETootView_Open(FS3ETootView *tv)
         ActivateWindow(tv->window);
        DoMethod(tv->windowObj, WM_RETHINK, NULL);
         return; /* already open */
+    }
+
+    /* Every fresh open starts the visibility chooser back at Public,
+     * regardless of whatever was last picked -- Action_NewToot's menu path
+     * also resets composeKind to NEW right before this, but the chooser
+     * itself is reset here so it's consistent across every open path. */
+    if (tv->visibilityChooser) {
+        SetAttrs(tv->visibilityChooser, CHOOSER_Active, 0UL, TAG_END);
+        FS3ETootView_UpdateVisibilityMeaning(tv);
+    }
+    /* Same reasoning for the quote-policy chooser: every fresh open starts
+     * back at Everybody. */
+    if (tv->quotePolicyChooser) {
+        SetAttrs(tv->quotePolicyChooser, CHOOSER_Active, 0UL, TAG_END);
+        FS3ETootView_UpdateVisibilityMeaning(tv);
     }
 
     if (CurrentMainScreen) {
@@ -491,6 +573,8 @@ BOOL FS3ETootView_HandleInput(FS3ETootView *tv)
                 ULONG gadId = result & WMHI_GADGETMASK;
                 if (gadId == GID_TOOT_BODY_EDITOR)
                     FS3ETootView_UpdateCharCount(tv);
+                else if (gadId == GID_TOOT_VISIBILITY || gadId == GID_TOOT_QUOTEPOLICY)
+                    FS3ETootView_UpdateVisibilityMeaning(tv);
 
                 BoopsiDelay_BeginMessage(DelayQueue, gadId);
                 BoopsiDelay_AddTag(DelayQueue, GA_Selected, 0);
@@ -581,27 +665,31 @@ BOOL FS3ETootView_HandleInput(FS3ETootView *tv)
                 break;
             }
 
-           // case WMHI_RAWKEY:
-           //  {
-           //      ULONG key = (result & 0x07f);
-           //      ULONG isUp = (result & 0x080);
-           //      ULONG qualifiers=0;
-           //      int keyUsed=0;
+           case WMHI_RAWKEY:
+            {
+                ULONG key = (result & 0x07f);
+                ULONG isUp = (result & 0x080);
+               // ULONG qualifiers=0;
+               // int keyUsed=0;
 
-           //      GetAttr(WINDOW_Qualifier,app->window_obj,&qualifiers);
-           //      if(!isUp && !keyUsed && tv->window)
-           //      {
-           //          keyUsed = (int) FS3EEmojiBox_HandleFKey(
-           //            &app->emojiBoxWindow,
-           //          tv->bodyEditor, key, qualifiers,tv->window);
-           //      }
-           //      // if (!keyUsed && app->activeEditorObj == app->textEditorObj)
-           //      // {
-           //      //     SetGdAttrs(app->textEditorObj,
-           //      //         UTED_PutRawKey,(result & 0x0ff)|(qualifiers<<16),TAG_END);
-           //      // }
-           //  }
-           //  break;
+                //GetAttr(WINDOW_Qualifier,app->window_obj,&qualifiers);
+                if(isUp && key == 0x45)
+                {
+                    FS3ETootView_Close(tv);
+                }
+                // if(!isUp && !keyUsed && tv->window)
+                // {
+                //     // keyUsed = (int) FS3EEmojiBox_HandleFKey(
+                //     //   &app->emojiBoxWindow,
+                //     // tv->bodyEditor, key, qualifiers,tv->window);
+                // }
+                // if (!keyUsed && app->activeEditorObj == app->textEditorObj)
+                // {
+                //     SetGdAttrs(app->textEditorObj,
+                //         UTED_PutRawKey,(result & 0x0ff)|(qualifiers<<16),TAG_END);
+                // }
+            }
+            break;
 
             default:
                 break;
@@ -706,6 +794,47 @@ static const FS3ETootKindConfig tootKindConfig[] = {
     /* FS3ETOOT_KIND_REPLY  */ { MSG_TOOT_CONTEXT_NEW /* unused, see above */, MSG_TOOT_SEND_REPLY, TRUE, TRUE },
 };
 
+/* Updates tv->visibilityMeaning's text -- blank for kinds whose
+ * visibilityChooser isn't actually editable (MODIFY -- see tootKindConfig),
+ * else the meaning of the currently selected visibility. Called after
+ * SetComposeContext picks a kind, on every visibility chooser change
+ * (GID_TOOT_VISIBILITY in FS3ETootView_HandleInput), and after
+ * FS3ETootView_Open resets the chooser back to Public. */
+static void FS3ETootView_UpdateVisibilityMeaning(FS3ETootView *tv)
+{
+    char textBuf[200];
+    const char *text;
+    const FS3ETootKindConfig *cfg;
+    ULONG kindIdx;
+    LONG vis, qp;
+
+    if (!tv || !tv->visibilityMeaning) return;
+
+    kindIdx = (ULONG)tv->composeKind;
+    if (kindIdx >= sizeof(tootKindConfig) / sizeof(tootKindConfig[0]))
+        kindIdx = FS3ETOOT_KIND_NEW;
+    cfg = &tootKindConfig[kindIdx];
+
+    if (!cfg->visibilityEditable) {
+        text = ""; /* e.g. MODIFY: choosers are disabled, nothing to explain */
+    } else {
+        vis = FS3ETootView_GetVisibility(tv);
+        if (vis < 0 || vis >= FS3ETOOT_NUM_VISIBILITIES) vis = 0;
+        qp = FS3ETootView_GetQuotePolicy(tv);
+        if (qp < 0 || qp >= FS3ETOOT_NUM_QUOTEPOLICIES) qp = 0;
+
+        snprintf(textBuf, sizeof(textBuf), "%s,\n%s",
+                 LOC(visibilityMeaningMsgIds[vis]), LOC(quotePolicyMeaningMsgIds[qp]));
+        text = textBuf;
+    }
+
+    if (tv->window)
+        SetGadgetAttrs((struct Gadget *)tv->visibilityMeaning, tv->window, NULL,
+                       GA_Text, (ULONG)text, TAG_DONE);
+    else
+        SetAttrs(tv->visibilityMeaning, GA_Text, (ULONG)text, TAG_END);
+}
+
 void FS3ETootView_SetComposeContext(FS3ETootView *tv, FS3ETootKind kind,
                                      const FS3ETootComposeParams *params)
 {
@@ -796,6 +925,8 @@ void FS3ETootView_SetComposeContext(FS3ETootView *tv, FS3ETootKind kind,
             SetAttrs(tv->visibilityChooser, GA_Disabled, (ULONG)!cfg->visibilityEditable, TAG_END);
     }
 
+    FS3ETootView_UpdateVisibilityMeaning(tv);
+
     /* Prefill the body -- only for kinds that declare it, every other kind
      * starts from an empty editor. MODIFY prefills with what's already
      * posted (params->body); REPLY prefills with an "@acct " mention
@@ -844,5 +975,15 @@ LONG FS3ETootView_GetVisibility(FS3ETootView *tv)
     if (!tv || !tv->visibilityChooser) return 0;
 
     GetAttr(CHOOSER_Active, tv->visibilityChooser, &active);
+    return (LONG)active;
+}
+
+LONG FS3ETootView_GetQuotePolicy(FS3ETootView *tv)
+{
+    ULONG active = 0;
+
+    if (!tv || !tv->quotePolicyChooser) return 0;
+
+    GetAttr(CHOOSER_Active, tv->quotePolicyChooser, &active);
     return (LONG)active;
 }

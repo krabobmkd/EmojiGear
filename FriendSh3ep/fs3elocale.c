@@ -43,12 +43,33 @@ static const char *defaultStrings[MSG_COUNT] = {
     "Reply to %s's toot\n\nRemember to stay polite and calm,\n and avoid sarcasm.\n -- tone doesn't always come across in text.\nRemember you can be a better person.\xE2\x9D\xA4",
     /* MSG_TOOT_VISIBILITY_PUBLIC */
     "Public",
-    /* MSG_TOOT_VISIBILITY_UNLISTED */
-    "Unlisted",
-    /* MSG_TOOT_VISIBILITY_PRIVATE */
-    "Private",
-    /* MSG_TOOT_VISIBILITY_DIRECT */
-    "Direct",
+    /* MSG_TOOT_VISIBILITY_UNLISTED -- API value "unlisted", shown with the
+     * official app's newer label */
+    "Public (Quiet)",
+    /* MSG_TOOT_VISIBILITY_PRIVATE -- API value "private" */
+    "Followers",
+    /* MSG_TOOT_VISIBILITY_DIRECT -- API value "direct" */
+    "Private mention",
+    /* MSG_TOOT_VISIBILITY_MEANING_PUBLIC */
+    "Visible to everyone, shown in public timelines",
+    /* MSG_TOOT_VISIBILITY_MEANING_UNLISTED */
+    "Visible to everyone, but hidden from public timelines",
+    /* MSG_TOOT_VISIBILITY_MEANING_PRIVATE */
+    "Visible only to your followers",
+    /* MSG_TOOT_VISIBILITY_MEANING_DIRECT */
+    "Visible only to @mentioned accounts - like a PM",
+    /* MSG_TOOT_QUOTEPOLICY_PUBLIC -- API value "public" */
+    "Everybody",
+    /* MSG_TOOT_QUOTEPOLICY_FOLLOWERS -- API value "followers" */
+    "Followers only",
+    /* MSG_TOOT_QUOTEPOLICY_NOBODY -- API value "nobody" */
+    "Me only",
+    /* MSG_TOOT_QUOTEPOLICY_MEANING_PUBLIC */
+    "Can be quoted by anyone",
+    /* MSG_TOOT_QUOTEPOLICY_MEANING_FOLLOWERS */
+    "Can be quoted by followers",
+    /* MSG_TOOT_QUOTEPOLICY_MEANING_NOBODY */
+    "Cannot be quoted",
     /* MSG_TOOT_SEND */
     "Toot",
     /* MSG_TOOT_SEND_MODIFY */

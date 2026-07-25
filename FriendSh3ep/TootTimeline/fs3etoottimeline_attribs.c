@@ -13,6 +13,7 @@
 
 #include "fs3etoottimeline_private.h"
 #include "../bdbprintf.h"
+#include "../clipboard.h"
 /* ------------------------------------------------------------------ */
 /* Apply a tag list to the instance data                                */
 /* ------------------------------------------------------------------ */
@@ -694,6 +695,42 @@ ULONG ttl_apply_tags(Class *cl, Object *o, struct opSet *msg, int couldRefreshDr
                 used = 1;
                 break;
 
+            case TTIMELINE_CopySelectedText: {
+                const char *text = (inst->selectedText && inst->selectedText[0])
+                                  ? inst->selectedText : NULL;
+
+                if (!text) {
+                    /* No click yet -- fall back to the topmost visible
+                     * post/header in the active channel, same
+                     * "first onscreen item" test as
+                     * TTIMELINE_NextTootScrollDelta below. */
+                    TTLChannel *active = ttl_active(inst);
+
+                    if (active->headerPost &&
+                        active->headerPost->timelineY + active->headerPost->height > active->scrollY)
+                    {
+                        text = active->headerPost->body;
+                    } else {
+                        TTLPost *p;
+                        for (p = (TTLPost *)active->posts.mlh_Head;
+                             p->node.mln_Succ;
+                             p = (TTLPost *)p->node.mln_Succ)
+                        {
+                            if (p->timelineY + p->height > active->scrollY) {
+                                text = p->body;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if (text && text[0])
+                    Clipboard_WriteText(text);
+
+                used = 1;
+                break;
+            }
+
             case TTIMELINE_InvalidateImages:
                 /* No layout/height change -- just redraw the currently
                  * active tiles so they pick up whatever image just
@@ -797,6 +834,7 @@ ULONG TTL_OnDispose(Class *cl, Object *o, Msg msg)
         ttl_clear_channel(inst, ch);
     ttl_tiles_free(inst);
     if (inst->waitText) { FreeVec(inst->waitText); inst->waitText = NULL; }
+    if (inst->selectedText) { FreeVec(inst->selectedText); inst->selectedText = NULL; }
 
     return DoSuperMethodA(cl, o, (APTR)msg);
 }

@@ -22,6 +22,7 @@
 #define GID_TOOT_VISIBILITY      22
 #define GID_TOOT_EMOJI_BUTTON    23
 #define GID_TOOT_SEND_BUTTON     24
+#define GID_TOOT_QUOTEPOLICY     25
 
 /* Title bar (Part A, TitleBarLayout) */
 #define GID_TITLEBAR_CLOSE       30

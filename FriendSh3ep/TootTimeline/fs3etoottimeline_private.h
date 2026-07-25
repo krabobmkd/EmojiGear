@@ -553,6 +553,19 @@ typedef struct TTLData {
     char   lastHotSpotAcct[128];    /* @user@instance, see TTIMELINE_LastHotSpotAcct --
                                       * same size as AVATAR_ACCT_SIZE (avatarimages.h) */
 
+    /* ---- "Selected" toot for TTIMELINE_CopySelectedText (see its own
+     * doc comment in fs3etoottimeline.h) ---- AllocVec'd owned copy of
+     * the last-clicked post's body, not a fixed buffer like
+     * lastHotSpotStr above: toot bodies are unbounded (Mastodon instances
+     * can raise the default 500-char limit), and not a borrowed TTLPost*
+     * either -- same "post can scroll away and be freed" reasoning as
+     * lastHotSpotPostId. NULL = no click yet (TTIMELINE_CopySelectedText
+     * then falls back to the topmost visible post). Set in
+     * TTL_OnGoActive (fs3etoottimeline_input.c), read in
+     * ttl_apply_tags (fs3etoottimeline_attribs.c), freed in
+     * TTL_OnDispose. */
+    char  *selectedText;
+
     /* ---- TTIMELINE_OldestPostId/NewestPostId (see TTL_OnGet) ----
      * Same "owned copy, not a borrowed pointer" reasoning as
      * lastHotSpotPostId just above: the old code found the post while

@@ -153,10 +153,16 @@ void FS3EMastodon_UrlEncode(const char *src, char *dst, ULONG dstSize);
  * standalone toot -- this is what actually threads the reply on the
  * server (Mastodon also auto-notifies/mentions the parent's author from
  * this alone, regardless of whether the body text visibly @-mentions them).
+ * quoteApprovalPolicy is one of "public"/"followers"/"nobody" (Mastodon
+ * 4.5+'s quote_approval_policy -- who's allowed to quote this status; the
+ * server silently ignores it on older instances that don't support quote
+ * posts yet). Server also forces it to "nobody" itself when visibility is
+ * private/direct, so no client-side special-casing needed here.
  */
 BOOL FS3EMastodon_PostStatus(const char *apiBaseUrl, const char *accessToken,
                             const char *statusText, const char *visibility,
                             const char *inReplyToId,
+                            const char *quoteApprovalPolicy,
                             char *outStatusId, ULONG outStatusIdSize);
 
 /*

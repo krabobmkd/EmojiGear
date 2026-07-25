@@ -110,10 +110,13 @@ BOOL Action_Refresh(struct App *ctx);
  * Action_TimelineTop). AUTOSCROLL_PLAY/STOP ("Play mode") are
  * implemented too (a second, independent repeating FS3ETimer that fires
  * one Next-toot move every settings.playTootTimeSec seconds, see
- * FS3EPlayModeAnim_Hook in fs3eaction.c). Only COPY_TEXT is still a
- * stub (returns TRUE, no-op): it needs a "currently focused toot"
- * concept TootTimeline doesn't have yet. Menu entries + key wiring are
- * in place for all five either way -- TOP/COPY_TEXT (U/C) are real
+ * FS3EPlayModeAnim_Hook in fs3eaction.c). COPY_TEXT is implemented too --
+ * copies the "selected" toot's plain text to the Amiga clipboard, see
+ * TTIMELINE_CopySelectedText's doc comment in
+ * TootTimeline/fs3etoottimeline.h for what "selected" means (there's no
+ * real multi-toot selection concept, just "last clicked, or topmost
+ * visible before any click"). Menu entries + key wiring are in place for
+ * all five either way -- TOP/COPY_TEXT (U/C) are real
  * Amiga+Key CommKeys (see fs3emenu.c), reaching here via the normal
  * WMHI_MENUPICK path; NEXT_TOOT/AUTOSCROLL_* (Space/P) are plain
  * keypresses instead, wired directly in friendsh3ep.c's WMHI_RAWKEY

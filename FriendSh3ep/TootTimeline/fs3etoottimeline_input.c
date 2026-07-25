@@ -32,6 +32,7 @@
 #include <proto/alib.h>
 #include <intuition/gadgetclass.h>
 #include <devices/inputevent.h>
+#include <string.h>
 
 #include "fs3etoottimeline_private.h"
 #include "../bdbprintf.h"
@@ -39,6 +40,19 @@
 /* Max total movement (either axis) between button-down and button-up for
  * the gesture to still count as a click rather than a scroll. */
 #define TTL_CLICK_SLOP 8
+
+/* Same dup helper as fs3etoottimeline_posts.c/_notif.c/_accountrow.c --
+ * kept local since this file doesn't otherwise share one. */
+static char *dup_str(const char *s)
+{
+    ULONG len;
+    char *copy;
+    if (!s) return NULL;
+    len  = (ULONG)strlen(s);
+    copy = (char *)AllocVec(len + 1, MEMF_ANY);
+    if (copy) CopyMem((APTR)s, copy, len + 1);
+    return copy;
+}
 
 /* ------------------------------------------------------------------ */
 /* Scroll helper: clamp and store pending scroll                        */
@@ -240,10 +254,34 @@ ULONG TTL_OnGoActive(Class *cl, Object *o, struct gpInput *msg)
         msg->gpi_IEvent->ie_Class == IECLASS_RAWMOUSE &&
         (msg->gpi_IEvent->ie_Code & ~IECODE_UP_PREFIX) == IECODE_LBUTTON)
     {
+        TTLPost *hitPost;
+
         inst->dragActive      = TRUE;
         inst->dragStartGadX   = msg->gpi_Mouse.X;
         inst->dragStartGadY   = msg->gpi_Mouse.Y;
         inst->dragStartScrollY = ttl_active(inst)->scrollY;
+
+        /* "Selected" toot for TTIMELINE_CopySelectedText -- see the
+         * selectedText doc comment in fs3etoottimeline_private.h. Every
+         * button-down updates it, even one that turns into a drag-scroll
+         * (see TTIMELINE_CopySelectedText's own doc comment) -- a
+         * button-down that lands on empty space (hitPost NULL) leaves
+         * whatever was selected before untouched, same as clicking
+         * nothing doesn't deselect it. GM_GOACTIVE can run off the app's
+         * main task (same reasoning as GM_HANDLEINPUT's listSem comment
+         * above ttl_hit_hotspot), so this is semaphore-protected like
+         * every other post-list walk. */
+        ObtainSemaphore(&inst->listSem);
+        hitPost = ttl_hit_post(inst, ttl_active(inst)->scrollY + inst->dragStartGadY);
+        if (hitPost) {
+            char *copy = dup_str(hitPost->body);
+            if (copy) {
+                if (inst->selectedText) FreeVec(inst->selectedText);
+                inst->selectedText = copy;
+            }
+        }
+        ReleaseSemaphore(&inst->listSem);
+
         return GMR_MEACTIVE;
     }
 
