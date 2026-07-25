@@ -323,8 +323,16 @@ ULONG ttl_apply_tags(Class *cl, Object *o, struct opSet *msg, int couldRefreshDr
                              post->node.mln_Succ;
                              post = (TTLPost *)post->node.mln_Succ)
                         {
-                            if (!post->postId ||
-                                strcmp(post->postId, upd->postId) != 0)
+                            /* Matched by targetId (falling back to postId),
+                             * not plain postId: the id echoed back by the
+                             * server after a favourite/reblog toggle is
+                             * whatever id was actually sent to interact with
+                             * (see TTLPostSetup.targetId) -- for a reblog-
+                             * wrapper row that's the ORIGINAL status' id,
+                             * not this row's own wrapper postId. */
+                            const char *matchId = (post->targetId && post->targetId[0])
+                                                 ? post->targetId : post->postId;
+                            if (!matchId || strcmp(matchId, upd->postId) != 0)
                                 continue;
 
                             /* Delta, not overwrite -- see the TTLPostUpdate
@@ -403,8 +411,14 @@ ULONG ttl_apply_tags(Class *cl, Object *o, struct opSet *msg, int couldRefreshDr
                              post->node.mln_Succ;
                              post = (TTLPost *)post->node.mln_Succ)
                         {
-                            if (!post->postId ||
-                                strcmp(post->postId, postId) != 0)
+                            /* Matched by targetId, same reasoning as
+                             * TTIMELINE_UpdatePost above -- a delete's
+                             * server-echoed id targets the ORIGINAL status
+                             * for a reblog-wrapper row, not the wrapper's
+                             * own postId. */
+                            const char *matchId = (post->targetId && post->targetId[0])
+                                                 ? post->targetId : post->postId;
+                            if (!matchId || strcmp(matchId, postId) != 0)
                                 continue;
 
                             /* Removing a post shifts every post below it,
@@ -460,9 +474,16 @@ ULONG ttl_apply_tags(Class *cl, Object *o, struct opSet *msg, int couldRefreshDr
                          * own id (pagination), NOT the embedded status's --
                          * see TTLPostSetup.notifStatusId's doc comment. "" for
                          * TTL_NOTIF_FOLLOW/FOLLOW_REQUEST (no embedded status
-                         * at all) -- skip those rows, nothing to refresh. */
+                         * at all) -- skip those rows, nothing to refresh.
+                         * Otherwise this is the id to actually GET-refetch
+                         * from the server (see FS3EApp_RefreshVisibleToots),
+                         * so it must be targetId (the ORIGINAL status for a
+                         * reblog-wrapper row), not postId -- fetching the
+                         * wrapper's own id back wouldn't return this row's
+                         * displayed content. */
                         statusId = (post->notifType == TTL_NOTIF_NONE)
-                                   ? post->postId : post->notifStatusId;
+                                   ? ((post->targetId && post->targetId[0]) ? post->targetId : post->postId)
+                                   : post->notifStatusId;
                         if (!statusId || !statusId[0]) continue;
 
                         idLen  = strlen(post->postId) + 1;

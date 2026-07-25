@@ -198,6 +198,9 @@ BOOL Action_ViewSearch(struct App *ctx)
 {
     (void)ctx;
     fs3e_setViewMode(VIEWMODE_Search);
+    /* in that case, give focus to search bar when possible */
+    ctx->searchWordEditor_activateNextRound = 2;
+
     return TRUE;
 }
 
@@ -649,6 +652,24 @@ BOOL Action_ToggleFavorite(struct App *ctx, const char *postId, BOOL currentlyFa
     if (!req) return FALSE;
 
     if (!FS3EApp_NetSend(FS3ENETQ_FAVORITE, req, sizeof(*req))) {
+        FreeVec(req);
+        return FALSE;
+    }
+    return TRUE;
+}
+
+BOOL Action_ToggleReblog(struct App *ctx, const char *postId, BOOL currentlyReblogged)
+{
+    FS3ENetReblogReq *req;
+
+    if (!ctx || !postId || !postId[0]) return FALSE;
+    if (!ctx->accountAccessToken || !ctx->accountAccessToken[0]) return FALSE;
+
+    req = FS3ENetReblogReq_Alloc(ctx->accountApiBaseUrl, ctx->accountAccessToken,
+                                 postId, !currentlyReblogged);
+    if (!req) return FALSE;
+
+    if (!FS3EApp_NetSend(FS3ENETQ_REBLOG, req, sizeof(*req))) {
         FreeVec(req);
         return FALSE;
     }

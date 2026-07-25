@@ -257,6 +257,20 @@
  * TTL_HOT_FOLLOW handler decide POST .../follow vs .../unfollow without a
  * separate lookup, same reasoning as TTIMELINE_LastHotSpotFavourited. */
 #define TTIMELINE_LastHotSpotFollowing  (TTIMELINE_Base + 28)
+/* [G] BOOL: same OM_NOTIFY tag list as TTIMELINE_HotSpotNotify -- TRUE if
+ * the post the just-activated hot-spot belongs to is currently reblogged
+ * (boosted) by the connected user. Meaningless (FALSE) for hot-spot types
+ * with no owning post -- lets a TTL_HOT_BOOST handler decide POST
+ * .../reblog vs .../unreblog without a separate lookup, same reasoning as
+ * TTIMELINE_LastHotSpotFavourited. */
+#define TTIMELINE_LastHotSpotReblogged  (TTIMELINE_Base + 39)
+/* [G] BOOL: same OM_NOTIFY tag list as TTIMELINE_HotSpotNotify -- TRUE if
+ * the connected user is currently allowed to Quote the post the
+ * just-activated hot-spot belongs to (see TTLPost.quotable/
+ * FS3ENetStatus.fmas_Quotable). Meaningless (FALSE) for hot-spot types
+ * with no owning post -- lets a TTL_HOT_BOOST handler decide whether to
+ * offer a Boost/Quote choice at all. */
+#define TTIMELINE_LastHotSpotQuotable   (TTIMELINE_Base + 40)
 /* Ask full redraw from correct process */
 #define TTIMELINE_ProcessRefresh        (TTIMELINE_Base + 23)
 /* The gadget's own internal mouse-drag scroll (click+drag on the post
@@ -358,10 +372,21 @@ typedef struct TTLPostSetup {
                                * clicking the "X boosted" line actually opens (see
                                * TTL_HOT_AVATAR on TTL_SPAN_BOOSTBY) */
     const char *avatarURL;   /* CDN URL of original author's avatar */
-    const char *postId;      /* Mastodon status id string, for hot-spot activation
-                               * notifications (TTL_HOT_REPLY/BOOST/FAVORITE need to
-                               * know which status to act on) -- see
-                               * TTIMELINE_LastHotSpotPostId. NULL/"" if unknown. */
+    const char *postId;      /* Mastodon status id string -- this timeline ROW's own
+                               * id, used for pagination (TTIMELINE_NewestPostId/
+                               * OldestPostId) and to find/patch this exact row later
+                               * (TTIMELINE_UpdatePost/RemovePost/RefreshPost). For a
+                               * genuine reblog-unwrapped entry this is the REBLOG
+                               * WRAPPER's own id, NOT the id to interact with -- see
+                               * targetId for that. NULL/"" if unknown. */
+    const char *targetId;    /* the id hot-spot activation notifications carry as
+                               * TTIMELINE_LastHotSpotPostId (TTL_HOT_REPLY/BOOST/
+                               * FAVORITE/MODIFY/DELETE/THREAD all act on this, not
+                               * postId) -- the ORIGINAL status' id for a reblog
+                               * wrapper, same as postId for everything else.
+                               * Mastodon's interaction endpoints operate on real
+                               * content, never a reblog's own wrapper row. NULL/""
+                               * falls back to postId (see ttl_activate_hotspot). */
     const char *mediaUrls[TTL_POST_MAX_MEDIA]; /* attachment preview URLs;
                                * NULL past mediaCount. Gadget copies each
                                * string and drives its own fetch/thumbnail/
@@ -413,6 +438,38 @@ typedef struct TTLPostSetup {
     ULONG       favouritesCount;
     BOOL        favourited;
     BOOL        reblogged;
+
+    /* TRUE if the connected user is currently allowed to Quote this post
+     * (server-computed from the post author's quote_approval_policy plus
+     * the follow relationship -- see FS3ENetStatus.fmas_Quotable's doc
+     * comment in fs3enet.h). Drives whether TTL_HOT_BOOST's click handler
+     * offers a Boost/Quote choice or just boosts directly -- see
+     * TTIMELINE_LastHotSpotQuotable. */
+    BOOL        quotable;
+
+    /* TRUE if this post is itself a reply (server's in_reply_to_id is
+     * non-null) -- see FS3ENetStatus.fmas_IsReply's doc comment. Drives
+     * whether a "Follow discussion up" affordance is shown alongside the
+     * existing "...down" one (see TTL_HOT_THREAD_UP), independent of
+     * repliesCount (a post can be a reply AND have its own replies, have
+     * neither, or just one of the two). */
+    BOOL        isReply;
+
+    /* Embedded quote (Mastodon 4.4+) -- the status THIS post is itself
+     * quoting, if any. hasQuote FALSE means every other quoteXxx field
+     * below is unused -- see FS3ENetStatus.fmas_HasQuote's doc comment for
+     * exactly which server states populate this. Rendered as a minimal
+     * avatar+name+body+timestamp block below a separator line at the
+     * bottom of the post (see ttl_toot_layout/ttl_toot_render) -- never
+     * its own action bar/media/poll/card, and never a further nested quote
+     * even if the quoted status is itself a quote (bounded to one level). */
+    BOOL        hasQuote;
+    const char *quoteId;           /* quoted status' own id -- TTL_HOT_QUOTECARD target */
+    const char *quoteAuthorName;
+    const char *quoteAuthorAcct;
+    const char *quoteAvatarURL;
+    const char *quoteBody;
+    const char *quoteTimestamp;
 
     /* TRUE if this post's original author is the connected user (caller
      * compares the status author's acct against the active account, e.g.
@@ -610,11 +667,12 @@ typedef struct TTLProfileFollowUpdate {
 #define TTL_HOT_DELETE      15 /* action bar's "Delete" text button, own toots only (post->isOwn) --
                                  * left-aligned, next to TTL_HOT_MODIFY; data is NULL, postId is the
                                  * status to delete */
-#define TTL_HOT_THREAD      16 /* "N replies, click to see the discussion" affordance row -- a short
-                                 * vertical bar + "..." shown only when post->repliesCount>0, just
-                                 * above the action bar (see TTLPost.threadRowY). data is NULL,
-                                 * postId is the status whose discussion to open -- see
-                                 * FS3EApp_OpenDiscussion. */
+#define TTL_HOT_THREAD      16 /* "Follow discussion" affordance row -- a short vertical bar +
+                                 * text shown only when post->repliesCount>0, just above the
+                                 * action bar (see TTLPost.threadRowY). data is NULL, postId is
+                                 * the status whose discussion to open -- see
+                                 * FS3EApp_OpenDiscussion(statusId, FALSE) (descendants only, NOT
+                                 * this post's own ancestors -- see TTL_HOT_THREAD_UP for that). */
 #define TTL_HOT_NOTIF_STATUS 17 /* notifications view's actor/verb prefix line (see
                                  * TTLPostSetup.notifType/notifActorName/notifActorAcct) --
                                  * data/dataLen carry notifStatusId (the embedded status, NOT
@@ -638,6 +696,24 @@ typedef struct TTLProfileFollowUpdate {
                                  * app-side (same as TTL_HOT_FOLLOW) and calls
                                  * FS3EApp_ShowFollowers(). */
 #define TTL_HOT_FOLLOWING_LIST 20 /* same line's "N Following" half; calls FS3EApp_ShowFollowing(). */
+#define TTL_HOT_QUOTECARD    21 /* embedded quote block rectangle (see TTLPost.hasQuote/quoteXxx) --
+                                 * data/dataLen carry quoteId (the QUOTED status' own id, NOT
+                                 * postId, which stays this post's own id for pagination -- same
+                                 * "data carries the OTHER status' id" convention as
+                                 * TTL_HOT_NOTIF_STATUS). Clicking it opens that quoted status'
+                                 * own discussion via FS3EApp_OpenDiscussion(hotSpotString, FALSE),
+                                 * same as TTL_HOT_THREAD/TTL_HOT_NOTIF_STATUS. */
+#define TTL_HOT_THREAD_UP    22 /* "Follow discussion up" affordance row -- shown only when
+                                 * post->isReply (this post is itself a reply to something),
+                                 * independent of TTL_HOT_THREAD/repliesCount (a post can have
+                                 * either, both, or neither) -- see TTLPost.threadUpRowY, drawn
+                                 * ABOVE TTL_HOT_THREAD's row when both are present. data is NULL,
+                                 * postId is THIS post's own id -- fetching its context already
+                                 * returns the full ancestor chain regardless of which specific
+                                 * ancestor started it (see FS3ENetStatus.fmas_IsReply). Opens the
+                                 * SAME discussion as TTL_HOT_THREAD would, but via
+                                 * FS3EApp_OpenDiscussion(hotSpotId, TRUE) -- ancestors AND
+                                 * descendants, the whole thread, not just this post's replies. */
 
 /* Opaque handle; cast to TTLHotSpot* from private header if needed */
 typedef struct TTLHotSpot TTLHotSpot;

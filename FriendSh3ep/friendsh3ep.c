@@ -733,11 +733,12 @@ void fs3e_setViewMode(ULONG viewMode)
     ULONG oldViewMode;
     if(app->viewMode == viewMode)
     {
-        /* if we jump to search view, give keyboard focus to search */
-        if(viewMode == VIEWMODE_Search && app->searchWordEditor && CurrentMainWindow)
-        {
-            ActivateGadget(app->searchWordEditor,CurrentMainWindow,NULL);
-        }
+        // /* if we jump to search view, give keyboard focus to search */
+        // if(viewMode == VIEWMODE_Search && app->searchWordEditor && CurrentMainWindow)
+        // {
+        //     app->searchWordEditor_activateNextRound = 2;
+        // }
+        /* already the correct view */
         return;
     }
     if(viewMode >=VIEWMODE_NumberOf) return;
@@ -785,10 +786,11 @@ void fs3e_setViewMode(ULONG viewMode)
     FS3EApp_CheckConnectionState();
 
     /* if we jump to search view, give keyboard focus to search */
-    if(viewMode == VIEWMODE_Search && app->searchWordEditor && CurrentMainWindow)
-    {
-        ActivateGadget(app->searchWordEditor,CurrentMainWindow,NULL);
-    }
+    // if(viewMode == VIEWMODE_Search && app->searchWordEditor && CurrentMainWindow)
+    // {
+    //     /* the gadget is visible later, view change, it needs a bit of messages before activating the line search */
+    //     app->searchWordEditor_activateNextRound = 2;
+    // }
 }
 
 /* Close every classic BOOPSI sub-window (but don't dispose them -- they
@@ -1774,7 +1776,12 @@ int main(int argc, char **argv)
                                 if (ptag && ptag->ti_Data)
                                 {
                                     /* possible because the GID order and the view enum match */
-                                    fs3e_setViewMode((ULONG)(sender_ID-GID_NAV_USER));
+                                    ULONG emode = (ULONG)(sender_ID-GID_NAV_USER);
+                                    fs3e_setViewMode(emode);
+                                    if(emode == VIEWMODE_Search)
+                                    {
+                                        app->searchWordEditor_activateNextRound = 2;
+                                    }
                                 }
                                 else
                                 {   /* if up but is current viewmode, put selection back. */
@@ -1906,9 +1913,14 @@ int main(int argc, char **argv)
                                          * toots have no subject concept, so spoiler
                                          * text is always empty. REPLY's composePostId
                                          * is the status being replied to -- see
-                                         * FS3EMastodon_PostStatus's inReplyToId. */
+                                         * FS3EMastodon_PostStatus's inReplyToId.
+                                         * QUOTE's composePostId is the status being
+                                         * quoted -- see quotedStatusId. */
                                         const char *inReplyToId =
                                             (app->tootView.composeKind == FS3ETOOT_KIND_REPLY)
+                                            ? app->tootView.composePostId : "";
+                                        const char *quotedStatusId =
+                                            (app->tootView.composeKind == FS3ETOOT_KIND_QUOTE)
                                             ? app->tootView.composePostId : "";
                                         FS3ENetPostStatusReq *req =
                                             FS3ENetPostStatusReq_Alloc(
@@ -1918,7 +1930,8 @@ int main(int argc, char **argv)
                                                 VisibilityString(visibility),
                                                 "",
                                                 inReplyToId,
-                                                QuotePolicyString(quotePolicy));
+                                                QuotePolicyString(quotePolicy),
+                                                quotedStatusId);
                                         if(body) FreeVec(body);
                                         FS3EApp_NetSend(FS3ENETQ_POST_STATUS, req, sizeof(*req));
                                     }
@@ -1998,10 +2011,7 @@ int main(int argc, char **argv)
                                 StartSearchFromLine();
 
                                 /*good idea to send stop having focus to editor so usual keys works */
-                                if(CurrentMainWindow && app->tootTimeline)
-                                {
-                                    ActivateGadget(app->tootTimeline,CurrentMainWindow,NULL);
-                                }
+                                /* -> deactivation has to be done by the gadget input message itself after sending UTEDN_EnterPressed !! */
                             }
                         }
                         break;
@@ -2017,6 +2027,8 @@ int main(int argc, char **argv)
                                     const char *hotSpotAcct = NULL;
                                     BOOL hotSpotFavourited = FALSE;
                                     BOOL hotSpotFollowing = FALSE;
+                                    BOOL hotSpotReblogged = FALSE;
+                                    BOOL hotSpotQuotable = FALSE;
 
                                     ptag = FindTagItem(TTIMELINE_LastHotSpotString, msg);
                                     if(ptag) hotSpotString  =(const char *)ptag->ti_Data;
@@ -2035,6 +2047,12 @@ int main(int argc, char **argv)
 
                                     ptag = FindTagItem(TTIMELINE_LastHotSpotFollowing, msg);
                                     if(ptag) hotSpotFollowing = (BOOL)ptag->ti_Data;
+
+                                    ptag = FindTagItem(TTIMELINE_LastHotSpotReblogged, msg);
+                                    if(ptag) hotSpotReblogged = (BOOL)ptag->ti_Data;
+
+                                    ptag = FindTagItem(TTIMELINE_LastHotSpotQuotable, msg);
+                                    if(ptag) hotSpotQuotable = (BOOL)ptag->ti_Data;
 
 
                                     switch (hotSpotType)
@@ -2091,8 +2109,19 @@ int main(int argc, char **argv)
                                         case TTL_HOT_THREAD:
                                             /* hotSpotId is the status whose
                                              * discussion to open -- see
-                                             * FS3EApp_OpenDiscussion. */
-                                            FS3EApp_OpenDiscussion(hotSpotId);
+                                             * FS3EApp_OpenDiscussion. Down
+                                             * only (descendants) -- see
+                                             * TTL_HOT_THREAD_UP for the
+                                             * whole-thread variant. */
+                                            FS3EApp_OpenDiscussion(hotSpotId, FALSE);
+                                            break;
+
+                                        case TTL_HOT_THREAD_UP:
+                                            /* Same status id as
+                                             * TTL_HOT_THREAD (this post's
+                                             * own), but the whole thread --
+                                             * ancestors AND descendants. */
+                                            FS3EApp_OpenDiscussion(hotSpotId, TRUE);
                                             break;
 
                                         case TTL_HOT_NOTIF_STATUS:
@@ -2104,7 +2133,18 @@ int main(int argc, char **argv)
                                              * a notification row is the
                                              * *notification's* own id -- see
                                              * TTLPostSetup.notifStatusId). */
-                                            FS3EApp_OpenDiscussion(hotSpotString);
+                                            FS3EApp_OpenDiscussion(hotSpotString, FALSE);
+                                            break;
+
+                                        case TTL_HOT_QUOTECARD:
+                                            /* Embedded quote block -- same
+                                             * "data carries the OTHER
+                                             * status' id" convention as
+                                             * TTL_HOT_NOTIF_STATUS above:
+                                             * hotSpotId stays THIS post's
+                                             * own id, hotSpotString is the
+                                             * quoted status' id. */
+                                            FS3EApp_OpenDiscussion(hotSpotString, FALSE);
                                             break;
 
                                         case TTL_HOT_FOLLOW:
@@ -2197,6 +2237,57 @@ int main(int argc, char **argv)
                                              * menu entry -- see
                                              * fs3eaction.c. */
                                             Action_ToggleFavorite(app, hotSpotId, hotSpotFavourited);
+                                            break;
+
+                                        case TTL_HOT_BOOST:
+                                            /* Un-boosting or a non-quotable
+                                             * post: same one-liner as
+                                             * TTL_HOT_FAVORITE, no dialog --
+                                             * reblogs_count update happens
+                                             * once the server confirms, via
+                                             * the FS3ENETQ_REBLOG reply
+                                             * handler's TTIMELINE_UpdatePost.
+                                             * Boosting a quotable post asks
+                                             * Boost/Quote/Cancel first, same
+                                             * "long-press reveals a choice"
+                                             * UX every mainstream Mastodon
+                                             * app already has for this --
+                                             * EasyRequestArgs' real
+                                             * numbering (confirmed against
+                                             * the intuition.doc autodoc's
+                                             * RESULT section, NOT the
+                                             * "rightmost=0, increasing
+                                             * leftward" guess that only
+                                             * happens to hold for exactly 2
+                                             * gadgets like Delete|Cancel
+                                             * above): left to right is
+                                             * 1, 2, ..., N, 0 -- so for
+                                             * "Boost|Quote|Cancel", Boost=1,
+                                             * Quote=2, Cancel(rightmost)=0. */
+                                            if (hotSpotReblogged || !hotSpotQuotable) {
+                                                Action_ToggleReblog(app, hotSpotId, hotSpotReblogged);
+                                            } else if (hotSpotId && hotSpotId[0]) {
+                                                struct EasyStruct es = {
+                                                    sizeof(struct EasyStruct), 0,
+                                                    (UBYTE *)"FriendSh3ep - Share Toot",
+                                                    (UBYTE *)"Share this toot?",
+                                                    (UBYTE *)"Boost|Quote|Cancel"
+                                                };
+                                                LONG choice = EasyRequestArgs(CurrentMainWindow, &es, NULL, NULL);
+
+                                                if (choice == 1) {
+                                                    Action_ToggleReblog(app, hotSpotId, hotSpotReblogged);
+                                                } else if (choice == 2) {
+                                                    FS3ETootComposeParams params;
+                                                    memset(&params, 0, sizeof(params));
+                                                    params.postId = hotSpotId;
+                                                    params.acct   = hotSpotAcct;
+                                                    FS3ETootView_SetComposeContext(&app->tootView,
+                                                        FS3ETOOT_KIND_QUOTE, &params);
+                                                    FS3ETootView_Open(&app->tootView);
+                                                }
+                                                /* choice==0 (Cancel): do nothing */
+                                            }
                                             break;
 
                                         case TTL_HOT_MODIFY:
@@ -2292,10 +2383,6 @@ int main(int argc, char **argv)
                                             }
                                             break;
 
-                                        /* TTL_HOT_BOOST: left for after
-                                         * toot composing/editing is in
-                                         * place (see todo.txt). */
-
                                         default:
                                             break;
                                     }
@@ -2351,6 +2438,18 @@ int main(int argc, char **argv)
                     RefreshGList((struct Gadget *)app->nav_btns[i],
                              CurrentMainWindow, NULL, 1);
                 }
+            }
+            if(app->searchWordEditor_activateNextRound>0)
+            {
+                app->searchWordEditor_activateNextRound--;
+                /* the gadget is visible later, view change,
+                 * it needs a bit of messages before activating the line search */
+                if(app->searchWordEditor_activateNextRound == 0)
+                if(app->searchWordEditor && CurrentMainWindow)
+                {
+                    ActivateGadget(app->searchWordEditor,CurrentMainWindow,NULL);
+                }
+
             }
 
 

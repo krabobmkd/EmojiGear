@@ -54,7 +54,7 @@ _LVORemove     EQU   -252
    LABEL ClassLib_SIZEOF
 
 ; important they must be the same as in the .c sources
-VERSION		EQU	4
+VERSION		EQU	5
 REVISION	EQU	3
 
 CALL	MACRO

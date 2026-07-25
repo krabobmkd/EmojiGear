@@ -140,9 +140,9 @@ static BOOL ttl_hit_hotspot(TTLData *inst, WORD gadX, WORD gadY,
 
 /* The link-click action. Every activation is forwarded to external code
  * via ttl_notify_hotspot() -- TTIMELINE_HotSpotNotify (value=hs->type)
- * plus the hot-spot's string data and the owning post's Mastodon status
- * id, both as persistent gadget-owned buffers external code can read off
- * the same notify's tag list (or via TTIMELINE_LastHotSpotString/PostId
+ * plus the hot-spot's string data and the id every hot-spot ACTION should
+ * target, both as persistent gadget-owned buffers external code can read
+ * off the same notify's tag list (or via TTIMELINE_LastHotSpotString/PostId
  * GetAttr afterwards) -- generic across every item kind, so it happens
  * here rather than in a per-class hook. Whatever the clicked item's own
  * class wants to do locally beyond that (see TTL_HOT_MEDIA_PREV/NEXT
@@ -152,9 +152,21 @@ static void ttl_activate_hotspot(TTLData *inst, Class *cl, Object *o,
                                   struct GadgetInfo *gi,
                                   TTLPost *post, TTLHotSpot *hs)
 {
-    ttl_notify_hotspot(cl, o, gi, hs->type, hs->data, hs->dataLen, post->postId,
-                        post->favourited, post->following, post->mediaIdsJoined,
-                        post->acct);
+    /* targetId, not postId: every actual hot-spot ACTION (Reply/Boost/
+     * Fave/Modify/Delete/Thread) needs the id to actually interact with,
+     * which for a reblog-wrapper post is the ORIGINAL status, not the
+     * wrapper row postId identifies -- see TTLPostSetup.targetId's doc
+     * comment. postId itself stays reserved for pagination/row-matching
+     * (TTIMELINE_NewestPostId/OldestPostId, TTIMELINE_UpdatePost/
+     * RemovePost/RefreshPost), neither of which goes through hot-spot
+     * notifications at all. Falls back to postId when targetId is unset
+     * (non-toot item kinds -- account rows/profile headers -- never set
+     * it, and behave exactly as before). */
+    const char *targetId = (post->targetId && post->targetId[0]) ? post->targetId : post->postId;
+
+    ttl_notify_hotspot(cl, o, gi, hs->type, hs->data, hs->dataLen, targetId,
+                        post->favourited, post->following, post->reblogged,
+                        post->quotable, post->mediaIdsJoined, post->acct);
 
     if (post->cls && post->cls->activate)
         post->cls->activate(inst, cl, o, gi, post, hs);

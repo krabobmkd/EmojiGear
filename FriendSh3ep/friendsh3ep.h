@@ -162,6 +162,7 @@ struct App {
      * gets added to mainlayout, not tootTimeline directly. */
     Object *searchBarLayout;
     Object *searchWordEditor;
+    int     searchWordEditor_activateNextRound;
     Object *searchWordTypeChooser;
     struct List   searchWordTypeList;
     struct Node  *searchWordTypeNodes[2]; /* 0="Word", 1="People" -- see FS3ESearchTypeChoice */

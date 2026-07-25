@@ -283,14 +283,18 @@ static void ttl_append_count(char *buf, ULONG bufsz, const char *prefix, ULONG c
 
 /* \xF0\x9F\x92\xAB = 💫 (dizzy symbol, stand-in for an empty/outline
  * star -- none of the bundled fonts have one); \xE2\xAD\x90 = ⭐ (filled
- * star), shown once the connected user has favourited the post. */
+ * star), shown once the connected user has favourited the post.
+ * \xF0\x9F\x94\x81 = 🔁 (plain repeat, not-yet-boosted); \xE2\x99\xBB = ♻
+ * (same glyph notifVerbFormat's TTL_NOTIF_REBLOG line already uses for
+ * "boosted"), shown once the connected user has reblogged the post. */
 void ttl_build_action_labels(const TTLPost *post,
                               char labels[3][TTL_ACTION_LABEL_MAX])
 {
     ttl_append_count(labels[0], TTL_ACTION_LABEL_MAX,
                       "\xe2\x86\xa9 Reply", post->repliesCount);
     ttl_append_count(labels[1], TTL_ACTION_LABEL_MAX,
-                      "\xF0\x9F\x94\x81 Boost", post->reblogsCount);
+                      post->reblogged ? "\xE2\x99\xBB Boost" : "\xF0\x9F\x94\x81 Boost",
+                      post->reblogsCount);
     ttl_append_count(labels[2], TTL_ACTION_LABEL_MAX,
                       post->favourited ? "\xE2\xAD\x90" : "\xF0\x9F\x92\xAB",
                       post->favouritesCount);
@@ -887,12 +891,31 @@ void ttl_toot_render(TTLData *inst, struct RastPort *rp, TTLPost *post, LONG til
                     }
                 }
 
+                /* "Follow discussion up" -- this post is itself a reply;
+                 * threadUpRowY was computed once by ttl_toot_layout and is
+                 * reused verbatim here, same rule as pollBlockY above.
+                 * Clickable -- see TTL_HOT_THREAD_UP. Opens the whole
+                 * thread (ancestors AND descendants), unlike the "...down"
+                 * row below (descendants only). */
+                if (post->isReply && post->threadUpRowY > 0) {
+                    LONG accentPen = (LONG)FS3E_PEN(inst->style, FS3E_COLOR_ACCENT);
+                    WORD rowY    = (WORD)(drawY + post->threadUpRowY);
+                    WORD barBotY = (WORD)(rowY + inst->miniLineHeight - 1);
+
+                    SetAPen(rp, accentPen);
+                    Move(rp, textX, rowY);
+                    Draw(rp, textX, barBotY);
+
+                    URPDC_SetDrawColorFromPen(dcMini, inst->screen, dimPen, bgPen);
+                    tile_draw_text(inst, rp, (WORD)(textX + 6), (WORD)(rowY + inst->miniLineAscent),
+                                   "\xE2\x86\x91 Follow discussion up" /* "↑ Follow discussion up" */, dcMini);
+                }
+
                 /* Thread indicator: short vertical bar + "..." meaning
                  * "this toot has replies, click to see the discussion" --
                  * threadRowY was computed once by ttl_toot_layout and is
                  * reused verbatim here -- never re-derived, same rule as
-                 * pollBlockY above. Not clickable yet (see TTL_HOT_THREAD's
-                 * doc comment) -- layout/render only for now. */
+                 * pollBlockY above. Clickable -- see TTL_HOT_THREAD. */
                 if (post->repliesCount > 0 && post->threadRowY > 0) {
                     LONG accentPen = (LONG)FS3E_PEN(inst->style, FS3E_COLOR_ACCENT);
                     WORD rowY    = (WORD)(drawY + post->threadRowY);
@@ -904,7 +927,7 @@ void ttl_toot_render(TTLData *inst, struct RastPort *rp, TTLPost *post, LONG til
 
                     URPDC_SetDrawColorFromPen(dcMini, inst->screen, dimPen, bgPen);
                     tile_draw_text(inst, rp, (WORD)(textX + 6), (WORD)(rowY + inst->miniLineAscent),
-                                   "\xE2\x80\xA2\xE2\x80\xA2\xE2\x80\xA2" /* "•••" */, dcMini);
+                                   "\xE2\x86\x93 Follow discussion \xE2\x80\xA2\xE2\x80\xA2\xE2\x80\xA2" /* "↓ Follow discussion •••" */, dcMini);
                 }
 
                 /* Action bar: ↩ Reply N  🔁 Boost N  ⭐/💫 N — right-aligned,
@@ -920,8 +943,7 @@ void ttl_toot_render(TTLData *inst, struct RastPort *rp, TTLPost *post, LONG til
                  * for whichever of the two is taller. */
                 {
                     LONG actionPen = (LONG)FS3E_PEN(inst->style, FS3E_COLOR_ACTION_TEXT);
-                    WORD barTopY = (WORD)(drawY + post->height - 1
-                                           - TTL_POST_PAD_BOT - inst->lineHeight);
+                    WORD barTopY = (WORD)(drawY + post->actionBarY);
                     WORD barBaselineY = (WORD)(barTopY + inst->lineAscent);
                     WORD xRight = (WORD)(inst->gadWidth - TTL_POST_PAD_RIGHT);
                     char labels[3][TTL_ACTION_LABEL_MAX];
@@ -951,8 +973,7 @@ void ttl_toot_render(TTLData *inst, struct RastPort *rp, TTLPost *post, LONG til
                  * comment on those arrays' definition. */
                 if (post->isOwn) {
                     LONG actionPen = (LONG)FS3E_PEN(inst->style, FS3E_COLOR_ACTION_TEXT);
-                    WORD barTopY = (WORD)(drawY + post->height - 1
-                                           - TTL_POST_PAD_BOT - inst->lineHeight);
+                    WORD barTopY = (WORD)(drawY + post->actionBarY);
                     WORD barBaselineY = (WORD)(barTopY + inst->lineAscent);
                     WORD xLeft = textX;
                     int  a;
@@ -968,6 +989,100 @@ void ttl_toot_render(TTLData *inst, struct RastPort *rp, TTLPost *post, LONG til
                         URPDrawTextUTF8(rp, dcBody, &pos, ttl_ownActionLabels[a], (ULONG)nc);
                         xLeft = (WORD)(xLeft + m.width + TTL_ACTION_GAP);
                     }
+                }
+
+                /* Embedded quote block: a bordered box (same FS3E_COLOR_
+                 * CARD_BG/CARD_BORDER pens and "fill+content first, border
+                 * last so it's always crisp on top" order the link-preview
+                 * card above already uses -- see that block's comment),
+                 * containing a smaller avatar (same cache/pipeline as the
+                 * main avatar above, keyed by quoteAuthorAcct), username/
+                 * acct+timestamp, and wrapped body -- see TTLPost.hasQuote's
+                 * doc comment and ttl_toot_layout for how quoteX/Y/W/H were
+                 * computed. */
+                if (post->hasQuote && post->quoteW > 0 && post->quoteH > 0) {
+                    LONG accentPen = (LONG)FS3E_PEN(inst->style, FS3E_COLOR_ACCENT);
+                    WORD qLeft   = post->quoteX;
+                    WORD qTop    = (WORD)(drawY + post->quoteY);
+                    WORD qRight  = (WORD)(qLeft + post->quoteW - 1);
+                    WORD qBottom = (WORD)(qTop + post->quoteH - 1);
+                    WORD qPad = 4;
+                    WORD qAvatarSize = (WORD)(((LONG)avatarW * TTL_QUOTE_AVATAR_SCALE_NUM) / TTL_QUOTE_AVATAR_SCALE_DEN);
+                    WORD qAvX = (WORD)(qLeft + qPad);
+                    WORD qAvY = (WORD)(qTop + qPad);
+                    WORD qTextX = (WORD)(qAvX + qAvatarSize + avatarGap);
+                    WORD qY;
+
+                    SetAPen(rp, (LONG)FS3E_PEN(inst->style, FS3E_COLOR_CARD_BG));
+                    RectFill(rp, qLeft, qTop, qRight, qBottom);
+
+                    {
+                        RgbImage *qAvImg = inst->avatarImages
+                                          ? AvatarImages_Get(inst->avatarImages, post->quoteAuthorAcct)
+                                          : NULL;
+                        if (qAvImg) {
+                            ULONG dw, dh;
+                            WORD  bx, by;
+                            if (qAvImg->width >= qAvImg->height) {
+                                dw = qAvatarSize;
+                                dh = ((ULONG)qAvImg->height * (ULONG)qAvatarSize) / qAvImg->width;
+                            } else {
+                                dh = qAvatarSize;
+                                dw = ((ULONG)qAvImg->width * (ULONG)qAvatarSize) / qAvImg->height;
+                            }
+                            if (dw < 1) dw = 1;
+                            if (dh < 1) dh = 1;
+                            bx = (WORD)(qAvX + (qAvatarSize - (WORD)dw) / 2);
+                            by = (WORD)(qAvY + (qAvatarSize - (WORD)dh) / 2);
+                            RgbImage_DrawScaled(qAvImg, rp, inst->screen, dcBody, bx, by, (UWORD)dw, (UWORD)dh);
+                        } else {
+                            ttl_draw_avatar_placeholder(rp, qAvX, qAvY, qAvatarSize, accentPen, bgPen);
+                        }
+                    }
+
+                    qY = (WORD)(qTop + qPad);
+
+                    if (post->quoteAuthorName && post->quoteAuthorName[0]) {
+                        URPDC_SetDrawColorFromPen(dcMini, inst->screen, txtPen, bgPen);
+                        tile_draw_text(inst, rp, qTextX, (WORD)(qY + inst->miniLineAscent),
+                                       post->quoteAuthorName, dcMini);
+                    }
+                    qY = (WORD)(qY + inst->miniLineHeight);
+
+                    {
+                        char line[192];
+                        snprintf(line, sizeof(line), "%s%s%s",
+                                 (post->quoteAuthorAcct && post->quoteAuthorAcct[0]) ? post->quoteAuthorAcct : "",
+                                 (post->quoteTimestamp && post->quoteTimestamp[0]) ? " \xC2\xB7 " : "",
+                                 (post->quoteTimestamp && post->quoteTimestamp[0]) ? post->quoteTimestamp : "");
+                        if (line[0]) {
+                            URPDC_SetDrawColorFromPen(dcMini, inst->screen, dimPen, bgPen);
+                            tile_draw_text(inst, rp, qTextX, (WORD)(qY + inst->miniLineAscent), line, dcMini);
+                        }
+                    }
+                    qY = (WORD)(qY + inst->miniLineHeight);
+
+                    if (post->quoteBodyLineCount > 0) {
+                        ULONG bi;
+                        qY = (WORD)(qY + 2);
+                        URPDC_SetDrawColorFromPen(dcMini, inst->screen, txtPen, bgPen);
+                        for (bi = 0; bi < post->quoteBodyLineCount; bi++) {
+                            if (post->quoteBodyLines[bi])
+                                tile_draw_text(inst, rp, qTextX, (WORD)(qY + inst->miniLineAscent),
+                                               post->quoteBodyLines[bi], dcMini);
+                            qY = (WORD)(qY + inst->miniLineHeight);
+                        }
+                    }
+
+                    /* Thin border, drawn last so it's always crisp on top
+                     * of the fill/avatar/text above -- same rule the card
+                     * box's own border follows. */
+                    SetAPen(rp, (LONG)FS3E_PEN(inst->style, FS3E_COLOR_CARD_BORDER));
+                    Move(rp, qLeft, qTop);
+                    Draw(rp, qRight, qTop);
+                    Draw(rp, qRight, qBottom);
+                    Draw(rp, qLeft, qBottom);
+                    Draw(rp, qLeft, qTop);
                 }
             }
         }
@@ -1117,10 +1232,11 @@ void ttl_notify(Class *cl, Object *o, struct GadgetInfo *gi,
 void ttl_notify_hotspot(Class *cl, Object *o, struct GadgetInfo *gi,
                          UBYTE type, const char *data, ULONG dataLen,
                          const char *postId, BOOL favourited, BOOL following,
+                         BOOL reblogged, BOOL quotable,
                          const char *mediaIds, const char *acct)
 {
     TTLData         *inst = TTL_DATA(cl, o);
-    struct TagItem  tags[9];
+    struct TagItem  tags[11];
     struct opUpdate nmsg;
 
     /* Copy into the gadget-owned buffers first -- see the TTLData comment
@@ -1180,7 +1296,11 @@ void ttl_notify_hotspot(Class *cl, Object *o, struct GadgetInfo *gi,
     tags[6].ti_Data = inst->lastHotSpotMediaIds[0] ? (ULONG)inst->lastHotSpotMediaIds : 0;
     tags[7].ti_Tag  = TTIMELINE_LastHotSpotAcct;
     tags[7].ti_Data = inst->lastHotSpotAcct[0] ? (ULONG)inst->lastHotSpotAcct : 0;
-    tags[8].ti_Tag  = TAG_DONE;
+    tags[8].ti_Tag  = TTIMELINE_LastHotSpotReblogged;
+    tags[8].ti_Data = (ULONG)reblogged;
+    tags[9].ti_Tag  = TTIMELINE_LastHotSpotQuotable;
+    tags[9].ti_Data = (ULONG)quotable;
+    tags[10].ti_Tag = TAG_DONE;
 
     nmsg.MethodID     = OM_UPDATE;
     nmsg.opu_AttrList = (struct TagItem *)tags;

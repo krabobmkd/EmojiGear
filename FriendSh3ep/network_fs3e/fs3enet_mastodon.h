@@ -134,6 +134,14 @@ BOOL FS3EMastodon_VerifyCredentials(const char *apiBaseUrl, const char *accessTo
  *                                        "accounts" instead -- used by
  *                                        FS3ENETQ_ACCOUNTS_LIST, not
  *                                        FS3ENETQ_TIMELINE
+ *   FS3ENET_TLSHAPE_CONTEXT_ANCESTORS (6) -- same endpoint/JSON shape as
+ *                                        CONTEXT_DESCENDANTS above, just
+ *                                        unwrapping "ancestors" instead;
+ *                                        appended last (not grouped next to
+ *                                        CONTEXT_DESCENDANTS) so this file's
+ *                                        own plain-int mirror of the enum
+ *                                        stays numbered the same as
+ *                                        fs3enet.h's real one
  */
 BOOL FS3EMastodon_GetTimeline(const char *apiBaseUrl, const char *accessToken,
                              const char *timeline, ULONG responseShape,
@@ -158,11 +166,20 @@ void FS3EMastodon_UrlEncode(const char *src, char *dst, ULONG dstSize);
  * server silently ignores it on older instances that don't support quote
  * posts yet). Server also forces it to "nobody" itself when visibility is
  * private/direct, so no client-side special-casing needed here.
+ * quotedStatusId, if non-NULL/non-empty, makes this a quote post of that
+ * status (Mastodon 4.5+'s quoted_status_id) -- omitted from the request
+ * entirely when NULL/"" rather than sent empty, since an empty string is
+ * NOT the same as "no quote" to the server. The server itself enforces
+ * whether quoting is actually allowed (target's quote_approval_policy,
+ * follow relationship, visibility) -- see FS3ENetStatus.fmas_Quotable for
+ * the read-side signal used to decide whether to even offer Quote in the
+ * UI, but this call doesn't re-check any of that itself.
  */
 BOOL FS3EMastodon_PostStatus(const char *apiBaseUrl, const char *accessToken,
                             const char *statusText, const char *visibility,
                             const char *inReplyToId,
                             const char *quoteApprovalPolicy,
+                            const char *quotedStatusId,
                             char *outStatusId, ULONG outStatusIdSize);
 
 /*
@@ -208,6 +225,16 @@ BOOL FS3EMastodon_DeleteStatus(const char *apiBaseUrl, const char *accessToken,
 BOOL FS3EMastodon_Favourite(const char *apiBaseUrl, const char *accessToken,
                            const char *statusId, BOOL favourite,
                            BOOL *outFavourited);
+
+/*
+ * POST /api/v1/statuses/:id/reblog or .../unreblog. On success fills
+ * outReblogged from the server's response and returns TRUE. Same "only the
+ * confirmed boolean, never the echoed counts" reasoning as
+ * FS3EMastodon_Favourite above.
+ */
+BOOL FS3EMastodon_Reblog(const char *apiBaseUrl, const char *accessToken,
+                         const char *statusId, BOOL reblog,
+                         BOOL *outReblogged);
 
 /*
  * GET /api/v1/accounts/lookup?acct=<acct> -- resolves an acct string

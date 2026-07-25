@@ -409,6 +409,7 @@ int uted_manage_vanilla_keycode(Class *cl, Object *o,ULONG codedata, struct Gadg
         } else if (ch == 0x0D || ch == 0x0A) {
             if (inst->noLineFeed) {
                 uted_notify(cl, o, gi, UTEDN_EnterPressed, 0);
+                inst->oneline_enterEventSent = TRUE; /* activation must be stopped in that case */
                 result = 1;
             } else {
                 UniTextEditor_DoInsertText(cl, o, "\n", 1);
@@ -810,6 +811,11 @@ ULONG UniTextEditor_OnHandleInput(Class *cl, Object *o, struct gpInput *msg)
 
     if(inst->useInternalRawKey && ie->ie_Class == IECLASS_RAWKEY)
     {
+        if(inst->oneline_enterEventSent)
+        {
+            inst->oneline_enterEventSent = FALSE;
+            return GMR_REUSE;
+        }
         if (inst->rawKeySendBack) {
             inst->rawKeyLastCode = ((ULONG)ie->ie_Qualifier << 16) | (ULONG)ie->ie_Code;
             uted_notify(cl, o, msg->gpi_GInfo, UTED_InternalRawKey_Code, inst->rawKeyLastCode);

@@ -31,6 +31,7 @@ enum FS3ENetRequestType
     FS3ENETQ_FLUSH_CACHE,    /* delete every file in the disk cache               */
     FS3ENETQ_VERIFY_ACCOUNT, /* re-verify an existing access token, backfill account fields */
     FS3ENETQ_FAVORITE,       /* toggle favourite/unfavourite on a status */
+    FS3ENETQ_REBLOG,         /* toggle reblog/unreblog (boost) on a status */
     FS3ENETQ_ACCOUNT_LOOKUP, /* resolve an acct string to a full account (profile view) */
     FS3ENETQ_RELATIONSHIP,   /* fetch following/followed-by state for an account id */
     FS3ENETQ_FOLLOW,         /* toggle follow/unfollow on an account */
@@ -366,7 +367,7 @@ enum FS3ENetTimelineShape
                                           * FS3ENetTimelineReq's doc comment) to carry the TTLPost.postId
                                           * to patch, echoed back via FS3ENetTimelineReply.fs3et_RefreshPostId
                                           * -- see FS3EApp_RefreshVisibleToots(). */
-    FS3ENET_TLSHAPE_SEARCH_ACCOUNTS  /* GET /api/v2/search?type=accounts&q=... -- same
+    FS3ENET_TLSHAPE_SEARCH_ACCOUNTS, /* GET /api/v2/search?type=accounts&q=... -- same
                                           * {accounts,statuses,hashtags} wrapper as SEARCH_STATUSES,
                                           * just unwrapping "accounts" instead of "statuses". Not used
                                           * by FS3ENetTimelineReq/FS3ENETQ_TIMELINE at all -- this value
@@ -374,6 +375,17 @@ enum FS3ENetTimelineShape
                                           * by FS3ENET_HandleAccountsList() (FS3ENETQ_ACCOUNTS_LIST),
                                           * which has its own request/reply pair and its own
                                           * FS3ENetAccountsListKind discriminator. */
+    FS3ENET_TLSHAPE_CONTEXT_ANCESTORS /* Same GET .../statuses/:id/context endpoint and JSON shape as
+                                          * CONTEXT_DESCENDANTS above, just unwrapping "ancestors" (the
+                                          * chain of toots this one replied to, root first) instead --
+                                          * see FS3EApp_OpenDiscussion's includeAncestors param.
+                                          * Deliberately appended at the END of this enum, not grouped
+                                          * next to CONTEXT_DESCENDANTS -- fs3enet_mastodon.c can't
+                                          * include this header (see its own mirrored #define list's
+                                          * comment) and keeps its own plain-int copies of these values
+                                          * in sync by NUMBER, so inserting a new entry anywhere but the
+                                          * end would silently renumber every later shape out of sync
+                                          * between the two files. */
 };
 
 /*
@@ -465,7 +477,18 @@ typedef struct FS3ENetStatus {
     char *fmas_Content;      /* HTML-stripped plain text */
     char *fmas_CreatedAt;    /* ISO 8601 timestamp string */
     char *fmas_AvatarURL;    /* original author CDN avatar URL */
-    char *fmas_Id;           /* status id string (for pagination) */
+    char *fmas_Id;           /* status id string (for pagination) -- for a genuine
+                               * reblog-unwrapped entry this is the REBLOG WRAPPER's
+                               * own id (item's "id"), needed for timeline cursor
+                               * correctness, NOT the id to interact with -- see
+                               * fmas_TargetId for that. Equal to fmas_TargetId
+                               * whenever this isn't a reblog wrapper. */
+    char *fmas_TargetId;     /* the id every interaction (reply/boost/fave/modify/
+                               * delete/thread) should actually target -- src's own
+                               * "id", i.e. the ORIGINAL status' id for a reblog
+                               * wrapper (Mastodon's interaction endpoints operate on
+                               * real content, not a reblog's own wrapper row). See
+                               * TTLPost.targetId for where this ends up in TootTimeline. */
     char *fmas_BoostBy;      /* booster display_name, "" if not a reblog */
     char *fmas_BoostByAcct;  /* booster @user@instance handle, "" if not a reblog --
                                * what a click on the "X boosted" line actually needs
@@ -493,6 +516,44 @@ typedef struct FS3ENetStatus {
     ULONG  fmas_FavouritesCount;
     BOOL   fmas_Favourited;   /* connected user already favourited this status */
     BOOL   fmas_Reblogged;    /* connected user already boosted this status */
+
+    /* TRUE if this status is itself a reply (src's own "in_reply_to_id" is
+     * non-null) -- doesn't need the actual parent id, just whether one
+     * exists: fetching GET .../statuses/:id/context with THIS status' own
+     * id already returns the full ancestor chain regardless (see
+     * FS3ENET_TLSHAPE_CONTEXT_ANCESTORS). Drives whether TootTimeline shows
+     * a "Follow discussion up" affordance alongside the existing "...down"
+     * one -- see TTLPost.isReply. */
+    BOOL   fmas_IsReply;
+
+    /* Whether the connected user is currently allowed to Quote this status
+     * -- from quote_approval.current_user (Mastodon 4.5+, absent on older
+     * servers): "automatic"/"manual" both mean TRUE (manual just means the
+     * quote goes to the author for approval first, still worth offering),
+     * "denied"/"unknown"/missing mean FALSE. See
+     * FS3EMastodon_PostStatus's quotedStatusId param for the actual quote
+     * submission, and TTLPostSetup.quotable for where this ends up in
+     * TootTimeline. */
+    BOOL   fmas_Quotable;
+
+    /* Embedded quote (Mastodon 4.4+, status.quote) -- the status this one
+     * is itself quoting, if any. Only populated when quote.state=="accepted"
+     * (the only state guaranteed to carry the quoted status' own content);
+     * pending/rejected/revoked/deleted/etc. leave fmas_HasQuote FALSE, same
+     * "nothing to render" treatment as a card-less status -- see
+     * FS3ENet_FillStatusFields. Deliberately a flat handful of fields (not
+     * a nested struct/full second FS3ENetStatus) since TootTimeline only
+     * ever shows a minimal avatar+name+body+timestamp block for a quoted
+     * status, never its own action bar/media/poll/card -- see
+     * TTLPost.quoteBody's comment for why (bounded recursion: a quote of a
+     * quote does not itself show a nested quote block). */
+    BOOL   fmas_HasQuote;
+    char  *fmas_QuoteId;           /* quoted status' own id, for opening its thread */
+    char  *fmas_QuoteAuthorName;
+    char  *fmas_QuoteAuthorAcct;
+    char  *fmas_QuoteAvatarURL;
+    char  *fmas_QuoteContent;      /* HTML-stripped plain text */
+    char  *fmas_QuoteCreatedAt;
 
     /* Poll ("survey"). Mutually exclusive with media_attachments above --
      * Mastodon itself disallows a status having both -- so the GUI treats
@@ -557,12 +618,14 @@ typedef struct FS3ENetPostStatusReq {
     char *fs3ep_Spoiler;     /* CW text; "" = no content warning */
     char *fs3ep_InReplyToId; /* status being replied to; "" = standalone toot */
     char *fs3ep_QuoteApprovalPolicy; /* "public", "followers", "nobody" */
+    char *fs3ep_QuotedStatusId; /* status being quoted; "" = not a quote post */
 } FS3ENetPostStatusReq;
 
 FS3ENetPostStatusReq *FS3ENetPostStatusReq_Alloc(
     const char *apiBaseUrl, const char *accessToken,
     const char *content, const char *visibility, const char *spoiler,
-    const char *inReplyToId, const char *quoteApprovalPolicy);
+    const char *inReplyToId, const char *quoteApprovalPolicy,
+    const char *quotedStatusId);
 
 typedef struct FS3ENetPostStatusReply {
     char *fs3ep_StatusId; /* new status id string */
@@ -754,6 +817,33 @@ typedef struct FS3ENetFavouriteReply {
     char  *fs3efa_StatusId;
     BOOL   fs3efa_Favourited;
 } FS3ENetFavouriteReply;
+
+/*
+ * FS3ENETQ_REBLOG — POST /api/v1/statuses/:id/reblog or .../unreblog.
+ *
+ * Same shape and same "don't trust echoed counts" reasoning as
+ * FS3ENETQ_FAVORITE above -- fs3ere_Reblog selects which: TRUE = reblog,
+ * FALSE = unreblog. On FS3ENETR_OK, fs3em_Data is replaced with an
+ * FS3ENetReblogReply carrying just the server-confirmed reblogged boolean;
+ * the resulting reblogs_count is a local +1/-1 delta the GUI applies
+ * itself -- see TTIMELINE_UpdatePost/TTL_POSTUPD_REBLOGGED in
+ * fs3etoottimeline.h.
+ */
+typedef struct FS3ENetReblogReq {
+    char *fs3ere_ApiBaseUrl;
+    char *fs3ere_AccessToken;
+    char *fs3ere_StatusId;
+    BOOL  fs3ere_Reblog;   /* TRUE=reblog, FALSE=unreblog */
+} FS3ENetReblogReq;
+
+FS3ENetReblogReq *FS3ENetReblogReq_Alloc(
+    const char *apiBaseUrl, const char *accessToken,
+    const char *statusId, BOOL reblog);
+
+typedef struct FS3ENetReblogReply {
+    char  *fs3ere_StatusId;
+    BOOL   fs3ere_Reblogged;
+} FS3ENetReblogReply;
 
 /*
  * FS3ENETQ_ACCOUNT_LOOKUP — GET /api/v1/accounts/lookup?acct=<acct>.

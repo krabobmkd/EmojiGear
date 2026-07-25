@@ -127,8 +127,15 @@ static ULONG delayedAttribs[] = {
     TTIMELINE_LastHotSpotString,
     TTIMELINE_LastHotSpotFavourited,
     TTIMELINE_LastHotSpotFollowing,
+    TTIMELINE_LastHotSpotReblogged,
+    TTIMELINE_LastHotSpotQuotable,
     TTIMELINE_HotSpotNotify,
     TTIMELINE_LastHotSpotMediaIds,
+    /* Was missing -- friendsh3ep.c reads this tag but it never actually
+     * arrived without being allowlisted here, same silent-drop trap as
+     * TTIMELINE_LastHotSpotReblogged above (see fs3eboopsimessage.c's file
+     * comment). */
+    TTIMELINE_LastHotSpotAcct,
     TTIMELINE_ScrollStarted,
 
     /* from UniButtonBGBM (nav_btns[]) -- see ubgbm_notify_refresh_needed()

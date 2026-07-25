@@ -46,7 +46,10 @@ typedef enum FS3ETootKind {
     FS3ETOOT_KIND_NEW = 0, /* blank body, "Creating a new toot" */
     FS3ETOOT_KIND_MODIFY,  /* editing params->postId, bodyEditor prefilled from params->body */
     FS3ETOOT_KIND_POLL,    /* new toot with a poll attached (poll UI itself: future work) */
-    FS3ETOOT_KIND_REPLY    /* replying to params->postId, title shows params->acct */
+    FS3ETOOT_KIND_REPLY,   /* replying to params->postId, title shows params->acct */
+    FS3ETOOT_KIND_QUOTE    /* quoting params->postId (own new toot + quoted_status_id),
+                             * title shows params->acct -- see TTL_HOT_BOOST's
+                             * Boost/Quote choice in friendsh3ep.c */
 } FS3ETootKind;
 
 /* Max media attachments carried through a compose context (mirrors
@@ -59,9 +62,12 @@ typedef enum FS3ETootKind {
  * depends on kind (see FS3ETootKind). Pass params NULL for
  * FS3ETOOT_KIND_NEW/FS3ETOOT_KIND_POLL. */
 typedef struct FS3ETootComposeParams {
-    const char *postId; /* MODIFY: status being edited. REPLY: status being replied to. */
-    const char *acct;   /* REPLY: "@handle" shown in the title ("Replying to @handle"). */
-    const char *body;   /* MODIFY: current raw body text, used to prefill bodyEditor. */
+    const char *postId; /* MODIFY: status being edited. REPLY: status being replied
+                          * to. QUOTE: status being quoted. */
+    const char *acct;   /* REPLY/QUOTE: "@handle" shown in the title ("Replying to
+                          * @handle" / "Quoting @handle's toot"). */
+    const char *body;   /* MODIFY: current raw body text, used to prefill bodyEditor.
+                          * Unused for QUOTE -- see FS3ETootKind. */
 
     /* MODIFY: the status's existing media_attachments[].id, NULL past
      * mediaCount -- not shown to the user yet (attached-media display in

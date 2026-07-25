@@ -373,6 +373,7 @@ typedef struct UniTextEditorData {
     ULONG                 maxDisplayLines;/* UTED_MaxDisplayLines: cap gadget height; default ~0UL */
     ULONG                 vanillaAnsiCode; /* encoding for UTED_PutVanillaKey 0xA0-0xFF bytes;
                                            * UTED_VANILLAKEY_LATIN1=1 or UTED_VANILLAKEY_LATIN2=2 */
+    ULONG                 oneline_enterEventSent; /* in no linefeed mode enter must send event and stop activation */
     struct Screen        *screen;         /* for URPDC_UpdateColorMap + AllocBitMap */
     ULONG               screen_last_mode;
     ULONG               screen_last_depth;

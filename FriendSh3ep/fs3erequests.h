@@ -25,8 +25,10 @@ void FS3EApp_FetchTimelinePage(ULONG viewMode, ULONG direction);
 void FS3EApp_OpenProfile(const char *acctOrHandle);
 
 /* "Discussion mode" -- show statusId's toot plus its replies in the Search
- * channel. */
-void FS3EApp_OpenDiscussion(const char *statusId);
+ * channel. includeAncestors FALSE: just the toot + its descendants (see
+ * TTL_HOT_THREAD). TRUE: the whole thread -- ancestors, the toot, and its
+ * descendants (see TTL_HOT_THREAD_UP). */
+void FS3EApp_OpenDiscussion(const char *statusId, BOOL includeAncestors);
 
 /* F5 "refresh visible toots" -- re-fetches, one at a time, every toot
  * currently on screen in the active TootTimeline channel and patches its

@@ -393,7 +393,12 @@ void FS3EApp_SearchGoBack(void)
             FS3EApp_OpenProfile(popped.profileAcct);
             break;
         case FS3ESEARCH_DISCUSSION:
-            FS3EApp_OpenDiscussion(popped.discussionStatusId);
+            /* Always restores in "down" (descendants-only) mode -- the
+             * stack doesn't currently remember whether the discussion was
+             * originally opened via TTL_HOT_THREAD or TTL_HOT_THREAD_UP;
+             * a reasonable simplification, not a correctness issue (the
+             * up/down choice is still one click away again). */
+            FS3EApp_OpenDiscussion(popped.discussionStatusId, FALSE);
             break;
         case FS3ESEARCH_WORD:
         case FS3ESEARCH_ACCOUNT:
@@ -489,23 +494,40 @@ void FS3EApp_OpenProfile(const char *acctOrHandle)
 
 /* "Discussion mode" -- shows statusId's toot as the first item in the
  * Search channel, followed by its replies (Mastodon's "descendants"),
- * each flagged isThreadReply (see TTLPostSetup.isThreadReply). Deliberately
- * simple, mirroring the user's own description: no ancestors (the chain
- * this toot itself replied to), no nested/threaded indentation, no
- * pagination for long discussions -- just "main toot, then its answers
- * below," flat, in server order. Unlike FS3EApp_OpenProfile there's no
- * single atomic "clear + seed" tag, so the channel is cleared proactively
- * here, before either fetch's reply can land.
+ * each flagged isThreadReply (see TTLPostSetup.isThreadReply). Unlike
+ * FS3EApp_OpenProfile there's no single atomic "clear + seed" tag, so the
+ * channel is cleared proactively here, before any fetch's reply can land
+ * (this also resets scrollY to 0 -- see ttl_clear_channel -- which both
+ * branches below rely on instead of an explicit ScrollToNewest).
  *
- * Two FS3ENETQ_TIMELINE requests, fired back to back: the main toot
- * (FS3ENET_TLSHAPE_SINGLE, lands via AddPost as item 1 since the channel
- * is already empty) then its replies (FS3ENET_TLSHAPE_CONTEXT_DESCENDANTS,
- * FS3ENETPAGE_OLDER so it lands via AppendPost below -- same trick
- * FS3EApp_OpenProfile's second request uses for its header). Relies on
- * the network process being a single serialized task (see the
- * accountGeneration comment in FS3EApp_HandleNetReply's FS3ENETQ_TIMELINE
- * case) so reply #1 always lands before reply #2 is even attempted. */
-void FS3EApp_OpenDiscussion(const char *statusId)
+ * includeAncestors FALSE (the common case: TTL_HOT_THREAD/NOTIF_STATUS/
+ * QUOTECARD) -- deliberately simple, mirroring the user's own original
+ * description: no ancestors (the chain this toot itself replied to), no
+ * nested/threaded indentation, no pagination for long discussions -- just
+ * "main toot, then its answers below," flat, in server order. Two
+ * FS3ENETQ_TIMELINE requests, fired back to back: the main toot
+ * (FS3ENET_TLSHAPE_SINGLE, FS3ENETPAGE_INITIAL, lands via AddPost as item 1
+ * since the channel is already empty) then its replies
+ * (FS3ENET_TLSHAPE_CONTEXT_DESCENDANTS, FS3ENETPAGE_OLDER so it lands via
+ * AppendPost below -- same trick FS3EApp_OpenProfile's second request uses
+ * for its header).
+ *
+ * includeAncestors TRUE (TTL_HOT_THREAD_UP) -- the WHOLE thread: this
+ * toot's ancestors (the chain it replied to, root first), then the toot
+ * itself, then its descendants. THREE requests, all fired as
+ * FS3ENETPAGE_OLDER/AppendPost (unlike the FALSE branch's AddPost for the
+ * main toot): AppendPost always adds to the tail, so firing ancestors
+ * first, then the main toot, then descendants -- into the just-cleared,
+ * scrollY==0 channel -- builds up top-to-bottom in exactly that order.
+ * FS3ENETPAGE_INITIAL's AddPost (as the FALSE branch uses) would PREPEND
+ * the main toot above whatever's already there, landing it above the
+ * ancestors instead of after them, so it can't be reused here.
+ *
+ * Both branches rely on the network process being a single serialized task
+ * (see the accountGeneration comment in FS3EApp_HandleNetReply's
+ * FS3ENETQ_TIMELINE case) so each reply lands in the order its request was
+ * sent, before the next one is even attempted. */
+void FS3EApp_OpenDiscussion(const char *statusId, BOOL includeAncestors)
 {
     char tl[128];
     FS3ENetTimelineReq *req;
@@ -525,6 +547,33 @@ void FS3EApp_OpenDiscussion(const char *statusId)
         SetAttrs(app->tootTimeline, TTIMELINE_ClearPosts, TRUE, TAG_DONE);
 
     if (!app->searchDiscussionStatusId) return;
+
+    if (includeAncestors) {
+        snprintf(tl, sizeof(tl), "statuses/%s/context", app->searchDiscussionStatusId);
+        req = FS3ENetTimelineReq_Alloc(VIEWMODE_Search, FS3ENETPAGE_OLDER,
+                  app->accountGeneration, FS3ENET_TLSHAPE_CONTEXT_ANCESTORS,
+                  app->accountApiBaseUrl,
+                  app->accountAccessToken ? app->accountAccessToken : "",
+                  tl, "", "", NULL);
+        if (req) FS3EApp_NetSend(FS3ENETQ_TIMELINE, req, sizeof(*req));
+
+        snprintf(tl, sizeof(tl), "statuses/%s", app->searchDiscussionStatusId);
+        req = FS3ENetTimelineReq_Alloc(VIEWMODE_Search, FS3ENETPAGE_OLDER,
+                  app->accountGeneration, FS3ENET_TLSHAPE_SINGLE,
+                  app->accountApiBaseUrl,
+                  app->accountAccessToken ? app->accountAccessToken : "",
+                  tl, "", "", NULL);
+        if (req) FS3EApp_NetSend(FS3ENETQ_TIMELINE, req, sizeof(*req));
+
+        snprintf(tl, sizeof(tl), "statuses/%s/context", app->searchDiscussionStatusId);
+        req = FS3ENetTimelineReq_Alloc(VIEWMODE_Search, FS3ENETPAGE_OLDER,
+                  app->accountGeneration, FS3ENET_TLSHAPE_CONTEXT_DESCENDANTS,
+                  app->accountApiBaseUrl,
+                  app->accountAccessToken ? app->accountAccessToken : "",
+                  tl, "", "", NULL);
+        if (req) FS3EApp_NetSend(FS3ENETQ_TIMELINE, req, sizeof(*req));
+        return;
+    }
 
     snprintf(tl, sizeof(tl), "statuses/%s", app->searchDiscussionStatusId);
     req = FS3ENetTimelineReq_Alloc(VIEWMODE_Search, FS3ENETPAGE_INITIAL,
@@ -800,11 +849,22 @@ static void FS3EApp_MapStatusToPostSetup(TTLPostSetup *post, const FS3ENetStatus
     post->boostByAcct = st->fmas_BoostByAcct;
     post->avatarURL   = st->fmas_AvatarURL;
     post->postId      = st->fmas_Id;
+    post->targetId    = st->fmas_TargetId;
     post->repliesCount    = st->fmas_RepliesCount;
     post->reblogsCount    = st->fmas_ReblogsCount;
     post->favouritesCount = st->fmas_FavouritesCount;
     post->favourited      = st->fmas_Favourited;
     post->reblogged       = st->fmas_Reblogged;
+    post->quotable        = st->fmas_Quotable;
+    post->isReply         = st->fmas_IsReply;
+
+    post->hasQuote        = st->fmas_HasQuote;
+    post->quoteId         = st->fmas_QuoteId;
+    post->quoteAuthorName = st->fmas_QuoteAuthorName;
+    post->quoteAuthorAcct = st->fmas_QuoteAuthorAcct;
+    post->quoteAvatarURL  = st->fmas_QuoteAvatarURL;
+    post->quoteBody       = st->fmas_QuoteContent;
+    post->quoteTimestamp  = st->fmas_QuoteCreatedAt;
 
     for (mi = 0; mi < st->fmas_MediaCount && mi < TTL_POST_MAX_MEDIA; mi++) {
         post->mediaUrls[mi] = st->fmas_MediaUrls[mi];
@@ -922,6 +982,34 @@ static void FS3EApp_TriggerMediaFetchesForStatus(const FS3ENetStatus *st)
         if (req) {
             if (FS3EApp_NetSend(FS3ENETQ_FETCH_IMAGE, req, reqSize))
                 AvatarImages_MarkCardRequested(app->avatarImages, st->fmas_CardImageUrl);
+            else
+                FreeVec(req);
+        }
+    }
+
+    /* Trigger the embedded quote's author avatar download, same pipeline
+     * and cache pool as the main avatar above (keyed by the quote
+     * author's OWN acct, a different account than st->fmas_Acct) -- if
+     * that author has posted elsewhere in the timeline too, this shares
+     * the exact same cache entry for free. */
+    if (app->avatarImages &&
+        st->fmas_HasQuote &&
+        st->fmas_QuoteAvatarURL && st->fmas_QuoteAvatarURL[0] &&
+        st->fmas_QuoteAuthorAcct && st->fmas_QuoteAuthorAcct[0] &&
+        !AvatarImages_IsRequested(app->avatarImages, st->fmas_QuoteAuthorAcct))
+    {
+        ULONG reqSize = sizeof(FS3ENetFetchImageReq)
+                      + strlen(st->fmas_QuoteAvatarURL) + 1
+                      + strlen(st->fmas_QuoteAuthorAcct) + 1
+                      + strlen(FS3E_CACHE_SUBDIR_USERICONS) + 1;
+        FS3ENetFetchImageReq *req =
+            FS3ENetFetchImageReq_Alloc(st->fmas_QuoteAvatarURL, st->fmas_QuoteAuthorAcct,
+                                       FS3E_CACHE_SUBDIR_USERICONS,
+                                       (BOOL)app->settings.keepBigUserIcons,
+                                       FALSE);
+        if (req) {
+            if (FS3EApp_NetSend(FS3ENETQ_FETCH_IMAGE, req, reqSize))
+                AvatarImages_MarkRequested(app->avatarImages, st->fmas_QuoteAuthorAcct);
             else
                 FreeVec(req);
         }
@@ -1172,10 +1260,13 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                 TTLPostSetup post;
                 memset(&post, 0, sizeof(post));
                 FS3EApp_MapStatusToPostSetup(&post, &statuses[idx]);
-                /* Every status in a CONTEXT_DESCENDANTS reply is, by
-                 * definition, one of the discussion's replies -- see
-                 * TTLPostSetup.isThreadReply / FS3EApp_OpenDiscussion. */
-                post.isThreadReply = (reply->fs3et_ResponseShape == FS3ENET_TLSHAPE_CONTEXT_DESCENDANTS);
+                /* Every status in a CONTEXT_DESCENDANTS or CONTEXT_ANCESTORS
+                 * reply is, by definition, part of the discussion's thread
+                 * (not the main toot itself, which is its own SINGLE-shape
+                 * reply) -- see TTLPostSetup.isThreadReply /
+                 * FS3EApp_OpenDiscussion. */
+                post.isThreadReply = (reply->fs3et_ResponseShape == FS3ENET_TLSHAPE_CONTEXT_DESCENDANTS ||
+                                       reply->fs3et_ResponseShape == FS3ENET_TLSHAPE_CONTEXT_ANCESTORS);
 
                 FS3EApp_TriggerMediaFetchesForStatus(&statuses[idx]);
 
@@ -1322,6 +1413,16 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                     post.favouritesCount = st->fmas_FavouritesCount;
                     post.favourited      = st->fmas_Favourited;
                     post.reblogged       = st->fmas_Reblogged;
+                    post.quotable        = st->fmas_Quotable;
+                    post.isReply         = st->fmas_IsReply;
+                    post.targetId        = st->fmas_TargetId;
+                    post.hasQuote        = st->fmas_HasQuote;
+                    post.quoteId         = st->fmas_QuoteId;
+                    post.quoteAuthorName = st->fmas_QuoteAuthorName;
+                    post.quoteAuthorAcct = st->fmas_QuoteAuthorAcct;
+                    post.quoteAvatarURL  = st->fmas_QuoteAvatarURL;
+                    post.quoteBody       = st->fmas_QuoteContent;
+                    post.quoteTimestamp  = st->fmas_QuoteCreatedAt;
                     post.notifActorName  = n->fen_ActorDisplayName;
                     post.notifActorAcct  = n->fen_ActorAcct;
                     post.notifStatusId   = st->fmas_Id;
@@ -1401,6 +1502,31 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                     if (req) {
                         if (FS3EApp_NetSend(FS3ENETQ_FETCH_IMAGE, req, reqSize))
                             AvatarImages_MarkRequested(app->avatarImages, post.acct);
+                        else
+                            FreeVec(req);
+                    }
+                }
+
+                /* Embedded quote's author avatar prefetch -- same pipeline
+                 * as FS3EApp_TriggerMediaFetchesForStatus's own quote-avatar
+                 * block. */
+                if (app->avatarImages && post.hasQuote &&
+                    post.quoteAvatarURL && post.quoteAvatarURL[0] &&
+                    post.quoteAuthorAcct && post.quoteAuthorAcct[0] &&
+                    !AvatarImages_IsRequested(app->avatarImages, post.quoteAuthorAcct))
+                {
+                    ULONG reqSize = sizeof(FS3ENetFetchImageReq)
+                                  + strlen(post.quoteAvatarURL) + 1
+                                  + strlen(post.quoteAuthorAcct) + 1
+                                  + strlen(FS3E_CACHE_SUBDIR_USERICONS) + 1;
+                    FS3ENetFetchImageReq *req =
+                        FS3ENetFetchImageReq_Alloc(post.quoteAvatarURL, post.quoteAuthorAcct,
+                                                   FS3E_CACHE_SUBDIR_USERICONS,
+                                                   (BOOL)app->settings.keepBigUserIcons,
+                                                   FALSE);
+                    if (req) {
+                        if (FS3EApp_NetSend(FS3ENETQ_FETCH_IMAGE, req, reqSize))
+                            AvatarImages_MarkRequested(app->avatarImages, post.quoteAuthorAcct);
                         else
                             FreeVec(req);
                     }
@@ -1645,7 +1771,12 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
              * doesn't touch either; they're only replaced by the next
              * SetComposeContext call (see fs3etootview.h). Same
              * "may have scrolled out of every channel by now" no-op
-             * guard as FS3ENETQ_FAVORITE. */
+             * guard as FS3ENETQ_FAVORITE. Harmless if we're about to
+             * navigate to that same discussion below (ClearPosts wipes
+             * this patch's effect a moment later either way) -- kept
+             * unconditional rather than special-cased on that, since
+             * FS3EApp_OpenDiscussion itself bails out early on a bad/
+             * missing statusId and this patch should still happen then. */
             if (app->tootView.composeKind == FS3ETOOT_KIND_REPLY &&
                 app->tootView.composePostId && app->tootTimeline)
             {
@@ -1658,6 +1789,18 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                     RefreshGList((struct Gadget *)app->tootTimeline,
                                  CurrentMainWindow, NULL, 1);
             }
+
+            /* Just replied -- jump straight to that discussion, same as
+             * clicking the parent's "Follow discussion •••" affordance
+             * (TTL_HOT_THREAD) would, so the freshly-posted reply is
+             * immediately visible in context instead of just sitting
+             * wherever the current channel happens to be. */
+            if (app->tootView.composeKind == FS3ETOOT_KIND_REPLY &&
+                app->tootView.composePostId)
+            {
+                FS3EApp_OpenDiscussion(app->tootView.composePostId, FALSE);
+            }
+
             FS3ETootView_Close(&app->tootView);
         }
         break;
@@ -1707,6 +1850,22 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
             upd.postId     = reply->fs3efa_StatusId;
             upd.flags      = TTL_POSTUPD_FAVOURITED;
             upd.favourited = reply->fs3efa_Favourited;
+            SetAttrs(app->tootTimeline, TTIMELINE_UpdatePost, (ULONG)&upd, TAG_DONE);
+            if (CurrentMainWindow)
+                RefreshGList((struct Gadget *)app->tootTimeline,
+                             CurrentMainWindow, NULL, 1);
+        }
+        break;
+
+    case FS3ENETQ_REBLOG:
+        /* Same reasoning as FS3ENETQ_FAVORITE above. */
+        if (msg->fs3em_Result == FS3ENETR_OK && app->tootTimeline) {
+            FS3ENetReblogReply *reply = (FS3ENetReblogReply *)msg->fs3em_Data;
+            TTLPostUpdate upd;
+            memset(&upd, 0, sizeof(upd));
+            upd.postId    = reply->fs3ere_StatusId;
+            upd.flags     = TTL_POSTUPD_REBLOGGED;
+            upd.reblogged = reply->fs3ere_Reblogged;
             SetAttrs(app->tootTimeline, TTIMELINE_UpdatePost, (ULONG)&upd, TAG_DONE);
             if (CurrentMainWindow)
                 RefreshGList((struct Gadget *)app->tootTimeline,

@@ -731,6 +731,36 @@ static const char *GetEditorUTF8Line(Object *editor, ULONG line)
     return text;
 }
 
+/* Counts Unicode codepoints in a NUL-terminated UTF-8 string -- what
+ * FS3ETootView_UpdateCharCount uses for the shown "N / Max" count, since
+ * that reads far closer to what Mastodon's own server-side limit does than
+ * a raw byte count (strlen()) would: an accented letter or CJK character
+ * is 2-3 UTF-8 bytes but one codepoint, and counting bytes would flag a
+ * toot as over-length long before the server actually would. Not a perfect
+ * match either -- Mastodon counts UTF-16 code units, so a codepoint outside
+ * the Basic Multilingual Plane (most emoji) costs 2 there but only 1 here
+ * -- but codepoints is the simpler, still-far-more-accurate-than-bytes rule
+ * to show the user while typing (see the mirrored, TootTimeline-private
+ * utf8_codepoints_range() in fs3etoottimeline_private.h for the same
+ * algorithm; not reused directly since this module has no dependency on
+ * TootTimeline's internals). */
+static ULONG Utf8CodepointCount(const char *s)
+{
+    ULONG n = 0;
+    const unsigned char *p = (const unsigned char *)s;
+
+    if (!p) return 0;
+    while (*p) {
+        unsigned char c = *p;
+        if      (c < 0x80) p += 1;
+        else if (c < 0xE0) p += 2;
+        else if (c < 0xF0) p += 3;
+        else               p += 4;
+        n++;
+    }
+    return n;
+}
+
 void FS3ETootView_UpdateCharCount(FS3ETootView *tv)
 {
     ULONG lineCount = 0, i, total = 0;
@@ -740,7 +770,7 @@ void FS3ETootView_UpdateCharCount(FS3ETootView *tv)
     GetAttr(UTED_LineCount, tv->bodyEditor, &lineCount);
     for (i = 0; i < lineCount; i++) {
         const char *line = GetEditorUTF8Line(tv->bodyEditor, i);
-        if (line) total += strlen(line);
+        if (line) total += Utf8CodepointCount(line);
         if (i + 1 < lineCount) total += 1; /* newline */
     }
 
@@ -775,8 +805,8 @@ void FS3ETootView_UpdateSendEnabled(FS3ETootView *tv)
 /* Everything that varies per FS3ETootKind, kept as one table instead of
  * scattered switch-statements -- adding a future kind (e.g. an actual poll
  * compose UI) means adding one row here, not touching three separate
- * places. FS3ETOOT_KIND_REPLY's titleMsgId is unused (its title is
- * printf-formatted with the replied-to @handle, not a plain lookup) --
+ * places. FS3ETOOT_KIND_REPLY/QUOTE's titleMsgId is unused (their title is
+ * printf-formatted with the target @handle, not a plain lookup) --
  * handled as an explicit exception in FS3ETootView_SetComposeContext. */
 typedef struct FS3ETootKindConfig {
     ULONG titleMsgId;         /* MSG_TOOT_CONTEXT_* for contextMessage's text */
@@ -792,6 +822,7 @@ static const FS3ETootKindConfig tootKindConfig[] = {
     /* FS3ETOOT_KIND_MODIFY */ { MSG_TOOT_CONTEXT_MODIFY, MSG_TOOT_SEND_MODIFY, TRUE, FALSE },
     /* FS3ETOOT_KIND_POLL   */ { MSG_TOOT_CONTEXT_POLL,   MSG_TOOT_SEND,       FALSE, TRUE  },
     /* FS3ETOOT_KIND_REPLY  */ { MSG_TOOT_CONTEXT_NEW /* unused, see above */, MSG_TOOT_SEND_REPLY, TRUE, TRUE },
+    /* FS3ETOOT_KIND_QUOTE  */ { MSG_TOOT_CONTEXT_NEW /* unused, see above */, MSG_TOOT_SEND_QUOTE, FALSE, TRUE },
 };
 
 /* Updates tv->visibilityMeaning's text -- blank for kinds whose
@@ -895,6 +926,10 @@ void FS3ETootView_SetComposeContext(FS3ETootView *tv, FS3ETootKind kind,
         snprintf(textBuf, sizeof(textBuf)-1, LOC(MSG_TOOT_CONTEXT_REPLY_FORMAT),
                  (params && params->acct && params->acct[0]) ? params->acct : "?");
         text = textBuf;
+    } else if (kind == FS3ETOOT_KIND_QUOTE) {
+        snprintf(textBuf, sizeof(textBuf)-1, LOC(MSG_TOOT_CONTEXT_QUOTE_FORMAT),
+                 (params && params->acct && params->acct[0]) ? params->acct : "?");
+        text = textBuf;
     } else {
         text = LOC(cfg->titleMsgId);
     }
@@ -931,7 +966,11 @@ void FS3ETootView_SetComposeContext(FS3ETootView *tv, FS3ETootKind kind,
      * starts from an empty editor. MODIFY prefills with what's already
      * posted (params->body); REPLY prefills with an "@acct " mention
      * prefix built from params->acct, the standard "who this reply is
-     * addressed to" convention every mainstream Mastodon client shows. */
+     * addressed to" convention every mainstream Mastodon client shows.
+     * QUOTE does NOT prefill the quoted text -- quoted_status_id already
+     * makes the server (and every quote-aware client) render the quoted
+     * toot as its own embedded card; copying its text into the body too
+     * would just duplicate it in the posted status' own text. */
     if (cfg->prefillBody && tv->bodyEditor) {
         char bodyBuf[300];
         const char *body;

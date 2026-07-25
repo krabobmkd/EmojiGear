@@ -113,6 +113,22 @@ extern WORD windowResizeLastTargetH;  /* last height sent to SizeWindow */
 #define TTL_CARD_TITLE_MAX_ROWS    2
 #define TTL_CARD_DESC_MAX_ROWS     2
 
+/* Embedded quote block's own body text, word-wrapped the same way the card
+ * title/description are (FS3ETextWrap) -- see TTLPost.quoteBodyLines. Unlike
+ * the card's title/description (a fixed-size array, deliberately capped
+ * short), the quote body is AllocVec'd to exactly how many rows
+ * FS3ETextWrap_Build actually reports, so a normal-length toot is never
+ * truncated -- computing that count costs nothing extra, FS3ETextWrap_Build
+ * already returns it before any row is stored. This cap is purely a
+ * pathological-input safety net (some custom instance allowing far more
+ * than Mastodon's usual ~500 chars, wrapped into a narrow column), not a
+ * real-world limit. Unlike the card, the quote block's own avatar is
+ * scaled smaller (see TTL_QUOTE_AVATAR_SCALE_NUM/DEN in ttl_toot_layout) to
+ * read as visually subordinate to the outer post's own avatar. */
+#define TTL_QUOTE_BODY_MAX_ROWS    200
+#define TTL_QUOTE_AVATAR_SCALE_NUM 2
+#define TTL_QUOTE_AVATAR_SCALE_DEN 3
+
 /* Poll ("survey") results block: fixed pixel height for each option's
  * proportional result bar (drawn below its title/percentage text row)
  * and the gap before the next option -- not font-dependent, same
@@ -302,6 +318,7 @@ typedef struct TTLPost {
     char  *boostByAcct; /* booster @user@instance, NULL for original posts -- see TTLPostSetup.boostByAcct */
     char  *avatarURL;  /* CDN URL; used to trigger deferred download */
     char  *postId;     /* Mastodon status id, NULL if unknown; see TTLPostSetup.postId */
+    char  *targetId;   /* id hot-spot actions target, NULL if unknown; see TTLPostSetup.targetId */
 
     /* Media attachment preview URLs (AllocVec'd copies), NULL past
      * mediaCount. mediaCurrentIndex is which one is currently shown in
@@ -329,6 +346,8 @@ typedef struct TTLPost {
     ULONG  favouritesCount;
     BOOL   favourited;
     BOOL   reblogged;
+    BOOL   quotable;   /* see TTLPostSetup.quotable */
+    BOOL   isReply;    /* see TTLPostSetup.isReply */
     BOOL   isOwn;      /* see TTLPostSetup.isOwn */
     BOOL   isThreadReply; /* see TTLPostSetup.isThreadReply */
 
@@ -405,6 +424,30 @@ typedef struct TTLPost {
     char  *cardDescLines[TTL_CARD_DESC_MAX_ROWS];
     ULONG  cardDescLineCount;
 
+    /* Embedded quote block -- see TTLPostSetup.hasQuote's doc comment.
+     * quoteW==0 means "no quote block to draw" (hasQuote FALSE). Rect
+     * (quoteX/Y/W/H) is post-relative, computed once by ttl_toot_layout,
+     * reused as-is by render/build_hotspots -- same "store once" rule as
+     * cardX/Y/W/H above. Unlike the card, width is NOT the fixed
+     * TTL_CARD_BASE_W scale: it spans nearly this post's own full content
+     * width (see ttl_toot_layout), since the block reads as "this post,
+     * nested" rather than a side attachment. */
+    BOOL   hasQuote;
+    char  *quoteId, *quoteAuthorName, *quoteAuthorAcct, *quoteAvatarURL, *quoteBody, *quoteTimestamp;
+    WORD   quoteX, quoteY, quoteW, quoteH;
+
+    /* Word-wrapped quoteBody, computed once by ttl_toot_layout via
+     * FS3ETextWrap against quoteW -- same "own AllocVec'd copies, not
+     * textSpans" reasoning as cardTitleLines/cardDescLines above (not
+     * selectable/hit-testable, just drawn). Unlike those two (small fixed
+     * arrays), quoteBodyLines is itself AllocVec'd, sized to exactly
+     * quoteBodyLineCount entries (FS3ETextWrap_Build reports the row count
+     * up front, so no guessing/over-allocating is needed) -- capped only
+     * at TTL_QUOTE_BODY_MAX_ROWS as a pathological-input safety net, not a
+     * real truncation limit. NULL when quoteBodyLineCount==0. */
+    char **quoteBodyLines;
+    ULONG  quoteBodyLineCount;
+
     /* Poll ("survey"), closed/result rendering only -- see
      * TTLPostSetup.pollOptionTitles. pollOptionCount==0 means no poll on
      * this post; mutually exclusive with mediaCount>0 in practice (see
@@ -426,6 +469,24 @@ typedef struct TTLPost {
      * "store once, never re-derive" rule as pollBlockY just above. 0 when
      * repliesCount==0 (no row reserved at all in that case). */
     WORD   threadRowY;
+
+    /* "Follow discussion up" row (see TTL_HOT_THREAD_UP) -- same "store
+     * once" rule as threadRowY above, drawn ABOVE it when both are
+     * present. 0 when !isReply (no row reserved). */
+    WORD   threadUpRowY;
+
+    /* Action bar's (Reply/Boost/Fave, +Modify/Delete for own toots) top Y,
+     * post-relative, computed once by ttl_toot_layout and reused as-is by
+     * render/build_hotspots -- same "store once" rule as pollBlockY/
+     * threadRowY above. MUST be stored rather than re-derived from
+     * post->height (the old "post->height - 1 - TTL_POST_PAD_BOT -
+     * lineHeight" formula): that only worked back when the action bar was
+     * always the very last thing before the closing pad/separator, which
+     * stopped being true once the embedded quote block (see hasQuote) can
+     * be appended below it -- re-deriving from the now-larger post->height
+     * would place the action bar at the bottom of the quote block instead
+     * of above it. */
+    WORD   actionBarY;
 
     struct MinList  textSpans;    /* list of TTLTextSpan (wrapped body lines, for hit-testing/selection) */
 
@@ -843,7 +904,11 @@ void     ttl_notify       (Class *cl, Object *o, struct GadgetInfo *gi,
  * TTIMELINE_LastHotSpotFavourited -- pass FALSE when postId is NULL (no
  * owning post to have a favourited state). following is carried as
  * TTIMELINE_LastHotSpotFollowing the same way, for TTL_HOT_FOLLOW clicks
- * on a profile header -- pass FALSE for every other item kind. mediaIds is
+ * on a profile header -- pass FALSE for every other item kind. reblogged is
+ * carried as TTIMELINE_LastHotSpotReblogged the same way, for TTL_HOT_BOOST
+ * clicks -- pass FALSE for every other item kind. quotable is carried as
+ * TTIMELINE_LastHotSpotQuotable the same way, also for TTL_HOT_BOOST
+ * clicks. mediaIds is
  * copied into lastHotSpotMediaIds and carried as
  * TTIMELINE_LastHotSpotMediaIds the same way as data/postId -- NULL for
  * every item kind but a toot (see TTLPost.mediaIdsJoined). acct is copied
@@ -855,6 +920,7 @@ void     ttl_notify       (Class *cl, Object *o, struct GadgetInfo *gi,
 void     ttl_notify_hotspot(Class *cl, Object *o, struct GadgetInfo *gi,
                              UBYTE type, const char *data, ULONG dataLen,
                              const char *postId, BOOL favourited, BOOL following,
+                             BOOL reblogged, BOOL quotable,
                              const char *mediaIds, const char *acct);
 /* only process have right to send render, ask with notify ProcessREfresh
  * void     ttl_render_self  (Class *cl, Object *o, struct GadgetInfo *gi);

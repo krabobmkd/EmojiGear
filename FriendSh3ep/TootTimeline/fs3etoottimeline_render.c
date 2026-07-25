@@ -353,7 +353,7 @@ ULONG TTL_OnRender(Class *cl, Object *o, struct gpRender *msg)
             active->scrollY + gadH >= active->contentBottomY)
         {
             active->olderLoadTriggered = TRUE;
-            ttl_notify_hotspot(cl, o, msg->gpr_GInfo, TTL_HOT_LOAD_OLDER, NULL, 0, NULL, FALSE, FALSE, NULL, NULL);
+            ttl_notify_hotspot(cl, o, msg->gpr_GInfo, TTL_HOT_LOAD_OLDER, NULL, 0, NULL, FALSE, FALSE, FALSE, FALSE, NULL, NULL);
         }
     }
 

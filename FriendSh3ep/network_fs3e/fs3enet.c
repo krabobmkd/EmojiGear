@@ -187,7 +187,8 @@ FS3ENetTimelineReq *FS3ENetTimelineReq_Alloc(ULONG viewModeBit,
 FS3ENetPostStatusReq *FS3ENetPostStatusReq_Alloc(
     const char *apiBaseUrl, const char *accessToken,
     const char *content, const char *visibility, const char *spoiler,
-    const char *inReplyToId, const char *quoteApprovalPolicy)
+    const char *inReplyToId, const char *quoteApprovalPolicy,
+    const char *quotedStatusId)
 {
     ULONG total = sizeof(FS3ENetPostStatusReq)
                 + FS3ENet_PackLen(apiBaseUrl)
@@ -196,7 +197,8 @@ FS3ENetPostStatusReq *FS3ENetPostStatusReq_Alloc(
                 + FS3ENet_PackLen(visibility)
                 + FS3ENet_PackLen(spoiler)
                 + FS3ENet_PackLen(inReplyToId)
-                + FS3ENet_PackLen(quoteApprovalPolicy);
+                + FS3ENet_PackLen(quoteApprovalPolicy)
+                + FS3ENet_PackLen(quotedStatusId);
     FS3ENetPostStatusReq *req =
         (FS3ENetPostStatusReq *)AllocVec(total, MEMF_ANY | MEMF_PUBLIC);
     char *p;
@@ -210,6 +212,7 @@ FS3ENetPostStatusReq *FS3ENetPostStatusReq_Alloc(
     FS3ENet_PackStr(&req->fs3ep_Spoiler,      &p, spoiler);
     FS3ENet_PackStr(&req->fs3ep_InReplyToId,  &p, inReplyToId);
     FS3ENet_PackStr(&req->fs3ep_QuoteApprovalPolicy, &p, quoteApprovalPolicy);
+    FS3ENet_PackStr(&req->fs3ep_QuotedStatusId, &p, quotedStatusId);
     return req;
 }
 
@@ -333,6 +336,27 @@ FS3ENetFavouriteReq *FS3ENetFavouriteReq_Alloc(
     FS3ENet_PackStr(&req->fs3efa_AccessToken, &p, accessToken);
     FS3ENet_PackStr(&req->fs3efa_StatusId,    &p, statusId);
     req->fs3efa_Favourite = favourite;
+    return req;
+}
+
+FS3ENetReblogReq *FS3ENetReblogReq_Alloc(
+    const char *apiBaseUrl, const char *accessToken,
+    const char *statusId, BOOL reblog)
+{
+    ULONG total = sizeof(FS3ENetReblogReq)
+                + FS3ENet_PackLen(apiBaseUrl)
+                + FS3ENet_PackLen(accessToken)
+                + FS3ENet_PackLen(statusId);
+    FS3ENetReblogReq *req =
+        (FS3ENetReblogReq *)AllocVec(total, MEMF_ANY | MEMF_PUBLIC);
+    char *p;
+
+    if (!req) return NULL;
+    p = (char *)req + sizeof(*req);
+    FS3ENet_PackStr(&req->fs3ere_ApiBaseUrl,  &p, apiBaseUrl);
+    FS3ENet_PackStr(&req->fs3ere_AccessToken, &p, accessToken);
+    FS3ENet_PackStr(&req->fs3ere_StatusId,    &p, statusId);
+    req->fs3ere_Reblog = reblog;
     return req;
 }
 
@@ -1589,6 +1613,13 @@ static ULONG FS3ENet_SizeStatusFields(const cJSON *item, const cJSON *src)
     v = cJSON_GetObjectItemCaseSensitive(item, "id");
     total += (v && cJSON_IsString(v) && v->valuestring) ? strlen(v->valuestring) + 1 : 1;
 
+    /* fmas_TargetId -- src's own "id" (see that field's comment in
+     * fs3enet.h): equal to the item-sourced "id" just above whenever src
+     * and item are the same pointer (not a reblog), a different value
+     * (the ORIGINAL status' id) when they differ. */
+    v = cJSON_GetObjectItemCaseSensitive(src, "id");
+    total += (v && cJSON_IsString(v) && v->valuestring) ? strlen(v->valuestring) + 1 : 1;
+
     /* media_attachments belongs to src (the reblogged status for boosts),
      * same as "content" above. */
     v = cJSON_GetObjectItemCaseSensitive(src, "media_attachments");
@@ -1647,6 +1678,38 @@ static ULONG FS3ENet_SizeStatusFields(const cJSON *item, const cJSON *src)
         total += 5; /* five empty strings -- url/title/description/provider_name/image */
     }
 
+    /* Embedded quote -- belongs to src same as card/poll/media_attachments
+     * above. Only "accepted" carries quoted_status content worth sizing
+     * for; every other state (or no "quote" at all) reserves the same six
+     * empty strings as "no quote", matching FS3ENet_FillStatusFields's
+     * fmas_HasQuote gate. */
+    v = cJSON_GetObjectItemCaseSensitive(src, "quote");
+    {
+        const cJSON *state = (v && !cJSON_IsNull(v)) ? cJSON_GetObjectItemCaseSensitive(v, "state") : NULL;
+        BOOL accepted = (state && cJSON_IsString(state) && state->valuestring &&
+                          strcmp(state->valuestring, "accepted") == 0) ? TRUE : FALSE;
+        const cJSON *qs    = accepted ? cJSON_GetObjectItemCaseSensitive(v, "quoted_status") : NULL;
+        const cJSON *qacct = qs ? cJSON_GetObjectItemCaseSensitive(qs, "account") : NULL;
+        const cJSON *f;
+
+        if (qs) {
+            f = qacct ? cJSON_GetObjectItemCaseSensitive(qacct, "display_name") : NULL;
+            total += (f && cJSON_IsString(f) && f->valuestring) ? strlen(f->valuestring) + 1 : 1;
+            f = qacct ? cJSON_GetObjectItemCaseSensitive(qacct, "acct") : NULL;
+            total += (f && cJSON_IsString(f) && f->valuestring) ? strlen(f->valuestring) + 1 : 1;
+            f = qacct ? cJSON_GetObjectItemCaseSensitive(qacct, "avatar") : NULL;
+            total += (f && cJSON_IsString(f) && f->valuestring) ? strlen(f->valuestring) + 1 : 1;
+            f = cJSON_GetObjectItemCaseSensitive(qs, "content");
+            total += (f && cJSON_IsString(f) && f->valuestring) ? strlen(f->valuestring) + 1 : 1;
+            f = cJSON_GetObjectItemCaseSensitive(qs, "created_at");
+            total += (f && cJSON_IsString(f) && f->valuestring) ? strlen(f->valuestring) + 1 : 1;
+            f = cJSON_GetObjectItemCaseSensitive(qs, "id");
+            total += (f && cJSON_IsString(f) && f->valuestring) ? strlen(f->valuestring) + 1 : 1;
+        } else {
+            total += 6; /* six empty strings -- name/acct/avatar/content/created_at/id */
+        }
+    }
+
     return total;
 }
 
@@ -1688,6 +1751,10 @@ static void FS3ENet_FillStatusFields(const cJSON *item, const cJSON *src,
     v = cJSON_GetObjectItemCaseSensitive(item, "id");
     str = (v && cJSON_IsString(v)) ? v->valuestring : "";
     FS3ENet_PackStr(&dst->fmas_Id, p, str);
+
+    v = cJSON_GetObjectItemCaseSensitive(src, "id");
+    str = (v && cJSON_IsString(v)) ? v->valuestring : "";
+    FS3ENet_PackStr(&dst->fmas_TargetId, p, str);
 
     /* media_attachments -- see the matching block in FS3ENet_SizeStatusFields. */
     v = cJSON_GetObjectItemCaseSensitive(src, "media_attachments");
@@ -1820,6 +1887,63 @@ static void FS3ENet_FillStatusFields(const cJSON *item, const cJSON *src,
 
     v = cJSON_GetObjectItemCaseSensitive(src, "reblogged");
     dst->fmas_Reblogged = (v && cJSON_IsTrue(v)) ? TRUE : FALSE;
+
+    v = cJSON_GetObjectItemCaseSensitive(src, "in_reply_to_id");
+    dst->fmas_IsReply = (v && !cJSON_IsNull(v)) ? TRUE : FALSE;
+
+    /* quote_approval.current_user -- "automatic"/"manual" both mean the
+     * connected user may Quote this status right now (see the field
+     * comment on fmas_Quotable in fs3enet.h); missing entirely on servers
+     * older than Mastodon 4.5, correctly falling through to FALSE. */
+    dst->fmas_Quotable = FALSE;
+    v = cJSON_GetObjectItemCaseSensitive(src, "quote_approval");
+    if (v) {
+        const cJSON *cu = cJSON_GetObjectItemCaseSensitive(v, "current_user");
+        if (cu && cJSON_IsString(cu) && cu->valuestring &&
+            (strcmp(cu->valuestring, "automatic") == 0 ||
+             strcmp(cu->valuestring, "manual") == 0))
+        {
+            dst->fmas_Quotable = TRUE;
+        }
+    }
+
+    /* Embedded quote -- see the matching block in FS3ENet_SizeStatusFields. */
+    v = cJSON_GetObjectItemCaseSensitive(src, "quote");
+    {
+        const cJSON *state = (v && !cJSON_IsNull(v)) ? cJSON_GetObjectItemCaseSensitive(v, "state") : NULL;
+        BOOL accepted = (state && cJSON_IsString(state) && state->valuestring &&
+                          strcmp(state->valuestring, "accepted") == 0) ? TRUE : FALSE;
+        const cJSON *qs    = accepted ? cJSON_GetObjectItemCaseSensitive(v, "quoted_status") : NULL;
+        const cJSON *qacct = qs ? cJSON_GetObjectItemCaseSensitive(qs, "account") : NULL;
+        const cJSON *f;
+
+        dst->fmas_HasQuote = (qs != NULL) ? TRUE : FALSE;
+
+        f = qacct ? cJSON_GetObjectItemCaseSensitive(qacct, "display_name") : NULL;
+        str = (f && cJSON_IsString(f)) ? f->valuestring : "";
+        FS3ENet_PackStrClean(&dst->fmas_QuoteAuthorName, p, str);
+
+        f = qacct ? cJSON_GetObjectItemCaseSensitive(qacct, "acct") : NULL;
+        str = (f && cJSON_IsString(f)) ? f->valuestring : "";
+        FS3ENet_PackStr(&dst->fmas_QuoteAuthorAcct, p, str);
+
+        f = qacct ? cJSON_GetObjectItemCaseSensitive(qacct, "avatar") : NULL;
+        str = (f && cJSON_IsString(f)) ? f->valuestring : "";
+        FS3ENet_PackStr(&dst->fmas_QuoteAvatarURL, p, str);
+
+        f = qs ? cJSON_GetObjectItemCaseSensitive(qs, "content") : NULL;
+        str = (f && cJSON_IsString(f)) ? f->valuestring : "";
+        StripHTML(str, stripped, strippedSize);
+        FS3ENet_PackStr(&dst->fmas_QuoteContent, p, stripped);
+
+        f = qs ? cJSON_GetObjectItemCaseSensitive(qs, "created_at") : NULL;
+        str = (f && cJSON_IsString(f)) ? f->valuestring : "";
+        FS3ENet_PackStr(&dst->fmas_QuoteCreatedAt, p, str);
+
+        f = qs ? cJSON_GetObjectItemCaseSensitive(qs, "id") : NULL;
+        str = (f && cJSON_IsString(f)) ? f->valuestring : "";
+        FS3ENet_PackStr(&dst->fmas_QuoteId, p, str);
+    }
 }
 
 /* Sizing pass for FS3ENET_ACCOUNTS_LIST -- mirrors FS3ENet_SizeStatusFields's
@@ -2295,7 +2419,7 @@ static void FS3ENet_HandlePostStatus(FS3ENetMessage *fs3em)
 
     if (!FS3EMastodon_PostStatus(req->fs3ep_ApiBaseUrl, req->fs3ep_AccessToken,
             req->fs3ep_Content, req->fs3ep_Visibility, req->fs3ep_InReplyToId,
-            req->fs3ep_QuoteApprovalPolicy,
+            req->fs3ep_QuoteApprovalPolicy, req->fs3ep_QuotedStatusId,
             statusId, sizeof(statusId)))
     {
         fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
@@ -2416,6 +2540,45 @@ static void FS3ENet_HandleFavourite(FS3ENetMessage *fs3em)
     p = (char *)reply + sizeof(*reply);
     FS3ENet_PackStr(&reply->fs3efa_StatusId, &p, req->fs3efa_StatusId);
     reply->fs3efa_Favourited = favourited;
+
+    FreeVec(fs3em->fs3em_Data);
+    fs3em->fs3em_Data    = reply;
+    fs3em->fs3em_DataLen = total;
+    fs3em->fs3em_Result  = FS3ENETR_OK;
+}
+
+/* FS3ENETQ_REBLOG — toggle reblog/unreblog (boost) on a status, returning
+ * the server-confirmed reblogged boolean (see the field comment on
+ * FS3ENetReblogReply in fs3enet.h -- deliberately not that response's
+ * other counts too). */
+static void FS3ENet_HandleReblog(FS3ENetMessage *fs3em)
+{
+    FS3ENetReblogReq    *req = (FS3ENetReblogReq *)fs3em->fs3em_Data;
+    FS3ENetReblogReply  *reply;
+    BOOL  reblogged;
+    ULONG total;
+    char *p;
+
+    if (!req || fs3em->fs3em_DataLen < sizeof(*req)) {
+        fs3em->fs3em_Result = FS3ENETR_PARSE_ERROR;
+        return;
+    }
+
+
+    if (!FS3EMastodon_Reblog(req->fs3ere_ApiBaseUrl, req->fs3ere_AccessToken,
+            req->fs3ere_StatusId, req->fs3ere_Reblog, &reblogged))
+    {
+        fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
+        return;
+    }
+
+    total = sizeof(FS3ENetReblogReply) + FS3ENet_PackLen(req->fs3ere_StatusId);
+    reply = (FS3ENetReblogReply *)AllocVec(total, MEMF_ANY | MEMF_PUBLIC);
+    if (!reply) { fs3em->fs3em_Result = FS3ENETR_NETWORK_ERROR; return; }
+
+    p = (char *)reply + sizeof(*reply);
+    FS3ENet_PackStr(&reply->fs3ere_StatusId, &p, req->fs3ere_StatusId);
+    reply->fs3ere_Reblogged = reblogged;
 
     FreeVec(fs3em->fs3em_Data);
     fs3em->fs3em_Data    = reply;
@@ -2705,6 +2868,10 @@ static BOOL FS3ENet_Dispatch(FS3ENetMessage *fs3em)
 
         case FS3ENETQ_FAVORITE:
             FS3ENet_HandleFavourite(fs3em);
+            break;
+
+        case FS3ENETQ_REBLOG:
+            FS3ENet_HandleReblog(fs3em);
             break;
 
         case FS3ENETQ_ACCOUNT_LOOKUP:

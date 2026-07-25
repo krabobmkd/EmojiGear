@@ -41,6 +41,8 @@ static const char *defaultStrings[MSG_COUNT] = {
     "Creating a new poll",
     /* MSG_TOOT_CONTEXT_REPLY_FORMAT */
     "Reply to %s's toot\n\nRemember to stay polite and calm,\n and avoid sarcasm.\n -- tone doesn't always come across in text.\nRemember you can be a better person.\xE2\x9D\xA4",
+    /* MSG_TOOT_CONTEXT_QUOTE_FORMAT */
+    "Quoting %s's toot",
     /* MSG_TOOT_VISIBILITY_PUBLIC */
     "Public",
     /* MSG_TOOT_VISIBILITY_UNLISTED -- API value "unlisted", shown with the
@@ -76,6 +78,8 @@ static const char *defaultStrings[MSG_COUNT] = {
     "Modify",
     /* MSG_TOOT_SEND_REPLY */
     "Reply",
+    /* MSG_TOOT_SEND_QUOTE */
+    "Quote",
     /* MSG_TOOT_CHARS_FORMAT */
     "%lu / Max: %s",
 

@@ -260,6 +260,7 @@ TTLPost *ttl_post_alloc(const TTLPostSetup *setup)
         post->boostByAcct = (setup->boostByAcct && setup->boostByAcct[0]) ? dup_str(setup->boostByAcct) : NULL;
         post->avatarURL = (setup->avatarURL && setup->avatarURL[0]) ? dup_str(setup->avatarURL) : NULL;
         post->postId    = (setup->postId && setup->postId[0]) ? dup_str(setup->postId) : NULL;
+        post->targetId  = (setup->targetId && setup->targetId[0]) ? dup_str(setup->targetId) : NULL;
 
         post->mediaCount = setup->mediaCount;
         if (post->mediaCount > TTL_POST_MAX_MEDIA) post->mediaCount = TTL_POST_MAX_MEDIA;
@@ -307,6 +308,8 @@ TTLPost *ttl_post_alloc(const TTLPostSetup *setup)
         post->favouritesCount = setup->favouritesCount;
         post->favourited      = setup->favourited;
         post->reblogged       = setup->reblogged;
+        post->quotable        = setup->quotable;
+    post->isReply         = setup->isReply;
         post->isOwn           = setup->isOwn;
         post->isThreadReply   = setup->isThreadReply;
 
@@ -334,6 +337,16 @@ TTLPost *ttl_post_alloc(const TTLPostSetup *setup)
         post->cardImageUrl     = (setup->cardImageUrl     && setup->cardImageUrl[0])     ? dup_str(setup->cardImageUrl)     : NULL;
         /* cardTitleLines/cardDescLines are computed by ttl_toot_layout
          * (they depend on cardW, a layout-time value), not here. */
+
+        post->hasQuote = setup->hasQuote;
+        post->quoteId         = (setup->quoteId         && setup->quoteId[0])         ? dup_str(setup->quoteId)         : NULL;
+        post->quoteAuthorName = (setup->quoteAuthorName && setup->quoteAuthorName[0]) ? dup_str(setup->quoteAuthorName) : NULL;
+        post->quoteAuthorAcct = (setup->quoteAuthorAcct && setup->quoteAuthorAcct[0]) ? dup_str(setup->quoteAuthorAcct) : NULL;
+        post->quoteAvatarURL  = (setup->quoteAvatarURL  && setup->quoteAvatarURL[0])  ? dup_str(setup->quoteAvatarURL)  : NULL;
+        post->quoteBody       = (setup->quoteBody       && setup->quoteBody[0])       ? dup_str(setup->quoteBody)       : NULL;
+        post->quoteTimestamp  = (setup->quoteTimestamp  && setup->quoteTimestamp[0])  ? dup_str(setup->quoteTimestamp)  : NULL;
+        /* quoteBodyLines are computed by ttl_toot_layout (depend on
+         * quoteW, a layout-time value), not here. */
     }
 
     return post;
@@ -378,6 +391,12 @@ void ttl_post_refresh_fields(TTLPost *post, const TTLPostSetup *setup)
     if (post->cardDescription)  FreeVec(post->cardDescription);
     if (post->cardProviderName) FreeVec(post->cardProviderName);
     if (post->cardImageUrl)     FreeVec(post->cardImageUrl);
+    if (post->quoteId)         FreeVec(post->quoteId);
+    if (post->quoteAuthorName) FreeVec(post->quoteAuthorName);
+    if (post->quoteAuthorAcct) FreeVec(post->quoteAuthorAcct);
+    if (post->quoteAvatarURL)  FreeVec(post->quoteAvatarURL);
+    if (post->quoteBody)       FreeVec(post->quoteBody);
+    if (post->quoteTimestamp)  FreeVec(post->quoteTimestamp);
     for (mi = 0; mi < post->mediaCount; mi++)
         if (post->mediaUrls[mi]) FreeVec(post->mediaUrls[mi]);
     for (mi = 0; mi < post->pollOptionCount; mi++)
@@ -434,6 +453,8 @@ void ttl_post_refresh_fields(TTLPost *post, const TTLPostSetup *setup)
     post->favouritesCount = setup->favouritesCount;
     post->favourited      = setup->favourited;
     post->reblogged       = setup->reblogged;
+    post->quotable        = setup->quotable;
+    post->isReply         = setup->isReply;
 
     post->pollOptionCount = setup->pollOptionCount;
     if (post->pollOptionCount > TTL_POST_MAX_POLL_OPTIONS) post->pollOptionCount = TTL_POST_MAX_POLL_OPTIONS;
@@ -454,6 +475,16 @@ void ttl_post_refresh_fields(TTLPost *post, const TTLPostSetup *setup)
     post->cardImageUrl     = (setup->cardImageUrl     && setup->cardImageUrl[0])     ? dup_str(setup->cardImageUrl)     : NULL;
     /* cardTitleLines/cardDescLines are rebuilt by the forced relayout the
      * caller (TTIMELINE_RefreshPost) triggers right after this call. */
+
+    post->hasQuote = setup->hasQuote;
+    post->quoteId         = (setup->quoteId         && setup->quoteId[0])         ? dup_str(setup->quoteId)         : NULL;
+    post->quoteAuthorName = (setup->quoteAuthorName && setup->quoteAuthorName[0]) ? dup_str(setup->quoteAuthorName) : NULL;
+    post->quoteAuthorAcct = (setup->quoteAuthorAcct && setup->quoteAuthorAcct[0]) ? dup_str(setup->quoteAuthorAcct) : NULL;
+    post->quoteAvatarURL  = (setup->quoteAvatarURL  && setup->quoteAvatarURL[0])  ? dup_str(setup->quoteAvatarURL)  : NULL;
+    post->quoteBody       = (setup->quoteBody       && setup->quoteBody[0])       ? dup_str(setup->quoteBody)       : NULL;
+    post->quoteTimestamp  = (setup->quoteTimestamp  && setup->quoteTimestamp[0])  ? dup_str(setup->quoteTimestamp)  : NULL;
+    /* quoteBodyLines are rebuilt by the forced relayout the caller
+     * (TTIMELINE_RefreshPost) triggers right after this call. */
 }
 
 /* ------------------------------------------------------------------ */
@@ -501,6 +532,7 @@ static void ttl_toot_dispose(TTLPost *post)
     if (post->boostByAcct) FreeVec(post->boostByAcct);
     if (post->avatarURL) FreeVec(post->avatarURL);
     if (post->postId)    FreeVec(post->postId);
+    if (post->targetId)  FreeVec(post->targetId);
     if (post->mediaIdsJoined) FreeVec(post->mediaIdsJoined);
     if (post->notifActorName) FreeVec(post->notifActorName);
     if (post->notifActorAcct) FreeVec(post->notifActorAcct);
@@ -510,6 +542,12 @@ static void ttl_toot_dispose(TTLPost *post)
     if (post->cardDescription)  FreeVec(post->cardDescription);
     if (post->cardProviderName) FreeVec(post->cardProviderName);
     if (post->cardImageUrl)     FreeVec(post->cardImageUrl);
+    if (post->quoteId)         FreeVec(post->quoteId);
+    if (post->quoteAuthorName) FreeVec(post->quoteAuthorName);
+    if (post->quoteAuthorAcct) FreeVec(post->quoteAuthorAcct);
+    if (post->quoteAvatarURL)  FreeVec(post->quoteAvatarURL);
+    if (post->quoteBody)       FreeVec(post->quoteBody);
+    if (post->quoteTimestamp)  FreeVec(post->quoteTimestamp);
     {
         ULONG mi;
         for (mi = 0; mi < post->mediaCount; mi++)
@@ -520,6 +558,11 @@ static void ttl_toot_dispose(TTLPost *post)
             if (post->cardTitleLines[mi]) FreeVec(post->cardTitleLines[mi]);
         for (mi = 0; mi < post->cardDescLineCount; mi++)
             if (post->cardDescLines[mi]) FreeVec(post->cardDescLines[mi]);
+        if (post->quoteBodyLines) {
+            for (mi = 0; mi < post->quoteBodyLineCount; mi++)
+                if (post->quoteBodyLines[mi]) FreeVec(post->quoteBodyLines[mi]);
+            FreeVec(post->quoteBodyLines);
+        }
     }
 }
 
@@ -577,10 +620,11 @@ static void ttl_toot_layout(TTLData *inst, TTLPost *post)
 
     post->previewX = post->previewY = post->previewW = post->previewH = 0;
     post->cardX = post->cardY = post->cardW = post->cardH = post->cardImgH = 0;
+    post->quoteX = post->quoteY = post->quoteW = post->quoteH = 0;
 
-    /* Free any previously wrapped card title/description lines before
-     * rebuilding below (layout can rerun on width/font change) -- same
-     * reasoning ttl_clear_textspans handles for textSpans just above. */
+    /* Free any previously wrapped card title/description/quote body lines
+     * before rebuilding below (layout can rerun on width/font change) --
+     * same reasoning ttl_clear_textspans handles for textSpans just above. */
     {
         ULONG li;
         for (li = 0; li < post->cardTitleLineCount; li++)
@@ -589,6 +633,13 @@ static void ttl_toot_layout(TTLData *inst, TTLPost *post)
         for (li = 0; li < post->cardDescLineCount; li++)
             if (post->cardDescLines[li]) { FreeVec(post->cardDescLines[li]); post->cardDescLines[li] = NULL; }
         post->cardDescLineCount = 0;
+        if (post->quoteBodyLines) {
+            for (li = 0; li < post->quoteBodyLineCount; li++)
+                if (post->quoteBodyLines[li]) FreeVec(post->quoteBodyLines[li]);
+            FreeVec(post->quoteBodyLines);
+            post->quoteBodyLines = NULL;
+        }
+        post->quoteBodyLineCount = 0;
     }
 
     hasThumb = (post->mediaCount > 0 && post->pollOptionCount == 0);
@@ -806,6 +857,18 @@ static void ttl_toot_layout(TTLData *inst, TTLPost *post)
         curRelY += inst->miniLineHeight;       /* "N votes - Poll closed" summary line */
     }
 
+    /* ---- "Follow discussion up" row -- reserved only when this post is
+     * itself a reply, ABOVE the "...down" row below (see TTL_HOT_THREAD_UP).
+     * Independent of repliesCount: a post can be a reply with no replies of
+     * its own (only this row), have replies without being one itself (only
+     * the row below), both (both rows), or neither (neither row). ---- */
+    post->threadUpRowY = 0;
+    if (post->isReply) {
+        curRelY += avatarGap;
+        post->threadUpRowY = (WORD)curRelY;
+        curRelY += inst->miniLineHeight;
+    }
+
     /* ---- Thread indicator: short vertical bar + "..." meaning "this
      * toot has replies, click to see the discussion" -- reserved only
      * when it actually does, right above the action bar. threadRowY
@@ -825,7 +888,64 @@ static void ttl_toot_layout(TTLData *inst, TTLPost *post)
      * the two can never drift apart the way two separately-hand-maintained
      * copies would. */
     curRelY += 2;                              /* gap above the action bar */
+    post->actionBarY = (WORD)curRelY;
     curRelY += inst->lineHeight + TTL_POST_PAD_BOT;
+
+    /* ---- Embedded quote block: a bordered box (not just a separator
+     * line -- a line read as still "part of" this post; a full rectangle
+     * reads as a distinct nested block), containing a minimal "nested
+     * toot" -- smaller avatar, dcMini throughout (no dcUsername/dcNormal),
+     * no action bar/poll/media/card of its own, and no further nested
+     * quote even if the quoted status is itself a quote (bounded to one
+     * level) -- see TTLPost.hasQuote's doc comment. Indented further right
+     * than this post's own avatar column start (padLeft alone would just
+     * align with THIS post's own left edge, reading as another row at the
+     * same level rather than nested under it) -- width shrinks to match,
+     * still derived from this post's own gadWidth-relative margins, not a
+     * fixed card-style scale. ---- */
+    if (post->hasQuote) {
+        struct URPDrawContext *dcMini = inst->style ? inst->style->dcMini : NULL;
+        WORD qPad = 4;
+        WORD qIndent = (WORD)(padLeft + avatarW / 2);
+        WORD qAvatarSize = (WORD)(((LONG)avatarW * TTL_QUOTE_AVATAR_SCALE_NUM) / TTL_QUOTE_AVATAR_SCALE_DEN);
+        WORD qTextW, qHeaderH, qTopH, qBodyH;
+
+        curRelY += avatarGap; /* gap between the action bar and the quote box -- see post->actionBarY */
+
+        post->quoteX = qIndent;
+        post->quoteW = (WORD)(inst->gadWidth - qIndent - TTL_POST_PAD_RIGHT);
+        if (post->quoteW < 32) post->quoteW = 32;
+        post->quoteY = (WORD)curRelY;
+
+        qTextW = (WORD)(post->quoteW - (qPad + qAvatarSize + avatarGap) - qPad);
+        if (qTextW < 16) qTextW = 16;
+
+        qHeaderH = (WORD)(2 * inst->miniLineHeight); /* username line + "@acct - timestamp" line */
+        qTopH = (qAvatarSize > qHeaderH) ? qAvatarSize : qHeaderH;
+
+        qBodyH = 0;
+        if (dcMini && post->quoteBody && post->quoteBody[0]) {
+            FS3ETextWrap tw;
+            if (FS3ETextWrap_Build(&tw, dcMini, inst->miniLineHeight, post->quoteBody, qTextW)) {
+                ULONG ri, rows = tw.rowCount;
+                if (rows > TTL_QUOTE_BODY_MAX_ROWS) rows = TTL_QUOTE_BODY_MAX_ROWS;
+                if (rows > 0)
+                    post->quoteBodyLines = (char **)AllocVec(rows * sizeof(char *), MEMF_ANY | MEMF_CLEAR);
+                for (ri = 0; ri < rows && post->quoteBodyLines; ri++) {
+                    post->quoteBodyLines[ri] = dup_strn(tw.rows[ri].start, tw.rows[ri].byteLen);
+                    post->quoteBodyLineCount++;
+                    qBodyH += inst->miniLineHeight;
+                }
+                FS3ETextWrap_Free(&tw);
+            }
+        }
+        if (qBodyH > 0) qBodyH += 2; /* small gap above the wrapped body */
+
+        post->quoteH = (WORD)(2 * qPad + qTopH + qBodyH);
+
+        curRelY += post->quoteH;
+        curRelY += avatarGap; /* gap below the quote box, before this post's own bottom separator */
+    }
 
     curRelY += 1;  /* separator pixel */
     post->height = curRelY;
@@ -1026,6 +1146,16 @@ static void ttl_toot_build_hotspots(TTLData *inst, TTLPost *post)
                    post->cardUrl, post->cardUrl ? (ULONG)strlen(post->cardUrl) : 0);
     }
 
+    /* "Follow discussion up" row -- see TTLPost.threadUpRowY. Same full-
+     * width clickable treatment as the "...down" row below. */
+    if (post->isReply && post->threadUpRowY > 0 &&
+        post->hotSpotCount < TTL_HOTSPOT_MAX_PER_TOOT)
+    {
+        WORD rowW = (WORD)(inst->gadWidth - textX - TTL_POST_PAD_RIGHT);
+        ttl_hs_add(post, TTL_HOT_THREAD_UP, textX, post->threadUpRowY,
+                   rowW, inst->miniLineHeight, NULL, 0);
+    }
+
     /* "N replies" thread-indicator row -- see TTLPost.threadRowY. Spans
      * the same left-to-right text column as the body, full clickable
      * width rather than just the small vertical-bar-and-dots glyph,
@@ -1045,7 +1175,7 @@ static void ttl_toot_build_hotspots(TTLData *inst, TTLPost *post)
     if (post->hotSpotCount < TTL_HOTSPOT_MAX_PER_TOOT) {
         struct URPDrawContext *dcA = inst->style ? inst->style->dcNormal : NULL;
         WORD barH   = inst->lineHeight;
-        WORD y      = (WORD)(post->height - 1 - TTL_POST_PAD_BOT - barH);
+        WORD y      = post->actionBarY;
         WORD xRight = (WORD)(inst->gadWidth - TTL_POST_PAD_RIGHT);
         char labels[3][TTL_ACTION_LABEL_MAX];
         int  a;
@@ -1089,7 +1219,7 @@ static void ttl_toot_build_hotspots(TTLData *inst, TTLPost *post)
     if (post->isOwn && post->hotSpotCount < TTL_HOTSPOT_MAX_PER_TOOT) {
         struct URPDrawContext *dcA = inst->style ? inst->style->dcNormal : NULL;
         WORD barH  = inst->lineHeight;
-        WORD y     = (WORD)(post->height - 1 - TTL_POST_PAD_BOT - barH);
+        WORD y     = post->actionBarY;
         WORD xLeft = textX;
         int  a;
 
@@ -1119,6 +1249,17 @@ static void ttl_toot_build_hotspots(TTLData *inst, TTLPost *post)
             }
             xLeft = (WORD)(xLeft + w + TTL_ACTION_GAP);
         }
+    }
+
+    /* Embedded quote block: one hotspot over the whole rect (not
+     * per-element), carrying quoteId as data so it opens THAT status'
+     * own discussion -- see TTL_HOT_QUOTECARD's comment. */
+    if (post->hasQuote && post->quoteW > 0 && post->quoteH > 0 &&
+        post->hotSpotCount < TTL_HOTSPOT_MAX_PER_TOOT)
+    {
+        ttl_hs_add(post, TTL_HOT_QUOTECARD, post->quoteX, post->quoteY,
+                   post->quoteW, post->quoteH,
+                   post->quoteId, post->quoteId ? (ULONG)strlen(post->quoteId) : 0);
     }
 }
 

@@ -310,6 +310,7 @@ BOOL FS3EMastodon_GetInstanceInfo(const char *apiBaseUrl, ULONG *outMaxChars)
 #define FS3ENET_TLSHAPE_SEARCH_STATUSES     3
 #define FS3ENET_TLSHAPE_SINGLE_REFRESH      4
 #define FS3ENET_TLSHAPE_SEARCH_ACCOUNTS     5
+#define FS3ENET_TLSHAPE_CONTEXT_ANCESTORS   6
 
 BOOL FS3EMastodon_GetTimeline(const char *apiBaseUrl, const char *accessToken,
                              const char *timeline, ULONG responseShape,
@@ -378,6 +379,12 @@ BOOL FS3EMastodon_GetTimeline(const char *apiBaseUrl, const char *accessToken,
         cJSON_Delete(json); /* frees the wrapper object + ancestors; descendants already detached, survives */
         json = descendants;
     }
+    else if (json && cJSON_IsObject(json) && responseShape == FS3ENET_TLSHAPE_CONTEXT_ANCESTORS)
+    {
+        cJSON *ancestors = cJSON_DetachItemFromObjectCaseSensitive(json, "ancestors");
+        cJSON_Delete(json); /* frees the wrapper object + descendants; ancestors already detached, survives */
+        json = ancestors;
+    }
     else if (json && cJSON_IsObject(json) && responseShape == FS3ENET_TLSHAPE_SEARCH_STATUSES)
     {
         cJSON *statuses = cJSON_DetachItemFromObjectCaseSensitive(json, "statuses");
@@ -419,6 +426,7 @@ BOOL FS3EMastodon_PostStatus(const char *apiBaseUrl, const char *accessToken,
                             const char *statusText, const char *visibility,
                             const char *inReplyToId,
                             const char *quoteApprovalPolicy,
+                            const char *quotedStatusId,
                             char *outStatusId, ULONG outStatusIdSize)
 {
     char url[256];
@@ -439,6 +447,8 @@ BOOL FS3EMastodon_PostStatus(const char *apiBaseUrl, const char *accessToken,
                              quoteApprovalPolicy ? quoteApprovalPolicy : "public");
     if (inReplyToId && inReplyToId[0])
         cJSON_AddStringToObject(reqJson, "in_reply_to_id", inReplyToId);
+    if (quotedStatusId && quotedStatusId[0])
+        cJSON_AddStringToObject(reqJson, "quoted_status_id", quotedStatusId);
 
     reqBody = cJSON_PrintUnformatted(reqJson);
     cJSON_Delete(reqJson);
@@ -592,6 +602,48 @@ BOOL FS3EMastodon_Favourite(const char *apiBaseUrl, const char *accessToken,
         {
             const cJSON *v = cJSON_GetObjectItemCaseSensitive(json, "favourited");
             *outFavourited = (v && cJSON_IsTrue(v)) ? TRUE : FALSE;
+
+            ok = TRUE;
+            cJSON_Delete(json);
+        }
+
+        FS3EHttp_FreeResponse(&resp);
+    }
+
+    return ok;
+}
+
+BOOL FS3EMastodon_Reblog(const char *apiBaseUrl, const char *accessToken,
+                         const char *statusId, BOOL reblog,
+                         BOOL *outReblogged)
+{
+    char url[300];
+    char authHeader[300];
+    FS3EHttpHeader headers[2];
+    FS3EHttpResponse resp;
+    cJSON *json;
+    BOOL ok = FALSE;
+
+    *outReblogged = FALSE;
+
+    snprintf(url, sizeof(url), "%s/api/v1/statuses/%s/%s", apiBaseUrl, statusId,
+             reblog ? "reblog" : "unreblog");
+    FS3EMastodon_BuildAuthHeader(authHeader, sizeof(authHeader), accessToken);
+
+    headers[0].fhh_Name  = "Authorization";
+    headers[0].fhh_Value = authHeader;
+    headers[1].fhh_Name  = NULL;
+    headers[1].fhh_Value = NULL;
+
+    /* Empty body -- Mastodon's reblog/unreblog endpoints take none, only
+     * the auth header and the :id in the URL. */
+    if (FS3EHttp_Post(url, headers, "application/json", "", 0, &resp))
+    {
+        json = cJSON_Parse((char *)resp.fhr_Body);
+        if (json)
+        {
+            const cJSON *v = cJSON_GetObjectItemCaseSensitive(json, "reblogged");
+            *outReblogged = (v && cJSON_IsTrue(v)) ? TRUE : FALSE;
 
             ok = TRUE;
             cJSON_Delete(json);

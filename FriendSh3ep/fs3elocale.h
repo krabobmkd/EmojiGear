@@ -35,6 +35,7 @@ enum {
     MSG_TOOT_CONTEXT_REPLY_FORMAT, /* FS3ETOOT_KIND_REPLY contextMessage format: "Reply to %s's
                                      * toot" + a second line reminding to stay civil -- UniButton
                                      * renders the embedded \n\n as real line breaks */
+    MSG_TOOT_CONTEXT_QUOTE_FORMAT, /* FS3ETOOT_KIND_QUOTE contextMessage format: "Quoting %s's toot" */
     MSG_TOOT_VISIBILITY_PUBLIC,
     MSG_TOOT_VISIBILITY_UNLISTED,
     MSG_TOOT_VISIBILITY_PRIVATE,
@@ -61,6 +62,7 @@ enum {
     MSG_TOOT_SEND,        /* tootBtn label for FS3ETOOT_KIND_NEW/POLL */
     MSG_TOOT_SEND_MODIFY, /* tootBtn label for FS3ETOOT_KIND_MODIFY */
     MSG_TOOT_SEND_REPLY,  /* tootBtn label for FS3ETOOT_KIND_REPLY */
+    MSG_TOOT_SEND_QUOTE,  /* tootBtn label for FS3ETOOT_KIND_QUOTE */
     MSG_TOOT_CHARS_FORMAT, /* format: "%lu / Max: %s" -- typed chars, then
                              * either the active account's server-confirmed
                              * per-toot limit as a decimal string, or "-" if
