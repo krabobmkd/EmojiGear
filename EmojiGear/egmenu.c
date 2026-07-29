@@ -78,7 +78,9 @@ static void buildMenuTemplate(const AppSettings *as)
     BAR(NM_ITEM);
     ADD(NM_ITEM,  NULL, "Q", 0, 0, ACTION_UD(ACTION_FILE_CLOSE));
     BAR(NM_ITEM);
-    ADD(NM_ITEM,  NULL, "S", 0, 0, ACTION_UD(ACTION_FILE_SAVE_UTF8));
+    ADD(NM_ITEM,  NULL, "S", 0, 0, ACTION_UD(ACTION_FILE_SAVE));
+    ADD(NM_ITEM,  NULL, 0,   0, 0, ACTION_UD(ACTION_FILE_SAVE_ALL));
+    ADD(NM_ITEM,  NULL, "W",   0, 0, ACTION_UD(ACTION_FILE_SAVE_UTF8));
     ADD(NM_ITEM,  NULL, 0,   0, 0, ACTION_UD(ACTION_FILE_SAVE_ESCAPED));
     ADD(NM_ITEM,  NULL, 0,   0, 0, ACTION_UD(ACTION_FILE_SAVE_LATIN1));
     ADD(NM_ITEM,  NULL, 0,   0, 0, ACTION_UD(ACTION_FILE_SAVE_LATIN2));
@@ -167,7 +169,7 @@ BOOL EgMenu_Create(EgMenu *bm, struct Screen *screen, struct Window *window, App
 
     bm->visualInfo = GetVisualInfo(screen, TAG_END);
     if (!bm->visualInfo) {
-        printf("EgMenu_Create: GetVisualInfo failed\n");
+        SetTransientStatusBarMessage(LOC(MSG_ERROR_MENU));
         return FALSE;
     }
 
@@ -235,7 +237,7 @@ BOOL EgMenu_Create(EgMenu *bm, struct Screen *screen, struct Window *window, App
 
     bm->menu = CreateMenus(s_menuTemplate, TAG_END);
     if (!bm->menu) {
-        printf("EgMenu_Create: CreateMenus failed\n");
+        SetTransientStatusBarMessage(LOC(MSG_ERROR_MENU));
         FreeVisualInfo(bm->visualInfo);
         bm->visualInfo = NULL;
         return FALSE;
@@ -244,7 +246,7 @@ BOOL EgMenu_Create(EgMenu *bm, struct Screen *screen, struct Window *window, App
     if (!LayoutMenus(bm->menu, bm->visualInfo,
                      GTMN_NewLookMenus, TRUE,
                      TAG_END)) {
-        printf("EgMenu_Create: LayoutMenus failed\n");
+        SetTransientStatusBarMessage(LOC(MSG_ERROR_MENU));
         FreeMenus(bm->menu);
         FreeVisualInfo(bm->visualInfo);
         bm->menu       = NULL;

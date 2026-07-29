@@ -14,6 +14,7 @@
 #include <gadgets/button.h>
 #include <proto/checkbox.h>
 #include <proto/label.h>
+#include <proto/utility.h>
 #include <gadgets/checkbox.h>
 #include <proto/window.h>
 #include <classes/window.h>
@@ -32,6 +33,8 @@
 #include "egsearchbox.h"
 #include "emojigear.h"
 #include "egaction.h"
+
+extern Object *GetActiveUTEDEditor();
 
 BOOL EgSearchBox_Create(EgSearchBox *sb, ULONG pointSize/*,ULONG *sharedButtonsDrawContext*/)
 {
@@ -57,7 +60,8 @@ BOOL EgSearchBox_Create(EgSearchBox *sb, ULONG pointSize/*,ULONG *sharedButtonsD
     sb->searchEditor = (Object *)NewObject(UNITEXTEDITOR_GetClass(), NULL,
         GA_ID,                  (ULONG)ID_SEARCH_EDITOR,
         ICA_TARGET,             (ULONG)TargetInstance,
-        UTED_KeyMessageMode,    UKM_External, /* send rawkey/vanilla keys messages from window */
+        UTED_KeyMessageMode,    UKM_Internal, /* send rawkey/vanilla keys messages from window */
+        UTED_InternalRawKey_SendBack,TRUE,
         UTED_BevelStyle,        BVS_FIELD,
         UTED_PointSize,         pointSize,
         UTED_AddFont,           (ULONG)"LiberationSans-Regular.ttf",
@@ -71,6 +75,7 @@ BOOL EgSearchBox_Create(EgSearchBox *sb, ULONG pointSize/*,ULONG *sharedButtonsD
         UTED_TopMargin,3,
         UTED_BottomMargin,1,
         UTED_LineSpacing,0,
+     //   GA_TabCycle,  TRUE,
         TAG_END);
 
     if(sb->searchEditor)
@@ -83,6 +88,7 @@ BOOL EgSearchBox_Create(EgSearchBox *sb, ULONG pointSize/*,ULONG *sharedButtonsD
         GA_ID,   (ULONG)ID_SEARCH_ERASE,
         GA_Text, (ULONG)LOC(MSG_SEARCH_ERASE),
         GA_RelVerify,TRUE, /* needed to receive WMHI_GADGETUP */
+        GA_TabCycle,  TRUE,
         TAG_END);
 
     searchLine = (Object *)NewObject(LAYOUT_GetClass(), NULL,
@@ -110,7 +116,8 @@ BOOL EgSearchBox_Create(EgSearchBox *sb, ULONG pointSize/*,ULONG *sharedButtonsD
         UTED_BevelStyle,        BVS_FIELD,
         UTED_PointSize,         pointSize,
         UTED_URPDrawContext,    (ULONG)buttonsDc,
-        UTED_KeyMessageMode,    UKM_External, /* send rawkey/vanilla keys messages from window */
+        UTED_KeyMessageMode,    UKM_Internal, /* send rawkey/vanilla keys messages from window */
+        UTED_InternalRawKey_SendBack,TRUE,
         // UTED_AddFont,           (ULONG)"LiberationSans-Regular.ttf",
         // UTED_AddFont,           (ULONG)"NotoColorEmoji32.ttf",
 
@@ -123,12 +130,14 @@ BOOL EgSearchBox_Create(EgSearchBox *sb, ULONG pointSize/*,ULONG *sharedButtonsD
         UTED_TopMargin,3,
         UTED_BottomMargin,1,
         UTED_LineSpacing,0,
+     //re   GA_TabCycle,  TRUE,
         TAG_END);
 
     sb->replaceEraseBtn = (Object *)NewObject(BUTTON_GetClass(), NULL,
         GA_ID,   (ULONG)ID_REPLACE_ERASE,
         GA_Text, (ULONG)LOC(MSG_SEARCH_ERASE),
         GA_RelVerify,TRUE, /* needed to receive WMHI_GADGETUP */
+        GA_TabCycle,  TRUE,
         TAG_END);
 
     replaceLine = (Object *)NewObject(LAYOUT_GetClass(), NULL,
@@ -151,30 +160,35 @@ BOOL EgSearchBox_Create(EgSearchBox *sb, ULONG pointSize/*,ULONG *sharedButtonsD
     sb->findNextBtn = (Object *)NewObject(BUTTON_GetClass(), NULL,
         GA_ID,   (ULONG)ID_SEARCH_FIND_NEXT,
         GA_Text, (ULONG)LOC(MSG_SEARCH_FIND_NEXT),
+        GA_TabCycle,  TRUE,
         GA_RelVerify,TRUE, /* needed to receive WMHI_GADGETUP */
         TAG_END);
 
     sb->findPrevBtn = (Object *)NewObject(BUTTON_GetClass(), NULL,
         GA_ID,   (ULONG)ID_SEARCH_FIND_PREV,
         GA_Text, (ULONG)LOC(MSG_SEARCH_FIND_PREV),
+        GA_TabCycle,  TRUE,
         GA_RelVerify,TRUE, /* needed to receive WMHI_GADGETUP */
         TAG_END);
 
     sb->replaceBtn = (Object *)NewObject(BUTTON_GetClass(), NULL,
         GA_ID,   (ULONG)ID_SEARCH_REPLACE,
         GA_Text, (ULONG)LOC(MSG_SEARCH_REPLACE),
+        GA_TabCycle,  TRUE,
         GA_RelVerify,TRUE, /* needed to receive WMHI_GADGETUP */
         TAG_END);
 
     sb->replaceAllBtn = (Object *)NewObject(BUTTON_GetClass(), NULL,
         GA_ID,   (ULONG)ID_SEARCH_REPLACE_ALL,
         GA_Text, (ULONG)LOC(MSG_SEARCH_REPLACE_ALL),
+        GA_TabCycle,  TRUE,
         GA_RelVerify,TRUE, /* needed to receive WMHI_GADGETUP */
         TAG_END);
 
     sb->caseSensCheck = (Object *)NewObject(CHECKBOX_GetClass(), NULL,
         GA_ID,            (ULONG)ID_SEARCH_CASE_SENS,
         GA_Text,          (ULONG)LOC(MSG_SEARCH_CASE_SENS),
+        GA_TabCycle,  TRUE,
         CHECKBOX_Checked, FALSE,
         TAG_END);
 
@@ -228,7 +242,7 @@ BOOL EgSearchBox_Create(EgSearchBox *sb, ULONG pointSize/*,ULONG *sharedButtonsD
     sb->windowObj = NewObject(WINDOW_GetClass(), NULL,
                          WA_Left,   100,
                          WA_Top,    60,
-      WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_MENUPICK | IDCMP_RAWKEY | IDCMP_VANILLAKEY |
+      WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_MENUPICK | IDCMP_RAWKEY |
                   IDCMP_GADGETDOWN | IDCMP_GADGETUP /*| IDCMP_MOUSEMOVE*/ | IDCMP_NEWSIZE,
         WA_Flags, WFLG_DRAGBAR | WFLG_DEPTHGADGET | WFLG_CLOSEGADGET |
                   WFLG_SIZEGADGET | WFLG_ACTIVATE | WFLG_SMART_REFRESH,
@@ -284,10 +298,14 @@ void EgSearchBox_Open(EgSearchBox *sb)
 
     sb->window = (struct Window *)DoMethod(sb->windowObj, WM_OPEN, NULL);
     if(sb->window)
+    {
         EgMenu_Create(&sb->menu,CurrentMainScreen,sb->window,&app->appSettings);
-
+        ActivateGadget(sb->searchEditor,sb->window,NULL);
+    }
     /* sort of activate the search field */
-    app->activeEditorObj = sb->searchEditor;
+  //old for ukm_external  app->activeEditorObj = sb->searchEditor;
+
+
 }
 
 void EgSearchBox_Close(EgSearchBox *sb)
@@ -304,11 +322,84 @@ void EgSearchBox_Close(EgSearchBox *sb)
     DoMethod(sb->windowObj, WM_CLOSE, NULL);
     sb->window = NULL;
 }
+BOOL EmojiBox_HandleFKey(struct App *ctx, ULONG code, ULONG qualifiers,
+                         struct Window *win);
+void  EgSearchBox_HandleBoopsiMessages(EgSearchBox *sb,ULONG sender_ID, struct TagItem *msg)
+{
+    struct TagItem *ptag;
+
+    switch(sender_ID)
+    {
+        case ID_SEARCH_EDITOR:
+            ptag = FindTagItem(UTEDN_EnterPressed, msg);
+            if (ptag) {
+                Action_NavFindNext(app);
+               if(sb->searchEditor && sb->window)
+                    ActivateGadget(sb->searchEditor,sb->window,NULL);
+            }
+            ptag = FindTagItem(UTED_InternalRawKey_Code, msg);
+            if (ptag) {
+
+                ULONG qulkey = ptag->ti_Data;
+                int isUp = 0x0080 & qulkey;
+                UWORD key = (UWORD)(0x007f & qulkey);
+                UWORD qualifiers = (UWORD)(qulkey>>16);
+
+                if(!isUp && key>=0x50 && key<=0x59 )
+                {
+                    EmojiBox_HandleFKey(app,key, qualifiers, NULL );
+                }
+                /* if edidtor has focus (activation), escape key to close the window is here */
+                if(isUp && key == 0x45)
+                {
+                    EgSearchBox_Close(sb);
+                }
+            }
+            if(sb->window)
+            {
+                RefreshGadgets(sb->searchEditor,sb->window,NULL);
+            }
+
+        break;
+        case ID_REPLACE_EDITOR:
+            ptag = FindTagItem(UTEDN_EnterPressed, msg);
+            if (ptag) {
+                Action_NavReplace(app);
+               if(sb->replaceEditor && sb->window)
+                    ActivateGadget(sb->replaceEditor,sb->window,NULL);
+            }
+            ptag = FindTagItem(UTED_InternalRawKey_Code, msg);
+            if (ptag) {
+
+                ULONG qulkey = ptag->ti_Data;
+                int isUp = 0x0080 & qulkey;
+                UWORD key = (UWORD)(0x007f & qulkey);
+                UWORD qualifiers = (UWORD)(qulkey>>16);
+
+                if(!isUp && key>=0x50 && key<=0x59 )
+                {
+                    EmojiBox_HandleFKey(app,key, qualifiers, NULL );
+                }
+                /* if edidtor has focus (activation), escape key to close the window is here */
+                if(isUp && key == 0x45)
+                {
+                    EgSearchBox_Close(sb);
+                }
+            }
+
+            if(sb->window )
+            {
+                RefreshGadgets(sb->replaceEditor,sb->window,NULL);
+            }
+        break;
+    }
+
+}
 
 BOOL EgSearchBox_HandleInput(EgSearchBox *sb)
 {
     ULONG result;
-
+    Object *activeEditor = GetActiveUTEDEditor();
     if (!sb || !sb->windowObj) return FALSE;
     if (!sb->window) return TRUE; /* window closed, that's fine */
 
@@ -327,50 +418,8 @@ BOOL EgSearchBox_HandleInput(EgSearchBox *sb)
                     RefreshGList((struct Gadget *)sb->replaceEditor, sb->window, NULL, 1);
                 break;
             case WMHI_ACTIVE:
-            app->activeEditorObj == sb->searchEditor;
-            break;
-           case WMHI_RAWKEY:
-            {
-                ULONG qualifiers=0;
-                GetAttr(WINDOW_Qualifier,sb->windowObj,&qualifiers);
-                ULONG key = (result & 0x07f);
-                ULONG isUp = (result & 0x080);
-
-                // if(key == 0x45) {
-                //     EgSearchBox_Close(sb);
-                //     return TRUE;
-                // }
-                if(app->activeEditorObj == sb->searchEditor ||
-                    app->activeEditorObj == sb->replaceEditor)
-                {
-                    if (!EmojiBox_HandleFKey(app, key, qualifiers,sb->window))
-                    {
-                        SetGadgetAttrs(app->activeEditorObj,
-                            sb->window,NULL,
-                            UTED_PutRawKey,key|(qualifiers<<16),TAG_END);
-                    }
-                }
-            }
-            break;
-            case WMHI_VANILLAKEY:
-            {
-                ULONG key = (result & 0x0FF);
-                ULONG qualifiers=0;
-
-                if(key == 0x1b) { /* esc in vanilla */
-                    EgSearchBox_Close(sb);
-                    return TRUE;
-                }
-                 GetAttr(WINDOW_Qualifier,sb->windowObj,&qualifiers);
-
-                if(app->activeEditorObj == sb->searchEditor ||
-                    app->activeEditorObj == sb->replaceEditor)
-                {
-                    SetGadgetAttrs(app->activeEditorObj,
-                        sb->window,NULL,
-                         UTED_PutVanillaKey, key, TAG_END);
-                }
-            }
+                ActivateGadget(sb->searchEditor,sb->window,NULL);
+           // app->activeEditorObj == sb->searchEditor;
             break;
 
             case WMHI_GADGETUP:
@@ -378,6 +427,7 @@ BOOL EgSearchBox_HandleInput(EgSearchBox *sb)
                 ULONG gadId = result & WMHI_GADGETMASK;
                 switch(gadId)
                 {
+                    /* boopsimessage managements in main loop */
                     case ID_SEARCH_ERASE:
                         if(sb->searchEditor)
                             SetGadgetAttrs(sb->searchEditor,sb->window,NULL,

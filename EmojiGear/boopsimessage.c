@@ -103,6 +103,7 @@ static ULONG delayedAttribs[] = {
     UTEDN_ScrollChanged,
     UTEDN_UndoAvailable,
     UTEDN_RedoAvailable,
+    UTEDN_EnterPressed,
 
     UTED_AddFont,
     UTED_Modified,
@@ -110,8 +111,7 @@ static ULONG delayedAttribs[] = {
     UTED_CursorColumn,
     UTED_ScrollLeft,
     UTED_ScrollTop,
-
-    UTED_SetPrivateActivation,
+    UTED_InternalRawKey_Code,
 
 
 };

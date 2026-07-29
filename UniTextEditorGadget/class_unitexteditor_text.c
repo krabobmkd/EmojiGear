@@ -580,7 +580,7 @@ ULONG UniTextEditor_DoInsertText(Class *cl, Object *o, const char *text, LONG le
         } else {
             e.textBytes = 0;
         }
-        uted_undo_push(inst, &e);
+        uted_undo_push(inst, &e, FALSE);
         uted_undo_notify(cl, o, NULL);
     }
     return 1;
@@ -753,7 +753,7 @@ ULONG UniTextEditor_DoDeleteChar(Class *cl, Object *o, LONG delta)
 
 delete_done:
     if (doRecord && !inst->undoInProgress && inst->undoMax > 0) {
-        uted_undo_push(inst, &e);
+        uted_undo_push(inst, &e, FALSE);
         uted_undo_notify(cl, o, NULL);
     } else if (e.text) {
         FreeVec(e.text);
@@ -812,7 +812,7 @@ ULONG UniTextEditor_DoDeleteToLineStart(Class *cl, Object *o)
     uted_ensure_cursor_h_visible(inst);
 
     if (!inst->undoInProgress && inst->undoMax > 0) {
-        uted_undo_push(inst, &e);
+        uted_undo_push(inst, &e, FALSE);
         uted_undo_notify(cl, o, NULL);
     } else if (e.text) {
         FreeVec(e.text);
@@ -872,7 +872,7 @@ ULONG UniTextEditor_DoDeleteToLineEnd(Class *cl, Object *o)
     uted_ensure_cursor_h_visible(inst);
 
     if (!inst->undoInProgress && inst->undoMax > 0) {
-        uted_undo_push(inst, &e);
+        uted_undo_push(inst, &e, FALSE);
         uted_undo_notify(cl, o, NULL);
     } else if (e.text) {
         FreeVec(e.text);
@@ -1210,7 +1210,7 @@ ULONG UniTextEditor_DoDeleteSelection(Class *cl, Object *o)
         e.posEnd       = undoPosEnd;
         e.text         = undoText;
         e.textBytes    = undoBytes;
-        uted_undo_push(inst, &e);
+        uted_undo_push(inst, &e, FALSE);
         uted_undo_notify(cl, o, NULL);
     } else if (undoText) {
         FreeVec(undoText);

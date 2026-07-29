@@ -12,6 +12,7 @@
 
 #include <proto/exec.h>
 #include <proto/intuition.h>
+#include <intuition/intuition.h>
 #include <proto/dos.h>
 #include <proto/alib.h>
 #include <proto/clicktab.h>
@@ -21,6 +22,8 @@
 #include "eglocale.h"
 #include "boopsimainwindow.h"
 #include "egtabs.h"
+#include "egnotify.h"
+#include "egaction.h"
 
 #include <gadgets/unitexteditor.h>
 
@@ -35,9 +38,27 @@ static void egReplaceUnderscores(char *buf)
         if (*buf == '_') *buf = ' ';
 }
 
+/* TRUE if key matches a real-path tab (not the current one being added/
+ * renamed, which by the time FillLabel is called for it either isn't in
+ * tabContextNames[] yet - AddOrSelectTab - or already holds the same key -
+ * RenameCurrentTab - so a plain linear scan finds the right slot either
+ * way, or correctly finds none for a brand-new tab, which is exactly the
+ * "not modified yet" state a freshly loaded/saved file should show). */
+static BOOL egTabsReal_IsKeyModified(const char *key)
+{
+    int i;
+    if (!app || !key) return FALSE;
+    for (i = 0; i < app->tabCount; i++) {
+        if (app->tabContextNames[i] && strcmp(app->tabContextNames[i], key) == 0)
+            return app->tabModified[i];
+    }
+    return FALSE;
+}
+
 /* Fill buf with a human-readable tab label for the given context key.
  * Synthetic keys ":n:N": N==1 → "New File"; N>1 → "New File N".
- * Real paths: just the filename part, with underscores replaced by spaces. */
+ * Real paths: filename part (underscores replaced by spaces), prefixed
+ * with "*" when the file differs from what's on disk (see EgTabs_SyncModified). */
 static void egTabsReal_FillLabel(char *buf, ULONG bufsz, const char *key)
 {
     if (!key || key[0] == '\0') {
@@ -52,7 +73,11 @@ static void egTabsReal_FillLabel(char *buf, ULONG bufsz, const char *key)
         buf[bufsz - 1] = '\0';
     } else {
         const char *fp = (const char *)FilePart((STRPTR)key);
-        strncpy(buf, fp ? fp : key, bufsz - 1);
+        const char *name = fp ? fp : key;
+        if (egTabsReal_IsKeyModified(key))
+            snprintf(buf, bufsz, "*%s", name);
+        else
+            strncpy(buf, name, bufsz - 1);
         buf[bufsz - 1] = '\0';
         egReplaceUnderscores(buf);
     }
@@ -107,6 +132,15 @@ static void egTabsRebuildGadget(void)
         FreeVec(app->tabList);
     }
     app->tabList = newList;
+}
+
+void EgTabs_SyncModified(int idx, BOOL isModified)
+{
+    if (!app || idx < 0 || idx >= app->tabCount) return;
+    isModified = isModified ? TRUE : FALSE;
+    if (app->tabModified[idx] == isModified) return;
+    app->tabModified[idx] = isModified;
+    egTabsRebuildGadget();
 }
 
 static void egTabsReal_AddOrSelectTab(const char *contextKey)
@@ -183,6 +217,44 @@ static void egTabsReal_NewTab(void)
 /* forward declaration needed: CloseCurrentTab calls SwitchTo defined below */
 static void egTabsReal_SwitchTo(int newIdx);
 
+/* Ask whether to save tab idx's changes before it closes, if (and only if)
+ * it's attached to a real file and currently modified - unmodified and
+ * untitled tabs close silently, same as always. Returns FALSE if the close
+ * must be aborted: the user asked to save first but the save failed, so
+ * discarding the tab now would silently lose those changes. */
+static BOOL egTabsReal_ConfirmClose(int idx)
+{
+    const char *key;
+    struct EasyStruct es;
+    ULONG argArray[1];
+    LONG  choice;
+
+    if (!app || idx < 0 || idx >= app->tabCount) return TRUE;
+
+    key = app->tabContextNames[idx];
+    if (!key || !key[0] || key[0] == ':' || !app->tabModified[idx])
+        return TRUE;
+
+    argArray[0] = (ULONG)key;
+
+    es.es_StructSize   = sizeof(struct EasyStruct);
+    es.es_Flags        = 0;
+    es.es_Title        = (UBYTE *)LOC(MSG_CLOSE_CONFIRM_TITLE);
+    es.es_TextFormat   = (UBYTE *)LOC(MSG_CLOSE_CONFIRM_BODY);
+    es.es_GadgetFormat = (UBYTE *)LOC(MSG_CLOSE_CONFIRM_GADGETS);
+
+    choice = EasyRequestArgs(CurrentMainWindow, &es, NULL, argArray);
+    if (choice != 1) return TRUE; /* "Don't Save": proceed, discard changes */
+
+    /* "Save": Action_FileSave() only ever acts on the *current* tab, since
+     * that's the only context whose text actually lives in the editor
+     * gadget right now - bring this one into focus first if it isn't. */
+    if (idx != app->tabCurrentIndex)
+        egTabsReal_SwitchTo(idx);
+
+    return Action_FileSave(app);
+}
+
 /* Close the tab at closingIdx, whether or not it is the active tab, and
  * synchronize tab state.  Shared by CloseCurrentTab and CloseTabByNode. */
 static void egTabsReal_CloseTabByIndex(int closingIdx)
@@ -193,11 +265,16 @@ static void egTabsReal_CloseTabByIndex(int closingIdx)
     if (!app) return;
     if (closingIdx < 0 || closingIdx >= app->tabCount) return;
 
-    /* Single tab: closing it means quitting */
+    /* Single tab: closing it means quitting the app - go through the
+     * app-wide quit confirmation (covers this tab, worded for "quitting"
+     * rather than "closing") instead of a redundant per-tab one below. */
     if (app->tabCount == 1) {
-        exit(0);
-        return;
+        EgAction_ConfirmAndQuit(app);
+        return; /* only reached if the user backed out (a save failed) */
     }
+
+    if (!egTabsReal_ConfirmClose(closingIdx))
+        return; /* user asked to save first but it failed - keep the tab open */
 
     closingKey = app->tabContextNames[closingIdx]; /* borrow – freed below */
 
@@ -216,19 +293,28 @@ static void egTabsReal_CloseTabByIndex(int closingIdx)
                    UTED_DeleteContext, (ULONG)closingKey,
                    TAG_END);
 
+    /* Stop watching the closing tab's file, if any watch was armed */
+    EgNotify_End(closingIdx);
+
     /* Free the closing tab's context-name string */
     if (closingKey)
         FreeVec(closingKey);
 
-    /* Compact the three parallel arrays (contextNames, nodes, labels) */
+    /* Compact the four parallel arrays (contextNames, nodes, labels, notify) */
     for (i = closingIdx; i < app->tabCount - 1; i++) {
         app->tabContextNames[i] = app->tabContextNames[i + 1];
         app->tabNodes[i]        = app->tabNodes[i + 1];
         memcpy(app->tabLabels[i], app->tabLabels[i + 1],
                sizeof(app->tabLabels[0]));
+        app->tabNotify[i]   = app->tabNotify[i + 1];
+        app->tabEncoding[i] = app->tabEncoding[i + 1];
+        app->tabModified[i] = app->tabModified[i + 1];
     }
     app->tabContextNames[app->tabCount - 1] = NULL;
     app->tabNodes[app->tabCount - 1]        = NULL;
+    app->tabNotify[app->tabCount - 1]       = NULL;
+    app->tabEncoding[app->tabCount - 1]     = 0;
+    app->tabModified[app->tabCount - 1]     = FALSE;
     app->tabCount--;
 
     /* After removing closingIdx the surviving tabs shift left by one when

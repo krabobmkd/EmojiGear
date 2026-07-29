@@ -296,6 +296,7 @@ static void uted_stash_save(UniTextEditorData *inst)
     stash->undoCount  = inst->undoCount;
     stash->undoHead   = inst->undoHead;
     stash->redoCount  = inst->redoCount;
+    stash->savedSeq   = inst->savedSeq;
 
     /* Move wrap map */
     stash->wrapMap      = inst->wrapMap;
@@ -344,6 +345,7 @@ static void uted_stash_restore(UniTextEditorData *inst, UTEDTextStash *stash)
     inst->undoCount  = stash->undoCount;
     inst->undoHead   = stash->undoHead;
     inst->redoCount  = stash->redoCount;
+    inst->savedSeq   = stash->savedSeq;
 
     /* Move wrap map back */
     inst->wrapMap      = stash->wrapMap;
@@ -432,6 +434,7 @@ static void uted_apply_context_switch(UniTextEditorData *inst, const char *newNa
         inst->scrollTopLine = 0;
         inst->scrollLeftPx  = 0;
         inst->modified      = FALSE;
+        inst->savedSeq      = 0; /* fresh context: clean at an empty undo stack */
         inst->lastSearchValid = FALSE;
         inst->refreshStartLine = 0;
         inst->refreshEndLine   = (LONG)~0UL;
@@ -901,6 +904,7 @@ ULONG UniTextEditor_OnSet(Class *cl, Object *o, struct opSet *msg)
             if (inst->wordWrap) inst->wrapMapDirty = TRUE;
             /* Loading new text invalidates any prior undo/redo history and search state */
             uted_undo_flush(inst);
+            inst->savedSeq        = 0; /* matches the now-empty undo stack: not modified */
             inst->lastSearchValid = FALSE;
 
             redraw = TRUE;
@@ -910,6 +914,16 @@ ULONG UniTextEditor_OnSet(Class *cl, Object *o, struct opSet *msg)
 
         case UTED_Modified:
             inst->modified = (BOOL)tag->ti_Data;
+            result = 1;
+            break;
+
+        case UTED_IsModified:
+            /* See gadgets/unitexteditor.h: FALSE marks the undo entry
+             * currently on top (or "empty") as matching the file; TRUE
+             * forces it dirty regardless of undo position via a seq value
+             * no real entry can ever have. */
+            inst->savedSeq = (BOOL)tag->ti_Data ? (ULONG)~0UL
+                                                 : uted_undo_current_seq(inst);
             result = 1;
             break;
 
@@ -1533,6 +1547,11 @@ ULONG UniTextEditor_OnGet(Class *cl, Object *o, struct opGet *msg)
 
     case UTED_Modified:
         *msg->opg_Storage = (ULONG)inst->modified;
+        return TRUE;
+
+    case UTED_IsModified:
+        *msg->opg_Storage =
+            (ULONG)(uted_undo_current_seq(inst) != inst->savedSeq);
         return TRUE;
 
     case UTED_ScrollTop:

@@ -33,6 +33,8 @@ set(EMOJIGEAR_SOURCES
     emojibox.c
     egsearchbox.c
     egtabs.c
+    egnotify.c
+    egappwindow.c
 #    egtabs_safe.c
 #    egtabs_fallbackclass.c
 )

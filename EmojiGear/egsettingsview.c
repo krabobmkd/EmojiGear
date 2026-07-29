@@ -164,6 +164,7 @@ BOOL EgSettingsView_Init(EgSettingsView *psv, const char *title)
                                   GA_ID,           GAD_SETTINGS_EDITORBGCOLOR,
                                   GA_RelVerify,    TRUE,
                                   PALETTE_NumColours, numcolors,
+                                  GA_TabCycle,  TRUE,
                                   TAG_END);
         if (!psv->bgColorPalette) return FALSE;
 
@@ -171,6 +172,7 @@ BOOL EgSettingsView_Init(EgSettingsView *psv, const char *title)
                                    GA_ID,           GAD_SETTINGS_EDITORPENCOLOR,
                                    GA_RelVerify,    TRUE,
                                    PALETTE_NumColours, numcolors,
+                                   GA_TabCycle,  TRUE,
                                    TAG_END);
         if (!psv->penColorPalette) return FALSE;
     }
@@ -190,6 +192,7 @@ BOOL EgSettingsView_Init(EgSettingsView *psv, const char *title)
                                INTEGER_Minimum, 2L,
                                INTEGER_Maximum, 12L,
                                INTEGER_Arrows,  TRUE,
+                               GA_TabCycle,  TRUE,
                                TAG_END);
     if (!psv->tabSpacesInteger) return FALSE;
 
@@ -201,6 +204,7 @@ BOOL EgSettingsView_Init(EgSettingsView *psv, const char *title)
                                   GA_ID,        GAD_SETTINGS_VISUALIZETABS,
                                   GA_RelVerify, TRUE,
                                   GA_Selected,  (ULONG)app->appSettings.visualizeTabs,
+                                  GA_TabCycle,  TRUE,
                                   TAG_END);
     if (!psv->visualizeTabsCheck) return FALSE;
 
@@ -212,6 +216,7 @@ BOOL EgSettingsView_Init(EgSettingsView *psv, const char *title)
                                    GA_ID,        GAD_SETTINGS_TABSARESPACES,
                                    GA_RelVerify, TRUE,
                                    GA_Selected,  (ULONG)app->appSettings.tabsAreSpaces,
+                                   GA_TabCycle,  TRUE,
                                    TAG_END);
     if (!psv->tabsAreSpacesCheck) return FALSE;
 

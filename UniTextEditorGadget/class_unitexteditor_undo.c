@@ -105,15 +105,23 @@ void uted_undo_resize(UniTextEditorData *inst, ULONG newMax)
  * If ring is full, evicts the oldest entry (with its text).
  * =========================================================================
  */
-void uted_undo_push(UniTextEditorData *inst, UTEDUndoEntry *entry)
+void uted_undo_push(UniTextEditorData *inst, UTEDUndoEntry *entry, BOOL groupWithPrev)
 {
     UTEDUndoEntry *top;
     char          *newText;
+
+    entry->groupWithPrev = groupWithPrev;
 
     if (!inst->undoStack || inst->undoMax == 0) {
         entry_free_text(entry);
         return;
     }
+
+    /* Permanent identity for UTED_IsModified (see unitexteditor_private.h's
+     * UTEDUndoEntry.seq doc comment). Assigned unconditionally here, even
+     * though a compression merge below may discard it unused - a skipped
+     * counter value is harmless, uniqueness is all that matters. */
+    entry->seq = ++inst->undoSeqCounter;
 
     /* Every new edit clears redo.
      * NOTE: DoRedo bypasses this function for its ring-push (see undo_ring_put)
@@ -123,12 +131,20 @@ void uted_undo_push(UniTextEditorData *inst, UTEDUndoEntry *entry)
     /* -----------------------------------------------------------------------
      * Compression: try to merge single-char non-atomic edits of the same
      * type on the same line with the current top entry.
+     *
+     * Excludes the entry currently marking the UTED_IsModified "clean" point
+     * (top->seq == inst->savedSeq): merging into it in place would silently
+     * grow the saved entry's content without changing its identity, so a
+     * single keystroke right after a save could go undetected as a
+     * modification. Forcing a fresh entry there instead keeps every edit
+     * after that point on a distinct, comparable seq.
      * ----------------------------------------------------------------------- */
     if (!entry->atomic && entry->text && entry->textBytes > 0 && inst->undoCount > 0) {
         top = undo_top(inst);
 
         if (top && !top->atomic && top->opType == entry->opType
-            && top->posStart.line == entry->posStart.line)
+            && top->posStart.line == entry->posStart.line
+            && top->seq != inst->savedSeq)
         {
             BOOL merged = FALSE;
 
@@ -232,67 +248,93 @@ void uted_undo_notify(Class *cl, Object *o, struct GadgetInfo *gi)
 
 /* =========================================================================
  * DoUndo
+ *
+ * Consumes one whole group per call (see UTEDUndoEntry.groupWithPrev):
+ * a multi-line block indent/unindent pushes one entry per affected line,
+ * but must undo/redo as a single user-visible step. Each iteration below is
+ * exactly the single-entry logic this function used to have; the loop just
+ * keeps going while the entry just popped says it was glued to the one
+ * before it, stopping once it pops a group leader (groupWithPrev==FALSE) or
+ * the stack runs dry (e.g. the rest of the group was evicted long ago).
  * =========================================================================
  */
 ULONG UniTextEditor_DoUndo(Class *cl, Object *o)
 {
     UniTextEditorData *inst = UTED_DATA(cl, o);
     UTEDUndoEntry      e;
+    BOOL               continueGroup;
+    ULONG              didAny = 0;
 
-    if (!inst->undoStack || inst->undoCount == 0) return 0;
+    do {
+        if (!inst->undoStack || inst->undoCount == 0) break;
 
-    /* Pop top entry from ring */
-    inst->undoHead = (inst->undoHead + inst->undoMax - 1) % inst->undoMax;
-    e = inst->undoStack[inst->undoHead];
-    inst->undoStack[inst->undoHead].text = NULL; /* ownership in local e */
-    inst->undoCount--;
+        /* Pop top entry from ring */
+        inst->undoHead = (inst->undoHead + inst->undoMax - 1) % inst->undoMax;
+        e = inst->undoStack[inst->undoHead];
+        inst->undoStack[inst->undoHead].text = NULL; /* ownership in local e */
+        inst->undoCount--;
 
-    /* Execute inverse operation with recording suppressed */
-    inst->undoInProgress = TRUE;
+        continueGroup = e.groupWithPrev;
 
-    if (e.opType == UTED_UNDO_INSERT) {
-        /* Undo an insert: select and delete the inserted range */
-        if (uted_pos_cmp(&e.posStart, &e.posEnd) != 0) {
-            inst->cursor       = e.posStart;
-            inst->selAnchor    = e.posStart;
-            inst->selFloat     = e.posEnd;
-            inst->hasSelection = TRUE;
-            UniTextEditor_DoDeleteSelection(cl, o);
+        /* Execute inverse operation with recording suppressed */
+        inst->undoInProgress = TRUE;
+
+        if (e.opType == UTED_UNDO_INSERT) {
+            /* Undo an insert: select and delete the inserted range */
+            if (uted_pos_cmp(&e.posStart, &e.posEnd) != 0) {
+                inst->cursor       = e.posStart;
+                inst->selAnchor    = e.posStart;
+                inst->selFloat     = e.posEnd;
+                inst->hasSelection = TRUE;
+                UniTextEditor_DoDeleteSelection(cl, o);
+            }
+        } else {
+            /* Undo a delete: re-insert the captured text at posStart */
+            if (e.text && e.textBytes > 0) {
+                inst->cursor       = e.posStart;
+                inst->selAnchor    = e.posStart;
+                inst->selFloat     = e.posStart;
+                inst->hasSelection = FALSE;
+                UniTextEditor_DoInsertText(cl, o, e.text, (LONG)e.textBytes);
+            }
         }
-    } else {
-        /* Undo a delete: re-insert the captured text at posStart */
-        if (e.text && e.textBytes > 0) {
-            inst->cursor       = e.posStart;
-            inst->selAnchor    = e.posStart;
-            inst->selFloat     = e.posStart;
-            inst->hasSelection = FALSE;
-            UniTextEditor_DoInsertText(cl, o, e.text, (LONG)e.textBytes);
+
+        inst->undoInProgress = FALSE;
+
+        /* Restore full cursor/selection state to pre-edit snapshot. Only
+         * the last iteration's restore survives, which is exactly right:
+         * that's the group leader's pre-edit state, i.e. the state before
+         * the whole block operation. */
+        inst->cursor       = e.cursorBefore;
+        inst->selAnchor    = e.anchorBefore;
+        inst->selFloat     = e.cursorBefore;
+        inst->hasSelection = e.hasSelBefore;
+
+        /* Push entry to redo stack (same entry, text ownership transferred) */
+        if (inst->redoStack && inst->redoCount < inst->undoMax) {
+            inst->redoStack[inst->redoCount] = e;
+            inst->redoCount++;
+            e.text = NULL; /* redo stack now owns it */
         }
-    }
+        if (e.text) { FreeVec(e.text); }
 
-    inst->undoInProgress = FALSE;
+        didAny = 1;
+    } while (continueGroup);
 
-    /* Restore full cursor/selection state to pre-edit snapshot */
-    inst->cursor       = e.cursorBefore;
-    inst->selAnchor    = e.anchorBefore;
-    inst->selFloat     = e.cursorBefore;
-    inst->hasSelection = e.hasSelBefore;
     uted_ensure_cursor_visible(inst);
     uted_ensure_cursor_h_visible(inst);
 
-    /* Push entry to redo stack (same entry, text ownership transferred) */
-    if (inst->redoStack && inst->redoCount < inst->undoMax) {
-        inst->redoStack[inst->redoCount] = e;
-        inst->redoCount++;
-        e.text = NULL; /* redo stack now owns it */
-    }
-    if (e.text) { FreeVec(e.text); }
-
-    return 1;
+    return didAny;
 }
 
 /* =========================================================================
  * DoRedo
+ *
+ * Mirrors DoUndo's grouping: after redoing entry e, peek at what would be
+ * redone *next* (the new top of the redo stack) - if that entry says it was
+ * grouped with the one before it (i.e. with e, which we just redid),
+ * continue the loop instead of returning, so the whole group is re-applied
+ * as a single user-visible step.
  * =========================================================================
  */
 ULONG UniTextEditor_DoRedo(Class *cl, Object *o)
@@ -302,58 +344,78 @@ ULONG UniTextEditor_DoRedo(Class *cl, Object *o)
     UniTextEditorPos   preCursor;
     UniTextEditorPos   preAnchor;
     BOOL               preHasSel;
+    BOOL               continueGroup;
+    ULONG              didAny = 0;
 
-    if (!inst->redoStack || inst->redoCount == 0) return 0;
+    do {
+        if (!inst->redoStack || inst->redoCount == 0) break;
 
-    /* Pop top from redo stack */
-    inst->redoCount--;
-    e = inst->redoStack[inst->redoCount];
-    inst->redoStack[inst->redoCount].text = NULL;
+        /* Pop top from redo stack */
+        inst->redoCount--;
+        e = inst->redoStack[inst->redoCount];
+        inst->redoStack[inst->redoCount].text = NULL;
 
-    /* Save cursor state before redo (will become cursorBefore in new undo entry) */
-    preCursor = inst->cursor;
-    preAnchor = inst->selAnchor;
-    preHasSel = inst->hasSelection;
+        continueGroup = (inst->redoCount > 0) &&
+                        inst->redoStack[inst->redoCount - 1].groupWithPrev;
 
-    /* Re-execute the original operation with recording suppressed */
-    inst->undoInProgress = TRUE;
+        /* Save cursor state before redo (will become cursorBefore in new undo entry) */
+        preCursor = inst->cursor;
+        preAnchor = inst->selAnchor;
+        preHasSel = inst->hasSelection;
 
-    if (e.opType == UTED_UNDO_INSERT) {
-        /* Redo an insert: re-insert text at posStart */
-        if (e.text && e.textBytes > 0) {
-            inst->cursor       = e.posStart;
-            inst->selAnchor    = e.posStart;
-            inst->selFloat     = e.posStart;
-            inst->hasSelection = FALSE;
-            UniTextEditor_DoInsertText(cl, o, e.text, (LONG)e.textBytes);
+        /* Re-execute the original operation with recording suppressed */
+        inst->undoInProgress = TRUE;
+
+        if (e.opType == UTED_UNDO_INSERT) {
+            /* Redo an insert: re-insert text at posStart */
+            if (e.text && e.textBytes > 0) {
+                inst->cursor       = e.posStart;
+                inst->selAnchor    = e.posStart;
+                inst->selFloat     = e.posStart;
+                inst->hasSelection = FALSE;
+                UniTextEditor_DoInsertText(cl, o, e.text, (LONG)e.textBytes);
+            }
+        } else {
+            /* Redo a delete: re-delete the range [posStart..posEnd] */
+            if (uted_pos_cmp(&e.posStart, &e.posEnd) != 0) {
+                inst->cursor       = e.posStart;
+                inst->selAnchor    = e.posStart;
+                inst->selFloat     = e.posEnd;
+                inst->hasSelection = TRUE;
+                UniTextEditor_DoDeleteSelection(cl, o);
+            }
         }
-    } else {
-        /* Redo a delete: re-delete the range [posStart..posEnd] */
-        if (uted_pos_cmp(&e.posStart, &e.posEnd) != 0) {
-            inst->cursor       = e.posStart;
-            inst->selAnchor    = e.posStart;
-            inst->selFloat     = e.posEnd;
-            inst->hasSelection = TRUE;
-            UniTextEditor_DoDeleteSelection(cl, o);
-        }
-    }
 
-    inst->undoInProgress = FALSE;
+        inst->undoInProgress = FALSE;
+
+        /* Push back to undo stack with updated cursorBefore = state before redo.
+         * Use undo_ring_put (not uted_undo_push) so the remaining redo entries
+         * are NOT flushed. Mark atomic so this entry never compresses;
+         * groupWithPrev is preserved as-is (whole-struct copy above). */
+        e.cursorBefore = preCursor;
+        e.anchorBefore = preAnchor;
+        e.hasSelBefore = preHasSel;
+        e.atomic       = TRUE;
+        if (inst->undoStack && inst->undoMax > 0)
+            undo_ring_put(inst, &e);
+        else
+            entry_free_text(&e);
+
+        didAny = 1;
+    } while (continueGroup);
 
     uted_ensure_cursor_visible(inst);
     uted_ensure_cursor_h_visible(inst);
 
-    /* Push back to undo stack with updated cursorBefore = state before redo.
-     * Use undo_ring_put (not uted_undo_push) so the remaining redo entries
-     * are NOT flushed. Mark atomic so this entry never compresses. */
-    e.cursorBefore = preCursor;
-    e.anchorBefore = preAnchor;
-    e.hasSelBefore = preHasSel;
-    e.atomic       = TRUE;
-    if (inst->undoStack && inst->undoMax > 0)
-        undo_ring_put(inst, &e);
-    else
-        entry_free_text(&e);
+    return didAny;
+}
 
-    return 1;
+/* =========================================================================
+ * uted_undo_current_seq - backs UTED_IsModified (see class_unitexteditor_attribs.c)
+ * =========================================================================
+ */
+ULONG uted_undo_current_seq(UniTextEditorData *inst)
+{
+    UTEDUndoEntry *top = undo_top(inst);
+    return top ? top->seq : 0;
 }

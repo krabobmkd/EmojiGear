@@ -122,6 +122,20 @@ typedef struct {
     UniTextEditorPos cursorBefore;
     UniTextEditorPos anchorBefore;
     BOOL             hasSelBefore;
+    /* Unique, permanent identity assigned once at creation (see inst's
+     * undoSeqCounter) - survives undo/redo moves and in-place compression
+     * of a *different*, still-uncommitted entry, but never changes once
+     * assigned. Backs UTED_IsModified: never 0 (0 is the "empty stack"
+     * sentinel), never reused, monotonically increasing across the whole
+     * gadget instance's lifetime. */
+    ULONG            seq;
+    /* TRUE = this entry must be undone/redone together with the entry
+     * immediately before it in undo-stack order, as a single user-visible
+     * step (e.g. one line of a multi-line block indent/unindent). The
+     * first entry of such a group has this FALSE; every entry pushed after
+     * it as part of the same operation has it TRUE. See
+     * UniTextEditor_DoUndo/DoRedo in class_unitexteditor_undo.c. */
+    BOOL             groupWithPrev;
 } UTEDUndoEntry;
 
 /* =========================================================================
@@ -240,6 +254,11 @@ typedef struct UTEDTextStash {
     ULONG              undoHead;
     ULONG              redoCount;
 
+    /* UTED_IsModified marker for this context: the undo entry seq that
+     * matched the file as of the last explicit clear (0 = matched at an
+     * empty undo stack; ~0UL = forced dirty). See inst->savedSeq. */
+    ULONG              savedSeq;
+
     /* Wrap map */
     UTEDWrapRow       *wrapMap;
     ULONG              wrapRowCount;
@@ -354,6 +373,14 @@ typedef struct UniTextEditorData {
     ULONG                 undoHead;       /* ring write position */
     ULONG                 redoCount;      /* entries currently on redo stack */
     BOOL                  undoInProgress; /* TRUE while executing undo/redo */
+
+    /* UTED_IsModified backing store (see gadgets/unitexteditor.h for the
+     * full contract). savedSeq is per-context (stashed/restored with the
+     * rest of the undo state); undoSeqCounter is NOT - it is one monotonic
+     * counter for the whole gadget instance's lifetime, guaranteeing every
+     * undo entry ever pushed in any context gets a globally unique seq. */
+    ULONG                 savedSeq;
+    ULONG                 undoSeqCounter;
 
     /* Word-wrap map
      * Built lazily at the start of GM_RENDER when wrapMapDirty=TRUE.
@@ -544,10 +571,14 @@ void uted_render_self(Class *cl, Object *o, struct GadgetInfo *gi);
 /* class_unitexteditor_undo.c */
 void  uted_undo_flush  (UniTextEditorData *inst);
 void  uted_undo_resize (UniTextEditorData *inst, ULONG newMax);
-void  uted_undo_push   (UniTextEditorData *inst, UTEDUndoEntry *entry);
+void  uted_undo_push   (UniTextEditorData *inst, UTEDUndoEntry *entry, BOOL groupWithPrev);
 void  uted_undo_notify (Class *cl, Object *o, struct GadgetInfo *gi);
 ULONG UniTextEditor_DoUndo (Class *cl, Object *o);
 ULONG UniTextEditor_DoRedo (Class *cl, Object *o);
+
+/* Seq of the entry currently on top of the undo ring, or 0 if empty.
+ * Backs UTED_IsModified (see gadgets/unitexteditor.h). */
+ULONG uted_undo_current_seq(UniTextEditorData *inst);
 
 /* class_texteditor_lines.c */
 void  uted_line_build_metrics  (UniTextEditorLine *line, UniTextEditorData *inst);

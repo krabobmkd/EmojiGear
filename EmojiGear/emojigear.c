@@ -72,6 +72,8 @@
 #include "egfontsview.h"
 #include "egtabs.h"
 #include "egtabs_fallbackclass.h"
+#include "egnotify.h"
+#include "egappwindow.h"
 
 #include <workbench/startup.h>
 
@@ -111,6 +113,7 @@ struct LocaleBase      *LocaleBase    = NULL;
 struct Library         *DataTypesBase = NULL;
 struct Library          *CyberGfxBase = NULL;
 struct Library          *URPBase = NULL; /* Unicode rastport lib */
+struct Library          *WorkbenchBase = NULL; /* AppWindow drag & drop */
 
 /* BOOPSI class bases */
 struct Library *WindowBase   = NULL;
@@ -160,7 +163,7 @@ static LibraryEntry libraryTable[] = {
     {"icon.library",      39, &IconBase},
     {"asl.library",       39, &AslBase},
     {"gadtools.library",  39, &GadToolsBase},
-    {"utf8rastport.library",4, &URPBase},
+    {"utf8rastport.library",5, &URPBase},
 
     /* BOOPSI class libraries - with minimal version of OS3.9 (not related to os!) */
     {"window.class",           42, &WindowBase},
@@ -177,7 +180,7 @@ static LibraryEntry libraryTable[] = {
     {"gadgets/chooser.gadget", 44, &ChooserBase},
     {"images/penmap.image",    47, &PenMapBase},
     /* ... and the one that are starred in this app */
-    {"gadgets/unitexteditor.gadget",4, &UniTextEditorBase},
+    {"gadgets/unitexteditor.gadget",5, &UniTextEditorBase},
     {"gadgets/unibutton.gadget", 4, &UniButtonBase},
 
     {NULL, 0, NULL} /* Terminator */
@@ -338,7 +341,7 @@ int main(int argc, char **argv)
             *(entry->base) = OpenLibrary(entry->name, entry->version);
 
             if (!*(entry->base)) {
-                printf( "Can't open %s v%d", entry->name,entry->version);
+                printf( "Can't open %s v%d\n", entry->name,entry->version);
                 return 1;
             }
         }
@@ -373,6 +376,10 @@ int main(int argc, char **argv)
 
     /* Open locale.library (optional - soft failure) */
     LocaleBase = (struct LocaleBase *)OpenLibrary("locale.library", 38);
+
+    /* Open workbench.library (optional - soft failure): needed only for
+     * AppWindow file drag & drop, never required to run. */
+    WorkbenchBase = OpenLibrary("workbench.library", 37);
 
     /* Allocate app struct (zero-initialized so disposeQ.count = 0 etc.) */
     app = (struct App *)AllocVec(sizeof(struct App), MEMF_CLEAR);
@@ -457,9 +464,6 @@ int main(int argc, char **argv)
         TAG_DONE);
 
     if (!app->textEditorObj) cleanexit("Can't create UniTextEditor gadget");
-
-    /* Main editor starts with focus */
-    app->activeEditorObj = app->textEditorObj;
 
     UpdateEditorFontsFromSettings();
 
@@ -575,6 +579,9 @@ int main(int argc, char **argv)
     /* Create message port */
     app->app_port = CreateMsgPort();
 
+    /* Create the dos.library notification port (external file-change detection) */
+    EgNotify_Init();
+
     /* Create window object */
     {
         ULONG lasttag = TAG_END;
@@ -593,7 +600,8 @@ int main(int argc, char **argv)
     /*given at opening    WA_CustomScreen, (ULONG)app->lockedscreen, */
         WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_MENUPICK | IDCMP_RAWKEY
         | IDCMP_VANILLAKEY
-        | IDCMP_GADGETDOWN | IDCMP_GADGETUP /*| IDCMP_MOUSEMOVE*/ | IDCMP_NEWSIZE,
+        | IDCMP_GADGETDOWN | IDCMP_GADGETUP /*| IDCMP_MOUSEMOVE*/ | IDCMP_NEWSIZE
+        | IDCMP_INTUITICKS, /* ~10/sec while active - drives the transient status bar message */
         WA_Flags, WFLG_DRAGBAR | WFLG_DEPTHGADGET | WFLG_CLOSEGADGET |
                   WFLG_SIZEGADGET | WFLG_SIZEBRIGHT | WFLG_ACTIVATE | WFLG_SMART_REFRESH
                   ,
@@ -640,6 +648,10 @@ int main(int argc, char **argv)
     /*  Open the window or screen accoring to last prefs. */
     BMainWindow_Show(&app->mainwindow,app->window_obj,&app->appSettings);
 
+    /* Register as a Workbench AppWindow: lets the user drag & drop file
+     * icons onto the window to load them (optional - see egappwindow.h). */
+    EgAppWindow_Init();
+
     /* try refresh close button of clicktabs */
     if(app->tabGadget)
         SetGadgetAttrs(app->tabGadget,CurrentMainWindow,NULL,
@@ -669,7 +681,6 @@ int main(int argc, char **argv)
     /* - - - Input Event Loop - - - */
     {
         ULONG winsignal;
-        BOOL  ok = TRUE;
 
         /* Persistent buffer for pipe / stdin UTF-8 input.
          * Accumulates raw bytes across iterations so that multi-byte UTF-8
@@ -682,14 +693,17 @@ int main(int argc, char **argv)
 
         GetAttr(WINDOW_SigMask, app->window_obj, &winsignal);
 
-        while (ok)
+        /* Every exit path is now an exit(0) call (Ctrl-C, quit
+         * confirmation, closing the last tab) rather than breaking out of
+         * this loop - see EgAction_ConfirmAndQuit(). */
+        for (;;)
         {
 
             ULONG editorNeedRefresh=0;
             ULONG vscrollNeedRefresh=0;
             ULONG hscrollNeedRefresh=0;
             ULONG result, waitedSignals, currentSignals;
-            ULONG settingsSig, fontsSig, searchBoxSig, emojiBoxSig;
+            ULONG settingsSig, fontsSig, searchBoxSig, emojiBoxSig, notifySig, appWinSig;
 
             flushbdbprint();
             if(app->textEditorObj)
@@ -702,9 +716,11 @@ int main(int argc, char **argv)
             fontsSig     = EgFontsView_GetSignalMask(&app->fontsView);
             searchBoxSig = EgSearchBox_GetSignalMask(&app->searchBox);
             emojiBoxSig  = EmojiBoxWindow_GetSignalMask(&app->emojiBoxWindow);
+            notifySig    = EgNotify_GetSignalMask();
+            appWinSig    = EgAppWindow_GetSignalMask();
 
             waitedSignals = winsignal |
-                settingsSig | fontsSig | searchBoxSig | emojiBoxSig |
+                settingsSig | fontsSig | searchBoxSig | emojiBoxSig | notifySig | appWinSig |
                 (1L << app->app_port->mp_SigBit) |
                 SIGBREAKF_CTRL_C |
                 SIGBREAKF_CTRL_F;
@@ -753,6 +769,12 @@ int main(int argc, char **argv)
             if (currentSignals & emojiBoxSig) {
                 EmojiBoxWindow_HandleInput(&app->emojiBoxWindow);
             }
+            if (currentSignals & notifySig) {
+                EgNotify_HandleInput();
+            }
+            if (currentSignals & appWinSig) {
+                EgAppWindow_HandleInput();
+            }
 
             while ((result = DoMethod(app->window_obj, WM_HANDLEINPUT, NULL))
                    != WMHI_LASTMSG)
@@ -762,7 +784,7 @@ int main(int argc, char **argv)
                 {
                     case WMHI_ACTIVE:
                      //printf("WMHI_ACTIVE\n");
-                     app->activeEditorObj = app->textEditorObj;
+                   //old  app->activeEditorObj = app->textEditorObj;
                      // if(CurrentMainWindow)
                      // {
                      //    ActivateGadget(app->textEditorObj,CurrentMainWindow,NULL);
@@ -798,7 +820,7 @@ int main(int argc, char **argv)
                         {
                             keyUsed = (int) EmojiBox_HandleFKey(app, key, qualifiers,CurrentMainWindow);
                         }
-                        if (!keyUsed && app->activeEditorObj == app->textEditorObj)
+                       //always for main window if (!keyUsed && app->activeEditorObj == app->textEditorObj)
                         {
                             SetGdAttrs(app->textEditorObj,
                                 UTED_PutRawKey,(result & 0x0ff)|(qualifiers<<16),TAG_END);
@@ -838,7 +860,7 @@ int main(int argc, char **argv)
                                (qualifiers &IEQUALIFIER_REPEAT)==0)
                         {
                             Action_SettingsFontSizePlus(app);
-                        } else if(app->activeEditorObj == app->textEditorObj)
+                        } else //always for main window if(app->activeEditorObj == app->textEditorObj)
                         {
                             SetGdAttrs(app->textEditorObj, UTED_PutVanillaKey, key|(qualifiers<<16), TAG_END);
                         }
@@ -846,9 +868,12 @@ int main(int argc, char **argv)
                     break;
 
                     case WMHI_CLOSEWINDOW:
-                        /* was ok to kill by current atb: EgTabs_CloseCurrentTab(); */
-                        /* direct quit */
-                        ok = FALSE;
+                        /* EgAction_ConfirmAndQuit() calls exit(0) itself once
+                         * it's safe to quit (see egaction.c); it only returns
+                         * here if the user backed out (a save failed), in
+                         * which case the window stays open as if nothing
+                         * happened. */
+                        EgAction_ConfirmAndQuit(app);
                         break;
 
                     case WMHI_GADGETUP:
@@ -865,6 +890,10 @@ int main(int argc, char **argv)
                     case WMHI_ICONIFY:
                         {
                             #define DO_ICONIFY 1
+                            /* The AppWindow registration is tied to the real
+                             * struct Window* that's about to close - drop it
+                             * first, re-register on the fresh one at uniconify. */
+                            EgAppWindow_Exit();
                             BMainWindow_Close(&app->mainwindow,app->window_obj,DO_ICONIFY);
                         }
                         break;
@@ -872,6 +901,7 @@ int main(int argc, char **argv)
                         {
                            BMainWindow_Show(&app->mainwindow,app->window_obj,&app->appSettings);
                             if (!CurrentMainWindow) cleanexit("can't re-open window");
+                            EgAppWindow_Init();
                             UpdateStatusBar();
                         }
                         break;
@@ -900,6 +930,17 @@ int main(int argc, char **argv)
                         SyncHScroller();
                     }
                     break;
+
+                    case WMHI_INTUITICK:
+                        /* Counts down a transient status bar message (see
+                         * SetTransientStatusBarMessage()); only fires while
+                         * the window is active. */
+                        if (app->statusMsgTicksRemaining > 0) {
+                            app->statusMsgTicksRemaining--;
+                            if (app->statusMsgTicksRemaining == 0)
+                                UpdateStatusBar();
+                        }
+                        break;
 
                     default:
                         break;
@@ -986,40 +1027,13 @@ int main(int argc, char **argv)
                                 vscrollNeedRefresh = 1;
                                 hscrollNeedRefresh = 1;
                             }
-                            ptag = FindTagItem(UTED_SetPrivateActivation, msg);
-                            if (ptag && ptag->ti_Data) {
-                             // printf(" ID_TEXTEDITOR activated\n");
-                                app->activeEditorObj = app->textEditorObj;
-                                /*watch out SetGdAttrs() is only for main window */
-                                SetAttrs(app->searchBox.searchEditor,
-                                    UTED_SetPrivateActivation, FALSE, TAG_END);
-                                SetAttrs(app->searchBox.replaceEditor,
-                                    UTED_SetPrivateActivation, FALSE, TAG_END);
-                            }
+
                             break;
 
+                        /*redirect messages for search box */
                         case ID_SEARCH_EDITOR:
-                            ptag = FindTagItem(UTED_SetPrivateActivation, msg);
-                            if (ptag && ptag->ti_Data) {
-                             // printf(" ID_SEARCH_EDITOR activated\n");
-                                app->activeEditorObj = app->searchBox.searchEditor;
-                                SetGdAttrs(app->textEditorObj,
-                                    UTED_SetPrivateActivation, FALSE, TAG_END);
-                                SetAttrs(app->searchBox.replaceEditor,
-                                    UTED_SetPrivateActivation, FALSE, TAG_END);
-                            }
-                            break;
-
                         case ID_REPLACE_EDITOR:
-                            ptag = FindTagItem(UTED_SetPrivateActivation, msg);
-                            if (ptag && ptag->ti_Data) {
-                            //  printf(" ID_REPLACE_EDITOR activated\n");
-                                app->activeEditorObj = app->searchBox.replaceEditor;
-                                SetGdAttrs(app->textEditorObj,
-                                    UTED_SetPrivateActivation, FALSE, TAG_END);
-                                SetAttrs(app->searchBox.searchEditor,
-                                    UTED_SetPrivateActivation, FALSE, TAG_END);
-                            }
+                            EgSearchBox_HandleBoopsiMessages(&app->searchBox,sender_ID,msg);
                             break;
 
                         case GID_EMOJI_BUTTON:
@@ -1126,6 +1140,15 @@ int main(int argc, char **argv)
             {
                 RefreshGList(app->textEditorObj, CurrentMainWindow, NULL, 1);
                 UpdateStatusBar();
+
+                /* Cheap on every edit/cursor notify; EgTabs_SyncModified()
+                 * only actually rebuilds the tab bar when the flag flips. */
+                {
+                    ULONG isMod = 0;
+                    GetAttr(UTED_IsModified, app->textEditorObj, &isMod);
+
+                    EgTabs_SyncModified(app->tabCurrentIndex, (BOOL)isMod);
+                }
             } else
             {
                 if(vscrollNeedRefresh)
@@ -1185,6 +1208,13 @@ void exitclose(void)
         AppSettings_Close(&app->appSettings);
 
 
+
+        /* Tear down every armed external-change watch before the tab
+         * bookkeeping they reference (tabContextNames) is freed below. */
+        EgNotify_EndAll();
+
+        /* Unregister the AppWindow (if any) before the real window closes. */
+        EgAppWindow_Exit();
 
         /* Free tab bar resources */
         if (app->tabList) {
@@ -1246,9 +1276,12 @@ void exitclose(void)
         EgFakeTab_Free();
     #endif
 
-        /* Delete message port */
+        /* Delete message ports (after EgNotify_EndAll() above, which relies
+         * on notifyPort still being valid to reply/remove pending messages) */
         if (app->app_port)
             DeleteMsgPort(app->app_port);
+        if (app->notifyPort)
+            DeleteMsgPort(app->notifyPort);
 
         FreeVec(app);
         app = NULL;
@@ -1261,6 +1294,10 @@ void exitclose(void)
     if (LocaleBase) {
         CloseLibrary((struct Library *)LocaleBase);
         LocaleBase = NULL;
+    }
+    if (WorkbenchBase) {
+        CloseLibrary(WorkbenchBase);
+        WorkbenchBase = NULL;
     }
 // printf("aft locale things\n");
 
@@ -1337,6 +1374,16 @@ void UpdateStatusBar()
 
     if (!app->textEditorObj || !app->statusBarLabel) return;
 
+    /* A transient message (see SetTransientStatusBarMessage()) takes over
+     * the whole status bar until WMHI_INTUITICK counts it down to zero,
+     * overriding the normal cursor/line info shown below. */
+    if (app->statusMsgTicksRemaining > 0) {
+        SetGdAttrs(app->statusBarLabel, GA_Text, &app->statusMessage[0], TAG_END);
+        SyncVScroller();
+        SyncHScroller();
+        return;
+    }
+
     GetAttr(UTED_CursorLine,   app->textEditorObj, &curLine);
     GetAttr(UTED_CursorColumn, app->textEditorObj, &curCol);
     GetAttr(UTED_LineCount,    app->textEditorObj, &lineCount);
@@ -1355,6 +1402,22 @@ void UpdateStatusBar()
 
     SyncVScroller();
     SyncHScroller();
+}
+
+/* IDCMP_INTUITICKS fires ~10/sec while the window is active (see the
+ * WA_IDCMP tags at window creation and the WMHI_INTUITICK case in the
+ * main loop) - 50 ticks is ~5 real seconds of that. */
+#define STATUSMSG_TICKS 50
+
+void SetTransientStatusBarMessage(const char *msg)
+{
+    if (!app || !app->statusBarLabel || !msg) return;
+
+    strncpy(app->statusMessage, msg, sizeof(app->statusMessage) - 1);
+    app->statusMessage[sizeof(app->statusMessage) - 1] = '\0';
+    app->statusMsgTicksRemaining = STATUSMSG_TICKS;
+
+    SetGdAttrs(app->statusBarLabel, GA_Text, &app->statusMessage[0], TAG_END);
 }
 
 void OpenSearchBox()

@@ -15,6 +15,7 @@
 #include <proto/exec.h>
 #include <proto/dos.h>
 #include <proto/intuition.h>
+#include <intuition/intuition.h>
 #include <proto/asl.h>
 #include <libraries/asl.h>
 #include <dos/dos.h>
@@ -27,6 +28,7 @@
 #include <proto/requester.h>
 #include <classes/requester.h>
 #include "egtabs.h"
+#include "egnotify.h"
 
 
 extern struct Library *AslBase;
@@ -40,6 +42,8 @@ static EgAction s_actions[ACTION_COUNT] = {
     /* ACTION_FILE_LOAD_LATIN1*/{ Action_FileLoadLatin1, MSG_FILE_LOAD_LATIN1,  NULL },
     /* ACTION_FILE_LOAD_LATIN2*/{ Action_FileLoadLatin2, MSG_FILE_LOAD_LATIN2,  NULL },
     /* ACTION_FILE_LOAD_LATIN2*/{ Action_FileClose, MSG_FILE_CLOSE,  NULL },
+    /* ACTION_FILE_SAVE         */ { Action_FileSave,        MSG_FILE_SAVE,         NULL },
+    /* ACTION_FILE_SAVE_ALL     */ { Action_FileSaveAll,     MSG_FILE_SAVE_ALL,     NULL },
     /* ACTION_FILE_SAVE_UTF8    */ { Action_FileSaveUTF8,    MSG_FILE_SAVE_UTF8,    NULL },
     /* ACTION_FILE_SAVE_ESCAPED */ { Action_FileSaveEscaped, MSG_FILE_SAVE_ESCAPED, NULL },
     /* ACTION_FILE_SAVE_LATIN1  */ { Action_FileSaveLatin1,  MSG_FILE_SAVE_LATIN1,  NULL },
@@ -165,6 +169,29 @@ static char *asl_request_file(struct Window *win, const char *title, BOOL saveMo
 
     FreeAslRequest(req);
     return result;
+}
+
+/* -------------------------------------------------------------------------
+ * User-facing error/result reporting: the status bar (SetTransientStatusBarMessage),
+ * never stdout - printf output isn't visible when the app is launched from
+ * Workbench, which is the common case.
+ * -------------------------------------------------------------------------*/
+static void report_error_path(ULONG msgID, const char *path)
+{
+    char msg[160];
+    snprintf(msg, sizeof(msg), "%s: %s", LOC(msgID), path);
+    SetTransientStatusBarMessage(msg);
+}
+
+/* Shows just the filename (FilePart), not the full path, to keep the
+ * status bar compact. Shared by every save action's success/failure path. */
+static void report_save_result(const char *path, BOOL ok)
+{
+    char msg[160];
+    const char *fname = (const char *)FilePart((STRPTR)path);
+    snprintf(msg, sizeof(msg), LOC(ok ? MSG_STATUS_SAVED : MSG_STATUS_SAVE_FAILED),
+             fname ? fname : path);
+    SetTransientStatusBarMessage(msg);
 }
 
 /* -------------------------------------------------------------------------
@@ -301,7 +328,7 @@ BOOL load_utf8_from_path(struct App *ctx, const char *path, int *actual_encoding
 
     fh = Open((STRPTR)path, MODE_OLDFILE);
     if (!fh) {
-        printf("%s: %s\n", LOC(MSG_ERROR_OPENFILE), path);
+        report_error_path(MSG_ERROR_OPENFILE, path);
         return FALSE;
     }
 
@@ -310,7 +337,7 @@ BOOL load_utf8_from_path(struct App *ctx, const char *path, int *actual_encoding
 
     buf = (char *)AllocVec((ULONG)(size + 1), MEMF_ANY);
     if (!buf) {
-        printf("%s\n", LOC(MSG_ERROR_NOMEMORY));
+        SetTransientStatusBarMessage(LOC(MSG_ERROR_NOMEMORY));
         Close(fh);
         return FALSE;
     }
@@ -319,7 +346,7 @@ BOOL load_utf8_from_path(struct App *ctx, const char *path, int *actual_encoding
     Close(fh);
 
     if (got < 0) {
-        printf("%s: %s\n", LOC(MSG_ERROR_OPENFILE), path);
+        report_error_path(MSG_ERROR_OPENFILE, path);
         FreeVec(buf);
         return FALSE;
     }
@@ -334,7 +361,7 @@ BOOL load_utf8_from_path(struct App *ctx, const char *path, int *actual_encoding
     {
         converted = utf16_to_utf8(text + 2, got - 2, 1, &textLen);
         if (!converted) {
-            printf("%s\n", LOC(MSG_ERROR_NOMEMORY));
+            SetTransientStatusBarMessage(LOC(MSG_ERROR_NOMEMORY));
             FreeVec(buf);
             return FALSE;
         }
@@ -345,7 +372,7 @@ BOOL load_utf8_from_path(struct App *ctx, const char *path, int *actual_encoding
     {
         converted = utf16_to_utf8(text + 2, got - 2, 0, &textLen);
         if (!converted) {
-            printf("%s\n", LOC(MSG_ERROR_NOMEMORY));
+            SetTransientStatusBarMessage(LOC(MSG_ERROR_NOMEMORY));
             FreeVec(buf);
             return FALSE;
         }
@@ -369,7 +396,7 @@ BOOL load_utf8_from_path(struct App *ctx, const char *path, int *actual_encoding
     if (!converted && !is_valid_utf8(text, textLen)) {
         char *latin1 = convert_to_utf8(text, textLen, 1);
         if (!latin1) {
-            printf("%s\n", LOC(MSG_ERROR_NOMEMORY));
+            SetTransientStatusBarMessage(LOC(MSG_ERROR_NOMEMORY));
             FreeVec(buf);
             return FALSE;
         }
@@ -387,6 +414,17 @@ BOOL load_utf8_from_path(struct App *ctx, const char *path, int *actual_encoding
     }
     EgTabs_AddOrSelectTab(path);
     BMainWindow_SetTitleLocS(&app->mainwindow, MSG_WINDOW_TITLE_WITHFILE, path);
+    /* This is the UTF-8/auto-detect *load mode* - always record it as 0
+     * regardless of whether the Latin-1 fallback fired this time around, so
+     * a later external-change reload re-runs the same auto-detection
+     * instead of getting stuck on whatever byte-level guess happened once.
+     * (Distinct from *actual_encoding, which reports the guess itself for
+     * the recent-files list - forcing Latin-1/Latin-2 is a separate,
+     * explicit user choice tracked by load_encoded_from_path() below.) */
+    app->tabEncoding[app->tabCurrentIndex] = 0;
+    EgNotify_Arm(app->tabCurrentIndex, path);
+    SetGdAttrs(ctx->textEditorObj, UTED_IsModified, FALSE, TAG_DONE);
+    EgTabs_SyncModified(app->tabCurrentIndex, FALSE);
     ok = TRUE;
 
     if (converted) FreeVec(converted);
@@ -503,7 +541,7 @@ BOOL load_encoded_from_path(struct App *ctx, const char *path, int encoding)
 
     fh = Open((STRPTR)path, MODE_OLDFILE);
     if (!fh) {
-        printf("%s: %s\n", LOC(MSG_ERROR_OPENFILE), path);
+        report_error_path(MSG_ERROR_OPENFILE, path);
         return FALSE;
     }
 
@@ -512,7 +550,7 @@ BOOL load_encoded_from_path(struct App *ctx, const char *path, int encoding)
 
     raw = (char *)AllocVec((ULONG)(size + 1), MEMF_ANY);
     if (!raw) {
-        printf("%s\n", LOC(MSG_ERROR_NOMEMORY));
+        SetTransientStatusBarMessage(LOC(MSG_ERROR_NOMEMORY));
         Close(fh);
         return FALSE;
     }
@@ -531,13 +569,17 @@ BOOL load_encoded_from_path(struct App *ctx, const char *path, int encoding)
                 TAG_DONE);
             EgTabs_AddOrSelectTab(path);
             BMainWindow_SetTitleLocS(&app->mainwindow, MSG_WINDOW_TITLE_WITHFILE, path);
+            app->tabEncoding[app->tabCurrentIndex] = encoding;
+            EgNotify_Arm(app->tabCurrentIndex, path);
+            SetGdAttrs(ctx->textEditorObj, UTED_IsModified, FALSE, TAG_DONE);
+            EgTabs_SyncModified(app->tabCurrentIndex, FALSE);
             FreeVec(utf8);
             ok = TRUE;
         } else {
-            printf("%s\n", LOC(MSG_ERROR_NOMEMORY));
+            SetTransientStatusBarMessage(LOC(MSG_ERROR_NOMEMORY));
         }
     } else {
-        printf("%s: %s\n", LOC(MSG_ERROR_OPENFILE), path);
+        report_error_path(MSG_ERROR_OPENFILE, path);
     }
 
     FreeVec(raw);
@@ -621,56 +663,87 @@ BOOL Action_OpenRecent6(struct App *ctx) { return open_recent_file(ctx, 6); }
 BOOL Action_OpenRecent7(struct App *ctx) { return open_recent_file(ctx, 7); }
 
 /* -------------------------------------------------------------------------
- * Action: Save As UTF-8 – ask for a file and write the editor contents
+ * Write the editor's current text as UTF-8 to an already-known path (no ASL
+ * requester). Shared by Action_FileSaveUTF8 (path from a fresh requester)
+ * and Action_FileSave (path already known from the tab's context).
  * -------------------------------------------------------------------------*/
-BOOL Action_FileSaveUTF8(struct App *ctx)
+static BOOL save_utf8_to_path(struct App *ctx, const char *path)
 {
-    char       *path;
     BPTR        fh;
     char       *text = NULL;
     ULONG       textPtr = 0;
     BOOL        ok = FALSE;
+
+    /* Get text from editor (AllocVec'd – must FreeVec) */
+    GetAttr(UTED_Text, ctx->textEditorObj, &textPtr);
+    text = (char *)textPtr;
+    if (!text) {
+        return FALSE;
+    }
+
+    /* Stop watching *before* writing, otherwise our own save (which closes
+     * the file and triggers the filesystem's change notification) would
+     * come right back to us as a bogus "changed externally, reload?". */
+    EgNotify_End(ctx->tabCurrentIndex);
+
+    fh = Open((STRPTR)path, MODE_NEWFILE);
+    if (!fh) {
+        report_save_result(path, FALSE);
+        if (ctx->tabContextNames[ctx->tabCurrentIndex])
+            EgNotify_Arm(ctx->tabCurrentIndex, ctx->tabContextNames[ctx->tabCurrentIndex]);
+        FreeVec(text);
+        return FALSE;
+    }
+
+    {
+        LONG len     = (LONG)strlen(text);
+        LONG written = Write(fh, text, len);
+
+        /* Close *before* arming: notification on a file fires when it is
+         * closed, so arming while fh is still open here would catch our
+         * own Close() below as a bogus "changed externally" notification. */
+        Close(fh);
+
+        if (written == len) {
+            SetGdAttrs(ctx->textEditorObj, UTED_Modified, FALSE, TAG_DONE);
+            SetGdAttrs(ctx->textEditorObj, UTED_IsModified, FALSE, TAG_DONE);
+            EgTabs_SyncModified(ctx->tabCurrentIndex, FALSE);
+            EgTabs_RenameCurrentTab(path);
+            BMainWindow_SetTitleLocS(&app->mainwindow, MSG_WINDOW_TITLE_WITHFILE, path);
+            AppSettings_AddRecentFile(&ctx->appSettings, path, 0);
+            EgMenu_Rebuild(&ctx->mainwindow.menu, CurrentMainScreen, CurrentMainWindow,
+                           &ctx->appSettings);
+            ctx->tabEncoding[ctx->tabCurrentIndex] = 0;
+            EgNotify_Arm(ctx->tabCurrentIndex, path);
+            ok = TRUE;
+        } else {
+            /* Write failed: the on-disk file is still whatever it was
+             * before, so restore the watch on the tab's current (unchanged) path. */
+            if (ctx->tabContextNames[ctx->tabCurrentIndex])
+                EgNotify_Arm(ctx->tabCurrentIndex, ctx->tabContextNames[ctx->tabCurrentIndex]);
+        }
+    }
+
+    FreeVec(text);
+    report_save_result(path, ok);
+    UpdateStatusBar();
+    return ok;
+}
+
+/* Ask for a file via ASL, then write the editor's current text as UTF-8.
+ * This is the "Save As UTF-8..." menu action. */
+BOOL Action_FileSaveUTF8(struct App *ctx)
+{
+    char *path;
+    BOOL  ok;
 
     if (!ctx || !ctx->textEditorObj) return FALSE;
 
     path = asl_request_file(CurrentMainWindow, LOC(MSG_FILE_SAVE_UTF8), TRUE);
     if (!path) return FALSE;
 
-    /* Get text from editor (AllocVec'd – must FreeVec) */
-    GetAttr(UTED_Text, ctx->textEditorObj, &textPtr);
-    text = (char *)textPtr;
-    if (!text) {
-        FreeVec(path);
-        return FALSE;
-    }
-
-    fh = Open((STRPTR)path, MODE_NEWFILE);
-    if (!fh) {
-        printf("%s: %s\n", LOC(MSG_ERROR_SAVEFILE), path);
-        FreeVec(text);
-        FreeVec(path);
-        return FALSE;
-    }
-
-    {
-        LONG len = (LONG)strlen(text);
-        if (Write(fh, text, len) == len) {
-            SetGdAttrs(ctx->textEditorObj, UTED_Modified, FALSE, TAG_DONE);
-            EgTabs_RenameCurrentTab(path);
-            BMainWindow_SetTitleLocS(&app->mainwindow, MSG_WINDOW_TITLE_WITHFILE, path);
-            AppSettings_AddRecentFile(&ctx->appSettings, path, 0);
-            EgMenu_Rebuild(&ctx->mainwindow.menu, CurrentMainScreen, CurrentMainWindow,
-                           &ctx->appSettings);
-            ok = TRUE;
-        } else {
-            printf("%s: %s\n", LOC(MSG_ERROR_SAVEFILE), path);
-        }
-    }
-
-    Close(fh);
-    FreeVec(text);
+    ok = save_utf8_to_path(ctx, path);
     FreeVec(path);
-    UpdateStatusBar();
     return ok;
 }
 
@@ -704,7 +777,7 @@ BOOL Action_FileSaveEscaped(struct App *ctx)
         ULONG srcLen = (ULONG)strlen(text);
         escaped = (char *)AllocVec(srcLen * 4 + 1, MEMF_ANY);
         if (!escaped) {
-            printf("%s\n", LOC(MSG_ERROR_NOMEMORY));
+            SetTransientStatusBarMessage(LOC(MSG_ERROR_NOMEMORY));
             FreeVec(text);
             FreeVec(path);
             return FALSE;
@@ -728,24 +801,38 @@ BOOL Action_FileSaveEscaped(struct App *ctx)
         }
     }
 
+    /* Stop watching before writing - see Action_FileSaveUTF8 for why. */
+    EgNotify_End(ctx->tabCurrentIndex);
+
     fh = Open((STRPTR)path, MODE_NEWFILE);
     if (!fh) {
-        printf("%s: %s\n", LOC(MSG_ERROR_SAVEFILE), path);
+        if (ctx->tabContextNames[ctx->tabCurrentIndex])
+            EgNotify_Arm(ctx->tabCurrentIndex, ctx->tabContextNames[ctx->tabCurrentIndex]);
     } else {
-        LONG len = (LONG)strlen(escaped);
-        if (Write(fh, escaped, len) == len) {
+        LONG len     = (LONG)strlen(escaped);
+        LONG written = Write(fh, escaped, len);
+
+        /* Close *before* arming - see Action_FileSaveUTF8 for why. */
+        Close(fh);
+
+        if (written == len) {
             SetGdAttrs(ctx->textEditorObj, UTED_Modified, FALSE, TAG_DONE);
+            SetGdAttrs(ctx->textEditorObj, UTED_IsModified, FALSE, TAG_DONE);
+            EgTabs_SyncModified(ctx->tabCurrentIndex, FALSE);
             EgTabs_RenameCurrentTab(path);
             BMainWindow_SetTitleLocS(&app->mainwindow, MSG_WINDOW_TITLE_WITHFILE, path);
+            ctx->tabEncoding[ctx->tabCurrentIndex] = 0;
+            EgNotify_Arm(ctx->tabCurrentIndex, path);
             ok = TRUE;
         } else {
-            printf("%s: %s\n", LOC(MSG_ERROR_SAVEFILE), path);
+            if (ctx->tabContextNames[ctx->tabCurrentIndex])
+                EgNotify_Arm(ctx->tabCurrentIndex, ctx->tabContextNames[ctx->tabCurrentIndex]);
         }
-        Close(fh);
     }
 
     FreeVec(escaped);
     FreeVec(text);
+    report_save_result(path, ok);
     FreeVec(path);
     UpdateStatusBar();
     return ok;
@@ -841,8 +928,45 @@ BOOL Action_FileAbout(struct App *ctx)
  * -------------------------------------------------------------------------*/
 BOOL Action_FileQuit(struct App *ctx)
 {
+    EgAction_ConfirmAndQuit(ctx);
+    return TRUE; /* only reached if the user backed out (a save failed) */
+}
+
+void EgAction_ConfirmAndQuit(struct App *ctx)
+{
+    BOOL anyModified = FALSE;
+    int  i;
+
+    if (!ctx) exit(0);
+
+    for (i = 0; i < ctx->tabCount; i++) {
+        const char *key = ctx->tabContextNames[i];
+        if (key && key[0] && key[0] != ':' && ctx->tabModified[i]) {
+            anyModified = TRUE;
+            break;
+        }
+    }
+
+    if (anyModified) {
+        struct EasyStruct es;
+        LONG choice;
+
+        es.es_StructSize   = sizeof(struct EasyStruct);
+        es.es_Flags        = 0;
+        es.es_Title        = (UBYTE *)LOC(MSG_QUIT_CONFIRM_TITLE);
+        es.es_TextFormat   = (UBYTE *)LOC(MSG_QUIT_CONFIRM_BODY);
+        es.es_GadgetFormat = (UBYTE *)LOC(MSG_QUIT_CONFIRM_GADGETS);
+
+        choice = EasyRequestArgs(CurrentMainWindow, &es, NULL, NULL);
+        if (choice == 1) {
+            /* "Save All": don't quit if a save actually failed - the user
+             * would silently lose those changes otherwise. */
+            if (!Action_FileSaveAll(ctx)) return;
+        }
+        /* choice == 0 "Quit Without Saving": fall through and quit. */
+    }
+
     exit(0);
-    return TRUE;
 }
 
 
@@ -1139,14 +1263,13 @@ static char *utf8_to_latin2(const char *src, ULONG srcLen, ULONG *outLen)
  * =========================================================================
  */
 
-/* Shared save path for legacy single-byte encodings.
- * Gets the full editor text, converts from UTF-8 to the target encoding,
- * and writes to a user-selected file.
- * encoding 1 → ISO 8859-1 (Latin-1), encoding 2 → ISO 8859-2 (Latin-2). */
-static BOOL save_encoded(struct App *ctx, ULONG titleMsgID, int encoding)
+/* Converts the editor's current text from UTF-8 to the target single-byte
+ * encoding and writes it to an already-known path (no ASL requester).
+ * encoding 1 -> ISO 8859-1 (Latin-1), encoding 2 -> ISO 8859-2 (Latin-2).
+ * Shared by save_encoded() (path from a fresh requester) and Action_FileSave
+ * (path already known from the tab's context). */
+static BOOL save_encoded_to_path(struct App *ctx, const char *path, int encoding)
 {
-
-    char      *path;
     BPTR       fh;
     char      *text  = NULL;
     ULONG      textPtr = 0;
@@ -1154,14 +1277,9 @@ static BOOL save_encoded(struct App *ctx, ULONG titleMsgID, int encoding)
     ULONG      convLen = 0;
     BOOL       ok = FALSE;
 
-    if (!ctx || !ctx->textEditorObj) return FALSE;
-
-    path = asl_request_file(CurrentMainWindow, LOC(titleMsgID), TRUE);
-    if (!path) return FALSE;
-
     GetAttr(UTED_Text, ctx->textEditorObj, &textPtr);
     text = (char *)textPtr;
-    if (!text) { FreeVec(path); return FALSE; }
+    if (!text) return FALSE;
 
     conv = (encoding == 2)
         ? utf8_to_latin2(text, (ULONG)strlen(text), &convLen)
@@ -1170,32 +1288,61 @@ static BOOL save_encoded(struct App *ctx, ULONG titleMsgID, int encoding)
     FreeVec(text);
 
     if (!conv) {
-        printf("%s\n", LOC(MSG_ERROR_NOMEMORY));
-        FreeVec(path);
+        SetTransientStatusBarMessage(LOC(MSG_ERROR_NOMEMORY));
         return FALSE;
     }
 
+    /* Stop watching before writing - see Action_FileSaveUTF8 for why. */
+    EgNotify_End(ctx->tabCurrentIndex);
+
     fh = Open((STRPTR)path, MODE_NEWFILE);
     if (!fh) {
-        printf("%s: %s\n", LOC(MSG_ERROR_SAVEFILE), path);
+        if (ctx->tabContextNames[ctx->tabCurrentIndex])
+            EgNotify_Arm(ctx->tabCurrentIndex, ctx->tabContextNames[ctx->tabCurrentIndex]);
     } else {
-        if (Write(fh, conv, (LONG)convLen) == (LONG)convLen) {
+        LONG written = Write(fh, conv, (LONG)convLen);
+
+        /* Close *before* arming - see Action_FileSaveUTF8 for why. */
+        Close(fh);
+
+        if (written == (LONG)convLen) {
             SetGdAttrs(ctx->textEditorObj, UTED_Modified, FALSE, TAG_DONE);
+            SetGdAttrs(ctx->textEditorObj, UTED_IsModified, FALSE, TAG_DONE);
+            EgTabs_SyncModified(ctx->tabCurrentIndex, FALSE);
             EgTabs_RenameCurrentTab(path);
             BMainWindow_SetTitleLocS(&app->mainwindow, MSG_WINDOW_TITLE_WITHFILE, path);
             AppSettings_AddRecentFile(&ctx->appSettings, path, encoding);
             EgMenu_Rebuild(&ctx->mainwindow.menu, CurrentMainScreen, CurrentMainWindow,
                            &ctx->appSettings);
+            ctx->tabEncoding[ctx->tabCurrentIndex] = encoding;
+            EgNotify_Arm(ctx->tabCurrentIndex, path);
             ok = TRUE;
         } else {
-            printf("%s: %s\n", LOC(MSG_ERROR_SAVEFILE), path);
+            if (ctx->tabContextNames[ctx->tabCurrentIndex])
+                EgNotify_Arm(ctx->tabCurrentIndex, ctx->tabContextNames[ctx->tabCurrentIndex]);
         }
-        Close(fh);
     }
 
     FreeVec(conv);
-    FreeVec(path);
+    report_save_result(path, ok);
     UpdateStatusBar();
+    return ok;
+}
+
+/* Ask for a file via ASL, then write via save_encoded_to_path().
+ * This is the "Save As ISO Latin-1/2..." menu action. */
+static BOOL save_encoded(struct App *ctx, ULONG titleMsgID, int encoding)
+{
+    char *path;
+    BOOL  ok;
+
+    if (!ctx || !ctx->textEditorObj) return FALSE;
+
+    path = asl_request_file(CurrentMainWindow, LOC(titleMsgID), TRUE);
+    if (!path) return FALSE;
+
+    ok = save_encoded_to_path(ctx, path, encoding);
+    FreeVec(path);
     return ok;
 }
 
@@ -1209,20 +1356,135 @@ BOOL Action_FileSaveLatin2(struct App *ctx)
     return save_encoded(ctx, MSG_FILE_SAVE_LATIN2, 2);
 }
 
+/* -------------------------------------------------------------------------
+ * Action: Save – write to the tab's existing file path/encoding with no
+ * ASL requester, if it has one (loaded from disk or already saved once).
+ * Untitled tabs (":n:N", ":About EmojiGear", ...) have no real path yet,
+ * so this falls back to the "Save As UTF-8..." requester instead.
+ * -------------------------------------------------------------------------*/
+BOOL Action_FileSave(struct App *ctx)
+{
+    const char *ctxPath;
+    char       *pathCopy;
+    BOOL        ok;
+    int         idx;
+
+    if (!ctx || !ctx->textEditorObj) return FALSE;
+
+    idx     = ctx->tabCurrentIndex;
+    ctxPath = ctx->tabContextNames[idx];
+
+    if (!ctxPath || !ctxPath[0] || ctxPath[0] == ':')
+        return Action_FileSaveUTF8(ctx);
+
+    /* Own copy: EgTabs_RenameCurrentTab() below frees/replaces
+     * ctx->tabContextNames[idx], so the path handed to the save helpers
+     * must not alias that pointer. */
+    pathCopy = (char *)AllocVec((ULONG)strlen(ctxPath) + 1, MEMF_ANY);
+    if (!pathCopy) return FALSE;
+    strcpy(pathCopy, ctxPath);
+
+    switch (ctx->tabEncoding[idx]) {
+        case 1:  ok = save_encoded_to_path(ctx, pathCopy, 1); break;
+        case 2:  ok = save_encoded_to_path(ctx, pathCopy, 2); break;
+        default: ok = save_utf8_to_path(ctx, pathCopy);       break;
+    }
+
+    FreeVec(pathCopy);
+    return ok;
+}
+
+/* -------------------------------------------------------------------------
+ * Action: Save All - saves every tab that both has a real on-disk path and
+ * is currently modified (the same tabs showing a "*" in the tab bar; see
+ * app->tabModified[] / EgTabs_SyncModified()). Untitled tabs are skipped
+ * outright (nothing to save them "as", same as Action_FileSave would fall
+ * back to a requester for a single one - doing that N times unattended
+ * here would be more surprising than useful).
+ *
+ * Each tab is saved via Action_FileSave() after switching to it (the editor
+ * gadget only holds the *active* context's text - a background tab's
+ * content lives in its own stash inside UniTextEditor until switched to),
+ * then the originally active tab is restored. A single summary status
+ * message replaces whatever per-file "Saved: ..." messages flashed by
+ * during the loop.
+ * -------------------------------------------------------------------------*/
+BOOL Action_FileSaveAll(struct App *ctx)
+{
+    int  originalIdx, i;
+    int  attempted = 0, saved = 0;
+
+    if (!ctx || !ctx->textEditorObj) return FALSE;
+
+    originalIdx = ctx->tabCurrentIndex;
+
+    for (i = 0; i < ctx->tabCount; i++) {
+        const char *key = ctx->tabContextNames[i];
+        if (!key || !key[0] || key[0] == ':') continue; /* untitled: nothing to save to */
+        if (!ctx->tabModified[i]) continue;              /* unmodified: nothing to do */
+
+        if (i != ctx->tabCurrentIndex)
+            EgTabs_SwitchTo(i);
+
+        attempted++;
+        if (Action_FileSave(ctx)) saved++;
+    }
+
+    if (ctx->tabCurrentIndex != originalIdx)
+        EgTabs_SwitchTo(originalIdx);
+
+    if (attempted == 0) {
+        SetTransientStatusBarMessage(LOC(MSG_STATUS_SAVE_ALL_NONE));
+    } else {
+        char msg[80];
+        snprintf(msg, sizeof(msg), LOC(MSG_STATUS_SAVE_ALL_DONE), (long)saved, (long)attempted);
+        SetTransientStatusBarMessage(msg);
+    }
+
+    return (saved == attempted);
+}
+
 /* =========================================================================
  * Edit actions
  * =========================================================================
  */
 
+/* get UniTextEditor that should receive the edition */
+Object *GetActiveUTEDEditor()
+{
+    if(!app) return NULL;
+    if(CurrentMainWindow && (CurrentMainWindow->Flags & WFLG_WINDOWACTIVE) !=0)
+    {
+        return app->textEditorObj;
+    }
+    /* may be the seach or replace editor, if open */
+    if(app->searchBox.window && (app->searchBox.window->Flags & WFLG_WINDOWACTIVE) !=0)
+    {
+        if( app->searchBox.searchEditor &&
+        (((struct Gadget *)app->searchBox.searchEditor)->Activation & GACT_ACTIVEGADGET) != 0)
+        {
+            return app->searchBox.searchEditor;
+        }
+        if( app->searchBox.replaceEditor &&
+        (((struct Gadget *)app->searchBox.replaceEditor)->Activation & GACT_ACTIVEGADGET) != 0)
+        {
+            return app->searchBox.replaceEditor;
+        }
+    }
+    return NULL;
+}
+
 BOOL Action_EditCut(struct App *ctx)
 {
-    if (!ctx || !ctx->activeEditorObj) return FALSE;
+    Object *editor = GetActiveUTEDEditor();
+    if (!ctx || !editor) return FALSE;
+
     /* UTED_ApplyCut copies the selection to the clipboard and deletes it
      * atomically inside the gadget.  No-op if nothing is selected. */
-    if (ctx->activeEditorObj == app->textEditorObj) {
-        SetGdAttrs(ctx->activeEditorObj, UTED_ApplyCut, TRUE, TAG_END);
+    if (editor == app->textEditorObj) {
+        SetGdAttrs(editor, UTED_ApplyCut, TRUE, TAG_END);
     } else if (app->searchBox.window) {
-        SetGadgetAttrs(ctx->activeEditorObj, app->searchBox.window, NULL,
+        SetGadgetAttrs(editor, app->searchBox.window, NULL,
             UTED_ApplyCut, TRUE, TAG_END);
     }
     UpdateStatusBar();
@@ -1231,23 +1493,25 @@ BOOL Action_EditCut(struct App *ctx)
 
 BOOL Action_EditCopy(struct App *ctx)
 {
-    if (!ctx || !ctx->activeEditorObj) return FALSE;
+    Object *editor = GetActiveUTEDEditor();
+    if (!ctx || !editor) return FALSE;
     /* UTED_ApplyCopy reads the selection and writes UTF-8 to the clipboard.
      * No rendering needed so SetAttrs (no window) is sufficient. */
-    SetAttrs((Object *)ctx->activeEditorObj, UTED_ApplyCopy, TRUE, TAG_END);
+    SetAttrs((Object *)editor, UTED_ApplyCopy, TRUE, TAG_END);
     return TRUE;
 }
 
 BOOL Action_EditCopyLatin1(struct App *ctx)
 {
+    Object *editor = GetActiveUTEDEditor();
     char      *selText = NULL;
     char      *conv;
     ULONG      convLen = 0;
     BOOL       ok;
 
-    if (!ctx || !ctx->activeEditorObj) return FALSE;
+    if (!ctx || !editor) return FALSE;
 
-    GetAttr(UTED_GetSelectedText, ctx->activeEditorObj, (ULONG *)&selText);
+    GetAttr(UTED_GetSelectedText, editor, (ULONG *)&selText);
     if (!selText) return FALSE;
 
     conv = utf8_to_latin1(selText, (ULONG)strlen(selText), &convLen);
@@ -1261,14 +1525,15 @@ BOOL Action_EditCopyLatin1(struct App *ctx)
 
 BOOL Action_EditCopyLatin2(struct App *ctx)
 {
+    Object *editor = GetActiveUTEDEditor();
     char      *selText = NULL;
     char      *conv;
     ULONG      convLen = 0;
     BOOL       ok;
 
-    if (!ctx || !ctx->activeEditorObj) return FALSE;
+    if (!ctx || !editor) return FALSE;
 
-    GetAttr(UTED_GetSelectedText, ctx->activeEditorObj, (ULONG *)&selText);
+    GetAttr(UTED_GetSelectedText,editor, (ULONG *)&selText);
     if (!selText) return FALSE;
 
     conv = utf8_to_latin2(selText, (ULONG)strlen(selText), &convLen);
@@ -1282,14 +1547,15 @@ BOOL Action_EditCopyLatin2(struct App *ctx)
 
 BOOL Action_EditPaste(struct App *ctx)
 {
-    if (!ctx || !ctx->activeEditorObj) return FALSE;
+    Object *editor = GetActiveUTEDEditor();
+    if (!ctx || !editor) return FALSE;
     /* UTED_ApplyPaste reads clipboard, inserts at cursor and redraws.
      * SetGadgetAttrs/SetGdAttrs provides GadgetInfo so the gadget's
      * redraw runs immediately in the correct task context. */
-    if (ctx->activeEditorObj == app->textEditorObj) {
-        SetGdAttrs(ctx->activeEditorObj, UTED_ApplyPaste, TRUE, TAG_END);
+    if (editor == app->textEditorObj) {
+        SetGdAttrs(editor, UTED_ApplyPaste, TRUE, TAG_END);
     } else if (app->searchBox.window) {
-        SetGadgetAttrs(ctx->activeEditorObj, app->searchBox.window, NULL,
+        SetGadgetAttrs(editor, app->searchBox.window, NULL,
             UTED_ApplyPaste, TRUE, TAG_END);
     }
     UpdateStatusBar();
@@ -1298,10 +1564,11 @@ BOOL Action_EditPaste(struct App *ctx)
 
 BOOL Action_EditPasteLatin1(struct App *ctx)
 {
+    Object *editor = GetActiveUTEDEditor();
     char      *raw;
     char      *utf8;
 
-    if (!ctx || !ctx->activeEditorObj) return FALSE;
+    if (!ctx || !editor) return FALSE;
 
     raw = clipboard_read();
     if (!raw) return FALSE;
@@ -1310,12 +1577,12 @@ BOOL Action_EditPasteLatin1(struct App *ctx)
     FreeVec(raw);
     if (!utf8) return FALSE;
 
-        if(ctx->activeEditorObj == app->textEditorObj)
+        if(editor == app->textEditorObj)
         {
-    SetGdAttrs(ctx->activeEditorObj, UTED_InsertText, (ULONG)utf8, TAG_END);
+    SetGdAttrs(editor, UTED_InsertText, (ULONG)utf8, TAG_END);
         } else if(app->searchBox.window)
         {   /* those for the search box */
-    SetGadgetAttrs(ctx->activeEditorObj,app->searchBox.window,NULL,
+    SetGadgetAttrs(editor,app->searchBox.window,NULL,
             UTED_InsertText, (ULONG)utf8, TAG_END
             );
         }
@@ -1326,10 +1593,11 @@ BOOL Action_EditPasteLatin1(struct App *ctx)
 
 BOOL Action_EditPasteLatin2(struct App *ctx)
 {
+    Object *editor = GetActiveUTEDEditor();
     char      *raw;
     char      *utf8;
 
-    if (!ctx || !ctx->activeEditorObj) return FALSE;
+    if (!ctx || !editor) return FALSE;
 
     raw = clipboard_read();
     if (!raw) return FALSE;
@@ -1338,12 +1606,12 @@ BOOL Action_EditPasteLatin2(struct App *ctx)
     FreeVec(raw);
     if (!utf8) return FALSE;
 
-        if(ctx->activeEditorObj == app->textEditorObj)
+        if(editor == app->textEditorObj)
         {
-    SetGdAttrs(ctx->activeEditorObj, UTED_InsertText, (ULONG)utf8, TAG_END);
+    SetGdAttrs(editor, UTED_InsertText, (ULONG)utf8, TAG_END);
         } else if(app->searchBox.window)
         {   /* those for the search box */
-    SetGadgetAttrs(ctx->activeEditorObj,app->searchBox.window,NULL,
+    SetGadgetAttrs(editor,app->searchBox.window,NULL,
             UTED_InsertText, (ULONG)utf8, TAG_END
             );
         }

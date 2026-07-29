@@ -65,6 +65,7 @@
     #include <proto/utf8rastport.h>
 #endif
 
+extern Object *GetActiveUTEDEditor();
 /* =========================================================================
  * Emoji set tables  (40 entries each, row-major: idx = row*10 + col)
  * =========================================================================
@@ -1428,8 +1429,10 @@ void EmojiBoxWindow_Close(EmojiBoxWindow *ebw)
 BOOL EmojiBoxWindow_HandleInput(EmojiBoxWindow *ebw)
 {
     ULONG result;
-
+    Object *activeEditor = GetActiveUTEDEditor();
     if (!ebw || !ebw->windowObj || !ebw->window) return TRUE;
+
+
 
     while ((result = DoMethod(ebw->windowObj, WM_HANDLEINPUT, NULL))
            != WMHI_LASTMSG)
@@ -1495,25 +1498,27 @@ BOOL EmojiBoxWindow_HandleInput(EmojiBoxWindow *ebw)
                    (qualifiers &IEQUALIFIER_REPEAT)==0)
             {
                 Action_SettingsFontSizePlus(app);
-            } else if(app->activeEditorObj == app->textEditorObj)
+            } else if(activeEditor == app->textEditorObj)
             {
                 SetGdAttrs(app->textEditorObj, UTED_PutVanillaKey, key|(qualifiers<<16), TAG_END);
             }
+
         }
         break;
         case WMHI_GADGETUP:
         {
             ULONG gadId = result & WMHI_GADGETMASK;
             if (gadId == GID_EMOJIBOX_GRID) {
+
                 /* Insert clicked emoji into the active editor */
                 ULONG cidx = (ULONG)(-1);
                 if (ebw->gridGadget)
                     GetAttr(EGRID_ClickedIdx, ebw->gridGadget, &cidx);
-                if (cidx < 40 && app && app->activeEditorObj) {
+                if (cidx < 40 && app && activeEditor) {
                     const char *emoji =
                         emojiSets[ebw->currentSetIdx].emojis[cidx];
                     if (emoji)
-                        SetGadgetAttrs(app->activeEditorObj,
+                        SetGadgetAttrs(activeEditor,
                                        CurrentMainWindow, NULL,
                                        UTED_InsertText, (ULONG)emoji,
                                        TAG_END);
@@ -1535,7 +1540,7 @@ BOOL EmojiBoxWindow_HandleInput(EmojiBoxWindow *ebw)
                             (ULONG)emojiSets[newIdx].emojis,
                             TAG_END);
                 }
-            } else if (app && app->activeEditorObj) {
+            } else if (app && activeEditor) {
                 /* ANSI escape modifier buttons */
                 static const struct { ULONG gid; const char *seq; } ansiButtons[] = {
                     { GID_EMOJIBOX_ANSI_BOLD,      "*E[1m"  },
@@ -1554,7 +1559,7 @@ BOOL EmojiBoxWindow_HandleInput(EmojiBoxWindow *ebw)
                 int ai;
                 for (ai = 0; ansiButtons[ai].gid; ai++) {
                     if (gadId == ansiButtons[ai].gid) {
-                        SetGadgetAttrs(app->activeEditorObj,
+                        SetGadgetAttrs(activeEditor,
                                        CurrentMainWindow, NULL,
                                        UTED_InsertText, (ULONG)ansiButtons[ai].seq,
                                        TAG_END);
@@ -1606,10 +1611,10 @@ BOOL EmojiBox_HandleFKey(struct App *ctx, ULONG code, ULONG qualifiers,
     ULONG idx;
     int setIdx;
     const char *emoji;
-
+    Object *activeEditor = GetActiveUTEDEditor();
     if (code < EMOJIBOX_RAWKEY_F1 || code > EMOJIBOX_RAWKEY_F10)
         return FALSE;
-    if (!ctx || !ctx->activeEditorObj)
+    if (!ctx || !activeEditor)
         return FALSE;
 
     idx = code - EMOJIBOX_RAWKEY_F1;
@@ -1621,7 +1626,7 @@ BOOL EmojiBox_HandleFKey(struct App *ctx, ULONG code, ULONG qualifiers,
     emoji = emojiSets[setIdx].emojis[idx];
     if (!emoji) return FALSE;
 
-    SetGadgetAttrs(ctx->activeEditorObj, win, NULL,
+    SetAttrs(activeEditor,
                    UTED_InsertText, (ULONG)emoji,
                    TAG_END);
     return TRUE;

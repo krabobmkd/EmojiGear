@@ -25,6 +25,8 @@ enum {
 
     MSG_FILE_CLOSE,
 
+    MSG_FILE_SAVE,
+    MSG_FILE_SAVE_ALL,
     MSG_FILE_SAVE_UTF8,
     MSG_FILE_SAVE_ESCAPED,
     MSG_FILE_SAVE_LATIN1,
@@ -32,14 +34,27 @@ enum {
     MSG_FILE_ABOUT,
     MSG_MENU_QUIT,
 
+    /* Close/Quit confirmation requesters */
+    MSG_CLOSE_CONFIRM_TITLE,
+    MSG_CLOSE_CONFIRM_BODY,    /* format: %s = file path */
+    MSG_CLOSE_CONFIRM_GADGETS,
+    MSG_QUIT_CONFIRM_TITLE,
+    MSG_QUIT_CONFIRM_BODY,
+    MSG_QUIT_CONFIRM_GADGETS,
+
     /* Status bar */
     MSG_STATUS_READY,
     MSG_STATUS_MODIFIED,
+    MSG_STATUS_SAVED,       /* format: "Saved: %s" */
+    MSG_STATUS_SAVE_FAILED, /* format: "Save failed: %s" */
+    MSG_STATUS_SAVE_ALL_NONE, /* nothing modified/on-disk to save */
+    MSG_STATUS_SAVE_ALL_DONE, /* format: "Saved %ld/%ld file(s)" */
 
     /* Error messages */
     MSG_ERROR_NOMEMORY,
     MSG_ERROR_OPENFILE,
     MSG_ERROR_SAVEFILE,
+    MSG_ERROR_MENU,
 
     /* Menu: Edit */
     MSG_MENU_EDIT,
@@ -125,6 +140,11 @@ enum {
 
     /* Tab bar */
     MSG_TAB_NEW_FILE,
+
+    /* External file-change notification (dos.library StartNotify) */
+    MSG_FILE_EXTERNAL_CHANGE_TITLE,
+    MSG_FILE_EXTERNAL_CHANGE_BODY,    /* RawDoFmt style: %s for the file path */
+    MSG_FILE_EXTERNAL_CHANGE_GADGETS,
 
     /* Must be last */
     MSG_COUNT

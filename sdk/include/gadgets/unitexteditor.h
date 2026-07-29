@@ -509,6 +509,33 @@ typedef struct UTEDTextPosition {
  *              the cursor is at/past the end of its line. */
 #define UTED_CursorChar              (UTED_Dummy + 70)
 
+/* [SG] (BOOL) Undo-aware "does the current context differ from the file
+ *             version" flag, per context (see UTED_CurrentContext).
+ *
+ *             Unlike UTED_Modified (a plain "an edit happened since this was
+ *             last cleared" flag), this tracks *position in the undo
+ *             history*: internally, clearing it (set FALSE) remembers the
+ *             undo entry currently on top of the stack (or "empty" if there
+ *             is none) as the one that matches the file. It reads back FALSE
+ *             again whenever undo/redo brings that same entry back to the
+ *             top - including after further edits, as long as they are
+ *             eventually undone - and reads TRUE for any other position,
+ *             including once that entry is evicted from the undo ring by
+ *             enough later edits (at that point the file's exact state can
+ *             no longer be reached via undo, so it stays TRUE until the next
+ *             explicit clear).
+ *
+ *             Typical use: SetAttrs(o, UTED_IsModified, FALSE, TAG_END)
+ *             right after a successful load or save of the current context;
+ *             GetAttr(UTED_IsModified, o, &v) at any later point to show an
+ *             "unsaved changes" indicator (e.g. a "*" in a tab/title).
+ *
+ *             [S] Only FALSE is meaningful to set explicitly (marks "clean
+ *             here"); setting TRUE forces it dirty regardless of undo
+ *             position (e.g. if the caller knows the on-disk file changed
+ *             externally and the buffer must be treated as unsynced). */
+#define UTED_IsModified              (UTED_Dummy + 71)
+
 
 /* =========================================================================
  * Notification attribute tags   (base TAG_USER | 0x05C0)

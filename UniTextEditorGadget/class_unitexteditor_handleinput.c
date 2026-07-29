@@ -25,6 +25,167 @@
 #define RAWKEY_F10  0x59
 #define RAWKEY_HELP  0x5F
 
+/* Tab / Shift+Tab with a selection spanning more than one line: block
+ * indent/unindent, using low-level uted_line_insert/delete_bytes directly
+ * so the selection-replace and undo side-effects of DoInsertText/
+ * DoDeleteChar are avoided. Shared by the rawkey (Tab) and vanilla-key
+ * (0x09) input paths, which otherwise duplicated this verbatim.
+ *
+ * Each affected line still gets its own UTEDUndoEntry (undo/redo execute
+ * one line's insert/delete at a time, same as before), but only the first
+ * pushed entry has groupWithPrev==FALSE; every subsequent one in this call
+ * is chained to it, so UniTextEditor_DoUndo/DoRedo treat the whole block
+ * operation as a single user-visible step instead of one step per line.
+ *
+ * Returns TRUE if a block operation was performed (selection spanned
+ * multiple lines); FALSE if the caller should fall through to normal
+ * single-line tab/backtab handling. */
+static BOOL uted_do_block_tab(Class *cl, Object *o, struct GadgetInfo *gi, BOOL unindent)
+{
+    UniTextEditorData *inst = UTED_DATA(cl, o);
+    ULONG firstLine, lastLine, L;
+    BOOL  grouped = FALSE;
+
+    if (!inst->hasSelection) return FALSE;
+
+    firstLine = inst->selAnchor.line < inst->selFloat.line
+              ? inst->selAnchor.line : inst->selFloat.line;
+    lastLine  = inst->selAnchor.line > inst->selFloat.line
+              ? inst->selAnchor.line : inst->selFloat.line;
+    if (firstLine >= lastLine) return FALSE;
+
+    if (!unindent) {
+        /* Block indent: insert tab or spaces at byte 0 of every line */
+        const char *insertStr;
+        ULONG insertBytes, insertChars;
+        char spaces[13];
+        if (inst->tabsAreSpaces) {
+            ULONG n = inst->tabSpaces, si;
+            if (n < 1) n = 1; if (n > 12) n = 12;
+            for (si = 0; si < n; si++) spaces[si] = ' ';
+            spaces[n] = '\0';
+            insertStr = spaces; insertBytes = n; insertChars = n;
+        } else {
+            insertStr = "\t"; insertBytes = 1; insertChars = 1;
+        }
+        for (L = firstLine; L <= lastLine; L++) {
+            UniTextEditorLine *curLine = uted_get_line(inst, L);
+            if (!curLine) continue;
+            UniTextEditorPos savedCursor = inst->cursor;
+            UniTextEditorPos savedAnchor = inst->selAnchor;
+            BOOL             savedHasSel = inst->hasSelection;
+            if (uted_line_insert_bytes(curLine, 0, insertStr, insertBytes)) {
+                if (inst->cursor.line    == L) inst->cursor.col    += insertChars;
+                if (inst->selAnchor.line == L) inst->selAnchor.col += insertChars;
+                if (inst->selFloat.line  == L) inst->selFloat.col  += insertChars;
+                if (!inst->undoInProgress && inst->undoMax > 0) {
+                    UTEDUndoEntry ue;
+                    UniTextEditorPos ps, pe;
+                    ps.line = L; ps.col = 0;
+                    pe.line = L; pe.col = insertChars;
+                    ue.opType       = UTED_UNDO_INSERT;
+                    ue.delDir       = 0;
+                    ue.atomic       = TRUE;
+                    ue.cursorBefore = savedCursor;
+                    ue.anchorBefore = savedAnchor;
+                    ue.hasSelBefore = savedHasSel;
+                    ue.posStart     = ps;
+                    ue.posEnd       = pe;
+                    ue.textBytes    = insertBytes;
+                    ue.text = (char *)AllocVec(insertBytes + 1, MEMF_ANY);
+                    if (ue.text) {
+                        CopyMem((APTR)insertStr, ue.text, insertBytes);
+                        ue.text[insertBytes] = '\0';
+                    } else {
+                        ue.textBytes = 0;
+                    }
+                    uted_undo_push(inst, &ue, grouped);
+                    grouped = TRUE;
+                }
+            }
+        }
+    } else {
+        /* Block unindent: remove tab or spaces from byte 0 of each line
+         * that actually starts with one (others are left untouched, so
+         * not every line in [firstLine..lastLine] pushes an entry - the
+         * "grouped" flag tracks the first *pushed* entry, not the first
+         * line). */
+        for (L = firstLine; L <= lastLine; L++) {
+            UniTextEditorLine *curLine = uted_get_line(inst, L);
+            if (!curLine || !curLine->utf8 || curLine->charCount == 0) continue;
+            const char *s = curLine->utf8;
+            ULONG removeBytes = 0, removeChars = 0;
+            if (inst->tabsAreSpaces) {
+                int nbsp = (int)inst->tabSpaces;
+                int j; BOOL allSpaces;
+                if (nbsp < 1) nbsp = 1; if (nbsp > 12) nbsp = 12;
+                if ((int)curLine->charCount >= nbsp) {
+                    allSpaces = TRUE;
+                    for (j = 0; j < nbsp; j++) {
+                        if (s[j] != ' ') { allSpaces = FALSE; break; }
+                    }
+                    if (allSpaces) { removeBytes = (ULONG)nbsp; removeChars = (ULONG)nbsp; }
+                }
+            } else {
+                if (s[0] == '\t') { removeBytes = 1; removeChars = 1; }
+            }
+            if (removeBytes) {
+                char capBuf[13];
+                UniTextEditorPos savedCursor = inst->cursor;
+                UniTextEditorPos savedAnchor = inst->selAnchor;
+                BOOL             savedHasSel = inst->hasSelection;
+                CopyMem((APTR)s, capBuf, removeBytes);
+                capBuf[removeBytes] = '\0';
+                if (uted_line_delete_bytes(curLine, 0, removeBytes)) {
+                    if (inst->cursor.line == L)
+                        inst->cursor.col = inst->cursor.col > removeChars
+                                        ? inst->cursor.col - removeChars : 0;
+                    if (inst->selAnchor.line == L)
+                        inst->selAnchor.col = inst->selAnchor.col > removeChars
+                                           ? inst->selAnchor.col - removeChars : 0;
+                    if (inst->selFloat.line == L)
+                        inst->selFloat.col = inst->selFloat.col > removeChars
+                                          ? inst->selFloat.col - removeChars : 0;
+                    if (!inst->undoInProgress && inst->undoMax > 0) {
+                        UTEDUndoEntry ue;
+                        UniTextEditorPos ps, pe;
+                        ps.line = L; ps.col = 0;
+                        pe.line = L; pe.col = removeChars;
+                        ue.opType       = UTED_UNDO_DELETE;
+                        ue.delDir       = 0;
+                        ue.atomic       = TRUE;
+                        ue.cursorBefore = savedCursor;
+                        ue.anchorBefore = savedAnchor;
+                        ue.hasSelBefore = savedHasSel;
+                        ue.posStart     = ps;
+                        ue.posEnd       = pe;
+                        ue.textBytes    = removeBytes;
+                        ue.text = (char *)AllocVec(removeBytes + 1, MEMF_ANY);
+                        if (ue.text) {
+                            CopyMem(capBuf, ue.text, removeBytes);
+                            ue.text[removeBytes] = '\0';
+                        } else {
+                            ue.textBytes = 0;
+                        }
+                        uted_undo_push(inst, &ue, grouped);
+                        grouped = TRUE;
+                    }
+                }
+            }
+        }
+    }
+
+    inst->modified         = TRUE;
+    if (inst->wordWrap) inst->wrapMapDirty = TRUE;
+    inst->refreshStartLine = (LONG)firstLine;
+    inst->refreshEndLine   = (LONG)lastLine;
+    uted_ensure_cursor_visible(inst);
+    uted_ensure_cursor_h_visible(inst);
+    uted_undo_notify(cl, o, gi);
+
+    return TRUE;
+}
+
 int uted_manage_rawkey_keycode(Class *cl, Object *o,ULONG codedata, struct GadgetInfo *gi)
 {
     int result = 0;
@@ -48,147 +209,19 @@ int uted_manage_rawkey_keycode(Class *cl, Object *o,ULONG codedata, struct Gadge
      * (if any) don't accidentally produce text output. */
     switch (keycode) {
     case RAWKEY_TAB: {
-        if (!inst->readOnly) {
-            BOOL didBlock = FALSE;
-            /* Block indent/unindent when selection spans more than one line.
-             * Uses low-level uted_line_insert/delete_bytes directly to avoid
-             * the selection-replace and undo side-effects of DoInsertText/DoDeleteChar. */
-            if (inst->hasSelection) {
-                ULONG firstLine = inst->selAnchor.line < inst->selFloat.line
-                                ? inst->selAnchor.line : inst->selFloat.line;
-                ULONG lastLine  = inst->selAnchor.line > inst->selFloat.line
-                                ? inst->selAnchor.line : inst->selFloat.line;
-                if (firstLine < lastLine) {
-                    ULONG L;
-                    didBlock = TRUE;
-                    if (!shift) {
-                        /* Block indent: insert tab or spaces at byte 0 of each line */
-                        const char *insertStr;
-                        ULONG insertBytes, insertChars;
-                        char spaces[13];
-                        if (inst->tabsAreSpaces) {
-                            ULONG n = inst->tabSpaces, si;
-                            if (n < 1) n = 1; if (n > 12) n = 12;
-                            for (si = 0; si < n; si++) spaces[si] = ' ';
-                            spaces[n] = '\0';
-                            insertStr = spaces; insertBytes = n; insertChars = n;
-                        } else {
-                            insertStr = "\t"; insertBytes = 1; insertChars = 1;
-                        }
-                        for (L = firstLine; L <= lastLine; L++) {
-                            UniTextEditorLine *curLine = uted_get_line(inst, L);
-                            if (!curLine) continue;
-                            UniTextEditorPos savedCursor = inst->cursor;
-                            UniTextEditorPos savedAnchor = inst->selAnchor;
-                            BOOL             savedHasSel = inst->hasSelection;
-                            if (uted_line_insert_bytes(curLine, 0, insertStr, insertBytes)) {
-                                if (inst->cursor.line    == L) inst->cursor.col    += insertChars;
-                                if (inst->selAnchor.line == L) inst->selAnchor.col += insertChars;
-                                if (inst->selFloat.line  == L) inst->selFloat.col  += insertChars;
-                                if (!inst->undoInProgress && inst->undoMax > 0) {
-                                    UTEDUndoEntry ue;
-                                    UniTextEditorPos ps, pe;
-                                    ps.line = L; ps.col = 0;
-                                    pe.line = L; pe.col = insertChars;
-                                    ue.opType       = UTED_UNDO_INSERT;
-                                    ue.delDir       = 0;
-                                    ue.atomic       = TRUE;
-                                    ue.cursorBefore = savedCursor;
-                                    ue.anchorBefore = savedAnchor;
-                                    ue.hasSelBefore = savedHasSel;
-                                    ue.posStart     = ps;
-                                    ue.posEnd       = pe;
-                                    ue.textBytes    = insertBytes;
-                                    ue.text = (char *)AllocVec(insertBytes + 1, MEMF_ANY);
-                                    if (ue.text) {
-                                        CopyMem((APTR)insertStr, ue.text, insertBytes);
-                                        ue.text[insertBytes] = '\0';
-                                    } else {
-                                        ue.textBytes = 0;
-                                    }
-                                    uted_undo_push(inst, &ue);
-                                }
-                            }
-                        }
-                    } else {
-                        /* Block unindent: remove tab or spaces from byte 0 of each line */
-                        for (L = firstLine; L <= lastLine; L++) {
-                            UniTextEditorLine *curLine = uted_get_line(inst, L);
-                            if (!curLine || !curLine->utf8 || curLine->charCount == 0)
-                                continue;
-                            const char *s = curLine->utf8;
-                            ULONG removeBytes = 0, removeChars = 0;
-                            if (inst->tabsAreSpaces) {
-                                int nbsp = (int)inst->tabSpaces;
-                                int j;
-                                BOOL allSpaces;
-                                if (nbsp < 1) nbsp = 1; if (nbsp > 12) nbsp = 12;
-                                if ((int)curLine->charCount >= nbsp) {
-                                    allSpaces = TRUE;
-                                    for (j = 0; j < nbsp; j++) {
-                                        if (s[j] != ' ') { allSpaces = FALSE; break; }
-                                    }
-                                    if (allSpaces) {
-                                        removeBytes = (ULONG)nbsp;
-                                        removeChars = (ULONG)nbsp;
-                                    }
-                                }
-                            } else {
-                                if (s[0] == '\t') { removeBytes = 1; removeChars = 1; }
-                            }
-                            if (removeBytes) {
-                                char capBuf[13];
-                                UniTextEditorPos savedCursor = inst->cursor;
-                                UniTextEditorPos savedAnchor = inst->selAnchor;
-                                BOOL             savedHasSel = inst->hasSelection;
-                                CopyMem((APTR)s, capBuf, removeBytes);
-                                capBuf[removeBytes] = '\0';
-                                if (uted_line_delete_bytes(curLine, 0, removeBytes)) {
-                                    if (inst->cursor.line == L)
-                                        inst->cursor.col = inst->cursor.col > removeChars
-                                                        ? inst->cursor.col - removeChars : 0;
-                                    if (inst->selAnchor.line == L)
-                                        inst->selAnchor.col = inst->selAnchor.col > removeChars
-                                                           ? inst->selAnchor.col - removeChars : 0;
-                                    if (inst->selFloat.line == L)
-                                        inst->selFloat.col = inst->selFloat.col > removeChars
-                                                          ? inst->selFloat.col - removeChars : 0;
-                                    if (!inst->undoInProgress && inst->undoMax > 0) {
-                                        UTEDUndoEntry ue;
-                                        UniTextEditorPos ps, pe;
-                                        ps.line = L; ps.col = 0;
-                                        pe.line = L; pe.col = removeChars;
-                                        ue.opType       = UTED_UNDO_DELETE;
-                                        ue.delDir       = 0;
-                                        ue.atomic       = TRUE;
-                                        ue.cursorBefore = savedCursor;
-                                        ue.anchorBefore = savedAnchor;
-                                        ue.hasSelBefore = savedHasSel;
-                                        ue.posStart     = ps;
-                                        ue.posEnd       = pe;
-                                        ue.textBytes    = removeBytes;
-                                        ue.text = (char *)AllocVec(removeBytes + 1, MEMF_ANY);
-                                        if (ue.text) {
-                                            CopyMem(capBuf, ue.text, removeBytes);
-                                            ue.text[removeBytes] = '\0';
-                                        } else {
-                                            ue.textBytes = 0;
-                                        }
-                                        uted_undo_push(inst, &ue);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    inst->modified         = TRUE;
-                    if (inst->wordWrap) inst->wrapMapDirty = TRUE;
-                    inst->refreshStartLine = (LONG)firstLine;
-                    inst->refreshEndLine   = (LONG)lastLine;
-                    uted_ensure_cursor_visible(inst);
-                    uted_ensure_cursor_h_visible(inst);
-                    uted_undo_notify(cl, o, gi);
-                }
-            }
+        if (inst->noLineFeed) {
+            /* One-line mode: Tab must never edit the text (no insert, no
+             * block indent/unindent, no backtab). Losing activation is
+             * handled directly in UniTextEditor_OnHandleInput before the
+             * key ever reaches here in the normal (internal-rawkey)
+             * pipeline; this guard is the safety net for the other path
+             * that reaches this function - UTED_PutRawKey set directly by
+             * an application (external key-message mode). */
+            result = 1;
+        } else if (!inst->readOnly) {
+            /* Block indent/unindent when selection spans more than one line
+             * (see uted_do_block_tab); otherwise fall through below. */
+            BOOL didBlock = uted_do_block_tab(cl, o, gi, shift);
             if (!didBlock) {
                 if (shift) {
                     /* Backtab: delete N spaces or one \t before cursor */
@@ -417,139 +450,8 @@ int uted_manage_vanilla_keycode(Class *cl, Object *o,ULONG codedata, struct Gadg
             }
         } else if (ch == 0x09) {
             /* Tab / Shift+Tab.  Multi-line selection → block indent/unindent
-             * using low-level primitives so the selection is never consumed. */
-            BOOL didBlock = FALSE;
-            if (inst->hasSelection) {
-                ULONG firstLine = inst->selAnchor.line < inst->selFloat.line
-                                ? inst->selAnchor.line : inst->selFloat.line;
-                ULONG lastLine  = inst->selAnchor.line > inst->selFloat.line
-                                ? inst->selAnchor.line : inst->selFloat.line;
-                if (firstLine < lastLine) {
-                    ULONG L;
-                    didBlock = TRUE;
-                    if (!vshift) {
-                        /* Block indent */
-                        const char *insertStr;
-                        ULONG insertBytes, insertChars;
-                        char spaces[13];
-                        if (inst->tabsAreSpaces) {
-                            ULONG n = inst->tabSpaces, si;
-                            if (n < 1) n = 1; if (n > 12) n = 12;
-                            for (si = 0; si < n; si++) spaces[si] = ' ';
-                            spaces[n] = '\0';
-                            insertStr = spaces; insertBytes = n; insertChars = n;
-                        } else {
-                            insertStr = "\t"; insertBytes = 1; insertChars = 1;
-                        }
-                        for (L = firstLine; L <= lastLine; L++) {
-                            UniTextEditorLine *curLine = uted_get_line(inst, L);
-                            if (!curLine) continue;
-                            UniTextEditorPos savedCursor = inst->cursor;
-                            UniTextEditorPos savedAnchor = inst->selAnchor;
-                            BOOL             savedHasSel = inst->hasSelection;
-                            if (uted_line_insert_bytes(curLine, 0, insertStr, insertBytes)) {
-                                if (inst->cursor.line    == L) inst->cursor.col    += insertChars;
-                                if (inst->selAnchor.line == L) inst->selAnchor.col += insertChars;
-                                if (inst->selFloat.line  == L) inst->selFloat.col  += insertChars;
-                                if (!inst->undoInProgress && inst->undoMax > 0) {
-                                    UTEDUndoEntry ue;
-                                    UniTextEditorPos ps, pe;
-                                    ps.line = L; ps.col = 0;
-                                    pe.line = L; pe.col = insertChars;
-                                    ue.opType       = UTED_UNDO_INSERT;
-                                    ue.delDir       = 0;
-                                    ue.atomic       = TRUE;
-                                    ue.cursorBefore = savedCursor;
-                                    ue.anchorBefore = savedAnchor;
-                                    ue.hasSelBefore = savedHasSel;
-                                    ue.posStart     = ps;
-                                    ue.posEnd       = pe;
-                                    ue.textBytes    = insertBytes;
-                                    ue.text = (char *)AllocVec(insertBytes + 1, MEMF_ANY);
-                                    if (ue.text) {
-                                        CopyMem((APTR)insertStr, ue.text, insertBytes);
-                                        ue.text[insertBytes] = '\0';
-                                    } else {
-                                        ue.textBytes = 0;
-                                    }
-                                    uted_undo_push(inst, &ue);
-                                }
-                            }
-                        }
-                    } else {
-                        /* Block unindent */
-                        for (L = firstLine; L <= lastLine; L++) {
-                            UniTextEditorLine *curLine = uted_get_line(inst, L);
-                            if (!curLine || !curLine->utf8 || curLine->charCount == 0) continue;
-                            const char *s = curLine->utf8;
-                            ULONG removeBytes = 0, removeChars = 0;
-                            if (inst->tabsAreSpaces) {
-                                int nbsp = (int)inst->tabSpaces;
-                                int j; BOOL allSpaces;
-                                if (nbsp < 1) nbsp = 1; if (nbsp > 12) nbsp = 12;
-                                if ((int)curLine->charCount >= nbsp) {
-                                    allSpaces = TRUE;
-                                    for (j = 0; j < nbsp; j++) {
-                                        if (s[j] != ' ') { allSpaces = FALSE; break; }
-                                    }
-                                    if (allSpaces) { removeBytes = (ULONG)nbsp; removeChars = (ULONG)nbsp; }
-                                }
-                            } else {
-                                if (s[0] == '\t') { removeBytes = 1; removeChars = 1; }
-                            }
-                            if (removeBytes) {
-                                char capBuf[13];
-                                UniTextEditorPos savedCursor = inst->cursor;
-                                UniTextEditorPos savedAnchor = inst->selAnchor;
-                                BOOL             savedHasSel = inst->hasSelection;
-                                CopyMem((APTR)s, capBuf, removeBytes);
-                                capBuf[removeBytes] = '\0';
-                                if (uted_line_delete_bytes(curLine, 0, removeBytes)) {
-                                    if (inst->cursor.line == L)
-                                        inst->cursor.col = inst->cursor.col > removeChars
-                                                        ? inst->cursor.col - removeChars : 0;
-                                    if (inst->selAnchor.line == L)
-                                        inst->selAnchor.col = inst->selAnchor.col > removeChars
-                                                           ? inst->selAnchor.col - removeChars : 0;
-                                    if (inst->selFloat.line == L)
-                                        inst->selFloat.col = inst->selFloat.col > removeChars
-                                                          ? inst->selFloat.col - removeChars : 0;
-                                    if (!inst->undoInProgress && inst->undoMax > 0) {
-                                        UTEDUndoEntry ue;
-                                        UniTextEditorPos ps, pe;
-                                        ps.line = L; ps.col = 0;
-                                        pe.line = L; pe.col = removeChars;
-                                        ue.opType       = UTED_UNDO_DELETE;
-                                        ue.delDir       = 0;
-                                        ue.atomic       = TRUE;
-                                        ue.cursorBefore = savedCursor;
-                                        ue.anchorBefore = savedAnchor;
-                                        ue.hasSelBefore = savedHasSel;
-                                        ue.posStart     = ps;
-                                        ue.posEnd       = pe;
-                                        ue.textBytes    = removeBytes;
-                                        ue.text = (char *)AllocVec(removeBytes + 1, MEMF_ANY);
-                                        if (ue.text) {
-                                            CopyMem(capBuf, ue.text, removeBytes);
-                                            ue.text[removeBytes] = '\0';
-                                        } else {
-                                            ue.textBytes = 0;
-                                        }
-                                        uted_undo_push(inst, &ue);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    inst->modified = TRUE;
-                    if (inst->wordWrap) inst->wrapMapDirty = TRUE;
-                    inst->refreshStartLine = (LONG)firstLine;
-                    inst->refreshEndLine   = (LONG)lastLine;
-                    uted_ensure_cursor_visible(inst);
-                    uted_ensure_cursor_h_visible(inst);
-                    uted_undo_notify(cl, o, gi);
-                }
-            }
+             * (see uted_do_block_tab); otherwise fall through below. */
+            BOOL didBlock = uted_do_block_tab(cl, o, gi, vshift);
             if (!didBlock) {
                 /* Single line / no selection: normal tab or backtab */
                 if (!vshift) {
@@ -814,6 +716,16 @@ ULONG UniTextEditor_OnHandleInput(Class *cl, Object *o, struct gpInput *msg)
         if(inst->oneline_enterEventSent)
         {
             inst->oneline_enterEventSent = FALSE;
+            return GMR_REUSE;
+        }
+        if (inst->noLineFeed && ie->ie_Code == RAWKEY_TAB) {
+            /* One-line mode: Tab must move focus elsewhere, never edit the
+             * text. Unlike Enter (whose "don't edit" decision needs the
+             * FreeType-unsafe app-context processing this input.device
+             * context can't do, hence the oneline_enterEventSent
+             * defer-and-signal dance above), noLineFeed and the raw
+             * keycode are both safe to read right here - decide and lose
+             * activation immediately, no need to queue the key at all. */
             return GMR_REUSE;
         }
         if (inst->rawKeySendBack) {

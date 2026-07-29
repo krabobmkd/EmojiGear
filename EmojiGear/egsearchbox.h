@@ -60,7 +60,7 @@ void  EgSearchBox_Close(EgSearchBox *sb);
 
 /* Handle input messages from this window. Call when its signal fires. */
 BOOL  EgSearchBox_HandleInput(EgSearchBox *sb);
-
+void  EgSearchBox_HandleBoopsiMessages(EgSearchBox *sb,ULONG sender_ID, struct TagItem *ptag);
 /* Signal bit mask to OR into Wait(). Returns 0 when window is closed. */
 ULONG EgSearchBox_GetSignalMask(EgSearchBox *sb);
 

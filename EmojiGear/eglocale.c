@@ -31,6 +31,10 @@ static const char *defaultStrings[MSG_COUNT] = {
     /* MSG_FILE_CLOSE */
     "Close",
 
+    /* MSG_FILE_SAVE */
+    "Save",
+    /* MSG_FILE_SAVE_ALL */
+    "Save All",
     /* MSG_FILE_SAVE_UTF8 */
     "Save As UTF-8 Text...",
     /* MSG_FILE_SAVE_ESCAPED */
@@ -44,10 +48,31 @@ static const char *defaultStrings[MSG_COUNT] = {
     /* MSG_MENU_QUIT */
     "Quit",
 
+    /* MSG_CLOSE_CONFIRM_TITLE */
+    "EmojiGear - Close",
+    /* MSG_CLOSE_CONFIRM_BODY */
+    "This file has unsaved changes:\n%s\n\nSave before closing?",
+    /* MSG_CLOSE_CONFIRM_GADGETS */
+    "Save|Don't Save",
+    /* MSG_QUIT_CONFIRM_TITLE */
+    "EmojiGear - Quit",
+    /* MSG_QUIT_CONFIRM_BODY */
+    "One or more files have unsaved changes.\n\nSave them all before quitting?",
+    /* MSG_QUIT_CONFIRM_GADGETS */
+    "Save All|Quit Without Saving",
+
     /* MSG_STATUS_READY */
     "Ready",
     /* MSG_STATUS_MODIFIED */
     "Modified",
+    /* MSG_STATUS_SAVED */
+    "Saved: %s",
+    /* MSG_STATUS_SAVE_FAILED */
+    "Save failed: %s",
+    /* MSG_STATUS_SAVE_ALL_NONE */
+    "Nothing to save",
+    /* MSG_STATUS_SAVE_ALL_DONE */
+    "Saved %ld/%ld file(s)",
 
     /* MSG_ERROR_NOMEMORY */
     "Out of memory",
@@ -55,6 +80,8 @@ static const char *defaultStrings[MSG_COUNT] = {
     "Cannot open file",
     /* MSG_ERROR_SAVEFILE */
     "Cannot save file",
+    /* MSG_ERROR_MENU */
+    "Menu creation failed",
 
     /* MSG_MENU_EDIT */
     "Edit",
@@ -186,6 +213,13 @@ static const char *defaultStrings[MSG_COUNT] = {
 
     /* MSG_TAB_NEW_FILE */
     "New File",
+
+    /* MSG_FILE_EXTERNAL_CHANGE_TITLE */
+    "EmojiGear - File Changed",
+    /* MSG_FILE_EXTERNAL_CHANGE_BODY */
+    "This file was changed by another program:\n%s\n\nReload it from disk? Unsaved changes in this tab will be lost.",
+    /* MSG_FILE_EXTERNAL_CHANGE_GADGETS */
+    "Reload|Cancel",
 
 };
 

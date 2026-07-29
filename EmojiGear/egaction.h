@@ -33,6 +33,8 @@ enum {
     ACTION_FILE_LOAD_LATIN2,
     ACTION_FILE_CLOSE,
 
+    ACTION_FILE_SAVE,
+    ACTION_FILE_SAVE_ALL,
     ACTION_FILE_SAVE_UTF8,
     ACTION_FILE_SAVE_ESCAPED,
     ACTION_FILE_SAVE_LATIN1,
@@ -112,12 +114,23 @@ BOOL Action_FileLoadLatin1(struct App *ctx);
 BOOL Action_FileLoadLatin2(struct App *ctx);
 BOOL Action_FileClose(struct App *ctx);
 
+BOOL Action_FileSave(struct App *ctx);
+BOOL Action_FileSaveAll(struct App *ctx);
 BOOL Action_FileSaveUTF8(struct App *ctx);
 BOOL Action_FileSaveEscaped(struct App *ctx);
 BOOL Action_FileSaveLatin1(struct App *ctx);
 BOOL Action_FileSaveLatin2(struct App *ctx);
 BOOL Action_FileAbout(struct App *ctx);
 BOOL Action_FileQuit(struct App *ctx);
+
+/* If any tab attached to a real file is modified, asks (once, for all of
+ * them together) whether to save them all before quitting; otherwise quits
+ * immediately. Only returns to the caller if the user asked to save and at
+ * least one save failed - a failed write is never silently discarded by
+ * quitting anyway. Used by Action_FileQuit, WMHI_CLOSEWINDOW, and closing
+ * the last remaining tab (which amounts to the same thing). Does NOT apply
+ * to Ctrl-C, which always quits immediately regardless. */
+void EgAction_ConfirmAndQuit(struct App *ctx);
 
 BOOL Action_EditCut(struct App *ctx);
 BOOL Action_EditCopy(struct App *ctx);
