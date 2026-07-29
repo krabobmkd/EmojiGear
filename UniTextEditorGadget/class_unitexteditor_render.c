@@ -1048,7 +1048,8 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
                             - (LONG)inst->scrollLeftPx);
 
             /* 2px wide when activated (focused), 1px when not */
-            cxEnd = inst->gadgetActive ? (WORD)(cx + 1) : cx;
+            cxEnd = ((G(o)->Activation & GACT_ACTIVEGADGET  )!=0)
+            ? (WORD)(cx + 1) : cx;
 
             if (cx >= textLeft && cx < textLeft + textWidth - 1) {
                 if (!inst->isCLUT) {

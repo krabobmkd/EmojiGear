@@ -822,6 +822,7 @@ int main(int argc, char **argv)
                         }
                        //always for main window if (!keyUsed && app->activeEditorObj == app->textEditorObj)
                         {
+                           //noneed if(CurrentMainWindow) ActivateGadget(app->textEditorObj,CurrentMainWindow,NULL);
                             SetGdAttrs(app->textEditorObj,
                                 UTED_PutRawKey,(result & 0x0ff)|(qualifiers<<16),TAG_END);
                         }
@@ -862,6 +863,7 @@ int main(int argc, char **argv)
                             Action_SettingsFontSizePlus(app);
                         } else //always for main window if(app->activeEditorObj == app->textEditorObj)
                         {
+                           //if(CurrentMainWindow) ActivateGadget(app->textEditorObj,CurrentMainWindow,NULL);
                             SetGdAttrs(app->textEditorObj, UTED_PutVanillaKey, key|(qualifiers<<16), TAG_END);
                         }
                     }
@@ -1425,13 +1427,15 @@ void OpenSearchBox()
     if(!app) return;
     if(!CurrentMainScreen) return;
 
+    /* that creates if not done and doesnt open */
     if(!app->searchBox.windowObj)
     {
         ULONG pointSize = 14;
         if(CurrentMainScreen->Font) pointSize = CurrentMainScreen->Font->ta_YSize;
         EgSearchBox_Create(&app->searchBox,pointSize);
     }
-    if(app->searchBox.windowObj /* no because refocus && !app->searchBox.window*/)
+    /* that open if created */
+    if(app->searchBox.windowObj)
     {
         EgSearchBox_Open(&app->searchBox);
     }

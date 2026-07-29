@@ -999,8 +999,7 @@ int main(int argc, char *argv[])
 
                         if (FindTagItem(UTEDN_CursorMoved,       msg) ||
                             FindTagItem(UTEDN_ScrollChanged,      msg) ||
-                            FindTagItem(UTED_ScrollLeft,          msg) ||
-                            FindTagItem(UTED_SetPrivateActivation, msg))
+                            FindTagItem(UTED_ScrollLeft,          msg) )
                         { needRedraw = TRUE; needStatus = TRUE; }
                         if (FindTagItem(UTEDN_TextChanged, msg) ||
                             FindTagItem(UTED_Modified,     msg))

@@ -36,6 +36,7 @@ typedef struct EgSearchBox {
     Object *replaceAllBtn;
     Object *caseSensCheck;
     // Object *closeBtn;
+    int reactivateSearchEdDelayed;
 } EgSearchBox;
 
 /*

@@ -638,17 +638,16 @@ ULONG UniTextEditor_OnGoActive(Class *cl, Object *o, struct gpInput *msg)
     /* Programmatic activation: ActivateGadget() or TAB cycling pass ie=NULL.
      * Set activation state and trigger a redraw so the cursor appears. */
     if (!ie) {
-        inst->gadgetActive = TRUE;
         uted_notify(cl, o, msg->gpi_GInfo, UTEDN_CursorMoved, inst->cursor.line);
         return GMR_MEACTIVE;
     }
- //   bdbprintf("UniTextEditor_OnGoActive %08x\n",(int)ie->ie_Class);
+    bdbprintf("UniTextEditor_OnGoActive %08x\n",(int)ie->ie_Class);
 
     if(inst->useInternalRawKey && ie->ie_Class == IECLASS_RAWKEY)
     {
-       // bdbprintf("uted OnGoActive %08x %08x %08x\n",ie->ie_Code,ie->ie_Qualifier,ie->ie_position.ie_addr);
+        bdbprintf("uted OnGoActive %08x %08x %08x\n",ie->ie_Code,ie->ie_Qualifier,ie->ie_position.ie_addr);
         uted_notify(cl, o, msg->gpi_GInfo, UTEDN_CursorMoved, inst->cursor.line);
-        uted_notify(cl, o, msg->gpi_GInfo, UTED_SetPrivateActivation, TRUE);
+     //   uted_notify(cl, o, msg->gpi_GInfo, UTED_SetPrivateActivation, TRUE);
         return GMR_MEACTIVE | GMR_REUSE;
     }
 
@@ -664,9 +663,7 @@ ULONG UniTextEditor_OnGoActive(Class *cl, Object *o, struct gpInput *msg)
         inst->pendingVScrollY     = msg->gpi_Mouse.Y;
         inst->pendingDrag         = FALSE;
         inst->dragging            = TRUE;
-        inst->gadgetActive        = TRUE;
         uted_notify(cl, o, msg->gpi_GInfo, UTEDN_CursorMoved, inst->cursor.line);
-        uted_notify(cl, o, msg->gpi_GInfo, UTED_SetPrivateActivation, TRUE);
         return GMR_MEACTIVE;
     }
 
@@ -678,11 +675,9 @@ ULONG UniTextEditor_OnGoActive(Class *cl, Object *o, struct gpInput *msg)
     inst->pendingDrag             = FALSE;
 
     inst->dragging     = TRUE;
-    inst->gadgetActive = TRUE;
 
     uted_notify(cl, o, msg->gpi_GInfo, UTEDN_CursorMoved, inst->cursor.line);
 
-    uted_notify(cl, o, msg->gpi_GInfo, UTED_SetPrivateActivation, TRUE);
     return GMR_MEACTIVE;
 }
 
@@ -767,7 +762,6 @@ ULONG UniTextEditor_OnHandleInput(Class *cl, Object *o, struct gpInput *msg)
                 msg->gpi_Mouse.X >= gw || msg->gpi_Mouse.Y >= gh)
             {
                 inst->dragging     = FALSE;
-                inst->gadgetActive = FALSE;
                 //uted_notify(cl, o, msg->gpi_GInfo, UTED_SetPrivateActivation, FALSE);
                 return GMR_REUSE;
             }
@@ -823,7 +817,6 @@ ULONG UniTextEditor_OnHandleInput(Class *cl, Object *o, struct gpInput *msg)
         if (ie->ie_Code == IECODE_RBUTTON) {
             /* Right button: release focus and replay so window menus work */
             inst->dragging     = FALSE;
-            inst->gadgetActive = FALSE;
             //uted_notify(cl, o, msg->gpi_GInfo, UTED_SetPrivateActivation, FALSE);
             return GMR_REUSE;
         }
@@ -835,7 +828,6 @@ ULONG UniTextEditor_OnHandleInput(Class *cl, Object *o, struct gpInput *msg)
              * so there is nothing to do here. */
             if (!inst->useInternalRawKey) {
                 inst->dragging     = FALSE;
-                inst->gadgetActive = FALSE;
                 //no uted_notify(cl, o, msg->gpi_GInfo, UTED_SetPrivateActivation, FALSE);
                 return GMR_REUSE;
             }
@@ -878,5 +870,7 @@ ULONG UniTextEditor_OnGoInactive(Class *cl, Object *o, struct gpGoInactive *msg)
     inst->pendingKeyCount     = 0;
     inst->pendingVScrollClick = FALSE;
     inst->pendingVScrollDrag  = FALSE;
+    /* will need a redraw for unactive cursor */
+     uted_notify(cl, o, msg->gpgi_GInfo, UTEDN_CursorMoved, inst->cursor.line);
     return 0;
 }

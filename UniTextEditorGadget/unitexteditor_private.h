@@ -393,7 +393,7 @@ typedef struct UniTextEditorData {
 
     /* Misc */
     BOOL                  modified;
-    BOOL                  gadgetActive;
+  //deprec  BOOL                  gadgetActive;
     BOOL                  isCLUT;         /* TRUE when target screen depth <= 8 */
     BOOL                  readOnly;       /* GA_ReadOnly: no edit/select/cursor; default FALSE */
     BOOL                  noLineFeed;     /* UTED_NoLineFeed: strip \n/\r; Enter → notify */

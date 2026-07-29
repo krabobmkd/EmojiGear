@@ -309,7 +309,7 @@
 /* [ISG]  Workaround , we manage activation privately from external.
  * just bool to tell if we're activated or not.
 */
-#define UTED_SetPrivateActivation       (UTED_Dummy + 48)
+//deprecated #define UTED_SetPrivateActivation       (UTED_Dummy + 48)
 
 /* [S]  (ULONG) Set the line index used by the next UTED_LineUTF8TextBuffer get.
  *              0-based; out-of-range values clamp to the last valid line. */

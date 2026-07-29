@@ -66,7 +66,6 @@ static const ULONG delayedAttribs[] = {
     UTED_CursorLine,
     UTED_CursorColumn,
     UTED_ScrollLeft,      /* horizontal scroll position changed */
-    UTED_SetPrivateActivation,
     UTED_InternalRawKey_Code,
     GA_Selected,          /* UniButton press notification */
     EGRID_ClickedIdx,     /* EmojiGrid cell click         */

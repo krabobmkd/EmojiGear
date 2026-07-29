@@ -278,6 +278,8 @@ void EgSearchBox_Open(EgSearchBox *sb)
     {
         WindowToFront(sb->window);
         ActivateWindow(sb->window);
+        sb->reactivateSearchEdDelayed =4;
+      //  ActivateGadget(sb->searchEditor,sb->window,NULL);
         return; /* already open */
     }
 
@@ -299,8 +301,10 @@ void EgSearchBox_Open(EgSearchBox *sb)
     sb->window = (struct Window *)DoMethod(sb->windowObj, WM_OPEN, NULL);
     if(sb->window)
     {
+        sb->reactivateSearchEdDelayed =4;
         EgMenu_Create(&sb->menu,CurrentMainScreen,sb->window,&app->appSettings);
-        ActivateGadget(sb->searchEditor,sb->window,NULL);
+        ActivateWindow(sb->window);
+        //ActivateGadget(sb->searchEditor,sb->window,NULL);
     }
     /* sort of activate the search field */
   //old for ukm_external  app->activeEditorObj = sb->searchEditor;
@@ -334,8 +338,8 @@ void  EgSearchBox_HandleBoopsiMessages(EgSearchBox *sb,ULONG sender_ID, struct T
             ptag = FindTagItem(UTEDN_EnterPressed, msg);
             if (ptag) {
                 Action_NavFindNext(app);
-               if(sb->searchEditor && sb->window)
-                    ActivateGadget(sb->searchEditor,sb->window,NULL);
+               // if(sb->searchEditor && sb->window)
+               //      ActivateGadget(sb->searchEditor,sb->window,NULL);
             }
             ptag = FindTagItem(UTED_InternalRawKey_Code, msg);
             if (ptag) {
@@ -344,6 +348,11 @@ void  EgSearchBox_HandleBoopsiMessages(EgSearchBox *sb,ULONG sender_ID, struct T
                 int isUp = 0x0080 & qulkey;
                 UWORD key = (UWORD)(0x007f & qulkey);
                 UWORD qualifiers = (UWORD)(qulkey>>16);
+
+                if(key == 0x09)
+                {
+                    ActivateGadget(sb->replaceEditor,sb->window,NULL);
+                }
 
                 if(!isUp && key>=0x50 && key<=0x59 )
                 {
@@ -418,6 +427,7 @@ BOOL EgSearchBox_HandleInput(EgSearchBox *sb)
                     RefreshGList((struct Gadget *)sb->replaceEditor, sb->window, NULL, 1);
                 break;
             case WMHI_ACTIVE:
+
                 ActivateGadget(sb->searchEditor,sb->window,NULL);
            // app->activeEditorObj == sb->searchEditor;
             break;
@@ -482,6 +492,16 @@ BOOL EgSearchBox_HandleInput(EgSearchBox *sb)
                 break;
         }
     }
+
+    if(sb->reactivateSearchEdDelayed>0 && sb->window)
+    {
+        sb->reactivateSearchEdDelayed--;
+        //if(sb->reactivateSearchEdDelayed ==0)
+        {
+            ActivateGadget(sb->searchEditor,sb->window,NULL);
+        }
+    }
+
 
     return TRUE;
 }

@@ -1453,10 +1453,6 @@ BOOL Action_FileSaveAll(struct App *ctx)
 Object *GetActiveUTEDEditor()
 {
     if(!app) return NULL;
-    if(CurrentMainWindow && (CurrentMainWindow->Flags & WFLG_WINDOWACTIVE) !=0)
-    {
-        return app->textEditorObj;
-    }
     /* may be the seach or replace editor, if open */
     if(app->searchBox.window && (app->searchBox.window->Flags & WFLG_WINDOWACTIVE) !=0)
     {
@@ -1470,6 +1466,11 @@ Object *GetActiveUTEDEditor()
         {
             return app->searchBox.replaceEditor;
         }
+    }
+    /* in emojibox case MainWindow dosnt even need activation */
+    if(CurrentMainWindow /*&& (CurrentMainWindow->Flags & WFLG_WINDOWACTIVE) !=0*/)
+    {
+        return app->textEditorObj;
     }
     return NULL;
 }
@@ -1651,9 +1652,8 @@ BOOL Action_EditOpenEmojiBox(struct App *ctx)
 /* this one just open the window, real Find operation is Action_NavFindNext() */
 BOOL Action_NavFindOpen(struct App *ctx)
 {
-    if (!ctx || !ctx->textEditorObj) return FALSE;
 
-        OpenSearchBox();
+    OpenSearchBox();
 
     return TRUE;
 }

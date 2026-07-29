@@ -1430,6 +1430,7 @@ BOOL EmojiBoxWindow_HandleInput(EmojiBoxWindow *ebw)
 {
     ULONG result;
     Object *activeEditor = GetActiveUTEDEditor();
+
     if (!ebw || !ebw->windowObj || !ebw->window) return TRUE;
 
 

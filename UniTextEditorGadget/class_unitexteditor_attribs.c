@@ -1116,7 +1116,7 @@ ULONG UniTextEditor_OnSet(Class *cl, Object *o, struct opSet *msg)
             inst->noLineFeed = tag->ti_Data ? TRUE : FALSE;
             result = 1;
             break;
-
+/*deprecated
         case UTED_SetPrivateActivation:
         {
             ULONG b = (tag->ti_Data) ? TRUE : FALSE;
@@ -1126,9 +1126,9 @@ ULONG UniTextEditor_OnSet(Class *cl, Object *o, struct opSet *msg)
                 redraw = TRUE;
             }
             result = 1;
-            }
-            break;
-
+        }
+        break;
+*/
         case UTED_LeftMargin:
         {
             WORD v = (WORD)(ULONG)tag->ti_Data;
@@ -1668,11 +1668,11 @@ ULONG UniTextEditor_OnGet(Class *cl, Object *o, struct opGet *msg)
     case UTED_NoLineFeed:
         *msg->opg_Storage = (ULONG)inst->noLineFeed;
         return TRUE;
-
+/*deprecated
     case UTED_SetPrivateActivation:
         *msg->opg_Storage = (ULONG)inst->gadgetActive;
         return TRUE;
-
+*/
     case UTED_LeftMargin:
         *msg->opg_Storage = (ULONG)(WORD)inst->leftMargin;
         if(inst->bevel)
