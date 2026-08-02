@@ -75,8 +75,16 @@ BOOL EgSearchBox_Create(EgSearchBox *sb, ULONG pointSize/*,ULONG *sharedButtonsD
         UTED_TopMargin,3,
         UTED_BottomMargin,1,
         UTED_LineSpacing,0,
-     //   GA_TabCycle,  TRUE,
+        GA_TabCycle,  TRUE,
         TAG_END);
+
+sb->searchEditor = (Object *)NewObject(BUTTON_GetClass(), NULL,
+        GA_ID,   (ULONG)ID_SEARCH_EDITOR,
+        GA_Text, (ULONG)"test",
+        GA_RelVerify,TRUE, /* needed to receive WMHI_GADGETUP */
+        GA_TabCycle,  TRUE,
+        TAG_END);
+
 
     if(sb->searchEditor)
     {
@@ -130,8 +138,10 @@ BOOL EgSearchBox_Create(EgSearchBox *sb, ULONG pointSize/*,ULONG *sharedButtonsD
         UTED_TopMargin,3,
         UTED_BottomMargin,1,
         UTED_LineSpacing,0,
-     //re   GA_TabCycle,  TRUE,
+        GA_TabCycle,  TRUE,
         TAG_END);
+
+
 
     sb->replaceEraseBtn = (Object *)NewObject(BUTTON_GetClass(), NULL,
         GA_ID,   (ULONG)ID_REPLACE_ERASE,
