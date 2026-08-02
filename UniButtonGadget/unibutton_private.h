@@ -33,6 +33,9 @@
 #endif
 #include "compilers.h"
 
+/* Raw keycode for Tab (not in any standard NDK header we include) */
+#define UBT_RAWKEY_TAB   0x42
+
 /* Cached bitmap states */
 #define UBT_STATE_NORMAL    0   /* unselected, enabled */
 #define UBT_STATE_SELECTED  1   /* pressed/active */
@@ -59,6 +62,8 @@ typedef struct UniButtonData {
     /* Appearance */
     BOOL    transparent;
     BOOL    readOnly;
+    BOOL    tabCycle;      /* GA_TabCycle: Tab/Shift-Tab release activation to the
+                            * next/prev GFLG_TABCYCLE gadget; default FALSE */
 
     /* Pens */
     ULONG   txtPen;

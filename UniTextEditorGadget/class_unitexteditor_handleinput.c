@@ -721,6 +721,14 @@ ULONG UniTextEditor_OnHandleInput(Class *cl, Object *o, struct gpInput *msg)
              * defer-and-signal dance above), noLineFeed and the raw
              * keycode are both safe to read right here - decide and lose
              * activation immediately, no need to queue the key at all. */
+            if (inst->tabCycle) {
+                /* GA_TabCycle: release activation straight to the previous
+                 * or next GFLG_TABCYCLE gadget instead of just replaying
+                 * the key for the window to deal with. */
+                BOOL shift = (ie->ie_Qualifier &
+                              (IEQUALIFIER_LSHIFT | IEQUALIFIER_RSHIFT)) ? TRUE : FALSE;
+                return GMR_NOREUSE | (shift ? GMR_PREVACTIVE : GMR_NEXTACTIVE);
+            }
             return GMR_REUSE;
         }
         if (inst->rawKeySendBack) {

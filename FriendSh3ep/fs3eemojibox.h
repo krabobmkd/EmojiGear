@@ -35,7 +35,7 @@
 struct URPDrawContext;
 
 /* Number of emoji sets (see the tables in fs3eemojibox.c). */
-#define FS3EEMOJIBOX_NUM_SETS 11
+#define FS3EEMOJIBOX_NUM_SETS 12
 
 typedef struct FS3EEmojiBoxWindow {
     Object         *windowObj;     /* BOOPSI window object (persistent) */

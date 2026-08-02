@@ -188,12 +188,13 @@ static const char *natureEmojiTable[40] = {
     "\xF0\x9F\x8C\xB4", /* 🌴 palm tree  */
     "\xF0\x9F\x8C\xB2", /* 🌲 evergreen  */
     "\xF0\x9F\x8C\xB3", /* 🌳 deciduous  */
-    "\xF0\x9F\x8E\x8B", /* 🎋 tanabata   */
+ //   "\xF0\x9F\x8E\x8B", /* 🎋 tanabata   */
     "\xF0\x9F\x8E\x8D", /* 🎍 pine deco  */
     "\xF0\x9F\x8D\x81", /* 🍁 maple leaf */
-    "\xF0\x9F\x8D\x82", /* 🍂 fallen leaf */
-    "\xF0\x9F\x8D\x83", /* 🍃 leaves     */
+   // "\xF0\x9F\x8D\x82", /* 🍂 fallen leaf */
+   // "\xF0\x9F\x8D\x83", /* 🍃 leaves     */
     /* row 2: vegetables */
+    "\xF0\x9F\x8D\x8C", /*  banana    */
     "\xF0\x9F\xA5\x95", /* 🥕 carrot     */
     "\xF0\x9F\xA5\xA6", /* 🥦 broccoli   */
     "\xF0\x9F\x8C\xBD", /* 🌽 corn       */
@@ -204,6 +205,7 @@ static const char *natureEmojiTable[40] = {
     "\xF0\x9F\xA7\x85", /* 🧅 onion      */
     "\xF0\x9F\xA7\x84", /* 🧄 garlic     */
     "\xF0\x9F\x8C\xB6", /* 🌶 pepper     */
+
     /* row 3: landscapes */
     "\xE2\x9B\xB0",     /* ⛰ mountain   */
     "\xF0\x9F\x8F\x94", /* 🏔 snow-capped mtn */
@@ -212,6 +214,10 @@ static const char *natureEmojiTable[40] = {
     "\xF0\x9F\x8F\x9D", /* 🏝 island     */
     "\xF0\x9F\x8F\x9C", /* 🏜 desert     */
     "\xF0\x9F\x8C\x8A", /* 🌊 wave       */
+
+    "\xE2\x98\x80",     /* sun */
+    "\xF0\x9F\x8C\x9E", /* sun face */
+
     "\xF0\x9F\x8C\x85", /* 🌅 sunrise    */
     "\xF0\x9F\x8C\x84", /* 🌄 sunrise over mtns */
     "\xF0\x9F\x8C\x8C", /* 🌌 milky way  */
@@ -560,6 +566,7 @@ static const char *animalsEmojiTable[40] = {
     "\xF0\x9F\x90\xB1", /* 🐱 cat              */
     "\xF0\x9F\x90\xAD", /* 🐭 mouse            */
     "\xF0\x9F\x90\xB0", /* 🐰 rabbit           */
+    "\xF0\x9F\x90\x91", /* sheep */
     "\xF0\x9F\xA6\x8A", /* 🦊 fox              */
     "\xF0\x9F\x90\xBB", /* 🐻 bear             */
     "\xF0\x9F\x90\xBC", /* 🐼 panda            */
@@ -586,8 +593,8 @@ static const char *animalsEmojiTable[40] = {
     "\xF0\x9F\xA6\x80", /* 🦀 crab             */
     "\xF0\x9F\xA6\x8B", /* 🦋 butterfly        */
     "\xF0\x9F\x90\x9D", /* 🐝 honeybee         */
-    "\xF0\x9F\x90\x9B", /* 🐛 bug              */
-    "\xF0\x9F\xA6\x97", /* 🦗 cricket          */
+    "\xF0\x9F\x90\x9B", /* 🐛 bug              */    
+   // "\xF0\x9F\xA6\x97", /* 🦗 cricket          */
     /* row 3: reptiles & exotic animals */
     "\xF0\x9F\x90\x8A", /* 🐊 crocodile        */
     "\xF0\x9F\x90\xA2", /* 🐢 turtle           */
@@ -599,6 +606,58 @@ static const char *animalsEmojiTable[40] = {
     "\xF0\x9F\xA6\x8F", /* 🦏 rhinoceros       */
     "\xF0\x9F\xA6\x94", /* 🦔 hedgehog         */
     "\xF0\x9F\xA6\x98", /* 🦘 kangaroo         */
+};
+
+/* Diacritics – inclusive-writing dot and French letters not on an AZERTY
+ * keyboard first, then the most used European diacritics and typographic
+ * ligatures that aren't on common keyboards either. Plain, commonly-typed
+ * French accents (é è à ç ù, and their lowercase dead-key combos) are
+ * deliberately left out. */
+static const char *diacriticsTable[40] = {
+    /* row 0: inclusive dot, French æ/œ ligatures + caps, other off-keyboard French signs */
+    "\xC2\xB7",         /* ·  middle dot (inclusive writing, e.g. "iel·le") */
+    "\xC3\xA6",         /* æ  ae ligature */
+    "\xC5\x93",         /* œ  oe ligature */
+    "\xC3\x86",         /* Æ  AE ligature */
+    "\xC5\x92",         /* Œ  OE ligature */
+    "\xC3\xBF",         /* ÿ  y diaeresis */
+    "\xC5\xB8",         /* Ÿ  Y diaeresis */
+    "\xC2\xAB",         /* «  left guillemet */
+    "\xC2\xBB",         /* »  right guillemet */
+    "\xE2\x80\x99",     /* '  right single quote (apostrophe typographique) */
+    /* row 1: uppercase French accented vowels (need caps-lock+dead-key) */
+    "\xC3\x89",         /* É */
+    "\xC3\x88",         /* È */
+    "\xC3\x8A",         /* Ê */
+    "\xC3\x8B",         /* Ë */
+    "\xC3\x80",         /* À */
+    "\xC3\x82",         /* Â */
+    "\xC3\x8E",         /* Î */
+    "\xC3\x8F",         /* Ï */
+    "\xC3\x94",         /* Ô */
+    "\xC3\x9B",         /* Û */
+    /* row 2: remaining French caps, German umlauts + sharp s */
+    "\xC3\x99",         /* Ù */
+    "\xC3\x87",         /* Ç */
+    "\xC3\xA4",         /* ä */
+    "\xC3\xB6",         /* ö */
+    "\xC3\xBC",         /* ü */
+    "\xC3\x9F",         /* ß  sharp s */
+    "\xC3\x84",         /* Ä */
+    "\xC3\x96",         /* Ö */
+    "\xC3\x9C",         /* Ü */
+    "\xC3\xA5",         /* å */
+    /* row 3: Scandinavian, Spanish, Slavic caron, typographic ligatures */
+    "\xC3\x85",         /* Å */
+    "\xC3\xB8",         /* ø */
+    "\xC3\x98",         /* Ø */
+    "\xC3\xB1",         /* ñ */
+    "\xC3\x91",         /* Ñ */
+    "\xC5\xA1",         /* š */
+    "\xC5\xBE",         /* ž */
+    "\xC4\x8D",         /* č */
+    "\xEF\xAC\x81",     /* fi ligature */
+    "\xEF\xAC\x82",     /* fl ligature */
 };
 
 /* -------------------------------------------------------------------------
@@ -621,6 +680,7 @@ static const EmojiSetDesc emojiSets[EMOJIBOX_NUM_SETS] = {
     { "Year Events",    yearEventsTable    },
     { "Business",       businessEmojiTable },
     { "Animals",        animalsEmojiTable  },
+    { "Diacritics",     diacriticsTable    },
 };
 
 /* =========================================================================

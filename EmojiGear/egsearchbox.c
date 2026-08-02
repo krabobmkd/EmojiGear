@@ -75,16 +75,8 @@ BOOL EgSearchBox_Create(EgSearchBox *sb, ULONG pointSize/*,ULONG *sharedButtonsD
         UTED_TopMargin,3,
         UTED_BottomMargin,1,
         UTED_LineSpacing,0,
-        GA_TabCycle,  TRUE,
+     //   GA_TabCycle,  TRUE,
         TAG_END);
-
-sb->searchEditor = (Object *)NewObject(BUTTON_GetClass(), NULL,
-        GA_ID,   (ULONG)ID_SEARCH_EDITOR,
-        GA_Text, (ULONG)"test",
-        GA_RelVerify,TRUE, /* needed to receive WMHI_GADGETUP */
-        GA_TabCycle,  TRUE,
-        TAG_END);
-
 
     if(sb->searchEditor)
     {
@@ -96,14 +88,11 @@ sb->searchEditor = (Object *)NewObject(BUTTON_GetClass(), NULL,
         GA_ID,   (ULONG)ID_SEARCH_ERASE,
         GA_Text, (ULONG)LOC(MSG_SEARCH_ERASE),
         GA_RelVerify,TRUE, /* needed to receive WMHI_GADGETUP */
-        GA_TabCycle,  TRUE,
+//        GA_TabCycle,  TRUE,
         TAG_END);
 
     searchLine = (Object *)NewObject(LAYOUT_GetClass(), NULL,
         LAYOUT_Orientation, LAYOUT_ORIENT_HORIZ,
-        // LAYOUT_AddChild,    (ULONG)searchLabel,
-        //     CHILD_WeightedWidth, 0,
-        //     CHILD_MinWidth,80,
         LAYOUT_AddChild,    (ULONG)sb->searchEditor,
             CHILD_WeightedWidth, 1,
             CHILD_Label,(ULONG)searchLabel,
@@ -128,7 +117,6 @@ sb->searchEditor = (Object *)NewObject(BUTTON_GetClass(), NULL,
         UTED_InternalRawKey_SendBack,TRUE,
         // UTED_AddFont,           (ULONG)"LiberationSans-Regular.ttf",
         // UTED_AddFont,           (ULONG)"NotoColorEmoji32.ttf",
-
         UTED_TextPen,           1UL,
         UTED_BgPen,             0UL,
         UTED_MaxDisplayLines,   1UL,
@@ -138,16 +126,14 @@ sb->searchEditor = (Object *)NewObject(BUTTON_GetClass(), NULL,
         UTED_TopMargin,3,
         UTED_BottomMargin,1,
         UTED_LineSpacing,0,
-        GA_TabCycle,  TRUE,
+//        GA_TabCycle,  TRUE,
         TAG_END);
-
-
 
     sb->replaceEraseBtn = (Object *)NewObject(BUTTON_GetClass(), NULL,
         GA_ID,   (ULONG)ID_REPLACE_ERASE,
         GA_Text, (ULONG)LOC(MSG_SEARCH_ERASE),
         GA_RelVerify,TRUE, /* needed to receive WMHI_GADGETUP */
-        GA_TabCycle,  TRUE,
+//        GA_TabCycle,  TRUE,
         TAG_END);
 
     replaceLine = (Object *)NewObject(LAYOUT_GetClass(), NULL,
@@ -170,35 +156,35 @@ sb->searchEditor = (Object *)NewObject(BUTTON_GetClass(), NULL,
     sb->findNextBtn = (Object *)NewObject(BUTTON_GetClass(), NULL,
         GA_ID,   (ULONG)ID_SEARCH_FIND_NEXT,
         GA_Text, (ULONG)LOC(MSG_SEARCH_FIND_NEXT),
-        GA_TabCycle,  TRUE,
+//        GA_TabCycle,  TRUE,
         GA_RelVerify,TRUE, /* needed to receive WMHI_GADGETUP */
         TAG_END);
 
     sb->findPrevBtn = (Object *)NewObject(BUTTON_GetClass(), NULL,
         GA_ID,   (ULONG)ID_SEARCH_FIND_PREV,
         GA_Text, (ULONG)LOC(MSG_SEARCH_FIND_PREV),
-        GA_TabCycle,  TRUE,
+//        GA_TabCycle,  TRUE,
         GA_RelVerify,TRUE, /* needed to receive WMHI_GADGETUP */
         TAG_END);
 
     sb->replaceBtn = (Object *)NewObject(BUTTON_GetClass(), NULL,
         GA_ID,   (ULONG)ID_SEARCH_REPLACE,
         GA_Text, (ULONG)LOC(MSG_SEARCH_REPLACE),
-        GA_TabCycle,  TRUE,
+ //       GA_TabCycle,  TRUE,
         GA_RelVerify,TRUE, /* needed to receive WMHI_GADGETUP */
         TAG_END);
 
     sb->replaceAllBtn = (Object *)NewObject(BUTTON_GetClass(), NULL,
         GA_ID,   (ULONG)ID_SEARCH_REPLACE_ALL,
         GA_Text, (ULONG)LOC(MSG_SEARCH_REPLACE_ALL),
-        GA_TabCycle,  TRUE,
+ //       GA_TabCycle,  TRUE,
         GA_RelVerify,TRUE, /* needed to receive WMHI_GADGETUP */
         TAG_END);
 
     sb->caseSensCheck = (Object *)NewObject(CHECKBOX_GetClass(), NULL,
         GA_ID,            (ULONG)ID_SEARCH_CASE_SENS,
         GA_Text,          (ULONG)LOC(MSG_SEARCH_CASE_SENS),
-        GA_TabCycle,  TRUE,
+ //       GA_TabCycle,  TRUE,
         CHECKBOX_Checked, FALSE,
         TAG_END);
 

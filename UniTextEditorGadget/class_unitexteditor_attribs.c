@@ -842,6 +842,11 @@ ULONG UniTextEditor_OnSet(Class *cl, Object *o, struct opSet *msg)
             result = 1;
             break;
 
+        case GA_TabCycle:
+            inst->tabCycle = (BOOL)tag->ti_Data;
+            result = 1;
+            break;
+
         case GA_Text:  /* alias: same behaviour as UTED_Text */
         case UTED_Text:
         {
@@ -1539,6 +1544,10 @@ ULONG UniTextEditor_OnGet(Class *cl, Object *o, struct opGet *msg)
         return TRUE;
     case GA_ReadOnly:
         *msg->opg_Storage = (ULONG)inst->readOnly;
+        return TRUE;
+
+    case GA_TabCycle:
+        *msg->opg_Storage = (ULONG)inst->tabCycle;
         return TRUE;
 
     case UTED_LineCount:

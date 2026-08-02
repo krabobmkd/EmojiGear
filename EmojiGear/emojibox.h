@@ -17,7 +17,7 @@ struct URPDrawContext;
 #define EMOJIBOX_RAWKEY_F10  0x59
 
 /* Number of emoji sets */
-#define EMOJIBOX_NUM_SETS  11
+#define EMOJIBOX_NUM_SETS  12
 
 /* -------------------------------------------------------------------------
  * EmojiBoxWindow – persistent state for the emoji-table popup window.

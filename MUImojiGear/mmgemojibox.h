@@ -45,7 +45,7 @@
 #define EGRID_URPDrawContext (EGRID_Dummy + 5)
 
 /* Number of emoji sets shown in the cycle gadget */
-#define EMOJIBOX_NUM_SETS  11
+#define EMOJIBOX_NUM_SETS  12
 
 /* =========================================================================
  * MUI Application ReturnID values owned by the emoji box module.

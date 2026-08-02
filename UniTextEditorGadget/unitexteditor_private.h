@@ -397,6 +397,9 @@ typedef struct UniTextEditorData {
     BOOL                  isCLUT;         /* TRUE when target screen depth <= 8 */
     BOOL                  readOnly;       /* GA_ReadOnly: no edit/select/cursor; default FALSE */
     BOOL                  noLineFeed;     /* UTED_NoLineFeed: strip \n/\r; Enter → notify */
+    BOOL                  tabCycle;       /* GA_TabCycle: in noLineFeed mode, Tab/Shift-Tab
+                                           * release activation to next/prev gadget instead
+                                           * of being ignored; default FALSE */
     ULONG                 maxDisplayLines;/* UTED_MaxDisplayLines: cap gadget height; default ~0UL */
     ULONG                 vanillaAnsiCode; /* encoding for UTED_PutVanillaKey 0xA0-0xFF bytes;
                                            * UTED_VANILLAKEY_LATIN1=1 or UTED_VANILLAKEY_LATIN2=2 */

@@ -400,6 +400,11 @@ ULONG UniButton_OnSet(Class *cl, Object *o, struct opSet *msg)
             result = 1;
             break;
 
+        case GA_TabCycle:
+            inst->tabCycle = tag->ti_Data ? TRUE : FALSE;
+            result = 1;
+            break;
+
         case GA_Text:
         {
             const char *newText = (const char *)tag->ti_Data;
@@ -568,6 +573,10 @@ ULONG UniButton_OnGet(Class *cl, Object *o, struct opGet *msg)
 
     case GA_ReadOnly:
         *msg->opg_Storage = (ULONG)inst->readOnly;
+        return TRUE;
+
+    case GA_TabCycle:
+        *msg->opg_Storage = (ULONG)inst->tabCycle;
         return TRUE;
 
     case GA_Text:

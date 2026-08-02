@@ -57,8 +57,11 @@ ULONG UniButton_OnGoActive(Class *cl, Object *o, struct gpInput *msg)
     UniButtonData  *inst = UBT_DATA(cl, o);
     struct RastPort *rp;
 
-    /* Only activate on a real user click, not a synthetic activation */
-    if (!msg->gpi_IEvent) return GMR_NOREUSE;
+    /* Synthetic activation (ActivateGadget() or TAB cycling, ie=NULL):
+     * only accept it when GA_TabCycle is set, so the gadget can be tabbed
+     * into; otherwise refuse, as before. No visual change here - GFLG_SELECTED
+     * is the "pressed" look, not a focus ring, so it stays untouched. */
+    if (!msg->gpi_IEvent) return inst->tabCycle ? GMR_MEACTIVE : GMR_NOREUSE;
 
     /* For push buttons, remember current latch state before showing feedback */
     if (inst->pushButton)
@@ -82,6 +85,15 @@ ULONG UniButton_OnHandleInput(Class *cl, Object *o, struct gpInput *msg)
     BOOL               over;
 
     if (!ie) return GMR_MEACTIVE;
+
+    if (inst->tabCycle && ie->ie_Class == IECLASS_RAWKEY &&
+        ie->ie_Code == UBT_RAWKEY_TAB) {
+        /* Tab / Shift+Tab: release activation to the next/prev
+         * GFLG_TABCYCLE gadget instead of consuming the key silently. */
+        BOOL shift = (ie->ie_Qualifier &
+                      (IEQUALIFIER_LSHIFT | IEQUALIFIER_RSHIFT)) ? TRUE : FALSE;
+        return GMR_NOREUSE | (shift ? GMR_PREVACTIVE : GMR_NEXTACTIVE);
+    }
 
     if (ie->ie_Class == IECLASS_RAWMOUSE) {
 

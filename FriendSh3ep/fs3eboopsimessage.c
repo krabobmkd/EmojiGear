@@ -115,13 +115,11 @@ static ULONG delayedAttribs[] = {
     UTED_CursorColumn,
     UTED_ScrollLeft,
     UTED_ScrollTop,
-    UTED_SetPrivateActivation,
     UTED_InternalRawKey_Code,
     UTEDN_EnterPressed,
 
     TTIMELINE_ScrollDomainChanged,
     TTIMELINE_PostClicked,
-   //TTIMELINE_HotSpotActivated,
     TTIMELINE_ProcessRefresh,
     TTIMELINE_LastHotSpotPostId,
     TTIMELINE_LastHotSpotString,
