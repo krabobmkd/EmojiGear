@@ -136,17 +136,21 @@ void FS3EApp_FetchTimeline(ULONG viewMode)
     FS3ENetTimelineReq *req;
     ULONG bit = (1UL << viewMode);
 
-    /* Search is never driven by this "fetch once per session the first
-     * time a channel is viewed" mechanism -- FS3EApp_OpenProfile() owns
-     * its fetch entirely (fired once per profile opened, not once per
-     * view switch), always as an FS3ENETPAGE_OLDER page so it correctly
-     * lands via TIMELINE_AppendPost below the profile header (see
-     * TTIMELINE_ShowProfile) instead of through the AddPost/prepend path
-     * this function's FS3ENETPAGE_INITIAL request below would take.
-     * Without this guard, merely switching back to an already-open
-     * profile (fs3e_setViewMode calls this unconditionally) would fire a
-     * second, wrongly-directed fetch. */
-    if (viewMode == VIEWMODE_Search) return;
+    /* Search and User are never driven by this "fetch once per session the
+     * first time a channel is viewed" mechanism -- both own a profile
+     * header (TTIMELINE_ShowProfile) with their toots fetched as an
+     * FS3ENETPAGE_OLDER page so they land via TIMELINE_AppendPost below it,
+     * instead of through the AddPost/prepend path this function's
+     * FS3ENETPAGE_INITIAL request below would take. Search's flow is owned
+     * entirely by FS3EApp_OpenProfile (fired once per profile opened, not
+     * once per view switch); User's by FS3EApp_ShowOwnProfileHeader (fired
+     * from fs3e_setViewMode alongside this function, guarded by its own
+     * accountProfileFetched/accountProfileLookupPending flags instead of
+     * channelPopulatedMask/timelineFetchedMask). Without this guard, merely
+     * switching back to an already-open profile/the User tab
+     * (fs3e_setViewMode calls this unconditionally) would fire a second,
+     * wrongly-directed fetch. */
+    if (viewMode == VIEWMODE_Search || viewMode == VIEWMODE_User) return;
 
     /* Notifications aren't Status objects and don't have a /api/v1/-
      * relative timeline path the way every other channel does (see
@@ -492,6 +496,42 @@ void FS3EApp_OpenProfile(const char *acctOrHandle)
               app->searchProfileAcct);
     if (!req) return;
 
+    FS3EApp_NetSend(FS3ENETQ_ACCOUNT_LOOKUP, req, sizeof(*req));
+}
+
+/* Seeds VIEWMODE_User's own profile header (avatar, display name, bio,
+ * follower/following counts -- no Follow/Unfollow hot-spot, see
+ * TTLProfileHeaderSetup.showFollow) the first time the User tab is shown
+ * each session, mirroring FS3EApp_OpenProfile's flow but self-contained:
+ * no searchMode/searchProfileAcct/search-stack/search-editor involvement
+ * (VIEWMODE_User is its own channel, not a Search-channel navigation), and
+ * no Relationship fetch (you can't follow yourself, same reasoning
+ * FS3EApp_OpenProfile's own isSelf branch already uses).
+ *
+ * Called from fs3e_setViewMode() every time VIEWMODE_User is switched to;
+ * accountProfileFetched/accountProfileLookupPending (reset on every real
+ * account change, see FS3EApp_SetAccount) make repeat switches back to an
+ * already-populated User tab a no-op, same role channelPopulatedMask/
+ * timelineFetchedMask play for every other channel (User is excluded from
+ * that generic mechanism -- see FS3EApp_FetchTimeline's own comment).
+ *
+ * Only starts the lookup; the header and the profile's own toot page (an
+ * FS3ENETPAGE_OLDER page so it lands via TTIMELINE_AppendPost below the
+ * header) are both applied from the FS3ENETQ_ACCOUNT_LOOKUP reply handler,
+ * same split as FS3EApp_OpenProfile. */
+void FS3EApp_ShowOwnProfileHeader(void)
+{
+    FS3ENetAccountLookupReq *req;
+
+    if (app->accountProfileFetched || app->accountProfileLookupPending) return;
+    if (!app->accountApiBaseUrl || !app->accountAcct || !app->accountAcct[0]) return;
+
+    req = FS3ENetAccountLookupReq_Alloc(app->accountApiBaseUrl,
+              app->accountAccessToken ? app->accountAccessToken : "",
+              app->accountAcct);
+    if (!req) return;
+
+    app->accountProfileLookupPending = TRUE;
     FS3EApp_NetSend(FS3ENETQ_ACCOUNT_LOOKUP, req, sizeof(*req));
 }
 
@@ -2076,6 +2116,69 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
         break;
 
     case FS3ENETQ_ACCOUNT_LOOKUP:
+        /* VIEWMODE_User's own-profile header lookup (see
+         * FS3EApp_ShowOwnProfileHeader) -- checked first since it fires the
+         * exact same request type/shape as the Search-flow lookup below and
+         * only accountProfileLookupPending tells them apart (both could
+         * plausibly resolve to "the same account" if the user searches for
+         * themselves via Search too, so the acct string alone can't be
+         * trusted to disambiguate -- see accountProfileLookupPending's own
+         * comment in friendsh3ep.h). Always clears the pending flag,
+         * whether or not the account actually matches self, so it can never
+         * get stuck TRUE. */
+        if (app->accountProfileLookupPending) {
+            app->accountProfileLookupPending = FALSE;
+
+            if (msg->fs3em_Result == FS3ENETR_OK && app->tootTimeline &&
+                app->accountId && app->accountId[0])
+            {
+                FS3ENetAccountLookupReply *reply = (FS3ENetAccountLookupReply *)msg->fs3em_Data;
+                FS3EMastodonAccount *acc = &reply->fs3eal_Account;
+
+                if (acc->fma_Id[0] && strcmp(app->accountId, acc->fma_Id) == 0) {
+                    TTLProfileHeaderSetup setup;
+
+                    app->accountProfileFetched = TRUE;
+
+                    memset(&setup, 0, sizeof(setup));
+                    setup.channel        = VIEWMODE_User;
+                    setup.accountId      = acc->fma_Id;
+                    setup.username       = acc->fma_DisplayName[0] ? acc->fma_DisplayName : acc->fma_Acct;
+                    setup.acct           = acc->fma_Acct;
+                    setup.avatarURL      = acc->fma_AvatarURL;
+                    setup.bio            = acc->fma_Note;
+                    setup.followersCount = acc->fma_FollowersCount;
+                    setup.followingCount = acc->fma_FollowingCount;
+                    setup.following      = FALSE;
+                    setup.showFollow     = FALSE; /* can't follow yourself */
+
+                    SetAttrs(app->tootTimeline, TTIMELINE_ShowProfile, (ULONG)&setup, TAG_DONE);
+
+                    /* Own toots, as an "older" page so they land via
+                     * TTIMELINE_AppendPost below the header -- same trick
+                     * the Search branch below uses. */
+                    {
+                        char tl[128];
+                        if (ViewModeTimeline(VIEWMODE_User, tl, sizeof(tl))) {
+                            FS3ENetTimelineReq *tlReq = FS3ENetTimelineReq_Alloc(
+                                VIEWMODE_User, FS3ENETPAGE_OLDER,
+                                app->accountGeneration, FS3ENET_TLSHAPE_ARRAY,
+                                app->accountApiBaseUrl,
+                                app->accountAccessToken ? app->accountAccessToken : "",
+                                tl, "", "", NULL);
+                            if (tlReq)
+                                FS3EApp_NetSend(FS3ENETQ_TIMELINE, tlReq, sizeof(FS3ENetTimelineReq));
+                        }
+                    }
+
+                    if (CurrentMainWindow)
+                        RefreshGList((struct Gadget *)app->tootTimeline,
+                                     CurrentMainWindow, NULL, 1);
+                }
+            }
+            break;
+        }
+
         /* Stale-reply guard: the user may have clicked a second
          * avatar/mention before this lookup came back for the first
          * one -- only apply it if it's still the profile we last asked
@@ -2095,6 +2198,7 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                 app->searchProfileAccountId = NetStrDup(acc->fma_Id);
 
                 memset(&setup, 0, sizeof(setup));
+                setup.channel        = TTL_SEARCH_CHANNEL;
                 setup.accountId      = acc->fma_Id;
                 setup.username       = acc->fma_DisplayName[0] ? acc->fma_DisplayName : acc->fma_Acct;
                 setup.acct           = acc->fma_Acct;
@@ -2182,6 +2286,7 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
             FS3ENetRelationshipReply *reply = (FS3ENetRelationshipReply *)msg->fs3em_Data;
             if (strcmp(app->searchProfileAccountId, reply->fs3erl_AccountId) == 0) {
                 TTLProfileFollowUpdate upd;
+                upd.channel   = TTL_SEARCH_CHANNEL;
                 upd.accountId = reply->fs3erl_AccountId;
                 upd.following = reply->fs3erl_Following;
                 SetAttrs(app->tootTimeline, TTIMELINE_UpdateProfileFollow, (ULONG)&upd, TAG_DONE);
@@ -2232,6 +2337,7 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
             FS3ENetFollowReply *reply = (FS3ENetFollowReply *)msg->fs3em_Data;
             if (strcmp(app->searchProfileAccountId, reply->fs3efo_AccountId) == 0) {
                 TTLProfileFollowUpdate upd;
+                upd.channel   = TTL_SEARCH_CHANNEL;
                 upd.accountId = reply->fs3efo_AccountId;
                 upd.following = reply->fs3efo_Following;
                 SetAttrs(app->tootTimeline, TTIMELINE_UpdateProfileFollow, (ULONG)&upd, TAG_DONE);

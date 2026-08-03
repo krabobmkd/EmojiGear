@@ -228,6 +228,13 @@ enum {
     MSG_NETWORKV_STATUS_ERROR,   /* status word: failed */
     MSG_NETWORKV_IDLE,           /* default status-bar text, no activity yet */
 
+    /* First-use disk-cache-usage warning (friendsh3ep.c, main()) -- shown
+     * once via EasyRequestArgs right after the main window first opens,
+     * gated on app->settings.warningDone (fs3esettings.h). */
+    MSG_FIRSTUSE_TITLE,          /* window title */
+    MSG_FIRSTUSE_TEXT,           /* body text, \n-separated lines */
+    MSG_FIRSTUSE_GADGETS,        /* es_GadgetFormat: "Go|Quit" -- Go=1, Quit(rightmost)=0 */
+
     /* Must be last */
     MSG_COUNT
 };

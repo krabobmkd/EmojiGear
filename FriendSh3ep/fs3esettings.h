@@ -115,6 +115,14 @@ typedef struct FS3ESettings {
      * fs3esettingsview.c alongside the other click-behavior settings. */
     short tootActionsNeedDoubleClick;
 
+    /* FALSE (default) until the user has acknowledged the disk-cache-usage
+     * warning EasyRequestArgs shown once, right after the main window
+     * first opens (see friendsh3ep.c, main()) -- set TRUE and saved
+     * immediately when "Go" is clicked, so the warning never nags again.
+     * Deliberately NOT exposed in fs3esettingsview.c -- nothing to toggle
+     * back, there's no reason to see this warning a second time. */
+    short warningDone;
+
 } FS3ESettings;
 
 /* scalingQuality enum -- index matches the combo's CHOOSER_Active order */

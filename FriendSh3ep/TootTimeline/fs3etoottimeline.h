@@ -18,11 +18,15 @@
  * one post can appear in more than one channel. Must match fs3eViewMode's
  * VIEWMODE_NumberOf. */
 #define TTIMELINE_NUM_VIEWMODES 8
-/* Channel index TTIMELINE_ShowProfile/TTIMELINE_UpdateProfileFollow
- * always target -- must match fs3eViewMode's VIEWMODE_Search (see
- * friendsh3ep.h), same "must match" convention as TTIMELINE_NUM_VIEWMODES
- * above. TootTimeline stays self-contained (no friendsh3ep.h include),
- * so this is a documented numeric coupling, not a shared symbol. */
+/* Channel index used by the Search profile-view flow -- must match
+ * fs3eViewMode's VIEWMODE_Search (see friendsh3ep.h), same "must match"
+ * convention as TTIMELINE_NUM_VIEWMODES above. TootTimeline stays self-
+ * contained (no friendsh3ep.h include), so this is a documented numeric
+ * coupling, not a shared symbol. TTIMELINE_ShowProfile/
+ * TTIMELINE_UpdateProfileFollow themselves target whichever channel their
+ * setup struct's own `channel` field names (any profile-header-capable
+ * channel, not just Search -- see TTLProfileHeaderSetup) -- this define is
+ * just the value Search's own callers (fs3erequests.c) pass. */
 #define TTL_SEARCH_CHANNEL 4
 
 /* [IS] UWORD: row-height DPI factor (default 14) */
@@ -166,24 +170,27 @@
  * post scrolled out and got evicted, the reply raced a ClearPosts, ...).
  * See TTLPostUpdate/TTL_POSTUPD_* below. */
 #define TTIMELINE_UpdatePost         (TTIMELINE_Base + 19)
-/* [S] TTLProfileHeaderSetup*: show a user profile in the Search channel --
- * clears the Search channel and seeds it with a pinned header (avatar,
- * display name, bio, follower/following counts, Follow/Unfollow button)
- * followed by that user's own toots as a normal paginated list. Always
- * targets the Search channel specifically (fs3eViewMode's VIEWMODE_Search)
- * -- unlike TTLPostSetup.viewModeBits, there is no multi-channel option,
- * since a profile view is inherently single-channel. The header is NOT a
- * member of the channel's post list (so it can never be displaced by
- * pagination/insert logic shared with every other channel) -- see
- * TTLChannel.headerPost in fs3etoottimeline_private.h. */
+/* [S] TTLProfileHeaderSetup*: show a user profile in setup->channel --
+ * clears that channel and seeds it with a pinned header (avatar, display
+ * name, bio, follower/following counts, Follow/Unfollow button) followed
+ * by that user's own toots as a normal paginated list. Targets exactly one
+ * channel, whichever setup->channel names (fs3eViewMode's VIEWMODE_Search
+ * for the "view any account" search-profile flow, VIEWMODE_User for the
+ * logged-in account's own profile tab -- see fs3erequests.c's
+ * FS3EApp_OpenProfile/FS3EApp_ShowOwnProfileHeader) -- unlike
+ * TTLPostSetup.viewModeBits, there is no multi-channel option, since a
+ * profile view is inherently single-channel. The header is NOT a member of
+ * the channel's post list (so it can never be displaced by pagination/
+ * insert logic shared with every other channel) -- see TTLChannel.
+ * headerPost in fs3etoottimeline_private.h. */
 #define TTIMELINE_ShowProfile        (TTIMELINE_Base + 26)
-/* [S] TTLProfileFollowUpdate*: the Search channel's current profile
- * header's following state (and, on a real transition, its
+/* [S] TTLProfileFollowUpdate*: upd->channel's current profile header's
+ * following state (and, on a real transition, its
  * followersCount by a local +1/-1 delta -- same reasoning as
  * TTL_POSTUPD_FAVOURITED) just changed on the server (a Relationship
- * fetch or a Follow/Unfollow reply). Silent no-op if the Search channel
- * has no header right now, or its header is for a different account id
- * than accountId (a stale reply racing a new profile being opened). */
+ * fetch or a Follow/Unfollow reply). Silent no-op if upd->channel has no
+ * header right now, or its header is for a different account id than
+ * accountId (a stale reply racing a new profile being opened). */
 #define TTIMELINE_UpdateProfileFollow (TTIMELINE_Base + 27)
 /* [S] any: like TTIMELINE_ClearPosts, but every channel (0..
  * TTIMELINE_NUM_VIEWMODES-1), not just the currently active one -- for
@@ -618,6 +625,12 @@ typedef struct TTLVisiblePosts {
 /* ------------------------------------------------------------------ */
 
 typedef struct TTLProfileHeaderSetup {
+    ULONG       channel;      /* fs3eViewMode channel this header targets (0..
+                                * TTIMELINE_NUM_VIEWMODES-1) -- e.g. TTL_SEARCH_CHANNEL
+                                * for the search-profile flow, or VIEWMODE_User for the
+                                * logged-in account's own profile tab. Every existing
+                                * caller must set this explicitly (no implicit default --
+                                * 0 is itself a valid channel, VIEWMODE_User). */
     const char *accountId;    /* Mastodon account id -- see TTIMELINE_UpdateProfileFollow */
     const char *username;     /* display name (UTF-8) */
     const char *acct;         /* "@user@instance" (UTF-8) */
@@ -639,6 +652,8 @@ typedef struct TTLProfileHeaderSetup {
 /* ------------------------------------------------------------------ */
 
 typedef struct TTLProfileFollowUpdate {
+    ULONG       channel;     /* which channel's header to patch -- see
+                               * TTLProfileHeaderSetup.channel's comment */
     const char *accountId;   /* must match the current header's account, else no-op */
     BOOL        following;   /* new state */
 } TTLProfileFollowUpdate;

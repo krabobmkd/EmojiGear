@@ -554,11 +554,12 @@ ULONG ttl_apply_tags(Class *cl, Object *o, struct opSet *msg, int couldRefreshDr
 
             case TTIMELINE_ShowProfile: {
                 const TTLProfileHeaderSetup *setup = (const TTLProfileHeaderSetup *)tag->ti_Data;
-                if (setup) {
-                    TTLChannel *channel = &inst->channels[TTL_SEARCH_CHANNEL];
+                if (setup && setup->channel < TTIMELINE_NUM_VIEWMODES) {
+                    ULONG       chanIdx = setup->channel;
+                    TTLChannel *channel = &inst->channels[chanIdx];
                     TTLPost    *header;
 
-                    ttl_clear_channel(inst, TTL_SEARCH_CHANNEL);
+                    ttl_clear_channel(inst, chanIdx);
 
                     header = ttl_profile_header_alloc(setup);
                     if (header) {
@@ -625,7 +626,7 @@ ULONG ttl_apply_tags(Class *cl, Object *o, struct opSet *msg, int couldRefreshDr
                             channel->contentBottomY += loadOlder->height;
                         }
 
-                        if (TTL_SEARCH_CHANNEL == inst->viewMode)
+                        if (chanIdx == inst->viewMode)
                             ttl_tiles_invalidate_all(inst);
                         redraw = TRUE;
                     }
@@ -636,29 +637,31 @@ ULONG ttl_apply_tags(Class *cl, Object *o, struct opSet *msg, int couldRefreshDr
 
             case TTIMELINE_UpdateProfileFollow: {
                 const TTLProfileFollowUpdate *upd = (const TTLProfileFollowUpdate *)tag->ti_Data;
-                TTLChannel *channel = &inst->channels[TTL_SEARCH_CHANNEL];
-                if (upd && upd->accountId && channel->headerPost &&
-                    channel->headerPost->postId &&
-                    strcmp(channel->headerPost->postId, upd->accountId) == 0)
-                {
-                    TTLPost *header = channel->headerPost;
+                if (upd && upd->channel < TTIMELINE_NUM_VIEWMODES) {
+                    TTLChannel *channel = &inst->channels[upd->channel];
+                    if (upd->accountId && channel->headerPost &&
+                        channel->headerPost->postId &&
+                        strcmp(channel->headerPost->postId, upd->accountId) == 0)
+                    {
+                        TTLPost *header = channel->headerPost;
 
-                    /* Delta, not overwrite -- same reasoning as
-                     * TTL_POSTUPD_FAVOURITED (see TTLPostUpdate's
-                     * comment): don't trust a server-echoed count, the
-                     * Relationship object doesn't even carry one anyway. */
-                    if (header->following != upd->following) {
-                        if (upd->following) header->followersCount++;
-                        else if (header->followersCount > 0) header->followersCount--;
-                        header->following = upd->following;
+                        /* Delta, not overwrite -- same reasoning as
+                         * TTL_POSTUPD_FAVOURITED (see TTLPostUpdate's
+                         * comment): don't trust a server-echoed count, the
+                         * Relationship object doesn't even carry one anyway. */
+                        if (header->following != upd->following) {
+                            if (upd->following) header->followersCount++;
+                            else if (header->followersCount > 0) header->followersCount--;
+                            header->following = upd->following;
+                        }
+                        header->dirty         = TRUE;
+                        header->hotSpotsDirty = TRUE;
+
+                        if (upd->channel == inst->viewMode)
+                            ttl_tiles_invalidate_range(inst,
+                                header->timelineY, header->timelineY + header->height);
+                        redraw = TRUE;
                     }
-                    header->dirty         = TRUE;
-                    header->hotSpotsDirty = TRUE;
-
-                    if (TTL_SEARCH_CHANNEL == inst->viewMode)
-                        ttl_tiles_invalidate_range(inst,
-                            header->timelineY, header->timelineY + header->height);
-                    redraw = TRUE;
                 }
                 used = 1;
                 break;

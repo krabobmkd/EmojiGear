@@ -50,6 +50,7 @@
 #define TT_DIRECTDLARCHIVES   "DIRECTDOWNLOADARCHIVES" /* "1" or "0"              */
 #define TT_DOWNLOADPATH       "DOWNLOADPATH"        /* download directory path    */
 #define TT_TOOTACTIONSDBLCLICK "TOOTACTIONSNEEDDOUBLECLICK" /* "1" or "0"         */
+#define TT_WARNINGDONE        "WARNINGDONE"         /* "1" or "0"                  */
 
 /* -------------------------------------------------------------------------- */
 
@@ -229,6 +230,10 @@ void FS3ESettings_Load(FS3ESettings *s)
     val = ToolTypePrefs_Get(TT_TOOTACTIONSDBLCLICK);
     if (val) s->tootActionsNeedDoubleClick = (val[0] != '0');
 
+    s->warningDone = FALSE;
+    val = ToolTypePrefs_Get(TT_WARNINGDONE);
+    if (val) s->warningDone = (val[0] != '0');
+
     /* Main window position - written directly into app->mainwindow */
     if (app) {
         val = ToolTypePrefs_Get(TT_WINDOW);
@@ -385,6 +390,8 @@ void FS3ESettings_Save(FS3ESettings *s)
         ToolTypePrefs_Remove(TT_DOWNLOADPATH);
 
     ToolTypePrefs_Set(TT_TOOTACTIONSDBLCLICK, s->tootActionsNeedDoubleClick ? "1" : "0");
+
+    ToolTypePrefs_Set(TT_WARNINGDONE, s->warningDone ? "1" : "0");
 
     /* Main window position */
     if (app && app->window_obj) {

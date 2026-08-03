@@ -150,6 +150,8 @@ typedef struct FS3ETootView {
      * FS3ETootView_Close every time -- see fs3etootview.c. */
     struct Menu *menu;
     APTR         menuVisualInfo;
+
+    int reactivateEditor;
 } FS3ETootView;
 
 /* Build the BOOPSI window+layout. pointSize is forwarded to the

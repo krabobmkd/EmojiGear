@@ -891,6 +891,14 @@ void fs3e_setViewMode(ULONG viewMode)
     /* If logged in and this channel hasn't been fetched yet, start a fetch. */
     FS3EApp_FetchTimeline(viewMode);
 
+    /* VIEWMODE_User's own toots are fetched as part of its profile header
+     * flow (self FS3ENETQ_ACCOUNT_LOOKUP -> TTIMELINE_ShowProfile ->
+     * OLDER-page AppendPost), not through FS3EApp_FetchTimeline's generic
+     * INITIAL/AddPost path above (excluded there, same as Search) -- see
+     * FS3EApp_ShowOwnProfileHeader's own doc comment. */
+    if (viewMode == VIEWMODE_User)
+        FS3EApp_ShowOwnProfileHeader();
+
     /* Update WaitText for channels that don't trigger a fetch (Search, Notifs, …). */
     FS3EApp_CheckConnectionState();
 
@@ -1266,12 +1274,15 @@ int main(int argc, char **argv)
 
     app->nav_btns[4] = makeBtn(GID_NAV_SEARCH,        "\xF0\x9F\x94\x8D Search",    dpiH,0,32,TRUE);
     app->nav_btns[5] = makeBtn(GID_NAV_NOTIFICATIONS, "\xF0\x9F\x9A\x80 Notif.",    dpiH,basew,32,TRUE);
+/* correct, when enabled for next version
     app->nav_btns[6] = makeBtn(GID_NAV_BOOKMARKS, "\xF0\x9F\x94\x96 Bookmark",    dpiH,basew*2,32,TRUE);
     app->nav_btns[7] = makeBtn(GID_NAV_NEWS, "\xF0\x9F\x93\xB0 News",    dpiH,basew*3,32,TRUE);
-//    app->nav_btns[7] = makeBtn(GID_NAV_NEWTOOT,       "\xF0\x9F\x97\xA3 Toot+",     dpiH,basew*3,32,FALSE);
+*/
+    app->nav_btns[6] = makeBtn(GID_NAV_BOOKMARKS, "-",    dpiH,basew*2,32,TRUE);
+    app->nav_btns[7] = makeBtn(GID_NAV_NEWS, "-",    dpiH,basew*3,32,TRUE);
+
 }
-//    app->nav_btns[6] = makeBtn(GID_NAV_SETTINGS,      "\xE2\x9A\x99 Settings",  dpiH);
-//    app->nav_btns[7] = makeBtn(GID_NAV_ACCOUNTS,      "\xF0\x9F\x91\xA4 Accounts",  dpiH);
+
 
     {
         int i;
@@ -1462,6 +1473,29 @@ int main(int argc, char **argv)
 
 
 // printf("FS3EMain_Show\n");
+
+    /* First-use disk-cache-usage warning -- shown once, before the main
+     * window ever opens (no CurrentMainWindow yet, so NULL -- a screen-
+     * wide requester). "Go|Quit": left-to-right numbering is 1,...,N,0
+     * (intuition.doc's EasyRequestArgs RESULT section), so for 2 gadgets
+     * Go=1 (truthy), Quit=0 (rightmost, falsy). Quit uses cleanexit(),
+     * same as every other early-init exit point in this function above
+     * (window_obj isn't open yet either way -- nothing more to tear down
+     * here than any of those). */
+    if (!app->settings.warningDone) {
+        struct EasyStruct es = {
+            sizeof(struct EasyStruct), 0,
+            (UBYTE *)LOC(MSG_FIRSTUSE_TITLE),
+            (UBYTE *)LOC(MSG_FIRSTUSE_TEXT),
+            (UBYTE *)LOC(MSG_FIRSTUSE_GADGETS)
+        };
+        if (EasyRequestArgs(NULL, &es, NULL, NULL)) {
+            app->settings.warningDone = TRUE;
+            FS3ESettings_Save(&app->settings);
+        } else {
+            cleanexit(NULL);
+        }
+    }
 
     FS3EMain_Show(&app->mainwindow, app->window_obj);
     if (!CurrentMainWindow) cleanexit("Can't open window");
@@ -2305,10 +2339,43 @@ int main(int argc, char **argv)
                                             break;
 
                                         case TTL_HOT_FOLLOWERS_LIST:
+                                            /* hotSpotId/hotSpotAcct are the
+                                             * CLICKED header's own account
+                                             * id/acct (a profile header's
+                                             * postId/acct fall back to
+                                             * itself as targetId -- see
+                                             * ttl_activate_hotspot's
+                                             * comment), independent of
+                                             * which channel that header is
+                                             * in -- refresh searchProfileAcct/
+                                             * AccountId from them before
+                                             * FS3EApp_ShowFollowers() reads
+                                             * searchProfileAccountId. Needed
+                                             * now that a profile header can
+                                             * also be VIEWMODE_User's own
+                                             * (see FS3EApp_ShowOwnProfileHeader):
+                                             * without this, clicking here
+                                             * used whatever searchProfileAccountId
+                                             * happened to be left over from
+                                             * the last Search-tab profile
+                                             * visited instead of your own. */
+                                            if (hotSpotId && hotSpotAcct) {
+                                                if (app->searchProfileAcct)      FreeVec(app->searchProfileAcct);
+                                                if (app->searchProfileAccountId) FreeVec(app->searchProfileAccountId);
+                                                app->searchProfileAcct      = NetStrDup(hotSpotAcct);
+                                                app->searchProfileAccountId = NetStrDup(hotSpotId);
+                                            }
                                             FS3EApp_ShowFollowers();
                                             break;
 
                                         case TTL_HOT_FOLLOWING_LIST:
+                                            /* See TTL_HOT_FOLLOWERS_LIST above. */
+                                            if (hotSpotId && hotSpotAcct) {
+                                                if (app->searchProfileAcct)      FreeVec(app->searchProfileAcct);
+                                                if (app->searchProfileAccountId) FreeVec(app->searchProfileAccountId);
+                                                app->searchProfileAcct      = NetStrDup(hotSpotAcct);
+                                                app->searchProfileAccountId = NetStrDup(hotSpotId);
+                                            }
                                             FS3EApp_ShowFollowing();
                                             break;
 

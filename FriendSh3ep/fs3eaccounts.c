@@ -97,6 +97,13 @@ void FS3EApp_SetAccount(const char *apiBaseUrl, const char *accessToken,
         app->accountMaxChars = 0;
         FS3ETootView_UpdateCharCount(&app->tootView);
 
+        /* Same "belongs to the account being left" reasoning as
+         * accountMaxChars above -- the new account's own profile header
+         * (VIEWMODE_User, see FS3EApp_ShowOwnProfileHeader) hasn't been
+         * fetched yet either. */
+        app->accountProfileFetched       = FALSE;
+        app->accountProfileLookupPending = FALSE;
+
         if (app->accountApiBaseUrl) {
             FS3ENetInstanceInfoReq *iiReq =
                 FS3ENetInstanceInfoReq_Alloc(app->accountApiBaseUrl);

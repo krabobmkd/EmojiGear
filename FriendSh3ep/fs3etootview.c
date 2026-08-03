@@ -615,7 +615,8 @@ BOOL FS3ETootView_HandleInput(FS3ETootView *tv)
 {
     ULONG result;
     ULONG refreshFlags = 0;
-    ULONG reactivateEditor=FALSE;
+ //   ULONG reactivateEditor=FALSE;
+ int reactvalue = 3;
     if (!tv || !tv->windowObj) return FALSE;
     if (!tv->window) return TRUE; /* closed, that's fine */
 
@@ -684,7 +685,7 @@ BOOL FS3ETootView_HandleInput(FS3ETootView *tv)
                                     tv->window, NULL,
                                     UTED_Undo, TRUE, TAG_DONE);
                             FS3ETootView_UpdateCharCount(tv);
-                            reactivateEditor = TRUE;
+                            tv->reactivateEditor = reactvalue;
                             break;
 
                         case FS3ETMENU_REDO:
@@ -693,7 +694,7 @@ BOOL FS3ETootView_HandleInput(FS3ETootView *tv)
                                     tv->window, NULL,
                                     UTED_Redo, TRUE, TAG_DONE);
                             FS3ETootView_UpdateCharCount(tv);
-                            reactivateEditor = TRUE;
+                            tv->reactivateEditor = reactvalue;
                             break;
 
                         case FS3ETMENU_CUT:
@@ -702,10 +703,9 @@ BOOL FS3ETootView_HandleInput(FS3ETootView *tv)
                                 SetGadgetAttrs((struct Gadget *)tv->bodyEditor,
                                     tv->window, NULL,
                                     UTED_ApplyCut, TRUE, TAG_DONE);
-                                reactivateEditor = TRUE;
                             }
                             FS3ETootView_UpdateCharCount(tv);
-                            reactivateEditor = TRUE;
+                            tv->reactivateEditor = reactvalue;
                             break;
 
                         case FS3ETMENU_COPY:
@@ -715,7 +715,7 @@ BOOL FS3ETootView_HandleInput(FS3ETootView *tv)
                                     tv->window, NULL,
                                     UTED_ApplyCopy, TRUE, TAG_DONE);
 
-                                reactivateEditor = TRUE;
+                            tv->reactivateEditor = reactvalue;
                             }
                             break;
 
@@ -728,7 +728,7 @@ BOOL FS3ETootView_HandleInput(FS3ETootView *tv)
 
                                 FS3ETootView_UpdateCharCount(tv);
 
-                                reactivateEditor = TRUE;
+                             tv->reactivateEditor = reactvalue;
                             }
                             break;
 
@@ -775,8 +775,9 @@ BOOL FS3ETootView_HandleInput(FS3ETootView *tv)
                 break;
         }
     }
-    if(reactivateEditor && tv->window && tv->bodyEditor)
+    if(tv->reactivateEditor>0 && tv->window && tv->bodyEditor)
     {
+        tv->reactivateEditor--;
         ActivateGadget(tv->bodyEditor,tv->window,NULL);
     }
 

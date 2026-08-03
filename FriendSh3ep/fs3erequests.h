@@ -24,6 +24,10 @@ void FS3EApp_FetchTimelinePage(ULONG viewMode, ULONG direction);
 /* Open (or re-open) a user's profile in the Search channel. */
 void FS3EApp_OpenProfile(const char *acctOrHandle);
 
+/* Seed VIEWMODE_User's own profile header the first time the User tab is
+ * shown each session -- see its own doc comment in fs3erequests.c. */
+void FS3EApp_ShowOwnProfileHeader(void);
+
 /* "Discussion mode" -- show statusId's toot plus its replies in the Search
  * channel. includeAncestors FALSE: just the toot + its descendants (see
  * TTL_HOT_THREAD). TRUE: the whole thread -- ancestors, the toot, and its

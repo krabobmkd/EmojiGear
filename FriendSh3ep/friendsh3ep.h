@@ -31,7 +31,7 @@
 #include "fs3esettings.h"
 #include "avatarimages.h"
 
-#define FRIENDSH3EP_VERSION "0.2"
+#define FRIENDSH3EP_VERSION "0.8"
 
 /* Login two-phase OAuth state machine */
 typedef enum {
@@ -247,6 +247,23 @@ struct App {
      * FS3ENetInstanceInfoReply with fs3eii_Known TRUE.
      * See FS3EMastodon_GetInstanceInfo in network_fs3e/fs3enet_mastodon.h. */
     ULONG  accountMaxChars;
+
+    /* VIEWMODE_User's own profile header (bio, follower/following counts --
+     * see TTIMELINE_ShowProfile) -- fetched once per real account via
+     * FS3EApp_ShowOwnProfileHeader(), not cached locally beyond these two
+     * flags (the fetched data is handed straight to TootTimeline, which
+     * owns displaying it; fs3erequests.c doesn't keep its own copy).
+     * accountProfileFetched TRUE means the header is already showing (or
+     * failed after landing -- either way, don't re-fetch just from
+     * switching back to the User tab); accountProfileLookupPending TRUE
+     * means the FS3ENETQ_ACCOUNT_LOOKUP for it is still in flight (guards
+     * against firing a second one on a fast repeat tab switch, and lets the
+     * reply handler tell this lookup apart from an unrelated Search-flow
+     * one for the same account -- see the FS3ENETQ_ACCOUNT_LOOKUP case in
+     * fs3erequests.c). Both reset FALSE on every real account change, same
+     * as accountMaxChars above. */
+    BOOL   accountProfileFetched;
+    BOOL   accountProfileLookupPending;
 
     /* Bumped by FS3EApp_SetAccount() every time the active account changes
      * (fresh login, saved-account load, or a multi-account switch).

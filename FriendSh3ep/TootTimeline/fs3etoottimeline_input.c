@@ -35,6 +35,7 @@
 #include <string.h>
 
 #include "fs3etoottimeline_private.h"
+#include "../avatarimages.h"
 #include "../bdbprintf.h"
 
 /* Max total movement (either axis) between button-down and button-up for
@@ -130,6 +131,49 @@ static BOOL ttl_hit_hotspot(TTLData *inst, WORD gadX, WORD gadY,
         if (relX >= hs->x && relX < hs->x + hs->w &&
             relY >= hs->y && relY < hs->y + hs->h)
         {
+            /* TTL_HOT_IMAGE's box is a fixed layout rect (previewW/H, see
+             * ttl_post_build_hotspots in fs3etoottimeline_posts.c), but the
+             * actual thumbnail is box-fit into it (letterboxed/pillarboxed,
+             * aspect preserved -- identical computation to ttl_render_tile,
+             * fs3etoottimeline_tiles.c) whenever the image's own aspect
+             * ratio doesn't match the box's. Without this narrowing, a
+             * click in the blank margin around the actual pixels (still
+             * inside the box) wrongly opened the media viewer instead of
+             * falling through to a scroll-drag. Recomputed here rather
+             * than cached from the render pass -- cheap (one
+             * AvatarImages_GetMedia lookup + integer math, on a click, not
+             * every frame) and always current, no invalidation to get
+             * wrong. Falls back to the full box if the thumb isn't loaded
+             * yet/failed (the placeholder is drawn edge-to-edge in that
+             * case, see ttl_render_tile), so the hotspot stays reachable
+             * before/without a real image. */
+            if (hs->type == TTL_HOT_IMAGE) {
+                RgbImage *thumb = (inst->avatarImages && hs->data)
+                                 ? AvatarImages_GetMedia(inst->avatarImages, hs->data)
+                                 : NULL;
+                if (thumb && RgbImage_IsLoaded(thumb)) {
+                    ULONG dw, dh;
+                    WORD  bx, by;
+
+                    if ((ULONG)hs->w * thumb->height <= (ULONG)hs->h * thumb->width) {
+                        dw = hs->w;
+                        dh = ((ULONG)thumb->height * (ULONG)hs->w) / thumb->width;
+                    } else {
+                        dh = hs->h;
+                        dw = ((ULONG)thumb->width * (ULONG)hs->h) / thumb->height;
+                    }
+                    if (dw < 1) dw = 1;
+                    if (dh < 1) dh = 1;
+
+                    bx = (WORD)(hs->x + (hs->w - (WORD)dw) / 2);
+                    by = (WORD)(hs->y + (hs->h - (WORD)dh) / 2);
+
+                    if (relX < bx || relX >= bx + (WORD)dw ||
+                        relY < by || relY >= by + (WORD)dh)
+                        continue; /* inside the box, outside the actual image -- not a hit */
+                }
+            }
+
             *outPost  = post;
             *outIndex = i - 1;
             return TRUE;

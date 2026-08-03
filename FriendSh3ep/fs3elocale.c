@@ -314,6 +314,27 @@ static const char *defaultStrings[MSG_COUNT] = {
     "Error",
     /* MSG_NETWORKV_IDLE */
     "No downloads",
+    /* MSG_FIRSTUSE_TITLE */
+    "FriendSh3ep - First Use Warning",
+    /* MSG_FIRSTUSE_TEXT */
+    "\n"
+    " FIRST USE WARNING!\n"
+    "\n"
+    " This app continuously writes tens of megabytes to a cache.\n"
+    " This is dangerous if your disk configuration is not 100% reliable.\n"
+    "\n"
+    " If your Amiga has frequent disk validation (slow boot) or\n"
+    " recurrent HD troubles, you're strongly advised to contact\n"
+    " a qualified repair technician to service your machine.\n"
+    "\n"
+    " You may also configure the cache directory on a\n"
+    " non-sensitive drive. About 80MB is needed.\n"
+    " You may delete the whole .cache dir at any moment.\n"
+    "\n"
+    "\n"
+    "\n",
+    /* MSG_FIRSTUSE_GADGETS */
+    "Go|Quit",
 };
 
 /* LocaleBase declared in friendsh3ep.c */
