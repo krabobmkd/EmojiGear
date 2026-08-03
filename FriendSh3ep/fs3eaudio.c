@@ -24,6 +24,7 @@
 #include <proto/alib.h>
 #include <proto/dos.h>
 #include <devices/ahi.h>
+#include <devices/timer.h>
 #include <dos/dos.h>
 #include <dos/dostags.h>
 #include <string.h>
@@ -45,6 +46,26 @@
 
 #define FS3EAUDIO_BUFFERSIZE      (8 << 10)                  /* bytes */
 #define FS3EAUDIO_BUFFER_SAMPLES  (FS3EAUDIO_BUFFERSIZE >> 2) /* stereo 16-bit sample-pairs */
+
+/* Bound on how long FS3EAudio_WaitIOTimeout() (see below) will wait for an
+ * outstanding ahi.device request before giving up on it -- a normal buffer
+ * is only ~46ms (FS3EAUDIO_BUFFERSIZE at 44100Hz), so this is generous
+ * headroom against ordinary scheduling jitter while still being short
+ * enough that a genuinely wedged device doesn't leave the user waiting long.
+ *
+ * UNIT_VBLANK (timer.device's own Autodoc recommends it for waits this
+ * long, and unlike the CIA-backed MICROHZ/ECLOCK units it doesn't drift
+ * under load). A reproducible near-instant false-positive first firing
+ * (TR_ADDREQUEST for 3 seconds coming back in under a millisecond with
+ * tr_node.io_Error == IOERR_ABORTED, confirmed via bdbprintf_now tracing:
+ * elapsed time, loop count, distinct non-colliding signal bits, io_Error on
+ * both sides) looked at first like interference from fs3etimer.c's own
+ * AddIntServer(INTB_VERTB, ...) handler on the same interrupt chain -- but
+ * switching to UNIT_MICROHZ (a completely unrelated, CIA-backed interrupt
+ * path) reproduced the exact same near-instant firing, ruling that out.
+ * See FS3EAudio_WaitIOTimeout()'s own doc comment for how this file copes
+ * with it (requiring two consecutive firings) instead. */
+#define FS3EAUDIO_IO_TIMEOUT_SECS 3
 
 struct Library *MPEGABase = NULL; /* MPEGA_BASE_NAME default, see inline/mpega.h */
 
@@ -107,6 +128,19 @@ typedef struct
                                      * elapsed-ms (samplesDecoded / dec_frequency) */
     UWORD           buffersSinceProgress; /* throttles FS3EAUDIOR_PROGRESS -- see
                                            * FS3EAUDIO_PROGRESS_EVERY_N_BUFFERS */
+
+    /* Guard against a wedged ahi.device -- opened once for the whole life of
+     * this task (FS3EAudio_ProcEntry), not per track/buffer, same lifetime
+     * as requestPort itself. NULL/timerReq==NULL if OpenDevice(TIMERNAME)
+     * failed at startup; FS3EAudio_WaitIOTimeout() falls back to a plain
+     * unbounded WaitIO() in that case. See FS3EAudio_WaitIOTimeout()'s own
+     * doc comment for why this exists. */
+    struct MsgPort      *timerPort;
+    struct timerequest  *timerReq;
+    BOOL                 ioTimedOut; /* set by FS3EAudio_StreamOneBuffer() when it
+                                       * gives up on the device -- distinguishes a
+                                       * genuine EOF from a stall, both of which
+                                       * return FALSE (see FS3EAudio_ProcEntry). */
 } FS3EAudioState;
 
 /* -------------------------------------------------------------------------
@@ -116,12 +150,115 @@ typedef struct
  * is the dedicated task).
  * ---------------------------------------------------------------------- */
 
+/*
+ * Waits for ioreq to complete, bounded by FS3EAUDIO_IO_TIMEOUT_SECS via a
+ * timer.device request run alongside it (st->timerPort/timerReq, opened
+ * once for the task's whole lifetime -- see FS3EAudio_ProcEntry()). A plain
+ * WaitIO() has no such bound, and a wedged/unresponsive ahi.device request
+ * is exactly what was traced (superlog.txt, bdbprintf_now tracing added
+ * while chasing this) as the cause of "mp3 frozen, can't relaunch, app
+ * hangs on exit": once stuck in WaitIO() forever, this task can never get
+ * back to its message loop to process Stop/Play/Shutdown at all.
+ *
+ * Standard AmigaOS bounded-wait idiom: SendIO() the timer request, then
+ * Wait() on the OR of both ports' signal bits, re-checking with CheckIO()
+ * after each wake (a signal can already be pending before Wait() is even
+ * called, and Wait() only tells you A signal arrived, not which port it
+ * was for). Either way, by the time this returns, both ioreq and the timer
+ * request have been WaitIO()'d -- fully reaped, safe to reuse or free
+ * immediately.
+ *
+ * Returns TRUE if ioreq completed on its own; FALSE if it had to be
+ * AbortIO()'d after timing out. Falls back to a plain unbounded WaitIO()
+ * (always returns TRUE) if the timer request isn't available -- i.e.
+ * OpenDevice(TIMERNAME) failed at startup -- same behavior as before this
+ * guard existed, better than crashing on a NULL timerReq.
+ */
+static BOOL FS3EAudio_WaitIOTimeout(FS3EAudioState *st, struct IORequest *ioreq)
+{
+    ULONG ioMask, timerMask, gotMask;
+    BOOL  timedOut   = FALSE;
+    BOOL  timerArmed = FALSE;
+    int   firings    = 0;
+
+    if (!st->timerReq) {
+        WaitIO(ioreq);
+        return TRUE;
+    }
+
+    ioMask    = 1L << ((struct MsgPort *)ioreq->io_Message.mn_ReplyPort)->mp_SigBit;
+    timerMask = 1L << st->timerPort->mp_SigBit;
+
+    st->timerReq->tr_node.io_Command = TR_ADDREQUEST;
+    st->timerReq->tr_time.tv_secs    = FS3EAUDIO_IO_TIMEOUT_SECS;
+    st->timerReq->tr_time.tv_micro   = 0;
+    SendIO((struct IORequest *)st->timerReq);
+    timerArmed = TRUE;
+
+    /* Traced (bdbprintf_now, superlog.txt) with elapsed-time/io_Error
+     * diagnostics: this timer.device build replies to the very first
+     * TR_ADDREQUEST after OpenDevice() almost instantly (<2ms, not the
+     * requested FS3EAUDIO_IO_TIMEOUT_SECS) with io_Error==IOERR_ABORTED,
+     * on both UNIT_VBLANK and UNIT_MICROHZ -- reproducible every time,
+     * ruling out a signal-mask collision (distinct, non-colliding bits
+     * confirmed) or the vblank-interrupt-chain theory (same result on a
+     * unit that doesn't touch INTB_VERTB at all). Presumed to be a
+     * one-off spurious/primer reply specific to this build rather than a
+     * real 3-second expiry -- so only the SECOND consecutive firing with
+     * no AHI completion in between counts as a genuine stall; one spurious
+     * firing just gets the timer re-armed and the wait continues. */
+    for (;;) {
+        if (CheckIO(ioreq)) break;
+        gotMask = Wait(ioMask | timerMask);
+        if (CheckIO(ioreq)) break;
+        if (gotMask & timerMask) {
+            WaitIO((struct IORequest *)st->timerReq); /* reap this firing */
+            /* exec.library/WaitIO's own WARNING: a request already complete
+             * when WaitIO() is called "drops though immediately, with no
+             * call to Wait() -- a side effect is that the signal bit
+             * related the port may remain set." st->timerPort is reused
+             * across every buffer's wait, so leftover residue here would
+             * masquerade as an immediate firing on the NEXT call's Wait()
+             * -- force-clear it rather than trust it was consumed. */
+            SetSignal(0, timerMask);
+            timerArmed = FALSE;
+            firings++;
+
+            if (firings >= 2) {
+                timedOut = TRUE;
+                AbortIO(ioreq);
+                break;
+            }
+
+            st->timerReq->tr_node.io_Command = TR_ADDREQUEST;
+            st->timerReq->tr_time.tv_secs    = FS3EAUDIO_IO_TIMEOUT_SECS;
+            st->timerReq->tr_time.tv_micro   = 0;
+            SendIO((struct IORequest *)st->timerReq);
+            timerArmed = TRUE;
+        }
+    }
+    WaitIO(ioreq);
+    /* Same residue risk as timerMask above -- ahiPort is reused across
+     * every buffer of this track, not just this call. */
+    SetSignal(0, ioMask);
+
+    /* Cancel/reap a still-armed timer request either way: if ioreq finished
+     * first, the timer is still pending and must be aborted before it can
+     * be reused next call. */
+    if (timerArmed) {
+        if (!CheckIO((struct IORequest *)st->timerReq))
+            AbortIO((struct IORequest *)st->timerReq);
+        WaitIO((struct IORequest *)st->timerReq);
+        SetSignal(0, timerMask);
+    }
+
+    return !timedOut;
+}
+
 static void FS3EAudio_CloseAHI(FS3EAudioState *st)
 {
     if (st->join) {
-        if (!CheckIO((struct IORequest *)st->join))
-            AbortIO((struct IORequest *)st->join);
-        WaitIO((struct IORequest *)st->join);
+        FS3EAudio_WaitIOTimeout(st, (struct IORequest *)st->join);
         st->join = NULL;
     }
 
@@ -179,13 +316,18 @@ static BOOL FS3EAudio_StartTrack(FS3EAudioState *st, const char *path)
      * AHIMPEGA.c used -- that trick assumed a specific (ppc-amigaos-gcc)
      * struct packing/pointer size; unsafe to carry over onto a different
      * (m68k) ABI. force_mono=0 (real stereo decode -- FS3EAudio_DecodeInto
-     * always interleaves pcm[0]/pcm[1]), freq_div=1 (full quality, no
-     * output-rate division), quality=2 (high). Matches the reference's own
-     * layer_3 (MP3) settings, the only layer Mastodon media ever is. */
+     * always interleaves pcm[0]/pcm[1]), quality=2 (high). freq_div=0 +
+     * freq_max=22050 (libraries/mpega.h: "freq_max: for automatic freq_div
+     * (if mono_freq_div == 0)") -- preferred output rate 22050Hz, not the
+     * source's native 44100/48000: lets MPEGA_open() pick the smallest
+     * divisor (1/2/4) that keeps decoded frequency at or below that, same
+     * AHI CMD_WRITE/mpega.library load either way (ahir_Frequency/
+     * dec_frequency below already follow whatever MPEGA_open() settles on,
+     * no separate change needed there). */
     static const MPEGA_CTRL mpaCtrl = {
         NULL,                          /* bs_access: default file I/O */
-        { 0, { 1, 2, 44100 }, { 1, 2, 44100 } }, /* layer_1_2 (unused by MP3, filled anyway) */
-        { 0, { 1, 2, 44100 }, { 1, 2, 44100 } }, /* layer_3 */
+        { 0, { 0, 2, 22050 }, { 0, 2, 22050 } }, /* layer_1_2 (unused by MP3, filled anyway) */
+        { 0, { 0, 2, 22050 }, { 0, 2, 22050 } }, /* layer_3 */
         0,                             /* check_mpeg: don't validate at open */
         0                              /* stream_buffer_size: 0 = library default */
     };
@@ -300,7 +442,7 @@ static BOOL FS3EAudio_StreamOneBuffer(FS3EAudioState *st)
     req->ahir_Std.io_Length  = (LONG)(numSampleWritten << 2); /* stereo 16-bit = 4 bytes/pair */
     req->ahir_Std.io_Offset  = 0;
     req->ahir_Version   = 4;
-    req->ahir_Frequency = (ULONG)(st->stream ? st->stream->dec_frequency : 44100);
+    req->ahir_Frequency = (ULONG)(st->stream ? st->stream->dec_frequency : 22050);
     req->ahir_Type      = AHIST_S16S;
     req->ahir_Volume    = 0x00010000; /* Fixed 1.0 -- full volume */
     req->ahir_Position  = 0x00008000; /* Fixed 0.5 -- centered */
@@ -308,8 +450,22 @@ static BOOL FS3EAudio_StreamOneBuffer(FS3EAudioState *st)
 
     SendIO((struct IORequest *)req);
 
-    if (st->join)
-        WaitIO((struct IORequest *)st->join);
+    if (st->join) {
+        if (!FS3EAudio_WaitIOTimeout(st, (struct IORequest *)st->join)) {
+            /* ahi.device stopped answering -- req (just SendIO()'d above) is
+             * presumably equally dead, so abort it too rather than leave it
+             * dangling, and give up on this device entirely instead of
+             * risking the exact same hang on the very next buffer. The
+             * caller (FS3EAudio_ProcEntry) sees FALSE + st->ioTimedOut and
+             * reports FS3EAUDIOR_ERROR instead of treating this like a
+             * clean end-of-track. */
+            AbortIO((struct IORequest *)req);
+            WaitIO((struct IORequest *)req);
+            st->join      = NULL;
+            st->ioTimedOut = TRUE;
+            return FALSE;
+        }
+    }
     st->join = req;
 
     /* swap double buffer -- see this function's header comment */
@@ -443,6 +599,26 @@ BOOL FS3EAudio_Pause(struct MsgPort *requestPort, struct MsgPort *replyPort, BOO
     return TRUE;
 }
 
+BOOL FS3EAudio_Seek(struct MsgPort *requestPort, struct MsgPort *replyPort, ULONG seekMs)
+{
+    FS3EAudioMessage *msg;
+
+    if (!requestPort)
+        return FALSE;
+
+    msg = (FS3EAudioMessage *)AllocVec(sizeof(FS3EAudioMessage), MEMF_CLEAR | MEMF_PUBLIC);
+    if (!msg)
+        return FALSE;
+
+    msg->fs3eam_Msg.mn_ReplyPort = replyPort;
+    msg->fs3eam_Msg.mn_Length    = sizeof(*msg);
+    msg->fs3eam_Type             = FS3EAUDIOQ_SEEK;
+    msg->fs3eam_SeekMs           = seekMs;
+
+    PutMsg(requestPort, (struct Message *)&msg->fs3eam_Msg);
+    return TRUE;
+}
+
 /* -------------------------------------------------------------------------
  * Process entry
  * ---------------------------------------------------------------------- */
@@ -472,6 +648,31 @@ static void FS3EAudio_NotifyFinished(FS3EAudioState *st)
     PutMsg(st->replyPort, (struct Message *)&note->fs3eam_Msg);
 }
 
+/* Same one-way/no-reply convention as FS3EAudio_NotifyFinished() above, but
+ * for a track that was cut short by a wedged ahi.device (st->ioTimedOut,
+ * see FS3EAudio_StreamOneBuffer()/FS3EAudio_WaitIOTimeout()) rather than
+ * reaching genuine EOF. Reuses FS3EAUDIOR_ERROR -- fs3emediaview.c's
+ * FS3EMediaView_OnAudioReply() already handles that result generically
+ * (stops treating the track as playing, shows an error) regardless of
+ * whether it arrived as a PLAY ack or, as here, an async notify. */
+static void FS3EAudio_NotifyError(FS3EAudioState *st)
+{
+    FS3EAudioMessage *note;
+
+    if (!st->replyPort) return;
+
+    note = (FS3EAudioMessage *)AllocVec(sizeof(FS3EAudioMessage), MEMF_CLEAR | MEMF_PUBLIC);
+    if (!note) return;
+
+    note->fs3eam_Msg.mn_ReplyPort = NULL;
+    note->fs3eam_Msg.mn_Length    = sizeof(*note);
+    note->fs3eam_Type             = FS3EAUDIOQ_PLAY;
+    note->fs3eam_Result           = FS3EAUDIOR_ERROR;
+    strcpy(note->fs3eam_Key, st->key);
+
+    PutMsg(st->replyPort, (struct Message *)&note->fs3eam_Msg);
+}
+
 /* Every Nth streamed buffer, not every single one -- each buffer is only
  * ~46ms at 44100Hz/FS3EAUDIO_BUFFERSIZE, so sending a notify per buffer
  * would needlessly flood replyPort; ~740ms between updates is plenty for a
@@ -492,7 +693,7 @@ static void FS3EAudio_NotifyProgress(FS3EAudioState *st)
     note = (FS3EAudioMessage *)AllocVec(sizeof(FS3EAudioMessage), MEMF_CLEAR | MEMF_PUBLIC);
     if (!note) return;
 
-    freq = (ULONG)(st->stream ? st->stream->dec_frequency : 44100);
+    freq = (ULONG)(st->stream ? st->stream->dec_frequency : 22050);
 
     note->fs3eam_Msg.mn_ReplyPort = NULL;
     note->fs3eam_Msg.mn_Length    = sizeof(*note);
@@ -534,6 +735,26 @@ static void FS3EAudio_ProcEntry(void)
         return;
 
     MPEGABase = OpenLibrary("mpega.library", 0);
+
+    /* Opened once for this task's whole lifetime (like requestPort itself),
+     * not per track/buffer -- see FS3EAudio_WaitIOTimeout()'s doc comment
+     * for why it exists. st.timerReq stays NULL on any failure here, which
+     * FS3EAudio_WaitIOTimeout() treats as "fall back to a plain unbounded
+     * WaitIO()" rather than crashing. */
+    st.timerPort = CreateMsgPort();
+    if (st.timerPort) {
+        st.timerReq = (struct timerequest *)CreateExtIO(st.timerPort, sizeof(struct timerequest));
+        if (st.timerReq && OpenDevice((STRPTR)TIMERNAME, UNIT_VBLANK,
+                                       (struct IORequest *)st.timerReq, 0) != 0)
+        {
+            DeleteExtIO((struct IORequest *)st.timerReq);
+            st.timerReq = NULL;
+        }
+        if (!st.timerReq) {
+            DeleteMsgPort(st.timerPort);
+            st.timerPort = NULL;
+        }
+    }
 
     while (running)
     {
@@ -579,6 +800,46 @@ static void FS3EAudio_ProcEntry(void)
                     msg->fs3eam_Result = FS3EAUDIOR_OK;
                     break;
 
+                case FS3EAUDIOQ_SEEK:
+                    /* No-op (still OK) if nothing is loaded -- same
+                     * convention as PAUSE, see fs3eaudio.h. */
+                    if (st.playing) {
+                        if (MPEGA_seek(st.stream, msg->fs3eam_SeekMs) == 0) {
+                            ULONG freq = (ULONG)(st.stream ? st.stream->dec_frequency : 0);
+
+                            /* Decoder's carried-over frame belongs to the
+                             * OLD position -- same reset FS3EAudio_
+                             * StartTrack() does at track start, so the
+                             * next FS3EAudio_DecodeInto() call fetches a
+                             * fresh frame at the new position instead of
+                             * flushing leftover pre-seek samples. */
+                            st.sampleLeft = 0;
+                            st.pleft  = NULL;
+                            st.pright = NULL;
+
+                            /* Re-sync samplesDecoded to the new position
+                             * so the next FS3EAUDIOR_PROGRESS notify
+                             * reports elapsed time from where playback
+                             * actually is now -- split add avoids
+                             * overflowing a 32-bit ULONG multiply for a
+                             * long seek, same trick as FS3EAudio_
+                             * NotifyProgress()'s own ms<-samples math,
+                             * just inverted (ms -> samples here). */
+                            st.samplesDecoded = freq
+                                ? (msg->fs3eam_SeekMs / 1000) * freq
+                                  + ((msg->fs3eam_SeekMs % 1000) * freq) / 1000
+                                : 0;
+                            st.buffersSinceProgress = 0;
+
+                            msg->fs3eam_Result = FS3EAUDIOR_OK;
+                        } else {
+                            msg->fs3eam_Result = FS3EAUDIOR_ERROR;
+                        }
+                    } else {
+                        msg->fs3eam_Result = FS3EAUDIOR_OK;
+                    }
+                    break;
+
                 case FS3EAUDIOQ_PLAY:
                     /* Replacing whatever was playing -- no FINISHED notify
                      * for it, that result is reserved for genuine EOF. */
@@ -616,7 +877,12 @@ static void FS3EAudio_ProcEntry(void)
         {
             if (!FS3EAudio_StreamOneBuffer(&st))
             {
-                FS3EAudio_NotifyFinished(&st);
+                if (st.ioTimedOut) {
+                    st.ioTimedOut = FALSE;
+                    FS3EAudio_NotifyError(&st);
+                } else {
+                    FS3EAudio_NotifyFinished(&st);
+                }
                 FS3EAudio_StopTrack(&st);
             }
             else if (++st.buffersSinceProgress >= FS3EAUDIO_PROGRESS_EVERY_N_BUFFERS)
@@ -626,6 +892,12 @@ static void FS3EAudio_ProcEntry(void)
             }
         }
     }
+
+    if (st.timerReq) {
+        CloseDevice((struct IORequest *)st.timerReq);
+        DeleteExtIO((struct IORequest *)st.timerReq);
+    }
+    if (st.timerPort) DeleteMsgPort(st.timerPort);
 
     if (MPEGABase) { CloseLibrary(MPEGABase); MPEGABase = NULL; }
     DeleteMsgPort(requestPort);

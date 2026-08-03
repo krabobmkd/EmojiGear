@@ -50,6 +50,8 @@
 #include "fs3eboopsimessage.h"
 #include "fs3egadgetid.h"
 
+#include "friendsh3ep.h"
+
 /* Raw key codes for F1-F10 */
 #define EMOJIBOX_RAWKEY_F1   0x50
 #define EMOJIBOX_RAWKEY_F8   0x57
@@ -796,7 +798,7 @@ BOOL FS3EEmojiBoxWindow_Create(FS3EEmojiBoxWindow *ebw, struct URPDrawContext *d
         WA_Height, FSEBW_OPEN_H,
         WA_MinWidth,  FSEBW_MIN_W,
         WA_MinHeight, FSEBW_MIN_H,
-        WA_IDCMP,  IDCMP_CLOSEWINDOW | IDCMP_GADGETUP | IDCMP_NEWSIZE | IDCMP_VANILLAKEY,
+        WA_IDCMP,  IDCMP_CLOSEWINDOW | IDCMP_GADGETUP | IDCMP_NEWSIZE | IDCMP_RAWKEY,
         WA_Flags,  WFLG_DRAGBAR | WFLG_DEPTHGADGET | WFLG_CLOSEGADGET |
                    WFLG_SIZEGADGET | WFLG_ACTIVATE | WFLG_SMART_REFRESH,
         WA_Title,  (ULONG)"Emoji Box",
@@ -895,16 +897,36 @@ BOOL FS3EEmojiBoxWindow_HandleInput(FS3EEmojiBoxWindow *ebw)
                     RefreshGList((struct Gadget *)ebw->gridGadget, ebw->window, NULL, 1);
                 break;
 
-            case WMHI_VANILLAKEY:
+            // case WMHI_VANILLAKEY:
+            // {
+            //     ULONG key = result & 0x00FF;
+            //     if (key == 0x1b) { /* Esc closes the popup */
+            //         FS3EEmojiBoxWindow_Close(ebw);
+            //         return TRUE;
+            //     }
+            //     break;
+            // }
+
+            case WMHI_RAWKEY:
             {
-                ULONG key = result & 0x00FF;
-                if (key == 0x1b) { /* Esc closes the popup */
-                    FS3EEmojiBoxWindow_Close(ebw);
+                ULONG key = result & 0x07f;
+                ULONG isUp = (result & 0x080);
+                ULONG qualifiers=0;
+
+                GetAttr(WINDOW_Qualifier,ebw->windowObj,&qualifiers);
+                if (key == 0x45 && isUp) { /* Esc */
+                     FS3EEmojiBoxWindow_Close(ebw);
                     return TRUE;
                 }
-                break;
-            }
 
+                if(!isUp && key>=0x50 && key<=0x59 && app->tootView.window)
+                {
+                    FS3EEmojiBox_HandleFKey(ebw,
+                            app->tootView.bodyEditor,key, qualifiers, app->tootView.window);
+                }
+
+            }
+                break;
             case WMHI_GADGETUP:
             {
                 ULONG gadId = result & WMHI_GADGETMASK;

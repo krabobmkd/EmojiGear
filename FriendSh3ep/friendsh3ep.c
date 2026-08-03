@@ -53,6 +53,8 @@
 #include <proto/window.h>
 #include <classes/window.h>
 
+#include <gadgets/slider.h>
+
 #include <gadgets/tapedeck.h>
 
 #include <proto/layout.h>
@@ -1121,7 +1123,7 @@ int main(int argc, char **argv)
 
 
 
- printf("FS3ELoginView_Create\n");
+// printf("FS3ELoginView_Create\n");
     /* --- Classic BOOPSI sub-windows ------------------------------------- */
     if (!FS3ELoginView_Create(&app->loginView,  app->style.dcNormal))
         cleanexit("Can't create login view");
@@ -1133,11 +1135,11 @@ int main(int argc, char **argv)
     if (app->accountApiBaseUrl)
         FS3ELoginView_ClearFields(&app->loginView);
 
- printf("FS3EApp_RefreshLoginAccountsList\n");
+// printf("FS3EApp_RefreshLoginAccountsList\n");
     FS3EApp_RefreshLoginAccountsList();
- printf("FS3EApp_RefreshLoginAccountsList done\n");
+// printf("FS3EApp_RefreshLoginAccountsList done\n");
 
- printf(" FS3ETootView_Create\n");
+// printf(" FS3ETootView_Create\n");
     if (!FS3ETootView_Create(&app->tootView, app->style.dcNormal))
         cleanexit("Can't create toot view");
 
@@ -1155,7 +1157,7 @@ int main(int argc, char **argv)
 
     FS3EMediaView_Init(&app->mediaView);
 
- printf(" ext window created\n");
+// printf(" ext window created\n");
     /* ================================================================== */
     /* Part A: title bar children (7 gadgets)                              */
     /* ================================================================== */
@@ -1301,7 +1303,7 @@ int main(int argc, char **argv)
     app->tootTimeline = (Object *)NewObject(TootTimelineClass, NULL,
         TTIMELINE_Style, (ULONG)(&app->style),
         TTIMELINE_DpiHeight, (ULONG)dpiH,
-        TTIMELINE_ActionOnDoubleClick, TRUE,
+        TTIMELINE_ActionOnDoubleClick, (ULONG)app->settings.tootActionsNeedDoubleClick,
         ICA_TARGET, (ULONG)TargetInstance,
         GA_ID,      GID_TTIMELINE,
         GA_BackFill, NULL,
@@ -1805,6 +1807,19 @@ int main(int argc, char **argv)
                     if (ptag) sender_ID = ptag->ti_Data;
 
                     switch (sender_ID) {
+
+                        case GID_MEDIAVIEW_SLIDER:
+                            /* Fires for BOTH a user drag AND our own
+                             * FS3EMediaView_OnAudioReply() pushing a
+                             * PROGRESS-driven SLIDER_Level update --
+                             * sliderGadget's ICA_TARGET points here either
+                             * way (see fs3emediaview.c), so this is the
+                             * only place that can see it. FS3EMediaView_
+                             * SliderMoved() itself tells the two apart. */
+                            ptag = FindTagItem(SLIDER_Level, msg);
+                            if (ptag)
+                                FS3EMediaView_SliderMoved(&app->mediaView, (ULONG)ptag->ti_Data);
+                        break;
 
                         /* ---- Title bar ---- */
                         case GID_TITLEBAR_CLOSE:

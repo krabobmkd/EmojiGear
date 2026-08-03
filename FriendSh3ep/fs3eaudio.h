@@ -47,18 +47,28 @@ enum FS3EAudioRequestType
     FS3EAUDIOQ_SHUTDOWN = 0,  /* ask the audio process to exit (stops playback first) */
     FS3EAUDIOQ_PLAY,          /* decode+stream a new MP3 file, replacing whatever is playing */
     FS3EAUDIOQ_STOP,          /* stop whatever is playing; no file loaded after */
-    FS3EAUDIOQ_PAUSE          /* pause/resume the CURRENTLY loaded track in place -- decode
+    FS3EAUDIOQ_PAUSE,         /* pause/resume the CURRENTLY loaded track in place -- decode
                                 * and AHI state are left untouched, just not fed/advanced
                                 * while paused, so resume continues exactly where it left
                                 * off (see FS3EAudioState.paused in fs3eaudio.c). fs3eam_Pause
                                 * TRUE=pause, FALSE=resume. A no-op (still acked OK) if
                                 * nothing is loaded. */
+    FS3EAUDIOQ_SEEK           /* jump the CURRENTLY loaded track to fs3eam_SeekMs (absolute
+                                * position, milliseconds) via MPEGA_seek() -- decode position
+                                * only, AHI/mpega.library state otherwise untouched, works
+                                * whether playing or paused. A no-op (still acked OK) if
+                                * nothing is loaded; FS3EAUDIOR_ERROR if fs3eam_SeekMs is
+                                * outside the stream (MPEGA_seek() returning MPEGA_ERR_EOF). */
 };
 
 enum FS3EAudioResult
 {
     FS3EAUDIOR_OK = 0,        /* PLAY/PAUSE: now streaming/paused-or-resumed. STOP/SHUTDOWN: done. */
-    FS3EAUDIOR_ERROR,         /* PLAY: couldn't open mpega.library / the file / ahi.device */
+    FS3EAUDIOR_ERROR,         /* PLAY ack: couldn't open mpega.library / the file / ahi.device.
+                                * ALSO sent as a spontaneous notify (fs3eam_Type left at
+                                * FS3EAUDIOQ_PLAY, same as FINISHED/PROGRESS below) if
+                                * ahi.device stops answering mid-track and has to be
+                                * abandoned -- see FS3EAudio_WaitIOTimeout() in fs3eaudio.c. */
     FS3EAUDIOR_FINISHED,      /* spontaneous notify, fs3eam_Type left at FS3EAUDIOQ_PLAY:
                                 * the track decoded to EOF on its own. Never sent for a
                                 * track a STOP or a later PLAY replaced first. */
@@ -109,6 +119,9 @@ typedef struct FS3EAudioMessage
 
     /* FS3EAUDIOQ_PAUSE request field, filled by the caller. Unused otherwise. */
     BOOL  fs3eam_Pause;
+
+    /* FS3EAUDIOQ_SEEK request field, filled by the caller. Unused otherwise. */
+    ULONG fs3eam_SeekMs;
 
     /* FS3EAUDIOR_PROGRESS notify fields, filled by the process. Unused otherwise. */
     ULONG fs3eam_ElapsedMs;
@@ -163,5 +176,15 @@ BOOL FS3EAudio_PlayStop(struct MsgPort *requestPort, struct MsgPort *replyPort);
  * requestPort is missing.
  */
 BOOL FS3EAudio_Pause(struct MsgPort *requestPort, struct MsgPort *replyPort, BOOL pause);
+
+/*
+ * Ask the audio process to jump the currently loaded track to seekMs
+ * (absolute position, milliseconds) -- a no-op, still acked, if nothing is
+ * loaded. Returns immediately; FS3EAUDIOR_OK (or FS3EAUDIOR_ERROR if seekMs
+ * is outside the stream) arrives later on replyPort, same as
+ * FS3EAudio_Play()/PlayStop()/Pause(). Returns FALSE (nothing queued) if
+ * requestPort is missing.
+ */
+BOOL FS3EAudio_Seek(struct MsgPort *requestPort, struct MsgPort *replyPort, ULONG seekMs);
 
 #endif /* FS3EAUDIO_H */

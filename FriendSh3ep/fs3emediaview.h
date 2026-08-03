@@ -148,6 +148,22 @@ typedef struct FS3EMediaView {
     BOOL   audioPaused;
     struct MsgPort *audioRequestPort;
     struct MsgPort *audioReplyPort;
+
+    /* Seek support (GID_MEDIAVIEW_SLIDER) -- sliderGadget's ICA_TARGET
+     * points at the main window's BOOPSI target (see fs3emediaview.c), so
+     * every SLIDER_Level change reaches friendsh3ep.c's OM_NOTIFY dispatch
+     * as one and the same event REGARDLESS of whether it was a user drag
+     * or our own FS3EMediaView_OnAudioReply() pushing a PROGRESS update --
+     * slider.gadget doesn't distinguish the two. audioSliderProgLevel is
+     * the level WE last set programmatically (from PROGRESS/FINISHED);
+     * FS3EMediaView_SliderMoved() compares the notify's level against it --
+     * a match means it's just an echo of our own update, a mismatch means
+     * the user actually moved the handle. audioTotalMs is the last known
+     * track duration (from PROGRESS's fs3eam_TotalMs), needed to convert
+     * the slider's 0..100 level back into an absolute ms position to seek
+     * to. Both meaningless (left at 0) while !isAudio. */
+    ULONG  audioSliderProgLevel;
+    ULONG  audioTotalMs;
 } FS3EMediaView;
 
 /* Zeroes mv. Nothing to allocate up front -- the window/layout/picClass
@@ -233,6 +249,20 @@ void FS3EMediaView_OnAudioReply(FS3EMediaView *mv, const FS3EAudioMessage *msg);
  * GID_MEDIAVIEW_TAPEDECK.
  */
 void FS3EMediaView_TapeDeckPressed(FS3EMediaView *mv);
+
+/*
+ * GID_MEDIAVIEW_SLIDER's OM_NOTIFY handler -- newLevel is sliderGadget's
+ * current SLIDER_Level (0..100) at the time of the notify. No-op if it
+ * matches audioSliderProgLevel (our own last PROGRESS/FINISHED update,
+ * echoed back rather than a real user move -- see mv's own field comment),
+ * or if mv->isAudio is FALSE, mv->audioBackend isn't FS3EMV_AUDIO_MPEGA, or
+ * audioTotalMs is still 0 (nothing seekable known yet). Otherwise treats it
+ * as the user dragging the handle: converts newLevel back to an absolute
+ * ms position against audioTotalMs and sends FS3EAUDIOQ_SEEK via the
+ * cached audioRequestPort/audioReplyPort. Call from friendsh3ep.c's
+ * GID_MEDIAVIEW_SLIDER case with the notify's SLIDER_Level tag data.
+ */
+void FS3EMediaView_SliderMoved(FS3EMediaView *mv, ULONG newLevel);
 
 void  FS3EMediaView_Close(FS3EMediaView *mv);
 BOOL  FS3EMediaView_HandleInput(FS3EMediaView *mv);

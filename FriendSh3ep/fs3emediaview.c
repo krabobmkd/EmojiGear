@@ -369,6 +369,7 @@ static BOOL mediaview_ensure_window(FS3EMediaView *mv)
      * playback position -- see GID_MEDIAVIEW_SLIDER. */
     mv->sliderGadget = (Object *)NewObject(SLIDER_GetClass(), NULL,
         GA_ID,              GID_MEDIAVIEW_SLIDER,
+        ICA_TARGET,        (ULONG)TargetInstance,
         GA_RelVerify,        TRUE,
         SLIDER_Orientation,  SLIDER_HORIZONTAL,
         SLIDER_Min,          0,
@@ -661,6 +662,8 @@ static void mediaview_stop_audio(FS3EMediaView *mv)
     mv->audioPaused      = FALSE;
     mv->audioLocalPath[0] = '\0';
     mv->audioKey[0]      = '\0';
+    mv->audioSliderProgLevel = 0;
+    mv->audioTotalMs         = 0;
 }
 
 void FS3EMediaView_Init(FS3EMediaView *mv)
@@ -957,6 +960,13 @@ void FS3EMediaView_OnAudioReply(FS3EMediaView *mv, const FS3EAudioMessage *msg)
             break;
 
         case FS3EAUDIOR_ERROR:
+            if (msg->fs3eam_Type == FS3EAUDIOQ_SEEK) {
+                /* Seek target outside the stream (MPEGA_seek() returning
+                 * MPEGA_ERR_EOF) -- playback position/state is unaffected,
+                 * nothing to reset here; don't pretend the whole track
+                 * failed over a bad drag target. */
+                break;
+            }
             mv->audioPlaying = FALSE;
             mv->audioPaused  = FALSE;
             /* mv->audioLocalPath is already filled in (set before this
@@ -980,6 +990,7 @@ void FS3EMediaView_OnAudioReply(FS3EMediaView *mv, const FS3EAudioMessage *msg)
                 SetGadgetAttrs((struct Gadget *)mv->sliderGadget, mv->window, NULL,
                     SLIDER_Level, 0,
                     TAG_END);
+            mv->audioSliderProgLevel = 0;
             break;
 
         case FS3EAUDIOR_PROGRESS: {
@@ -990,6 +1001,8 @@ void FS3EMediaView_OnAudioReply(FS3EMediaView *mv, const FS3EAudioMessage *msg)
             SetGadgetAttrs((struct Gadget *)mv->sliderGadget, mv->window, NULL,
                 SLIDER_Level, level,
                 TAG_END);
+            mv->audioSliderProgLevel = level;
+            mv->audioTotalMs         = msg->fs3eam_TotalMs;
             break;
         }
 
@@ -1064,6 +1077,36 @@ void FS3EMediaView_TapeDeckPressed(FS3EMediaView *mv)
             /* rewind/forward/begin/frame/end -- unimplemented, no-op. */
             break;
     }
+}
+
+void FS3EMediaView_SliderMoved(FS3EMediaView *mv, ULONG newLevel)
+{
+    ULONG seekMs;
+
+    if (!mv || !mv->isAudio || mv->audioBackend != FS3EMV_AUDIO_MPEGA) return;
+    if (mv->audioTotalMs == 0) return; /* nothing seekable known yet */
+    if (newLevel > 100) newLevel = 100;
+
+    /* Echo of our own last PROGRESS/FINISHED update, not a user drag --
+     * see mv's own field comment in fs3emediaview.h for why the two can't
+     * be told apart any other way (slider.gadget's OM_NOTIFY doesn't say
+     * who moved it). */
+    if (newLevel == mv->audioSliderProgLevel) return;
+
+    /* newLevel<=100 and audioTotalMs is a toot audio attachment's duration
+     * (seconds to a few minutes in practice) -- nowhere near the ~42.9M ms
+     * (~11.9h) this multiply could handle before overflowing a 32-bit
+     * ULONG, so no split-safe math needed here unlike the ms<->samples
+     * conversions in fs3eaudio.c. */
+    seekMs = (newLevel * mv->audioTotalMs) / 100;
+
+    FS3EAudio_Seek(mv->audioRequestPort, mv->audioReplyPort, seekMs);
+
+    /* Optimistic, same reasoning as the BUT_PLAY/paused branch above --
+     * update now rather than waiting for the async ack, so a second drag
+     * before the first SEEK is acked still compares against the right
+     * "last known" level instead of stale state. */
+    mv->audioSliderProgLevel = newLevel;
 }
 
 void FS3EMediaView_Close(FS3EMediaView *mv)

@@ -51,6 +51,7 @@
 #include "fs3egadgetid.h"
 #include "fs3eboopsimainwindow.h"
 #include "network_fs3e/fs3enet.h"
+#include "TootTimeline/fs3etoottimeline.h"
 
 extern struct Library *GetFileBase;
 extern struct Library *IntegerBase;
@@ -795,6 +796,9 @@ BOOL FS3ESettingsView_HandleInput(FS3ESettingsView *sv)
                     ULONG checked = 0;
                     GetAttr(GA_Selected, sv->tootActionsDblClickCheck, &checked);
                     app->settings.tootActionsNeedDoubleClick = checked ? TRUE : FALSE;
+                    SetGdAttrs(app->tootTimeline,
+                        TTIMELINE_ActionOnDoubleClick, (ULONG)app->settings.tootActionsNeedDoubleClick,
+                        TAG_DONE);
 
                 } else if (gadId == GID_SETTINGSV_FLUSH_CACHE) {
                     if (app->netRequestPort) {

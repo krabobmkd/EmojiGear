@@ -25,6 +25,7 @@
 #include <gadgets/unitexteditor.h>
 #include <gadgets/listbrowser.h>
 #include <gadgets/tapedeck.h>
+#include <gadgets/slider.h>
 
 #include "TitleBarLayout/fs3etitlebar.h"
 #include "TootTimeline/fs3etoottimeline.h"
@@ -138,6 +139,8 @@ static ULONG delayedAttribs[] = {
     TTIMELINE_ScrollStarted,
 
     TDECK_Mode,
+    SLIDER_Level,
+    SLIDER_Max,
 
     /* from UniButtonBGBM (nav_btns[]) -- see ubgbm_notify_refresh_needed()
      * in UniButtonBGBM/unibuttonbgbm_attribs.c */

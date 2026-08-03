@@ -1863,11 +1863,11 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
             BOOL failedIsDownload = failedReq && failedReq->fs3enf_ExactLocalPath &&
                                      failedReq->fs3enf_ExactLocalPath[0];
 
-            bdbprintf("FS3EApp: FETCH_IMAGE failed result=%ld key=%s subdir=%s\n",
+/*            bdbprintf("FS3EApp: FETCH_IMAGE failed result=%ld key=%s subdir=%s\n",
                       (long)msg->fs3em_Result,
                       (failedReply && failedReply->fs3enf_Key) ? failedReply->fs3enf_Key : "?",
                       (failedReply && failedReply->fs3enf_Subdir) ? failedReply->fs3enf_Subdir : "?");
-
+*/
             /* Same "no-op if no row" rule as the success path above. */
             if (failedReply && failedReply->fs3enf_Key)
                 FS3ENetworkView_OnFinished(&app->networkView, failedReply->fs3enf_Key, FALSE);
@@ -2295,8 +2295,9 @@ void FS3EApp_HandleThumbReply(FS3EThumbMessage *msg)
          * FS3EThumb_HandleMake/BmImage_SniffFormat) so the tile renderer
          * can show e.g. "webp" instead of a bare box. */
         UBYTE fmt = (UBYTE)msg->fs3etm_DetectedFormat;
-        bdbprintf("FS3EApp: thumbnail process failed key=%s src=%s kind=%ld fmt=%ld\n",
-                  msg->fs3etm_Key, msg->fs3etm_SrcPath, (long)msg->fs3etm_Kind, (long)fmt);
+        /* bdbprintf("FS3EApp: thumbnail process failed key=%s src=%s kind=%ld fmt=%ld\n",
+                   msg->fs3etm_Key, msg->fs3etm_SrcPath, (long)msg->fs3etm_Kind, (long)fmt);
+        */
         if (msg->fs3etm_Kind == FS3ETHUMB_KIND_MEDIA)
             AvatarImages_MarkMediaFailed(app->avatarImages, msg->fs3etm_Key, fmt);
         else if (msg->fs3etm_Kind == FS3ETHUMB_KIND_CARD)
