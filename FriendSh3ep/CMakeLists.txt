@@ -9,6 +9,10 @@ list(APPEND AMIGA_COMPILER_OPTIONS -mcpu=68020 -O2)
 
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../sdk/include)
 
+#needed for OpenURL.
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../../amigacommonlibs/extrasdk/OpenURL/include)
+
+
 # ---- Network process static library --------------------------------------
 # Standalone, no GUI includes; runs in its own CreateNewProc() task.
 add_subdirectory(network_fs3e)
@@ -43,11 +47,13 @@ set(FRIENDSH3EP_SOURCES
     fs3eemojibox.c
     fs3ethemeview.c
     fs3esettingsview.c
+    fs3enetworkview.c
     fs3emediaview.c
     fs3elocale.c
     fs3emenu.c
     fs3eaction.c
     fs3esettings.c
+    fs3emanageurl.c
     fs3emachineid.c
     fs3eaudio.c
     fs3etimer.c
@@ -97,6 +103,7 @@ set(FRIENDSH3EP_HEADERS
     fs3eemojibox.h
     fs3ethemeview.h
     fs3esettingsview.h
+    fs3enetworkview.h
     fs3emediaview.h
     fs3elocale.h
     fs3emenu.h

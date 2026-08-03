@@ -87,8 +87,33 @@ typedef struct FS3ESettings {
     /* Thumbnails & icons rendering (see fs3esettingsview.c "Thumbnails &
      * icons" group). Not yet consumed by the thumbnail process. */
     short biggerThumbnails;   /* FALSE (default) = current size */
+
+    /* FALSE (default) = skip the fs3ethumb minify-to-disk-cache pass for
+     * timeline media thumbnails -- fetch to RAM:T and display directly
+     * instead. Minifying makes sense for user icons (small, reused across
+     * many toots, worth a persistent disk-cached copy) but is wasted work
+     * for thumbnails (already server-sized, rarely redisplayed). TRUE =
+     * run thumbnails through the same minify pipeline as icons, like
+     * before this option existed. */
+    short minifyThumbnails;
     int   scalingQuality;     /* FS3E_SCALEQ_*, default FS3E_SCALEQ_FAST */
     int   rgbDrawFunction;    /* FS3E_RGBDRAW_*, default FS3E_RGBDRAW_SCALEPIXELARRAY */
+
+    /* "URL Link" group (fs3esettingsview.c) -- what happens when a link
+     * hotspot in a toot is clicked. Not yet consumed by anything else;
+     * these three fields are the whole feature for now. */
+    int   urlLinkAction;           /* FS3E_URLLINK_*, default FS3E_URLLINK_ASK */
+    short directDownloadArchives;  /* TRUE (default) = .zip/.lha links download
+                                     * straight to downloadPath instead of going
+                                     * through urlLinkAction's Ask/OpenURL/Clipboard
+                                     * choice */
+    char *downloadPath;            /* AllocVec'd, always non-NULL; default "ram:" */
+
+    /* FALSE (default) = a single click on a toot action (favorite, boost,
+     * reply, ...) fires immediately. TRUE = require a double click, to
+     * guard against misclicks. Lives in the "URL Link" group in
+     * fs3esettingsview.c alongside the other click-behavior settings. */
+    short tootActionsNeedDoubleClick;
 
 } FS3ESettings;
 
@@ -105,6 +130,15 @@ enum {
     FS3E_RGBDRAW_SCALEPIXELARRAY = 0, /* ScalePixelArray() */
     FS3E_RGBDRAW_INTERNAL_BILINEAR,   /* Internal Bilinear (>=68060) */
     FS3E_RGBDRAW_COUNT
+};
+
+/* urlLinkAction enum -- index matches the "URL Link Action" combo's
+ * CHOOSER_Active order */
+enum {
+    FS3E_URLLINK_ASK = 0,      /* Ask */
+    FS3E_URLLINK_OPENURL,      /* Use OpenURL */
+    FS3E_URLLINK_CLIPBOARD,    /* Copy to Clipboard */
+    FS3E_URLLINK_COUNT
 };
 
 /*

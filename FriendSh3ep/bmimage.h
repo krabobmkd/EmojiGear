@@ -143,6 +143,23 @@ BOOL BmImage_GenerateScaledBmp(const char *srcPath, const char *cacheKeyPath,
                                 char *outThumbPath, ULONG outPathSize, BmImageError *outError);
 
 /*
+ * Screen-less, scale-less half of the BmImage_LoadScaled pipeline: opens
+ * srcPath as a truecolor picture.datatype object and reads its pixels,
+ * AT NATIVE SIZE, into a freshly AllocVec'd top-down RGB24 (3 bytes/pixel,
+ * tightly packed rows, no padding) buffer -- exactly the format
+ * RgbImage_LoadViaDatatype() (rgbimage.h) hands straight to an RgbImage,
+ * and the same buffer shape BmImage_GenerateScaledBmp scales/writes as a
+ * BMP. No scaling, no disk write: this is the "no minify" thumbnail path
+ * (see fs3esettings.h's minifyThumbnails) -- a plain decode, nothing else.
+ *
+ * Caller FreeVec()s *outBuf. Returns FALSE (outBuf untouched) on failure;
+ * if outError is non-NULL, receives the BmImageError describing why.
+ */
+BOOL BmImage_ReadSourceRgb(const char *srcPath, UBYTE **outBuf,
+                            ULONG *outWidth, ULONG *outHeight,
+                            BmImageError *outError);
+
+/*
  * Read up to the first 16 bytes of path and identify its format from
  * magic bytes/signatures alone, independent of what datatypes happen to
  * be installed. Call this ONLY on a freshly downloaded source file that

@@ -174,12 +174,17 @@ void FS3EMastodon_UrlEncode(const char *src, char *dst, ULONG dstSize);
  * follow relationship, visibility) -- see FS3ENetStatus.fmas_Quotable for
  * the read-side signal used to decide whether to even offer Quote in the
  * UI, but this call doesn't re-check any of that itself.
+ * mediaIds/mediaCount, if mediaCount>0, attaches the given (already
+ * uploaded -- see FS3EMastodon_UploadMedia) media ids to the new status,
+ * same media_ids key FS3EMastodon_EditStatus sends; omitted entirely when
+ * mediaCount==0, same "don't send an empty key" reasoning.
  */
 BOOL FS3EMastodon_PostStatus(const char *apiBaseUrl, const char *accessToken,
                             const char *statusText, const char *visibility,
                             const char *inReplyToId,
                             const char *quoteApprovalPolicy,
                             const char *quotedStatusId,
+                            const char *const *mediaIds, ULONG mediaCount,
                             char *outStatusId, ULONG outStatusIdSize);
 
 /*
@@ -204,6 +209,37 @@ BOOL FS3EMastodon_EditStatus(const char *apiBaseUrl, const char *accessToken,
  */
 BOOL FS3EMastodon_DeleteStatus(const char *apiBaseUrl, const char *accessToken,
                               const char *statusId);
+
+/*
+ * POST /api/v2/media -- uploads fileBytes/fileLen as a new media
+ * attachment, multipart/form-data (the only encoding this endpoint
+ * accepts), a single "file" part named fileName with Content-Type
+ * mimeType. On success fills outMediaId (the new attachment's id, needed
+ * by a following FS3EMastodon_PostStatus's mediaIds) and returns TRUE.
+ *
+ * Doesn't poll for processing to finish itself: Mastodon returns 200
+ * immediately for ordinary images (processing is synchronous server-side
+ * for those), but can return 202 Accepted for audio/video still being
+ * transcoded -- the id is usable right away but attaching it to a status
+ * before processing finishes 422s. Callers uploading audio/video should
+ * follow a successful call with FS3EMastodon_WaitMediaReady() before
+ * attaching outMediaId to a status -- see FS3ENet_HandleUploadMedia
+ * (fs3enet.c) for the one caller that does.
+ */
+BOOL FS3EMastodon_UploadMedia(const char *apiBaseUrl, const char *accessToken,
+                              const void *fileBytes, ULONG fileLen,
+                              const char *fileName, const char *mimeType,
+                              char *outMediaId, ULONG outMediaIdSize);
+
+/*
+ * GET /api/v1/media/:id, polled in a loop (bounded attempts, ~1s apart via
+ * dos.library's Delay()) until the server answers 200 (fully processed)
+ * instead of 206 (still transcoding). Returns TRUE once ready; FALSE if
+ * the poll budget runs out, the server answers with anything other than
+ * 200/206, or the request fails outright.
+ */
+BOOL FS3EMastodon_WaitMediaReady(const char *apiBaseUrl, const char *accessToken,
+                                 const char *mediaId);
 
 /*
  * POST /api/v1/statuses/:id/favourite or .../unfavourite. On success fills

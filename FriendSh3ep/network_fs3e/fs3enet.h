@@ -38,6 +38,11 @@ enum FS3ENetRequestType
     FS3ENETQ_INSTANCE_INFO,  /* fetch the server's per-toot character limit */
     FS3ENETQ_EDIT_STATUS,    /* edit an existing status' text (own toots only) */
     FS3ENETQ_DELETE_STATUS,  /* delete an existing status (own toots only) */
+    FS3ENETQ_UPLOAD_MEDIA,   /* POST /api/v2/media, upload one attachment file --
+                               * see FS3ENetUploadMediaReq/Reply below. Fired before
+                               * FS3ENETQ_POST_STATUS when composing a toot with an
+                               * attachment; the returned media id feeds
+                               * FS3ENetPostStatusReq's fs3ep_MediaIds. */
     FS3ENETQ_NOTIFICATIONS,  /* fetch a page of notifications */
     FS3ENETQ_ACCOUNTS_LIST,  /* fetch a list of accounts: search results, or a
                                * user's followers/following -- see
@@ -225,6 +230,13 @@ typedef struct FS3ENetInstanceInfoReply
  * real attachment-thumbnail reply by subdir alone, and so a card's image
  * URL can never collide with an actual attachment's cache entry. */
 #define FS3E_CACHE_SUBDIR_CARDIMAGES  "cardimages"
+/* Toot audio attachments (mp3/wav/ogg) fetched whole -- see
+ * fs3emediaview.c's FS3EMediaView_ShowAudioUrl(). Own subdir for the same
+ * "never collide with, or get swept up as, a real image thumbnail" reasoning
+ * as CARDIMAGES above. Always fetched with keepOriginal=TRUE (there is no
+ * RAM:T-then-minify step for audio -- fs3eaudio.c decodes straight from
+ * this cached file). */
+#define FS3E_CACHE_SUBDIR_AUDIO       "audio"
 
 /*
  * FS3ENETQ_FETCH_IMAGE — fetch a media URL (avatar, attachment thumbnail,
@@ -264,6 +276,17 @@ typedef struct FS3ENetFetchImageReq
                                  * FALSE for routine avatar/thumbnail fetches (no progress UI
                                  * for those today) -- TRUE for the media viewer's on-demand
                                  * full-image fetch, the case this was actually added for. */
+    char *fs3enf_ExactLocalPath; /* "" (the common case, built by FS3ENetFetchImageReq_Alloc)
+                                * = normal cache-computed path, everything above applies as
+                                * documented. Non-empty (built by
+                                * FS3ENetFetchImageReq_AllocDownload) = the caller already
+                                * picked this exact final AmigaOS path (a file-save requester
+                                * result, see fs3emanageurl.c's archive download) -- not a
+                                * cache entry at all: fs3enf_Subdir/fs3enf_KeepOriginal are
+                                * ignored, there is no lookup/RAM:T reuse, and the reply's
+                                * fs3enf_IsTemp is always FALSE. Always downloads fresh,
+                                * overwriting whatever's already at that path, same as any
+                                * other "Save As" would. See FS3ENet_HandleFetchImage(). */
 } FS3ENetFetchImageReq;
 
 /* Allocates a flat request block for FETCH_IMAGE. FreeVec() when done.
@@ -271,6 +294,16 @@ typedef struct FS3ENetFetchImageReq
 FS3ENetFetchImageReq *FS3ENetFetchImageReq_Alloc(const char *url, const char *key,
                                                    const char *subdir, BOOL keepOriginal,
                                                    BOOL wantProgress);
+
+/* Allocates a flat request block for FETCH_IMAGE in "exact path" mode --
+ * see fs3enf_ExactLocalPath's doc comment above. key is set to url itself
+ * (the natural choice: there is no separate caller-side identity for a
+ * one-off download the way an avatar/media URL has one). Always
+ * KeepOriginal-like (never RAM:T) and always WantProgress (an archive
+ * download is exactly the case FS3ENETQ_FETCH_PROGRESS pings are worth
+ * having). FreeVec() when done, same as FS3ENetFetchImageReq_Alloc(). */
+FS3ENetFetchImageReq *FS3ENetFetchImageReq_AllocDownload(const char *url,
+                                                           const char *exactLocalPath);
 
 typedef struct FS3ENetFetchImageReply
 {
@@ -444,6 +477,17 @@ FS3ENetTimelineReq *FS3ENetTimelineReq_Alloc(ULONG viewModeBit,
     ULONG pageDirection, ULONG accountGeneration, ULONG responseShape,
     const char *apiBaseUrl, const char *accessToken, const char *timeline,
     const char *maxId, const char *minId, const char *searchQuery);
+
+/* Largest attachment FS3ENETQ_UPLOAD_MEDIA will read/upload, in bytes --
+ * conservative given the whole file is buffered in RAM twice over (once as
+ * read off disk, once inside the multipart body FS3EMastodon_UploadMedia
+ * builds around it) with no streaming, on hardware that may only have a
+ * few MB of Fast RAM to spare. The GUI checks this BEFORE ever sending the
+ * request (see fs3etootview.c/friendsh3ep.c's GID_TOOT_SEND_BUTTON), so a
+ * user sees the rejection immediately instead of after a slow upload
+ * attempt; FS3ENet_HandleUploadMedia() re-checks it too, defensively, in
+ * case the file grew between selection and send. */
+#define FS3ENET_UPLOAD_MAX_BYTES (16UL * 1024UL * 1024UL) /* 16 MiB */
 
 /* Max media_attachments entries kept per status (Mastodon itself caps
  * normal posts at 4 attachments, so this never truncates in practice). */
@@ -619,17 +663,60 @@ typedef struct FS3ENetPostStatusReq {
     char *fs3ep_InReplyToId; /* status being replied to; "" = standalone toot */
     char *fs3ep_QuoteApprovalPolicy; /* "public", "followers", "nobody" */
     char *fs3ep_QuotedStatusId; /* status being quoted; "" = not a quote post */
+    char *fs3ep_MediaIds[FS3ENET_MAX_MEDIA]; /* ids from a prior FS3ENETQ_UPLOAD_MEDIA
+                               * reply -- see fs3etootview.c/friendsh3ep.c's
+                               * GID_TOOT_SEND_BUTTON, which fires UPLOAD_MEDIA
+                               * first when an attachment is set and only sends
+                               * this request once that reply's media id is in
+                               * hand. */
+    ULONG fs3ep_MediaCount;
 } FS3ENetPostStatusReq;
 
 FS3ENetPostStatusReq *FS3ENetPostStatusReq_Alloc(
     const char *apiBaseUrl, const char *accessToken,
     const char *content, const char *visibility, const char *spoiler,
     const char *inReplyToId, const char *quoteApprovalPolicy,
-    const char *quotedStatusId);
+    const char *quotedStatusId,
+    const char *const *mediaIds, ULONG mediaCount);
 
 typedef struct FS3ENetPostStatusReply {
     char *fs3ep_StatusId; /* new status id string */
 } FS3ENetPostStatusReply;
+
+/*
+ * FS3ENETQ_UPLOAD_MEDIA — POST /api/v2/media, upload one image/audio/video
+ * file as the attachment for a toot about to be composed. fs3eum_FilePath is
+ * a local Amiga path (e.g. straight from a GETFILE gadget's GETFILE_File +
+ * GETFILE_Drawer) -- read from disk by the network process itself, off the
+ * GUI task, same reasoning FS3ENETQ_FETCH_IMAGE keeps file I/O off the GUI
+ * task. fs3eum_MimeType is derived by the caller from the file's extension
+ * (see FS3ETOOT_ATTACH_MEDIA_PATTERN in fs3etootview.c for the accepted
+ * list) since Mastodon's media endpoint needs a real Content-Type, not a
+ * guess made server-side. On FS3ENETR_OK, fs3em_Data is replaced with an
+ * FS3ENetUploadMediaReply carrying the new attachment's id.
+ *
+ * No progress reporting (unlike FS3ENETQ_FETCH_IMAGE's chunked download) --
+ * this is one blocking FS3EHttp_Post() of the whole file, same "single
+ * exchange, no timeout" tradeoff FS3ENETQ_POST_STATUS/LOGIN_FINISH already
+ * accept (see FS3EHTTP_TIMEOUT_SECS's comment in fs3enet_http.c). The GUI
+ * caps the file size before ever sending this (see
+ * FS3ENET_UPLOAD_MAX_BYTES) specifically so this exchange stays bounded in
+ * practice.
+ */
+typedef struct FS3ENetUploadMediaReq {
+    char *fs3eum_ApiBaseUrl;
+    char *fs3eum_AccessToken;
+    char *fs3eum_FilePath; /* local path to read and upload */
+    char *fs3eum_MimeType; /* e.g. "image/jpeg" -- see FS3ETootAttachMimeType() */
+} FS3ENetUploadMediaReq;
+
+FS3ENetUploadMediaReq *FS3ENetUploadMediaReq_Alloc(
+    const char *apiBaseUrl, const char *accessToken,
+    const char *filePath, const char *mimeType);
+
+typedef struct FS3ENetUploadMediaReply {
+    char *fs3eum_MediaId; /* new media attachment id string */
+} FS3ENetUploadMediaReply;
 
 /*
  * FS3ENETQ_EDIT_STATUS — PUT /api/v1/statuses/:id, edit an existing status'

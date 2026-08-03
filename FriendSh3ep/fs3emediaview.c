@@ -12,9 +12,23 @@
 
 #include "fs3emediaview.h"
 #include "fs3eboopsimainwindow.h"  /* extern CurrentMainScreen */
-
+#include "fs3eboopsimessage.h"
+#include <intuition/icclass.h>
 #include <string.h>
 #include <stdio.h>
+
+/* <proto/mpega.h> does NOT compile with this toolchain (unconditionally
+ * #includes pragmas/mpega_pragmas.h, which it doesn't ship) -- same issue
+ * and same fix fs3eaudio.h/.c already document/use: clib/mpega_protos.h +
+ * inline/mpega.h directly. This file doesn't call mpega.library itself
+ * (all decode happens in fs3eaudio.c's own process); MPEGA_STREAM's fields
+ * are read here only for duration/format info tied to the currently shown
+ * audio attachment. */
+#include <libraries/mpega.h>
+#include <clib/mpega_protos.h>
+#include <inline/mpega.h>
+
+#include "fs3eaudio.h"
 
 #include <exec/memory.h>
 #include <proto/exec.h>
@@ -38,11 +52,17 @@
 #include <proto/window.h>
 #include <classes/window.h>
 
+#include <gadgets/tapedeck.h>
+
+#include <proto/slider.h>
+#include <gadgets/slider.h>
+
 #include <libraries/gadtools.h>
 #include <libraries/asl.h>
 
 #include "compilers.h"
 #include "bdbprintf.h"
+#include "fs3egadgetid.h"
 
 /* Declared in friendsh3ep.c; fs3eaction.c already calls this the same way. */
 extern BOOL FS3EApp_NetSend(ULONG type, APTR data, ULONG dataLen);
@@ -318,21 +338,21 @@ static BOOL mediaview_ensure_window(FS3EMediaView *mv)
         return FALSE;
     }
 
-    /* picGadget's GM_DOMAIN result changes every time a differently-sized
-     * picture loads -- CHILD_CacheDomain FALSE tells layout.gadget to
-     * re-query it on every relayout instead of trusting its first answer
-     * forever (see layout_gc.doc's CHILD_CacheDomain entry). */
-    mv->layout = (Object *)NewObject(LAYOUT_GetClass(), NULL,
-        LAYOUT_Orientation,  LAYOUT_ORIENT_VERT,
-        LAYOUT_BevelStyle,   BVS_NONE,
-        LAYOUT_SpaceOuter,   FALSE,
-        LAYOUT_SpaceInner,   FALSE,
-        LAYOUT_AddChild,     (ULONG)mv->picGadget,
-            CHILD_WeightedWidth,  0,
-            CHILD_WeightedHeight, 0,
-            CHILD_CacheDomain,    FALSE,
+    /* Stock tapedeck.gadget class, looked up by public name -- no
+     * TAPEDECK_GetClass() macro ships with this NDK (see TapeDeckBase's
+     * comment in friendsh3ep.c). TDECK_Tape TRUE selects the classic 5-
+     * button tape controls (rewind/play/fast-forward/stop/pause) over the
+     * 4-button animation-frame variant. WMHI_GADGETUP drives play/pause/stop
+     * for audio via FS3EMediaView_TapeDeckPressed(); rewind/forward/begin/
+     * frame/end are still unimplemented no-ops there, and video playback
+     * isn't wired at all yet. */
+    mv->tapeDeckGadget = (Object *)NewObject(NULL, "tapedeck.gadget",
+        GA_ID,        GID_MEDIAVIEW_TAPEDECK,
+        GA_RelVerify, TRUE,
+        TDECK_Tape,   TRUE,
         TAG_END);
-    if (!mv->layout) {
+
+    if (!mv->tapeDeckGadget) {
         DisposeObject(mv->picGadget); /* not yet attached -- plain dispose is fine */
         mv->picGadget = NULL;
         bdbprintf_freeclass("FS3EMediaPicClass", mv->picClass);
@@ -341,21 +361,105 @@ static BOOL mediaview_ensure_window(FS3EMediaView *mv)
         return FALSE;
     }
 
+    /* Stock slider.gadget class, SLIDER_GetClass() -- unlike tapedeck.gadget
+     * this one DOES export a real GetClass() stub (see SliderBase's comment
+     * in friendsh3ep.c), same convention as layout/button/chooser/getfile.
+     * Horizontal, to the right of tapeDeckGadget in transportRow below.
+     * Level/Min/Max are placeholders (0..100) until this is wired to actual
+     * playback position -- see GID_MEDIAVIEW_SLIDER. */
+    mv->sliderGadget = (Object *)NewObject(SLIDER_GetClass(), NULL,
+        GA_ID,              GID_MEDIAVIEW_SLIDER,
+        GA_RelVerify,        TRUE,
+        SLIDER_Orientation,  SLIDER_HORIZONTAL,
+        SLIDER_Min,          0,
+        SLIDER_Max,          100,
+        SLIDER_Level,        0,
+        TAG_END);
+    if (!mv->sliderGadget) {
+        DisposeObject(mv->tapeDeckGadget); /* not yet attached -- plain dispose is fine */
+        mv->tapeDeckGadget = NULL;
+        DisposeObject(mv->picGadget);
+        mv->picGadget = NULL;
+        bdbprintf_freeclass("FS3EMediaPicClass", mv->picClass);
+        FreeClass(mv->picClass);
+        mv->picClass = NULL;
+        return FALSE;
+    }
+
+    /* transportRow: tapeDeckGadget (its own natural/minimum width) then
+     * sliderGadget filling the rest of the row -- first line of the outer
+     * vertical layout, above picGadget. */
+    {
+        Object *transportRow = (Object *)NewObject(LAYOUT_GetClass(), NULL,
+            LAYOUT_Orientation,  LAYOUT_ORIENT_HORIZ,
+            LAYOUT_BevelStyle,   BVS_NONE,
+            LAYOUT_SpaceOuter,   FALSE,
+            LAYOUT_SpaceInner,   FALSE,
+            LAYOUT_AddChild,     (ULONG)mv->tapeDeckGadget,
+                CHILD_WeightedWidth,  0,
+              //  CHILD_WeightedHeight, 0,
+            LAYOUT_AddChild,     (ULONG)mv->sliderGadget,
+                CHILD_WeightedWidth,  1,
+               // CHILD_WeightedHeight, 0,
+            TAG_END);
+        if (!transportRow) {
+            DisposeObject(mv->sliderGadget);
+            mv->sliderGadget = NULL;
+            DisposeObject(mv->tapeDeckGadget);
+            mv->tapeDeckGadget = NULL;
+            DisposeObject(mv->picGadget);
+            mv->picGadget = NULL;
+            bdbprintf_freeclass("FS3EMediaPicClass", mv->picClass);
+            FreeClass(mv->picClass);
+            mv->picClass = NULL;
+            return FALSE;
+        }
+
+        /* picGadget's GM_DOMAIN result changes every time a differently-
+         * sized picture loads -- CHILD_CacheDomain FALSE tells layout.gadget
+         * to re-query it on every relayout instead of trusting its first
+         * answer forever (see layout_gc.doc's CHILD_CacheDomain entry). */
+        mv->layout = (Object *)NewObject(LAYOUT_GetClass(), NULL,
+            LAYOUT_Orientation,  LAYOUT_ORIENT_VERT,
+            LAYOUT_BevelStyle,   BVS_NONE,
+            LAYOUT_SpaceOuter,   FALSE,
+            LAYOUT_SpaceInner,   FALSE,
+            LAYOUT_AddChild,     (ULONG)transportRow,
+                CHILD_WeightedHeight, 0,
+            LAYOUT_AddChild,     (ULONG)mv->picGadget,
+                CHILD_WeightedHeight, 0,
+                CHILD_CacheDomain,    FALSE,
+            TAG_END);
+        if (!mv->layout) {
+            DisposeObject(transportRow); /* cascades: disposes tapeDeckGadget/sliderGadget too */
+            mv->tapeDeckGadget = NULL;
+            mv->sliderGadget   = NULL;
+            DisposeObject(mv->picGadget);
+            mv->picGadget = NULL;
+            bdbprintf_freeclass("FS3EMediaPicClass", mv->picClass);
+            FreeClass(mv->picClass);
+            mv->picClass = NULL;
+            return FALSE;
+        }
+    }
+
     mv->windowObj = (Object *)NewObject(WINDOW_GetClass(), NULL,
         WA_Left,            mv->left > 0 ? mv->left : 100,
         WA_Top,             mv->top  > 0 ? mv->top  : 60,
         WA_InnerWidth,      FS3EMV_PLACEHOLDER_W,
         WA_InnerHeight,     FS3EMV_PLACEHOLDER_H,
         WA_Title,           (ULONG)FS3EMV_TITLE,
-        WA_IDCMP,           IDCMP_CLOSEWINDOW | IDCMP_MENUPICK,
+        WA_IDCMP,           IDCMP_CLOSEWINDOW | IDCMP_MENUPICK | IDCMP_GADGETUP,
         WA_Flags,           WFLG_DRAGBAR | WFLG_DEPTHGADGET | WFLG_CLOSEGADGET |
                             WFLG_ACTIVATE | WFLG_SMART_REFRESH,
         WINDOW_ParentGroup, (ULONG)mv->layout,
         TAG_END);
     if (!mv->windowObj) {
-        DisposeObject(mv->layout);   /* cascades: disposes picGadget too */
-        mv->layout    = NULL;
-        mv->picGadget = NULL;
+        DisposeObject(mv->layout);   /* cascades: disposes transportRow/tapeDeckGadget/sliderGadget/picGadget too */
+        mv->layout         = NULL;
+        mv->tapeDeckGadget = NULL;
+        mv->sliderGadget   = NULL;
+        mv->picGadget      = NULL;
         bdbprintf_freeclass("FS3EMediaPicClass", mv->picClass);
         FreeClass(mv->picClass);
         mv->picClass = NULL;
@@ -420,6 +524,7 @@ static void mediaview_dispose_menu(FS3EMediaView *mv)
 static void mediaview_build_default_name(FS3EMediaView *mv, char *out, ULONG outSize)
 {
     char sanitized[128];
+    char extBuf[16];
     const char *base;
     const char *ext;
 
@@ -434,17 +539,32 @@ static void mediaview_build_default_name(FS3EMediaView *mv, char *out, ULONG out
         }
         sanitized[i] = '\0';
         base = sanitized;
+    } else if (mv->isAudio) {
+        base = (const char *)FilePart((STRPTR)(mv->audioLocalPath[0] ? mv->audioLocalPath : "audio"));
     } else {
         base = (const char *)FilePart((STRPTR)(mv->image.filePath ? mv->image.filePath : "media"));
     }
 
-    switch (BmImage_SniffFormat(mv->image.filePath)) {
-        case BMFMT_PNG:  ext = ".png";  break;
-        case BMFMT_JPEG: ext = ".jpg";  break;
-        case BMFMT_GIF:  ext = ".gif";  break;
-        case BMFMT_WEBP: ext = ".webp"; break;
-        case BMFMT_BMP:  ext = ".bmp";  break;
-        default:         ext = ".dat";  break;
+    if (mv->isAudio) {
+        /* Cache files are hash-named, no extension -- take it from the
+         * attachment URL instead (same source FS3EMediaView_ShowAudioUrl's
+         * backend detection already reads). */
+        const char *dot = strrchr(mv->audioKey, '.');
+        if (dot && strlen(dot) < sizeof(extBuf)) {
+            strcpy(extBuf, dot);
+            ext = extBuf;
+        } else {
+            ext = ".dat";
+        }
+    } else {
+        switch (BmImage_SniffFormat(mv->image.filePath)) {
+            case BMFMT_PNG:  ext = ".png";  break;
+            case BMFMT_JPEG: ext = ".jpg";  break;
+            case BMFMT_GIF:  ext = ".gif";  break;
+            case BMFMT_WEBP: ext = ".webp"; break;
+            case BMFMT_BMP:  ext = ".bmp";  break;
+            default:         ext = ".dat";  break;
+        }
     }
 
     snprintf(out, (size_t)outSize, "%s%s", base, ext);
@@ -491,7 +611,11 @@ static void mediaview_save_media(FS3EMediaView *mv)
     char defaultName[160];
 
     if (!mv->window || !AslBase) return;
-    if (!BmImage_IsLoaded(&mv->image) || !mv->image.filePath) return;
+    if (mv->isAudio) {
+        if (!mv->audioLocalPath[0]) return;
+    } else {
+        if (!BmImage_IsLoaded(&mv->image) || !mv->image.filePath) return;
+    }
 
     mediaview_build_default_name(mv, defaultName, sizeof(defaultName));
 
@@ -515,10 +639,28 @@ static void mediaview_save_media(FS3EMediaView *mv)
         snprintf(destPath, sizeof(destPath), "%s%s%s",
                  req->fr_Drawer, needSlash ? "/" : "", req->fr_File);
 
-        mediaview_copy_file(mv->image.filePath, destPath);
+        mediaview_copy_file(mv->isAudio ? mv->audioLocalPath : mv->image.filePath, destPath);
     }
 
     FreeAslRequest(req);
+}
+
+/* Stops whatever audio attachment mv is currently playing/paused (if any)
+ * and clears the audio-mode state back to inert -- shared by Dispose(),
+ * ShowUrl() (switching to a picture) and ShowAudioUrl() (switching to a
+ * different audio attachment). Leaves audioRequestPort/audioReplyPort
+ * as-is; they're either about to be overwritten by ShowAudioUrl, or
+ * harmless-but-unused while isAudio is FALSE otherwise. */
+static void mediaview_stop_audio(FS3EMediaView *mv)
+{
+    if (mv->isAudio && (mv->audioPlaying || mv->audioPaused))
+        FS3EAudio_PlayStop(mv->audioRequestPort, mv->audioReplyPort);
+    mv->isAudio          = FALSE;
+    mv->audioBackend     = FS3EMV_AUDIO_NONE;
+    mv->audioPlaying     = FALSE;
+    mv->audioPaused      = FALSE;
+    mv->audioLocalPath[0] = '\0';
+    mv->audioKey[0]      = '\0';
 }
 
 void FS3EMediaView_Init(FS3EMediaView *mv)
@@ -531,13 +673,18 @@ void FS3EMediaView_Dispose(FS3EMediaView *mv)
 {
     if (!mv) return;
 
+    mediaview_stop_audio(mv);
+
     if (mv->windowObj) {
         FS3EMediaView_Close(mv);
-        /* Cascades: layout -> picGadget. */
+        /* Cascades: layout -> transportRow -> tapeDeckGadget, sliderGadget;
+         * layout -> picGadget. */
         DisposeObject(mv->windowObj);
-        mv->windowObj = NULL;
-        mv->layout    = NULL;
-        mv->picGadget = NULL;
+        mv->windowObj      = NULL;
+        mv->layout         = NULL;
+        mv->tapeDeckGadget = NULL;
+        mv->sliderGadget   = NULL;
+        mv->picGadget      = NULL;
     }
 
     if (mv->picClass) {
@@ -548,6 +695,22 @@ void FS3EMediaView_Dispose(FS3EMediaView *mv)
 
     BmImage_Free(&mv->image);
     if (mv->pendingUrl) { FreeVec(mv->pendingUrl); mv->pendingUrl = NULL; }
+}
+
+/* Keeps tapedeck.gadget's two independent attributes -- TDECK_Mode (the
+ * Play/Stop radio) and TDECK_Paused (a free-standing toggle, unrelated to
+ * Mode) -- in sync with mv->audioPlaying/mv->audioPaused. Called after
+ * every state change that isn't itself a click the gadget already applied
+ * to its own attributes (a new track loading, a PLAY/STOP/PAUSE ack,
+ * FINISHED, ERROR), so the gadget never shows stale state left over from
+ * a previous track. */
+static void mediaview_sync_tapedeck(FS3EMediaView *mv)
+{
+    if (!mv->tapeDeckGadget || !mv->window) return;
+    SetGadgetAttrs((struct Gadget *)mv->tapeDeckGadget, mv->window, NULL,
+        TDECK_Mode,   mv->audioPlaying ? BUT_PLAY : BUT_STOP,
+        TDECK_Paused, (ULONG)mv->audioPaused,
+        TAG_END);
 }
 
 void FS3EMediaView_ShowUrl(FS3EMediaView *mv, const char *url, const char *posterAcct)
@@ -580,6 +743,8 @@ void FS3EMediaView_ShowUrl(FS3EMediaView *mv, const char *url, const char *poste
         mv->poster[0] = '\0';
     }
 
+    mediaview_stop_audio(mv);
+
     if (mv->pendingUrl) { FreeVec(mv->pendingUrl); mv->pendingUrl = NULL; }
     mv->pendingUrl = mediaview_strdup(url);
     mv->progressBytesSoFar = 0;
@@ -596,6 +761,117 @@ void FS3EMediaView_ShowUrl(FS3EMediaView *mv, const char *url, const char *poste
     if (req) FS3EApp_NetSend(FS3ENETQ_FETCH_IMAGE, req, sizeof(*req));
 }
 
+/* Extension -> playback backend, matched against url (not the cache's
+ * hash-named local file, which carries no extension) -- see
+ * FS3EMVAudioBackend's doc comment in fs3emediaview.h for why only
+ * FS3EMV_AUDIO_MPEGA is actually playable today. */
+static ULONG mediaview_audio_backend_for_url(const char *url)
+{
+    const char *dot = url ? strrchr(url, '.') : NULL;
+    if (!dot) return FS3EMV_AUDIO_UNSUPPORTED;
+    if (Stricmp((STRPTR)dot, (STRPTR)".mp3") == 0) return FS3EMV_AUDIO_MPEGA;
+    return FS3EMV_AUDIO_UNSUPPORTED; /* .wav, .ogg, anything else */
+}
+
+/* FS3EMediaView_OnFetchReply()'s audio branch -- the fetched file is now
+ * on disk at reply->fs3enf_LocalPath; decide a backend from the URL
+ * (mv->audioKey) and, for MPEGA, hand the local path to fs3eaudio.c. */
+static void mediaview_start_audio(FS3EMediaView *mv, ULONG result,
+                                   const FS3ENetFetchImageReply *reply)
+{
+    if (result != FS3ENETR_OK || !reply || !reply->fs3enf_LocalPath) {
+        mediaview_push_picture(mv, "Couldn't load audio.");
+        return;
+    }
+
+    strncpy(mv->audioLocalPath, reply->fs3enf_LocalPath, sizeof(mv->audioLocalPath) - 1);
+    mv->audioLocalPath[sizeof(mv->audioLocalPath) - 1] = '\0';
+
+    mv->audioBackend = mediaview_audio_backend_for_url(mv->audioKey);
+
+    if (mv->audioBackend == FS3EMV_AUDIO_MPEGA) {
+        /* FALSE here just means the request couldn't even be queued (no
+         * audio process/port) -- a missing mpega.library/ahi.device
+         * instead fails asynchronously, handled by
+         * FS3EMediaView_OnAudioReply()'s FS3EAUDIOR_ERROR case. */
+        if (FS3EAudio_Play(mv->audioRequestPort, mv->audioReplyPort,
+                            mv->audioLocalPath, mv->audioKey))
+        {
+            mediaview_push_picture(mv, "Starting playback...");
+        } else {
+            mediaview_push_picture(mv, "Couldn't start playback.");
+        }
+    } else {
+        mediaview_push_picture(mv, "This audio format isn't supported yet.");
+    }
+
+    /* fs3enf_IsTemp can't happen here -- FS3E_CACHE_SUBDIR_AUDIO is always
+     * fetched keepOriginal=TRUE (see ShowAudioUrl), same reasoning
+     * FS3EMediaView_OnFetchReply's picture branch already documents. */
+}
+
+void FS3EMediaView_ShowAudioUrl(FS3EMediaView *mv, const char *url,
+                                 const char *posterAcct,
+                                 struct MsgPort *audioRequestPort,
+                                 struct MsgPort *audioReplyPort)
+{
+    FS3ENetFetchImageReq *req;
+
+    if (!mv || !url || !url[0]) return;
+
+    if (!mv->windowObj) {
+        if (!CurrentMainScreen) return;
+        if (!mediaview_ensure_window(mv)) return;
+    }
+
+    if (!mv->window) {
+        if (CurrentMainScreen)
+            SetAttrs(mv->windowObj, WA_CustomScreen, (ULONG)CurrentMainScreen, TAG_END);
+
+        mv->window = (struct Window *)DoMethod(mv->windowObj, WM_OPEN, NULL);
+        if (mv->window)
+            mediaview_create_menu(mv);
+    } else {
+        WindowToFront(mv->window);
+        ActivateWindow(mv->window);
+    }
+
+    if (posterAcct && posterAcct[0]) {
+        strncpy(mv->poster, posterAcct, sizeof(mv->poster) - 1);
+        mv->poster[sizeof(mv->poster) - 1] = '\0';
+    } else {
+        mv->poster[0] = '\0';
+    }
+
+    /* Stop whatever audio attachment was previously showing in this same
+     * window before switching to a new one -- ShowUrl()'s picture path
+     * uses the same helper for the reverse direction. */
+    mediaview_stop_audio(mv);
+    BmImage_Free(&mv->image);
+
+    if (mv->pendingUrl) { FreeVec(mv->pendingUrl); mv->pendingUrl = NULL; }
+    mv->pendingUrl = mediaview_strdup(url);
+    mv->progressBytesSoFar = 0;
+    mv->progressTotalBytes = 0;
+
+    mv->isAudio           = TRUE;
+    mv->audioRequestPort  = audioRequestPort;
+    mv->audioReplyPort    = audioReplyPort;
+    strncpy(mv->audioKey, url, sizeof(mv->audioKey) - 1);
+    mv->audioKey[sizeof(mv->audioKey) - 1] = '\0';
+
+    mv->loading = TRUE;
+    mediaview_push_picture(mv, "Loading audio...");
+    mediaview_sync_tapedeck(mv);
+
+    /* Own subdir, always kept -- see FS3E_CACHE_SUBDIR_AUDIO's doc comment
+     * in fs3enet.h. No progress pings (FALSE) -- unlike a big picture
+     * download, wiring FS3EMediaView_OnFetchProgress for this path too
+     * isn't worth it until audio files turn out to matter here. */
+    req = FS3ENetFetchImageReq_Alloc(url, url, FS3E_CACHE_SUBDIR_AUDIO, TRUE, FALSE);
+    if (req) FS3EApp_NetSend(FS3ENETQ_FETCH_IMAGE, req, sizeof(*req));
+}
+
 void FS3EMediaView_OnFetchReply(FS3EMediaView *mv, ULONG result,
                                  const FS3ENetFetchImageReply *reply)
 {
@@ -605,6 +881,11 @@ void FS3EMediaView_OnFetchReply(FS3EMediaView *mv, ULONG result,
     FreeVec(mv->pendingUrl);
     mv->pendingUrl = NULL;
     mv->loading    = FALSE;
+
+    if (mv->isAudio) {
+        mediaview_start_audio(mv, result, reply);
+        return;
+    }
 
     if (result == FS3ENETR_OK && reply->fs3enf_LocalPath) {
         BmImage_Free(&mv->image);
@@ -639,9 +920,162 @@ void FS3EMediaView_OnFetchProgress(FS3EMediaView *mv, const char *key,
     mv->progressTotalBytes = totalBytes;
 }
 
+void FS3EMediaView_OnAudioReply(FS3EMediaView *mv, const FS3EAudioMessage *msg)
+{
+    if (!mv || !mv->isAudio || !msg) return;
+    if (strcmp(msg->fs3eam_Key, mv->audioKey) != 0) return;
+
+    switch (msg->fs3eam_Result) {
+        case FS3EAUDIOR_OK:
+            switch (msg->fs3eam_Type) {
+                case FS3EAUDIOQ_PLAY:
+                    mv->audioPlaying = TRUE;
+                    mv->audioPaused  = FALSE;
+                    mediaview_push_picture(mv, "Playing...");
+                    mediaview_sync_tapedeck(mv);
+                    break;
+                case FS3EAUDIOQ_STOP:
+                    mv->audioPlaying = FALSE;
+                    mv->audioPaused  = FALSE;
+                    mediaview_push_picture(mv, "Stopped.");
+                    mediaview_sync_tapedeck(mv);
+                    break;
+                case FS3EAUDIOQ_PAUSE:
+                    /* mv->audioPaused is already accurate -- set optimistically
+                     * by FS3EMediaView_TapeDeckPressed() at click time, not
+                     * from this ack. This ack can arrive late enough for a
+                     * later click to have already moved mv->audioPaused on
+                     * again; blindly trusting fs3eam_Pause (an echo of
+                     * whatever THIS particular request asked for) here would
+                     * stomp that newer state with a stale one. */
+                    mediaview_push_picture(mv, mv->audioPaused ? "Paused." : "Playing...");
+                    mediaview_sync_tapedeck(mv);
+                    break;
+                default:
+                    break;
+            }
+            break;
+
+        case FS3EAUDIOR_ERROR:
+            mv->audioPlaying = FALSE;
+            mv->audioPaused  = FALSE;
+            /* mv->audioLocalPath is already filled in (set before this
+             * track was ever handed to FS3EAudio_Play(), see
+             * mediaview_start_audio()) and stays that way -- "Save
+             * Media..." still works even though playback failed, same as
+             * a picture that failed to decode still lets you save the
+             * original bytes. */
+            mediaview_push_picture(mv, mv->audioBackend == FS3EMV_AUDIO_MPEGA
+                ? "Needs AHI & mpega.library to play mp3."
+                : "Couldn't play this audio.");
+            mediaview_sync_tapedeck(mv);
+            break;
+
+        case FS3EAUDIOR_FINISHED:
+            mv->audioPlaying = FALSE;
+            mv->audioPaused  = FALSE;
+            mediaview_push_picture(mv, "Finished.");
+            mediaview_sync_tapedeck(mv);
+            if (mv->sliderGadget)
+                SetGadgetAttrs((struct Gadget *)mv->sliderGadget, mv->window, NULL,
+                    SLIDER_Level, 0,
+                    TAG_END);
+            break;
+
+        case FS3EAUDIOR_PROGRESS: {
+            ULONG level;
+            if (!mv->sliderGadget || msg->fs3eam_TotalMs == 0) break;
+            level = (msg->fs3eam_ElapsedMs * 100) / msg->fs3eam_TotalMs;
+            if (level > 100) level = 100;
+            SetGadgetAttrs((struct Gadget *)mv->sliderGadget, mv->window, NULL,
+                SLIDER_Level, level,
+                TAG_END);
+            break;
+        }
+
+        default:
+            break;
+    }
+}
+
+/* GID_MEDIAVIEW_TAPEDECK's WMHI_GADGETUP handler. tapedeck.gadget exposes
+ * two independent attributes: TDECK_Mode (Play/Stop, mutually exclusive --
+ * the gadget itself updates this on a Play or Stop click before GADGETUP
+ * fires) and TDECK_Paused (a free-standing toggle the gadget flips on its
+ * own on a Pause click, unrelated to Mode -- pressing Pause does NOT
+ * change Mode). Since a Pause click never shows up in Mode, it's detected
+ * here by noticing TDECK_Paused no longer matches mv->audioPaused (the
+ * last value we know is actually true, kept in sync via
+ * mediaview_sync_tapedeck()). A no-op for anything but the currently-
+ * showing MPEGA audio attachment -- pictures don't have a tapedeck to
+ * press, and unsupported formats (.wav/.ogg) have nothing to command yet. */
+void FS3EMediaView_TapeDeckPressed(FS3EMediaView *mv)
+{
+    ULONG mode;
+    ULONG paused = FALSE;
+
+    if (!mv || !mv->isAudio || !mv->tapeDeckGadget) return;
+    if (mv->audioBackend != FS3EMV_AUDIO_MPEGA) return;
+
+    if (!GetAttr(TDECK_Mode, mv->tapeDeckGadget, &mode)) return;
+    GetAttr(TDECK_Paused, mv->tapeDeckGadget, &paused);
+
+    if ((BOOL)paused != mv->audioPaused) {
+        BOOL hadSomethingToPause = mv->audioPlaying || mv->audioPaused;
+
+        /* Optimistic -- set mv->audioPaused NOW rather than waiting for the
+         * async ack: fs3eaudio.c's process can take up to a buffer's worth
+         * of playback to even see this request (it may be blocked in
+         * WaitIO), so a quick second click can land before the first one's
+         * ack ever arrives. Waiting for the ack left mv->audioPaused stale
+         * across that window, which made this exact comparison see "no
+         * change" on the second click and fall through to BUT_PLAY's
+         * fresh-restart branch below instead of resuming. */
+        mv->audioPaused = hadSomethingToPause ? (BOOL)paused : FALSE;
+
+        if (hadSomethingToPause)
+            FS3EAudio_Pause(mv->audioRequestPort, mv->audioReplyPort, (BOOL)paused);
+        else
+            mediaview_sync_tapedeck(mv); /* nothing to pause -- snap the gadget back */
+        return;
+    }
+
+    switch (mode) {
+        case BUT_PLAY:
+            /* Always (re)start unless resuming from pause -- never gated
+             * on mv->audioPlaying, which can still be stale (a Stop just
+             * sent hasn't been acked yet): a fresh PLAY request is safe
+             * regardless, fs3eaudio.c replaces whatever was playing. */
+            if (mv->audioPaused)
+                FS3EAudio_Pause(mv->audioRequestPort, mv->audioReplyPort, FALSE);
+            else
+                FS3EAudio_Play(mv->audioRequestPort, mv->audioReplyPort,
+                                mv->audioLocalPath, mv->audioKey);
+            break;
+
+        case BUT_STOP:
+            /* Unconditional, same reasoning as BUT_PLAY above -- always
+             * safe, fs3eaudio.c's STOP handler is a no-op if nothing is
+             * loaded. */
+            FS3EAudio_PlayStop(mv->audioRequestPort, mv->audioReplyPort);
+            break;
+
+        default:
+            /* rewind/forward/begin/frame/end -- unimplemented, no-op. */
+            break;
+    }
+}
+
 void FS3EMediaView_Close(FS3EMediaView *mv)
 {
     if (!mv || !mv->windowObj || !mv->window) return;
+
+    /* Closing the window with a track still playing/paused would otherwise
+     * leave fs3eaudio.c happily streaming to a window that's no longer
+     * there to show its state -- same "stop whatever the window was doing"
+     * reasoning ShowUrl()/ShowAudioUrl() already apply when switching to a
+     * different attachment. */
+    mediaview_stop_audio(mv);
 
     mediaview_dispose_menu(mv);
 
@@ -666,6 +1100,13 @@ BOOL FS3EMediaView_HandleInput(FS3EMediaView *mv)
             case WMHI_CLOSEWINDOW:
                 FS3EMediaView_Close(mv);
                 return TRUE;
+
+            case WMHI_GADGETUP: {
+                ULONG gadId = result & WMHI_GADGETMASK;
+                if (gadId == GID_MEDIAVIEW_TAPEDECK)
+                    FS3EMediaView_TapeDeckPressed(mv);
+                break;
+            }
 
             case WMHI_MENUPICK: {
                 /* Standard RKM chained-selection walk (right-mouse drag can

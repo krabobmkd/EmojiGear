@@ -302,6 +302,22 @@
  * an empty timeline). See Action_TimelineCopyText in fs3eaction.c. */
 #define TTIMELINE_CopySelectedText      (TTIMELINE_Base + 38)
 
+/* [G,S] BOOL: TRUE = a hot-spot's action (link click, avatar, image,
+ * Reply/Boost/Fave button, etc. -- see ttl_activate_hotspot in
+ * fs3etoottimeline_input.c) only fires on the SECOND click landing on the
+ * same hot-spot within the system's configured double-click timing (see
+ * DoubleClick(), intuition.library) -- a lone click just arms a pending
+ * candidate and does nothing yet. FALSE (default) = the original
+ * single-click behavior: any qualifying click (matched down/up hot-spot,
+ * not a scroll-drag) fires immediately. Either way, distinguishing a
+ * click from a drag-scroll (TTL_CLICK_SLOP) is unaffected -- this only
+ * gates what happens once something has already been decided to be a
+ * click. "Same hot-spot" across the two clicks is matched by type + the
+ * hot-spot's data bytes + owning post id, not by TTLPost/hs->data
+ * pointers -- see TTLData.pendingClick* in fs3etoottimeline_private.h for
+ * why (both can be freed/reused between the two clicks). */
+#define TTIMELINE_ActionOnDoubleClick   (TTIMELINE_Base + 41)
+
 
 /* ------------------------------------------------------------------ */
 /* Post content descriptor  (passed via TTIMELINE_AddPost)             */
@@ -714,6 +730,13 @@ typedef struct TTLProfileFollowUpdate {
                                  * SAME discussion as TTL_HOT_THREAD would, but via
                                  * FS3EApp_OpenDiscussion(hotSpotId, TRUE) -- ancestors AND
                                  * descendants, the whole thread, not just this post's replies. */
+#define TTL_HOT_MESSAGE      23 /* profile header's "Message" button -- same row as
+                                 * TTL_HOT_FOLLOW (Follow/Unfollow), right-aligned instead of
+                                 * left; shown/hidden under the same condition (hidden on a
+                                 * self-profile). data/postId are NULL -- the handler reads
+                                 * app->searchProfileAcct app-side (same as TTL_HOT_FOLLOW
+                                 * reads app->searchProfileAccountId) and opens the compose
+                                 * window with FS3ETOOT_KIND_MESSAGE. */
 
 /* Opaque handle; cast to TTLHotSpot* from private header if needed */
 typedef struct TTLHotSpot TTLHotSpot;

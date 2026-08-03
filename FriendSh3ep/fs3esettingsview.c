@@ -39,6 +39,9 @@
 #include <proto/chooser.h>
 #include <gadgets/chooser.h>
 
+#include <proto/clicktab.h>
+#include <gadgets/clicktab.h>
+
 #include <dos/dos.h>
 
 #include "friendsh3ep.h"
@@ -52,6 +55,7 @@
 extern struct Library *GetFileBase;
 extern struct Library *IntegerBase;
 extern struct Library *ChooserBase;
+extern struct Library *ClickTabBase;
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
@@ -117,6 +121,11 @@ BOOL FS3ESettingsView_Create(FS3ESettingsView *sv, const char *title)
     Object *serverGroup;
     Object *thumbnailsGroup;
     Object *playbackGroup;
+    Object *urlLinkGroup;
+    Object *userExpPage;
+    Object *pathsAndCachePage;
+    Object *thumbnailsSpacer;
+    Object *pathsCacheSpacer;
     Object *cachePathLabel;
     Object *userDataPathLabel;
     Object *maxCacheSizeLabel;
@@ -124,10 +133,15 @@ BOOL FS3ESettingsView_Create(FS3ESettingsView *sv, const char *title)
     Object *keepBigUserIconsLabel;
     Object *keepBigThumbnailsLabel;
     Object *biggerThumbnailsLabel;
+    Object *minifyThumbnailsLabel;
     Object *scalingQualityLabel;
     Object *rgbDrawFunctionLabel;
     Object *playTootTimeLabel;
     Object *allowNextTootScrollLabel;
+    Object *urlLinkActionLabel;
+    Object *directDownloadArchivesLabel;
+    Object *downloadPathLabel;
+    Object *tootActionsDblClickLabel;
     ULONG   i;
 
     {
@@ -241,7 +255,7 @@ BOOL FS3ESettingsView_Create(FS3ESettingsView *sv, const char *title)
     serverGroup = NewObject(LAYOUT_GetClass(), NULL,
         LAYOUT_Orientation,   LAYOUT_ORIENT_VERT,
         LAYOUT_BevelStyle,    BVS_GROUP,
-        LAYOUT_Label,         (ULONG)LOC(MSG_SETTINGSV_SERVER_GROUP),
+        LAYOUT_Label,         (ULONG)LOC(MSG_SETTINGSV_SERVERCHECK_GROUP),
         LAYOUT_BackFill,      NULL,
         LAYOUT_SpaceOuter,    TRUE,
         LAYOUT_SpaceInner,    TRUE,
@@ -250,6 +264,85 @@ BOOL FS3ESettingsView_Create(FS3ESettingsView *sv, const char *title)
         CHILD_Label,          (ULONG)checkIntervalLabel,
         TAG_END);
     if (!serverGroup) return FALSE;
+
+    /* --- URL Link group --- */
+    NewList(&sv->urlLinkActionList);
+    {
+        static const ULONG urlLinkActionMsgIds[FS3E_URLLINK_COUNT] = {
+            MSG_SETTINGSV_URLLINK_ASK,
+            MSG_SETTINGSV_URLLINK_OPENURL,
+            MSG_SETTINGSV_URLLINK_CLIPBOARD,
+        };
+        for (i = 0; i < FS3E_URLLINK_COUNT; i++) {
+            struct Node *node = NULL;
+            if (ChooserBase)
+                node = AllocChooserNode(CNA_Text, (ULONG)LOC(urlLinkActionMsgIds[i]), TAG_END);
+            sv->urlLinkActionNodes[i] = node;
+            if (node) AddTail(&sv->urlLinkActionList, node);
+        }
+    }
+
+    sv->urlLinkActionChooser = NewObject(CHOOSER_GetClass(), NULL,
+        GA_ID,          GID_SETTINGSV_URLLINK_ACTION,
+        GA_RelVerify,   TRUE,
+        CHOOSER_PopUp,  TRUE,
+        CHOOSER_Labels, (ULONG)&sv->urlLinkActionList,
+        CHOOSER_Active, (ULONG)app->settings.urlLinkAction,
+        TAG_END);
+    if (!sv->urlLinkActionChooser) return FALSE;
+
+    urlLinkActionLabel = NewObject(LABEL_GetClass(), NULL,
+        LABEL_Text, (ULONG)LOC(MSG_SETTINGSV_URLLINK_ACTION), TAG_END);
+
+    sv->directDownloadArchivesCheck = NewObject(CHECKBOX_GetClass(), NULL,
+        GA_ID,        GID_SETTINGSV_DIRECT_DL_ARCHIVES,
+        GA_RelVerify, TRUE,
+        GA_Selected,  (ULONG)app->settings.directDownloadArchives,
+        TAG_END);
+    if (!sv->directDownloadArchivesCheck) return FALSE;
+
+    directDownloadArchivesLabel = NewObject(LABEL_GetClass(), NULL,
+        LABEL_Text, (ULONG)LOC(MSG_SETTINGSV_DIRECT_DL_ARCHIVES), TAG_END);
+
+    sv->downloadPathGF = makeDirGadget(GID_SETTINGSV_DOWNLOAD_PATH, app->settings.downloadPath);
+    if (!sv->downloadPathGF) return FALSE;
+
+    downloadPathLabel = NewObject(LABEL_GetClass(), NULL,
+        LABEL_Text, (ULONG)LOC(MSG_SETTINGSV_DOWNLOAD_PATH), TAG_END);
+
+    sv->tootActionsDblClickCheck = NewObject(CHECKBOX_GetClass(), NULL,
+        GA_ID,        GID_SETTINGSV_TOOT_ACTIONS_DBLCLICK,
+        GA_RelVerify, TRUE,
+        GA_Selected,  (ULONG)app->settings.tootActionsNeedDoubleClick,
+        TAG_END);
+    if (!sv->tootActionsDblClickCheck) return FALSE;
+
+    tootActionsDblClickLabel = NewObject(LABEL_GetClass(), NULL,
+        LABEL_Text, (ULONG)LOC(MSG_SETTINGSV_TOOT_ACTIONS_DBLCLICK), TAG_END);
+
+    urlLinkGroup = NewObject(LAYOUT_GetClass(), NULL,
+        LAYOUT_Orientation,   LAYOUT_ORIENT_VERT,
+        LAYOUT_BevelStyle,    BVS_GROUP,
+        LAYOUT_Label,         (ULONG)LOC(MSG_SETTINGSV_URLLINK_GROUP),
+        LAYOUT_BackFill,      NULL,
+        LAYOUT_SpaceOuter,    TRUE,
+        LAYOUT_SpaceInner,    TRUE,
+        LAYOUT_AddChild,      (ULONG)sv->urlLinkActionChooser,
+        CHILD_WeightedHeight, 0,
+        CHILD_Label,          (ULONG)urlLinkActionLabel,
+        LAYOUT_AddChild,      (ULONG)sv->directDownloadArchivesCheck,
+        CHILD_WeightedWidth,  1,
+        CHILD_WeightedHeight, 0,
+        CHILD_Label,          (ULONG)directDownloadArchivesLabel,
+        LAYOUT_AddChild,      (ULONG)sv->downloadPathGF,
+        CHILD_WeightedHeight, 0,
+        CHILD_Label,          (ULONG)downloadPathLabel,
+        LAYOUT_AddChild,      (ULONG)sv->tootActionsDblClickCheck,
+        CHILD_WeightedWidth,  1,
+        CHILD_WeightedHeight, 0,
+        CHILD_Label,          (ULONG)tootActionsDblClickLabel,
+        TAG_END);
+    if (!urlLinkGroup) return FALSE;
 
     /* --- Thumbnails & icons group --- */
     sv->biggerThumbnailsCheck = NewObject(CHECKBOX_GetClass(), NULL,
@@ -261,6 +354,16 @@ BOOL FS3ESettingsView_Create(FS3ESettingsView *sv, const char *title)
 
     biggerThumbnailsLabel = NewObject(LABEL_GetClass(), NULL,
         LABEL_Text, (ULONG)LOC(MSG_SETTINGSV_BIGGER_THUMBNAILS), TAG_END);
+
+    sv->minifyThumbnailsCheck = NewObject(CHECKBOX_GetClass(), NULL,
+        GA_ID,        GID_SETTINGSV_MINIFY_THUMBNAILS,
+        GA_RelVerify, TRUE,
+        GA_Selected,  (ULONG)app->settings.minifyThumbnails,
+        TAG_END);
+    if (!sv->minifyThumbnailsCheck) return FALSE;
+
+    minifyThumbnailsLabel = NewObject(LABEL_GetClass(), NULL,
+        LABEL_Text, (ULONG)LOC(MSG_SETTINGSV_MINIFY_THUMBNAILS), TAG_END);
 
     NewList(&sv->scalingQualityList);
     for (i = 0; i < FS3E_SCALEQ_COUNT; i++) {
@@ -304,6 +407,15 @@ BOOL FS3ESettingsView_Create(FS3ESettingsView *sv, const char *title)
     rgbDrawFunctionLabel = NewObject(LABEL_GetClass(), NULL,
         LABEL_Text, (ULONG)LOC(MSG_SETTINGSV_RGB_DRAW_FUNCTION), TAG_END);
 
+    /* Trailing filler -- an unadorned layout.gadget used purely as flexible
+     * "glue" -- absorbs whatever vertical space the tab page has beyond
+     * this group's natural content height, instead of the group's own
+     * BVS_GROUP border stretching to fill it (see this file's header
+     * comment: thumbnailsGroup IS the whole "Thumbnails & icons" tab page
+     * now, no longer just one of several stacked groups). */
+    thumbnailsSpacer = NewObject(LAYOUT_GetClass(), NULL, TAG_END);
+    if (!thumbnailsSpacer) return FALSE;
+
     thumbnailsGroup = NewObject(LAYOUT_GetClass(), NULL,
         LAYOUT_Orientation,   LAYOUT_ORIENT_VERT,
         LAYOUT_BevelStyle,    BVS_GROUP,
@@ -315,12 +427,18 @@ BOOL FS3ESettingsView_Create(FS3ESettingsView *sv, const char *title)
         CHILD_WeightedWidth,  1,
         CHILD_WeightedHeight, 0,
         CHILD_Label,          (ULONG)biggerThumbnailsLabel,
+        LAYOUT_AddChild,      (ULONG)sv->minifyThumbnailsCheck,
+        CHILD_WeightedWidth,  1,
+        CHILD_WeightedHeight, 0,
+        CHILD_Label,          (ULONG)minifyThumbnailsLabel,
         LAYOUT_AddChild,      (ULONG)sv->scalingQualityChooser,
         CHILD_WeightedHeight, 0,
         CHILD_Label,          (ULONG)scalingQualityLabel,
         LAYOUT_AddChild,      (ULONG)sv->rgbDrawFunctionChooser,
         CHILD_WeightedHeight, 0,
         CHILD_Label,          (ULONG)rgbDrawFunctionLabel,
+        LAYOUT_AddChild,      (ULONG)thumbnailsSpacer,
+        CHILD_WeightedHeight, 1,
         TAG_END);
     if (!thumbnailsGroup) return FALSE;
 
@@ -351,7 +469,7 @@ BOOL FS3ESettingsView_Create(FS3ESettingsView *sv, const char *title)
     playbackGroup = NewObject(LAYOUT_GetClass(), NULL,
         LAYOUT_Orientation,   LAYOUT_ORIENT_VERT,
         LAYOUT_BevelStyle,    BVS_GROUP,
-        LAYOUT_Label,         (ULONG)LOC(MSG_SETTINGSV_PLAYBACK_GROUP),
+        LAYOUT_Label,         (ULONG)LOC(MSG_SETTINGSV_TOOTPLAYBACK_GROUP),
         LAYOUT_BackFill,      NULL,
         LAYOUT_SpaceOuter,    TRUE,
         LAYOUT_SpaceInner,    TRUE,
@@ -365,9 +483,29 @@ BOOL FS3ESettingsView_Create(FS3ESettingsView *sv, const char *title)
         TAG_END);
     if (!playbackGroup) return FALSE;
 
-    /* --- Top-level vertical layout --- */
-    sv->mainLayout = NewObject(LAYOUT_GetClass(), NULL,
-        LAYOUT_DeferLayout,   TRUE,
+    /* --- "User experience" tab page: Toot Timeline Playback, URL Link,
+     * Server Check, stacked vertically -- see this file's header comment. */
+    userExpPage = NewObject(LAYOUT_GetClass(), NULL,
+        LAYOUT_Orientation,   LAYOUT_ORIENT_VERT,
+        LAYOUT_BevelStyle,    BVS_NONE,
+        LAYOUT_SpaceOuter,    TRUE,
+        LAYOUT_SpaceInner,    TRUE,
+        LAYOUT_AddChild,      (ULONG)playbackGroup,
+        CHILD_WeightedHeight, 0,
+        LAYOUT_AddChild,      (ULONG)urlLinkGroup,
+        CHILD_WeightedHeight, 0,
+        LAYOUT_AddChild,      (ULONG)serverGroup,
+        CHILD_WeightedHeight, 0,
+        TAG_END);
+    if (!userExpPage) return FALSE;
+
+    /* --- "Paths & Cache" tab page: Paths, Cache, stacked vertically, plus
+     * a trailing spacer -- same "don't stretch the last group's border"
+     * reasoning as thumbnailsSpacer above. --- */
+    pathsCacheSpacer = NewObject(LAYOUT_GetClass(), NULL, TAG_END);
+    if (!pathsCacheSpacer) return FALSE;
+
+    pathsAndCachePage = NewObject(LAYOUT_GetClass(), NULL,
         LAYOUT_Orientation,   LAYOUT_ORIENT_VERT,
         LAYOUT_BevelStyle,    BVS_NONE,
         LAYOUT_SpaceOuter,    TRUE,
@@ -376,12 +514,65 @@ BOOL FS3ESettingsView_Create(FS3ESettingsView *sv, const char *title)
         CHILD_WeightedHeight, 0,
         LAYOUT_AddChild,      (ULONG)cacheGroup,
         CHILD_WeightedHeight, 0,
-        LAYOUT_AddChild,      (ULONG)serverGroup,
-        CHILD_WeightedHeight, 0,
-        LAYOUT_AddChild,      (ULONG)thumbnailsGroup,
-        CHILD_WeightedHeight, 0,
-        LAYOUT_AddChild,      (ULONG)playbackGroup,
-        CHILD_WeightedHeight, 0,
+        LAYOUT_AddChild,      (ULONG)pathsCacheSpacer,
+        CHILD_WeightedHeight, 1,
+        TAG_END);
+    if (!pathsAndCachePage) return FALSE;
+
+    /* --- "Thumbnails & icons" tab page: thumbnailsGroup itself IS the
+     * page -- already a single BVS_GROUP box with that exact label, no
+     * extra wrapper needed (see this file's header comment). --- */
+
+    /* --- Tab bar: one clicktab node per page, in the same order they're
+     * PAGE_Add'd below (TNA_Number must match that index -- see
+     * clicktab_gc.doc's page.gadget notes on keeping the two in sync). --- */
+    {
+        static const ULONG tabMsgIds[FS3ESETTINGSV_TAB_COUNT] = {
+            MSG_SETTINGSV_TAB_USEREXP,
+            MSG_SETTINGSV_TAB_PATHSCACHE,
+            MSG_SETTINGSV_THUMBNAILS_GROUP, /* same text as that tab's sole group */
+        };
+
+        NewList(&sv->tabLabelsList);
+        for (i = 0; i < FS3ESETTINGSV_TAB_COUNT; i++) {
+            struct Node *node = NULL;
+            if (ClickTabBase)
+                node = AllocClickTabNode(TNA_Text, (ULONG)LOC(tabMsgIds[i]),
+                                          TNA_Number, i, TAG_END);
+            sv->tabLabelNodes[i] = node;
+            if (node) AddTail(&sv->tabLabelsList, node);
+        }
+    }
+
+    /* page.gadget: lives in layout.gadget's own library (LayoutBase,
+     * already opened), PAGE_GetClass() needs no separate PageBase --
+     * disposes userExpPage/pathsAndCachePage/thumbnailsGroup itself when
+     * the window (and this page object with it) is torn down. */
+    sv->pageGroup = NewObject(PAGE_GetClass(), NULL,
+        PAGE_Add, (ULONG)userExpPage,
+        PAGE_Add, (ULONG)pathsAndCachePage,
+        PAGE_Add, (ULONG)thumbnailsGroup,
+        TAG_END);
+    if (!sv->pageGroup) return FALSE;
+
+    sv->tabGadget = NewObject(CLICKTAB_GetClass(), NULL,
+        GA_ID,              GID_SETTINGSV_TABS,
+        GA_RelVerify,       TRUE,
+        CLICKTAB_Labels,    (ULONG)&sv->tabLabelsList,
+        CLICKTAB_Current,   0L,
+        CLICKTAB_PageGroup, (ULONG)sv->pageGroup,
+        TAG_END);
+    if (!sv->tabGadget) return FALSE;
+
+    /* --- Top-level (mother) layout: just the tab bar. --- */
+    sv->mainLayout = NewObject(LAYOUT_GetClass(), NULL,
+        LAYOUT_DeferLayout,   TRUE,
+        LAYOUT_Orientation,   LAYOUT_ORIENT_VERT,
+        LAYOUT_BevelStyle,    BVS_NONE,
+        LAYOUT_SpaceOuter,    TRUE,
+        LAYOUT_SpaceInner,    TRUE,
+        LAYOUT_AddChild,      (ULONG)sv->tabGadget,
+        CHILD_WeightedHeight, 1,
         TAG_END);
     if (!sv->mainLayout) return FALSE;
 
@@ -428,6 +619,21 @@ void FS3ESettingsView_Dispose(FS3ESettingsView *sv)
             if (sv->rgbDrawFunctionNodes[i]) {
                 FreeChooserNode(sv->rgbDrawFunctionNodes[i]);
                 sv->rgbDrawFunctionNodes[i] = NULL;
+            }
+        }
+        for (i = 0; i < FS3E_URLLINK_COUNT; i++) {
+            if (sv->urlLinkActionNodes[i]) {
+                FreeChooserNode(sv->urlLinkActionNodes[i]);
+                sv->urlLinkActionNodes[i] = NULL;
+            }
+        }
+    }
+
+    if (ClickTabBase) {
+        for (i = 0; i < FS3ESETTINGSV_TAB_COUNT; i++) {
+            if (sv->tabLabelNodes[i]) {
+                FreeClickTabNode(sv->tabLabelNodes[i]);
+                sv->tabLabelNodes[i] = NULL;
             }
         }
     }
@@ -492,10 +698,15 @@ BOOL FS3ESettingsView_HandleInput(FS3ESettingsView *sv)
                 return TRUE;
 
             case WMHI_RAWKEY:
-                if ((result & WMHI_KEYMASK) == 0x45) { /* Esc */
+            {
+                ULONG key = result & 0x07f;
+                ULONG isUp = (result & 0x080);
+
+                if (key == 0x45 && isUp) { /* Esc */
                     FS3ESettingsView_Close(sv);
                     return TRUE;
                 }
+            }
                 break;
 
             case WMHI_GADGETUP:
@@ -551,6 +762,11 @@ BOOL FS3ESettingsView_HandleInput(FS3ESettingsView *sv)
                     GetAttr(GA_Selected, sv->biggerThumbnailsCheck, &checked);
                     app->settings.biggerThumbnails = checked ? TRUE : FALSE;
 
+                } else if (gadId == GID_SETTINGSV_MINIFY_THUMBNAILS) {
+                    ULONG checked = 0;
+                    GetAttr(GA_Selected, sv->minifyThumbnailsCheck, &checked);
+                    app->settings.minifyThumbnails = checked ? TRUE : FALSE;
+
                 } else if (gadId == GID_SETTINGSV_SCALING_QUALITY) {
                     ULONG active = 0;
                     GetAttr(CHOOSER_Active, sv->scalingQualityChooser, &active);
@@ -560,6 +776,25 @@ BOOL FS3ESettingsView_HandleInput(FS3ESettingsView *sv)
                     ULONG active = 0;
                     GetAttr(CHOOSER_Active, sv->rgbDrawFunctionChooser, &active);
                     app->settings.rgbDrawFunction = (int)active;
+
+                } else if (gadId == GID_SETTINGSV_URLLINK_ACTION) {
+                    ULONG active = 0;
+                    GetAttr(CHOOSER_Active, sv->urlLinkActionChooser, &active);
+                    app->settings.urlLinkAction = (int)active;
+
+                } else if (gadId == GID_SETTINGSV_DIRECT_DL_ARCHIVES) {
+                    ULONG checked = 0;
+                    GetAttr(GA_Selected, sv->directDownloadArchivesCheck, &checked);
+                    app->settings.directDownloadArchives = checked ? TRUE : FALSE;
+
+                } else if (gadId == GID_SETTINGSV_DOWNLOAD_PATH) {
+                    if (gfRequestDir(sv->downloadPathGF, sv->window))
+                        updateDirPath(sv->downloadPathGF, &app->settings.downloadPath);
+
+                } else if (gadId == GID_SETTINGSV_TOOT_ACTIONS_DBLCLICK) {
+                    ULONG checked = 0;
+                    GetAttr(GA_Selected, sv->tootActionsDblClickCheck, &checked);
+                    app->settings.tootActionsNeedDoubleClick = checked ? TRUE : FALSE;
 
                 } else if (gadId == GID_SETTINGSV_FLUSH_CACHE) {
                     if (app->netRequestPort) {

@@ -172,8 +172,14 @@ BOOL          AvatarImages_IsMediaRequested(AvatarImages *ai, const char *url);
 void          AvatarImages_MarkMediaRequested(AvatarImages *ai, const char *url);
 BOOL          AvatarImages_IsMediaThumbRequested(AvatarImages *ai, const char *url);
 void          AvatarImages_MarkMediaThumbRequested(AvatarImages *ai, const char *url);
+/* rawOriginal FALSE (the usual case): thumbPath is a real minified BMP
+ * (RgbImage_LoadBmp, cheap direct read). TRUE: thumbPath actually holds
+ * the untouched original image, just saved/renamed under the same
+ * deterministic name a minified thumbnail would use (fs3esettings.h's
+ * minifyThumbnails FALSE) -- decoded via RgbImage_LoadViaDatatype instead
+ * (rgbimage.h), a full datatype decode. */
 RgbImage     *AvatarImages_MediaThumbReady(AvatarImages *ai, const char *url,
-                                            const char *thumbPath);
+                                            const char *thumbPath, BOOL rawOriginal);
 void          AvatarImages_MarkMediaFailed(AvatarImages *ai, const char *url,
                                             UBYTE detectedFormat);
 BOOL          AvatarImages_MediaFailed(AvatarImages *ai, const char *url,
@@ -188,8 +194,9 @@ BOOL          AvatarImages_IsCardRequested(AvatarImages *ai, const char *url);
 void          AvatarImages_MarkCardRequested(AvatarImages *ai, const char *url);
 BOOL          AvatarImages_IsCardThumbRequested(AvatarImages *ai, const char *url);
 void          AvatarImages_MarkCardThumbRequested(AvatarImages *ai, const char *url);
+/* rawOriginal: see AvatarImages_MediaThumbReady's doc comment above. */
 RgbImage     *AvatarImages_CardThumbReady(AvatarImages *ai, const char *url,
-                                           const char *thumbPath);
+                                           const char *thumbPath, BOOL rawOriginal);
 void          AvatarImages_MarkCardFailed(AvatarImages *ai, const char *url,
                                            UBYTE detectedFormat);
 BOOL          AvatarImages_CardFailed(AvatarImages *ai, const char *url,

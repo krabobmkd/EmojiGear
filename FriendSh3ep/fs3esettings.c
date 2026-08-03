@@ -43,8 +43,13 @@
 #define TT_KEEPBIGUSERICONS   "KEEPBIGUSERICONS"   /* "1" or "0"                  */
 #define TT_KEEPBIGTHUMBNAILS  "KEEPBIGTHUMBNAILS"  /* "1" or "0"                  */
 #define TT_BIGGERTHUMBNAILS   "BIGGERTHUMBNAILS"   /* "1" or "0"                  */
+#define TT_MINIFYTHUMBNAILS   "MINIFYTHUMBNAILS"   /* "1" or "0"                  */
 #define TT_SCALINGQUALITY     "SCALINGQUALITY"     /* FS3E_SCALEQ_* index         */
 #define TT_RGBDRAWFUNCTION    "RGBDRAWFUNCTION"    /* FS3E_RGBDRAW_* index        */
+#define TT_URLLINKACTION      "URLLINKACTION"      /* FS3E_URLLINK_* index        */
+#define TT_DIRECTDLARCHIVES   "DIRECTDOWNLOADARCHIVES" /* "1" or "0"              */
+#define TT_DOWNLOADPATH       "DOWNLOADPATH"        /* download directory path    */
+#define TT_TOOTACTIONSDBLCLICK "TOOTACTIONSNEEDDOUBLECLICK" /* "1" or "0"         */
 
 /* -------------------------------------------------------------------------- */
 
@@ -183,6 +188,10 @@ void FS3ESettings_Load(FS3ESettings *s)
     val = ToolTypePrefs_Get(TT_BIGGERTHUMBNAILS);
     if (val) s->biggerThumbnails = (val[0] != '0');
 
+    s->minifyThumbnails = FALSE;
+    val = ToolTypePrefs_Get(TT_MINIFYTHUMBNAILS);
+    if (val) s->minifyThumbnails = (val[0] != '0');
+
     s->scalingQuality = FS3E_SCALEQ_FAST;
     val = ToolTypePrefs_Get(TT_SCALINGQUALITY);
     if (val && val[0] != '\0') {
@@ -196,6 +205,29 @@ void FS3ESettings_Load(FS3ESettings *s)
         int d = atoi(val);
         if (d >= 0 && d < FS3E_RGBDRAW_COUNT) s->rgbDrawFunction = d;
     }
+
+    /* URL Link group */
+    s->urlLinkAction = FS3E_URLLINK_ASK;
+    val = ToolTypePrefs_Get(TT_URLLINKACTION);
+    if (val && val[0] != '\0') {
+        int a = atoi(val);
+        if (a >= 0 && a < FS3E_URLLINK_COUNT) s->urlLinkAction = a;
+    }
+
+    s->directDownloadArchives = TRUE;
+    val = ToolTypePrefs_Get(TT_DIRECTDLARCHIVES);
+    if (val) s->directDownloadArchives = (val[0] != '0');
+
+    s->downloadPath = NULL;
+    val = ToolTypePrefs_Get(TT_DOWNLOADPATH);
+    if (val && val[0] != '\0')
+        s->downloadPath = StrDup(val);
+    else
+        s->downloadPath = StrDup("ram:");
+
+    s->tootActionsNeedDoubleClick = FALSE;
+    val = ToolTypePrefs_Get(TT_TOOTACTIONSDBLCLICK);
+    if (val) s->tootActionsNeedDoubleClick = (val[0] != '0');
 
     /* Main window position - written directly into app->mainwindow */
     if (app) {
@@ -333,12 +365,26 @@ void FS3ESettings_Save(FS3ESettings *s)
     ToolTypePrefs_Set(TT_KEEPBIGTHUMBNAILS, s->keepBigThumbnails ? "1" : "0");
 
     ToolTypePrefs_Set(TT_BIGGERTHUMBNAILS, s->biggerThumbnails ? "1" : "0");
+    ToolTypePrefs_Set(TT_MINIFYTHUMBNAILS, s->minifyThumbnails ? "1" : "0");
 
     snprintf(buf, sizeof(buf), "%d", s->scalingQuality);
     ToolTypePrefs_Set(TT_SCALINGQUALITY, buf);
 
     snprintf(buf, sizeof(buf), "%d", s->rgbDrawFunction);
     ToolTypePrefs_Set(TT_RGBDRAWFUNCTION, buf);
+
+    /* URL Link group */
+    snprintf(buf, sizeof(buf), "%d", s->urlLinkAction);
+    ToolTypePrefs_Set(TT_URLLINKACTION, buf);
+
+    ToolTypePrefs_Set(TT_DIRECTDLARCHIVES, s->directDownloadArchives ? "1" : "0");
+
+    if (s->downloadPath && s->downloadPath[0] != '\0')
+        ToolTypePrefs_Set(TT_DOWNLOADPATH, s->downloadPath);
+    else
+        ToolTypePrefs_Remove(TT_DOWNLOADPATH);
+
+    ToolTypePrefs_Set(TT_TOOTACTIONSDBLCLICK, s->tootActionsNeedDoubleClick ? "1" : "0");
 
     /* Main window position */
     if (app && app->window_obj) {
@@ -398,6 +444,7 @@ void FS3ESettings_Close(FS3ESettings *s)
     FreeVec(s->themeName);          s->themeName          = NULL;
     FreeVec(s->cachePath);         s->cachePath         = NULL;
     FreeVec(s->userDataPath);      s->userDataPath      = NULL;
+    FreeVec(s->downloadPath);      s->downloadPath      = NULL;
 
     ToolTypePrefs_Close();
 }

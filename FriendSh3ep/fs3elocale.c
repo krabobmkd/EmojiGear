@@ -43,6 +43,10 @@ static const char *defaultStrings[MSG_COUNT] = {
     "Reply to %s's toot\n\nRemember to stay polite and calm,\n and avoid sarcasm.\n -- tone doesn't always come across in text.\nRemember you can be a better person.\xE2\x9D\xA4",
     /* MSG_TOOT_CONTEXT_QUOTE_FORMAT */
     "Quoting %s's toot",
+    /* MSG_TOOT_CONTEXT_MESSAGE_FORMAT */
+    "Messaging %s",
+    /* MSG_TOOT_ATTACH_MEDIA */
+    "Attach Media",
     /* MSG_TOOT_VISIBILITY_PUBLIC */
     "Public",
     /* MSG_TOOT_VISIBILITY_UNLISTED -- API value "unlisted", shown with the
@@ -225,8 +229,8 @@ static const char *defaultStrings[MSG_COUNT] = {
     "Max cache size (MB)",
     /* MSG_SETTINGSV_FLUSH_CACHE */
     "Flush cache",
-    /* MSG_SETTINGSV_SERVER_GROUP */
-    "Server",
+    /* MSG_SETTINGSV_SERVERCHECK_GROUP */
+    "Server Check",
     /* MSG_SETTINGSV_CHECK_INTERVAL */
     "Check interval (seconds)",
     /* MSG_SETTINGSV_KEEP_BIG_USERICONS */
@@ -237,6 +241,8 @@ static const char *defaultStrings[MSG_COUNT] = {
     "Thumbnails & icons",
     /* MSG_SETTINGSV_BIGGER_THUMBNAILS */
     "Bigger Thumbnails",
+    /* MSG_SETTINGSV_MINIFY_THUMBNAILS */
+    "Minify thumbnails source",
     /* MSG_SETTINGSV_SCALING_QUALITY */
     "Scaling Quality",
     /* MSG_SETTINGSV_SCALEQ_FAST */
@@ -251,12 +257,32 @@ static const char *defaultStrings[MSG_COUNT] = {
     "ScalePixelArray()",
     /* MSG_SETTINGSV_RGBDRAW_INTERNAL_BILINEAR */
     "Internal Bilinear (>=68060)",
-    /* MSG_SETTINGSV_PLAYBACK_GROUP */
-    "Playback",
+    /* MSG_SETTINGSV_TOOTPLAYBACK_GROUP */
+    "Toot Timeline Playback",
     /* MSG_SETTINGSV_PLAY_TOOT_TIME */
     "Play toot time (seconds)",
     /* MSG_SETTINGSV_ALLOW_NEXT_TOOT_SCROLL */
     "Allow next toot scroll",
+    /* MSG_SETTINGSV_URLLINK_GROUP */
+    "URL Link",
+    /* MSG_SETTINGSV_URLLINK_ACTION */
+    "URL Link Action",
+    /* MSG_SETTINGSV_URLLINK_ASK */
+    "Ask",
+    /* MSG_SETTINGSV_URLLINK_OPENURL */
+    "Use OpenURL",
+    /* MSG_SETTINGSV_URLLINK_CLIPBOARD */
+    "Copy to Clipboard",
+    /* MSG_SETTINGSV_DIRECT_DL_ARCHIVES */
+    "Direct download .zip,.lha",
+    /* MSG_SETTINGSV_DOWNLOAD_PATH */
+    "Download directory",
+    /* MSG_SETTINGSV_TOOT_ACTIONS_DBLCLICK */
+    "Toot actions need double click",
+    /* MSG_SETTINGSV_TAB_USEREXP */
+    "User experience",
+    /* MSG_SETTINGSV_TAB_PATHSCACHE */
+    "Paths & Cache",
 
     /* MSG_SEARCHV_WAIT1 */
     "\xF0\x9F\x90\x98 Casting the net across the fediverse...",
@@ -271,6 +297,23 @@ static const char *defaultStrings[MSG_COUNT] = {
     "Word",
     /* MSG_SEARCH_TYPE_PEOPLE */
     "People",
+
+    /* MSG_NETWORKV_TITLE */
+    "Network",
+    /* MSG_NETWORKV_COL_NAME */
+    "Name",
+    /* MSG_NETWORKV_COL_PROGRESS */
+    "Progress",
+    /* MSG_NETWORKV_COL_STATUS */
+    "Status",
+    /* MSG_NETWORKV_STATUS_ON */
+    "Active",
+    /* MSG_NETWORKV_STATUS_OK */
+    "OK",
+    /* MSG_NETWORKV_STATUS_ERROR */
+    "Error",
+    /* MSG_NETWORKV_IDLE */
+    "No downloads",
 };
 
 /* LocaleBase declared in friendsh3ep.c */

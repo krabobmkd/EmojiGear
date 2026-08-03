@@ -71,6 +71,7 @@ typedef enum {
     /* Settings menu */
     FS3EACTION_SETTINGS_THEME,
     FS3EACTION_SETTINGS_GENERAL,
+    FS3EACTION_NETWORK_VIEW,
     FS3EACTION_SETTINGS_FONTSIZEM,
     FS3EACTION_SETTINGS_FONTSIZEP,
 
@@ -159,6 +160,7 @@ BOOL Action_UserUnblockServer(struct App *ctx);
 
 BOOL Action_SettingsTheme(struct App *ctx);
 BOOL Action_SettingsGeneral(struct App *ctx);
+BOOL Action_NetworkView(struct App *ctx);
 BOOL Action_FontSizeMinus(struct App *ctx);
 BOOL Action_FontSizePlus(struct App *ctx);
 

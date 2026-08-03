@@ -47,9 +47,14 @@ typedef enum FS3ETootKind {
     FS3ETOOT_KIND_MODIFY,  /* editing params->postId, bodyEditor prefilled from params->body */
     FS3ETOOT_KIND_POLL,    /* new toot with a poll attached (poll UI itself: future work) */
     FS3ETOOT_KIND_REPLY,   /* replying to params->postId, title shows params->acct */
-    FS3ETOOT_KIND_QUOTE    /* quoting params->postId (own new toot + quoted_status_id),
+    FS3ETOOT_KIND_QUOTE,   /* quoting params->postId (own new toot + quoted_status_id),
                              * title shows params->acct -- see TTL_HOT_BOOST's
                              * Boost/Quote choice in friendsh3ep.c */
+    FS3ETOOT_KIND_MESSAGE  /* a fresh, non-reply toot addressed at params->acct (no
+                             * postId -- unlike REPLY, nothing is being replied to):
+                             * bodyEditor prefilled with "@acct ", title shows
+                             * params->acct -- see a profile header's "Message"
+                             * button (TTL_HOT_MESSAGE) in friendsh3ep.c */
 } FS3ETootKind;
 
 /* Max media attachments carried through a compose context (mirrors
@@ -122,6 +127,17 @@ typedef struct FS3ETootView {
 
     Object *charCountLabel;
     char    charCountText[32];
+
+    /* "Attach Media" row, between bodyEditor and the bottom bar -- a single
+     * GETFILE gadget (see fs3ethemeview.c's font pickers for the same
+     * pattern) restricted to FS3ETOOT_ATTACH_MEDIA_PATTERN, plus an "X"
+     * button that clears it. Read directly via GETFILE_File at send time
+     * (see GID_TOOT_SEND_BUTTON in friendsh3ep.c); no separate copy kept
+     * here, same as fs3ethemeview.c's font pickers don't keep one either --
+     * app->settings.*FontPath is their copy, and there's no settings field
+     * for a one-shot compose-window attachment. */
+    Object *attachMediaGF;
+    Object *attachMediaClearBtn;
 
     Object *emojiBtn;
 
@@ -197,5 +213,30 @@ LONG FS3ETootView_GetVisibility(FS3ETootView *tv);
 
 /* 0=public (Everybody), 1=followers (Followers only), 2=nobody (Me only) */
 LONG FS3ETootView_GetQuotePolicy(FS3ETootView *tv);
+
+/* FS3ETootView_CheckAttachment()'s result -- see its doc comment. */
+typedef enum FS3ETootAttachStatus {
+    FS3ETOOT_ATTACH_NONE = 0, /* attachMediaGF is empty -- not an error, just nothing to upload */
+    FS3ETOOT_ATTACH_OK,       /* outPath/outMimeType filled, ready to upload */
+    FS3ETOOT_ATTACH_BADEXT,   /* a file is selected but its extension isn't accepted
+                                * (see FS3ETOOT_ATTACH_MEDIA_PATTERN in fs3etootview.c) */
+    FS3ETOOT_ATTACH_MISSING,  /* a file is selected but doesn't exist/isn't readable
+                                * (moved or deleted since it was picked) */
+    FS3ETOOT_ATTACH_TOOBIG    /* a file is selected but exceeds FS3ENET_UPLOAD_MAX_BYTES
+                                * (fs3enet.h), or Examine() found it isn't a plain file */
+} FS3ETootAttachStatus;
+
+/* Reads attachMediaGF's current selection (GETFILE_File + GETFILE_Drawer),
+ * builds the full path into outPath (outPathSize), and validates it:
+ * extension against the accepted list, existence/type/size via a
+ * synchronous Lock()+Examine() -- safe here since this is only ever called
+ * from the main event loop's WMHI_GADGETUP dispatch (a normal task
+ * context), never a BOOPSI device-context callback. On FS3ETOOT_ATTACH_OK,
+ * *outMimeType is set to a static string (e.g. "image/jpeg") suitable for
+ * FS3ENetUploadMediaReq_Alloc(); left untouched for every other result.
+ * Called by GID_TOOT_SEND_BUTTON (friendsh3ep.c) before deciding whether to
+ * fire FS3ENETQ_UPLOAD_MEDIA first or submit the toot directly. */
+FS3ETootAttachStatus FS3ETootView_CheckAttachment(FS3ETootView *tv,
+    char *outPath, ULONG outPathSize, const char **outMimeType);
 
 #endif /* FS3ETOOTVIEW_H */

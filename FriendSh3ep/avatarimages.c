@@ -226,7 +226,7 @@ void AvatarImages_MarkMediaThumbRequested(AvatarImages *ai, const char *url)
 }
 
 RgbImage *AvatarImages_MediaThumbReady(AvatarImages *ai, const char *url,
-                                        const char *thumbPath)
+                                        const char *thumbPath, BOOL rawOriginal)
 {
     ThumbnailEntry *e;
 
@@ -235,7 +235,11 @@ RgbImage *AvatarImages_MediaThumbReady(AvatarImages *ai, const char *url,
     e = find_or_create_media(ai, url);
     if (!e) return NULL;
 
-    if (!RgbImage_LoadBmp(&e->img, thumbPath)) return NULL;
+    if (rawOriginal) {
+        if (!RgbImage_LoadViaDatatype(&e->img, thumbPath)) return NULL;
+    } else {
+        if (!RgbImage_LoadBmp(&e->img, thumbPath)) return NULL;
+    }
 
     return &e->img;
 }
@@ -332,7 +336,7 @@ void AvatarImages_MarkCardThumbRequested(AvatarImages *ai, const char *url)
 }
 
 RgbImage *AvatarImages_CardThumbReady(AvatarImages *ai, const char *url,
-                                       const char *thumbPath)
+                                       const char *thumbPath, BOOL rawOriginal)
 {
     CardImageEntry *e;
 
@@ -341,7 +345,11 @@ RgbImage *AvatarImages_CardThumbReady(AvatarImages *ai, const char *url,
     e = find_or_create_card(ai, url);
     if (!e) return NULL;
 
-    if (!RgbImage_LoadBmp(&e->img, thumbPath)) return NULL;
+    if (rawOriginal) {
+        if (!RgbImage_LoadViaDatatype(&e->img, thumbPath)) return NULL;
+    } else {
+        if (!RgbImage_LoadBmp(&e->img, thumbPath)) return NULL;
+    }
 
     return &e->img;
 }

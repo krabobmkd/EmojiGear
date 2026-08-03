@@ -20,6 +20,7 @@
 #include "fs3eboopsimainwindow.h"
 #include "stylefile.h"
 #include "bdbprintf.h"
+#include "rgbimage.h"
 #include "friendsh3ep.h"
 #include "UniButtonP9/unibuttonp9.h"
 /* Opened optionally in friendsh3ep.c, mirroring BevelBase: if the class
@@ -704,6 +705,18 @@ BOOL FS3EStyle_LoadThemeImages(FS3EStyle *st, struct Screen *scr)
         !BmImage_Load(&st->waitImage, scr)) {
     }
 
+    /* Audio attachment placeholder -- see st->soundPlayImage's doc comment
+     * in fs3estyle.h. RgbImage, not BmImage: no Init/scr step, and
+     * RgbImage_LoadViaDatatype decodes via picture.datatype so any format
+     * datatypes.library can open works, same as every other theme image
+     * here (through BmImage's own picture.datatype use), just without the
+     * screen remap. Optional -- a missing file just means the play-glyph
+     * rect keeps being drawn instead (see RgbImage_IsLoaded's use in
+     * ttl_render_tile). */
+    snprintf(path, sizeof(path), "%s/%s", st->themePath,
+             StyleFile_GetString(&sf, "media.soundplay", "soundplay.png"));
+    RgbImage_LoadViaDatatype(&st->soundPlayImage, path);
+
     return TRUE;
 }
 
@@ -817,6 +830,11 @@ void FS3EStyle_UnloadThemeImages(FS3EStyle *st)
     for (i = 0; i < FS3ESTYLE_BTBGBM_COUNT; i++)
         BmImage_Unload(&st->btbgbmBitmap[i]);
     BmImage_Unload(&st->waitImage);
+    /* RgbImage has no Unload/Init split like BmImage (it's never
+     * screen-remapped in the first place) -- Free() is the only release,
+     * called here too so a theme switch drops the old image the same way
+     * every other slot above does. */
+    RgbImage_Free(&st->soundPlayImage);
     st->btbgbmUsePatch9 = FALSE;
     tbBgBitmap = NULL;
     tbBgWidth  = 0;

@@ -591,26 +591,55 @@ void ttl_toot_render(TTLData *inst, struct RastPort *rp, TTLPost *post, LONG til
 
                     /* Audio attachment: no thumbnail was ever fetched for
                      * this slot (see friendsh3ep.c's FETCH_IMAGE loop) --
-                     * just a filled rect with a centered play glyph,
-                     * same pattern as the prev/next arrows below. */
+                     * draw the theme's soundplay.png (st->soundPlayImage,
+                     * see its doc comment in fs3estyle.h) box-fit-scaled in
+                     * its place, same box-fit math as the real media thumb
+                     * below. Falls back to a filled rect with a centered
+                     * play glyph (the original placeholder, same pattern as
+                     * the prev/next arrows below) when no theme provides
+                     * that image. */
                     if (hs->type == TTL_HOT_PLAY_AUDIO) {
-                        const char *glyph = "\xE2\x96\xB6"; /* ▶ */
-                        struct URPTextMetric m;
-                        struct URPTextPos    pos;
-                        LONG nc;
+                        RgbImage *soundPlay = &inst->style->soundPlayImage;
 
                         rx = hs->x;
                         ry = (WORD)(drawY + hs->y);
-                        SetAPen(rp, (LONG)FS3E_PEN(inst->style, FS3E_COLOR_ACCENT));
-                        RectFill(rp, rx, ry, (WORD)(rx + hs->w - 1), (WORD)(ry + hs->h - 1));
 
-                        nc = utf8_codepoints_range(glyph, glyph + strlen(glyph));
-                        URPDC_SetDrawColorFromPen(dcBody, inst->screen,
-                            (LONG)FS3E_PEN(inst->style, FS3E_COLOR_ACTION_TEXT), bgPen);
-                        URPDC_TextSizeUTF8(dcBody, glyph, nc, &m);
-                        pos.x = (WORD)(rx + (hs->w - m.width) / 2);
-                        pos.y = (WORD)(ry + (hs->h - inst->lineHeight) / 2 + inst->lineAscent);
-                        URPDrawTextUTF8(rp, dcBody, &pos, glyph, (ULONG)nc);
+                        if (RgbImage_IsLoaded(soundPlay)) {
+                            ULONG dw, dh;
+                            WORD  bx, by;
+
+                            if ((ULONG)hs->w * soundPlay->height <= (ULONG)hs->h * soundPlay->width) {
+                                dw = hs->w;
+                                dh = ((ULONG)soundPlay->height * (ULONG)hs->w) / soundPlay->width;
+                            } else {
+                                dh = hs->h;
+                                dw = ((ULONG)soundPlay->width * (ULONG)hs->h) / soundPlay->height;
+                            }
+                            if (dw < 1) dw = 1;
+                            if (dh < 1) dh = 1;
+
+                            bx = (WORD)(rx + (hs->w - (WORD)dw) / 2);
+                            by = (WORD)(ry + (hs->h - (WORD)dh) / 2);
+
+                            RgbImage_DrawScaled(soundPlay, rp, inst->screen, inst->style->dcNormal,
+                                                 bx, by, (UWORD)dw, (UWORD)dh);
+                        } else {
+                            const char *glyph = "\xE2\x96\xB6"; /* ▶ */
+                            struct URPTextMetric m;
+                            struct URPTextPos    pos;
+                            LONG nc;
+
+                            SetAPen(rp, (LONG)FS3E_PEN(inst->style, FS3E_COLOR_ACCENT));
+                            RectFill(rp, rx, ry, (WORD)(rx + hs->w - 1), (WORD)(ry + hs->h - 1));
+
+                            nc = utf8_codepoints_range(glyph, glyph + strlen(glyph));
+                            URPDC_SetDrawColorFromPen(dcBody, inst->screen,
+                                (LONG)FS3E_PEN(inst->style, FS3E_COLOR_ACTION_TEXT), bgPen);
+                            URPDC_TextSizeUTF8(dcBody, glyph, nc, &m);
+                            pos.x = (WORD)(rx + (hs->w - m.width) / 2);
+                            pos.y = (WORD)(ry + (hs->h - inst->lineHeight) / 2 + inst->lineAscent);
+                            URPDrawTextUTF8(rp, dcBody, &pos, glyph, (ULONG)nc);
+                        }
                         continue;
                     }
 

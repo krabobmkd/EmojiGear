@@ -23,6 +23,7 @@
 #include "fs3etootview.h"
 #include "fs3ethemeview.h"
 #include "fs3esettingsview.h"
+#include "fs3enetworkview.h"
 #include "fs3eemojibox.h"
 #include "fs3emediaview.h"
 #include "fs3estyle.h"
@@ -177,6 +178,7 @@ struct App {
     FS3ETootView   tootView;
     FS3EThemeView  themeView;
     FS3ESettingsView settingsView;
+    FS3ENetworkView networkView;
     FS3EEmojiBoxWindow emojiBoxWindow;
 
     /* window.class/layout.gadget full-size media viewer (see
@@ -205,6 +207,24 @@ struct App {
     char  *loginApiBaseUrl;    /* saved between LOGIN_START reply and LOGIN_FINISH send */
     char  *loginClientId;
     char  *loginClientSecret;
+
+    /* GID_TOOT_SEND_BUTTON's own two-phase state, same shape as login above:
+     * TRUE while an FS3ENETQ_UPLOAD_MEDIA is in flight for the compose
+     * window's current attachment, between the click and the follow-up
+     * FS3EApp_SubmitToot() the reply triggers (see fs3erequests.c's
+     * FS3ENETQ_UPLOAD_MEDIA case). pendingToot* save what GID_TOOT_SEND_
+     * BUTTON already read off app->tootView's gadgets at click time, so
+     * FS3EApp_SubmitToot() doesn't have to re-read a window that might have
+     * been edited (or even closed) while the upload was in flight.
+     * pendingTootBody is AllocVec'd (FS3ETootView_GetUTF8Body()'s result,
+     * ownership moved here), freed by whichever of FS3EApp_SubmitToot() or
+     * the UPLOAD_MEDIA failure path ends up handling it. tootUploadPending
+     * also gates FS3ETootView_UpdateSendEnabled() so the Toot button can't
+     * be double-clicked mid-upload. */
+    BOOL   tootUploadPending;
+    char  *pendingTootBody;
+    LONG   pendingTootVisibility;
+    LONG   pendingTootQuotePolicy;
 
     /* Logged-in account — all NULL when not logged in */
     char  *accountApiBaseUrl;
@@ -370,6 +390,22 @@ extern struct App *app;
 
 /* Print pmessage (if non-NULL) and exit(0); runs exitclose() via atexit(). */
 void cleanexit(const char *pmessage);
+
+/* notifyMessage() severity levels -- see its own doc comment below. */
+enum {
+    FS3ENOTIFY_OK = 0,
+    FS3ENOTIFY_WARNING,
+    FS3ENOTIFY_ERROR
+};
+
+/* User-visible status/notification surface: drives the Network window's
+ * (fs3enetworkview.c) status-bar button label. Callers (e.g. the
+ * FS3ENETQ_FETCH_IMAGE reply handler in fs3erequests.c, for
+ * fs3emanageurl.c's archive downloads) don't need to know or care whether
+ * that window is currently open -- see FS3ENetworkView_SetStatus()'s own
+ * no-op-while-closed rule. level is one of the FS3ENOTIFY_* values above;
+ * unused today (no color/icon per level in the status bar yet). */
+void notifyMessage(const char *message, int level);
 
 void fs3e_setViewMode(ULONG viewMode);
 

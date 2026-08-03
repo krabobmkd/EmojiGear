@@ -27,6 +27,8 @@
 #include <libraries/amisslmaster.h>
 #include <libraries/amissl.h>
 
+#include "bdbprintf.h"
+
 #if !defined(__amigaos4__)
 # include <SDI_compiler.h>
 #endif
@@ -176,7 +178,8 @@ void FS3EHttp_Cleanup(void)
 
 void FS3EHttp_PrintErrors(void)
 {
-    BIO *bio_err;
+    unsigned long errCode;
+    BOOL any = FALSE;
 
     /* Defensive: never touch AmiSSL if FS3EHttp_Init() never succeeded
      * (or already ran FS3EHttp_Cleanup()) -- AmiSSLExtBase is only ever
@@ -185,14 +188,17 @@ void FS3EHttp_PrintErrors(void)
     if (!AmiSSLExtBase)
         return;
 
-    bio_err = BIO_new(BIO_s_file());
-
-    if (bio_err)
-    {
-        BIO_set_fp_amiga(bio_err, Output(), BIO_NOCLOSE | BIO_FP_TEXT);
-        ERR_print_errors(bio_err);
-        BIO_free(bio_err);
+    /* bdbprintf_now(), not ERR_print_errors()+Output() -- FS3ENet_ProcEntry's
+     * process (fs3enet.c) is a plain CreateNewProcTags() child with no
+     * controlling window, so Output() goes to a console nobody sees. */
+    while ((errCode = ERR_get_error()) != 0) {
+        char errBuf[256];
+        ERR_error_string_n(errCode, errBuf, sizeof(errBuf));
+        bdbprintf_now("FS3EHttp: %s\n", errBuf);
+        any = TRUE;
     }
+    if (!any)
+        bdbprintf_now("FS3EHttp: (no OpenSSL error queue entries)\n");
 }
 
 /* Reads all of bio into an AllocVec()'d, NUL-terminated buffer. */
@@ -595,6 +601,21 @@ BOOL FS3EHttp_Put(const char *url, const FS3EHttpHeader *headers,
 BOOL FS3EHttp_Delete(const char *url, const FS3EHttpHeader *headers, FS3EHttpResponse *out)
 {
     return FS3EHttp_DoRawRequest("DELETE", url, headers, NULL, NULL, 0,
+                                  FALSE, 0, 0, FS3EHTTP_RAW_TIMEOUT_SECS, NULL, out);
+}
+
+BOOL FS3EHttp_PostRaw(const char *url, const FS3EHttpHeader *headers,
+                    const char *contentType,
+                    const void *body, ULONG bodyLen,
+                    FS3EHttpResponse *out)
+{
+    return FS3EHttp_DoRawRequest("POST", url, headers, contentType, body, bodyLen,
+                                  FALSE, 0, 0, FS3EHTTP_RAW_TIMEOUT_SECS, NULL, out);
+}
+
+BOOL FS3EHttp_GetRaw(const char *url, const FS3EHttpHeader *headers, FS3EHttpResponse *out)
+{
+    return FS3EHttp_DoRawRequest("GET", url, headers, NULL, NULL, 0,
                                   FALSE, 0, 0, FS3EHTTP_RAW_TIMEOUT_SECS, NULL, out);
 }
 

@@ -36,6 +36,8 @@ enum {
                                      * toot" + a second line reminding to stay civil -- UniButton
                                      * renders the embedded \n\n as real line breaks */
     MSG_TOOT_CONTEXT_QUOTE_FORMAT, /* FS3ETOOT_KIND_QUOTE contextMessage format: "Quoting %s's toot" */
+    MSG_TOOT_CONTEXT_MESSAGE_FORMAT, /* FS3ETOOT_KIND_MESSAGE contextMessage format: "Messaging %s" */
+    MSG_TOOT_ATTACH_MEDIA, /* "Attach Media" -- label above the attachMediaGF/attachMediaClearBtn row */
     MSG_TOOT_VISIBILITY_PUBLIC,
     MSG_TOOT_VISIBILITY_UNLISTED,
     MSG_TOOT_VISIBILITY_PRIVATE,
@@ -168,12 +170,13 @@ enum {
     MSG_SETTINGSV_CACHE_GROUP,
     MSG_SETTINGSV_MAX_CACHE_SIZE,
     MSG_SETTINGSV_FLUSH_CACHE,
-    MSG_SETTINGSV_SERVER_GROUP,
+    MSG_SETTINGSV_SERVERCHECK_GROUP, /* was "Server", now "Server Check" */
     MSG_SETTINGSV_CHECK_INTERVAL,
     MSG_SETTINGSV_KEEP_BIG_USERICONS,
     MSG_SETTINGSV_KEEP_BIG_THUMBNAILS,
     MSG_SETTINGSV_THUMBNAILS_GROUP,
     MSG_SETTINGSV_BIGGER_THUMBNAILS,
+    MSG_SETTINGSV_MINIFY_THUMBNAILS,
     MSG_SETTINGSV_SCALING_QUALITY,
     MSG_SETTINGSV_SCALEQ_FAST,
     MSG_SETTINGSV_SCALEQ_BILINEAR,
@@ -181,9 +184,23 @@ enum {
     MSG_SETTINGSV_RGB_DRAW_FUNCTION,
     MSG_SETTINGSV_RGBDRAW_SCALEPIXELARRAY,
     MSG_SETTINGSV_RGBDRAW_INTERNAL_BILINEAR,
-    MSG_SETTINGSV_PLAYBACK_GROUP,
+    MSG_SETTINGSV_TOOTPLAYBACK_GROUP, /* was "Playback", now "Toot Timeline Playback" */
     MSG_SETTINGSV_PLAY_TOOT_TIME,
     MSG_SETTINGSV_ALLOW_NEXT_TOOT_SCROLL,
+    MSG_SETTINGSV_URLLINK_GROUP, /* "URL Link" group label */
+    MSG_SETTINGSV_URLLINK_ACTION,       /* "URL Link Action" chooser label */
+    MSG_SETTINGSV_URLLINK_ASK,          /* chooser entry: "Ask" */
+    MSG_SETTINGSV_URLLINK_OPENURL,      /* chooser entry: "Use OpenURL" */
+    MSG_SETTINGSV_URLLINK_CLIPBOARD,    /* chooser entry: "Copy to Clipboard" */
+    MSG_SETTINGSV_DIRECT_DL_ARCHIVES,   /* "Direct download .zip,.lha" checkbox label */
+    MSG_SETTINGSV_DOWNLOAD_PATH,        /* "Download directory" getfile label */
+    MSG_SETTINGSV_TOOT_ACTIONS_DBLCLICK, /* "Toot actions need double click" checkbox label */
+
+    /* clicktab labels for the settings window's 3 tabs -- the 3rd tab
+     * reuses MSG_SETTINGSV_THUMBNAILS_GROUP's text (that tab's sole page
+     * is the "Thumbnails & icons" group itself, so both read the same). */
+    MSG_SETTINGSV_TAB_USEREXP,
+    MSG_SETTINGSV_TAB_PATHSCACHE,
 
     /* Search channel (VIEWMODE_Search) TTIMELINE_WaitText, shown while a
      * word/hashtag search request is in flight (see
@@ -200,6 +217,16 @@ enum {
      * same order as FS3ESearchTypeChoice. */
     MSG_SEARCH_TYPE_WORD,
     MSG_SEARCH_TYPE_PEOPLE,
+
+    /* Network downloads window (fs3enetworkview.c) */
+    MSG_NETWORKV_TITLE,          /* window title, and Settings menu entry */
+    MSG_NETWORKV_COL_NAME,       /* listbrowser column: file name */
+    MSG_NETWORKV_COL_PROGRESS,   /* listbrowser column: "NN%" or "NNN KB" */
+    MSG_NETWORKV_COL_STATUS,     /* listbrowser column: status word */
+    MSG_NETWORKV_STATUS_ON,      /* status word: still downloading */
+    MSG_NETWORKV_STATUS_OK,      /* status word: finished */
+    MSG_NETWORKV_STATUS_ERROR,   /* status word: failed */
+    MSG_NETWORKV_IDLE,           /* default status-bar text, no activity yet */
 
     /* Must be last */
     MSG_COUNT

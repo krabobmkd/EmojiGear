@@ -26,11 +26,20 @@
 #include <proto/chooser.h>
 #include <gadgets/chooser.h>
 
+#include <proto/getfile.h>
+#include <gadgets/getfile.h>
+
+#include <proto/label.h>
+#include <images/label.h>
+
 #include <proto/window.h>
 #include <classes/window.h>
 
 #include <proto/gadtools.h>
 #include <libraries/gadtools.h>
+
+#include <proto/dos.h>
+#include <dos/dos.h>
 
 #include <intuition/icclass.h>
 
@@ -41,9 +50,17 @@
 #include "fs3elocale.h"
 
 #include "friendsh3ep.h"
+#include "network_fs3e/fs3enet.h"
 
 extern struct Library *ChooserBase;
 extern struct Library *GadToolsBase;
+
+/* attachMediaGF's GETFILE_Pattern -- images, plus audio/video, matching the
+ * extensions FS3ETootView_CheckAttachment() below recognizes; no leading
+ * dot needed, same convention as fs3ethemeview.c's font pickers ("#?(ttf|
+ * otf)"): #? already swallows everything up to and
+ * including it. */
+#define FS3ETOOT_ATTACH_MEDIA_PATTERN "#?(gif|jpeg|jpg|png|mp3|ogg|mpg|mp4)"
 
 /* nm_UserData values for the window-local "Toot" menu -- see
  * FS3ETootView_MenuCreate/FS3ETootView_HandleInput's WMHI_MENUPICK case.
@@ -201,6 +218,8 @@ static Object *Spacer(void)
 BOOL FS3ETootView_Create(FS3ETootView *tv, struct URPDrawContext *textDC)
 {
     Object *bottomBar;
+    Object *attachMediaRow;
+    Object *attachMediaLabel;
 
     int i;
 
@@ -257,6 +276,47 @@ BOOL FS3ETootView_Create(FS3ETootView *tv, struct URPDrawContext *textDC)
         UTED_LineSpacing,       0,
         TAG_END);
     if (!tv->bodyEditor) return FALSE;
+
+    /* ------------------------------------------------------------------ */
+    /* Attach Media row: [getfile][X], between bodyEditor and bottomBar -- */
+    /* same [GETFILE][X clear button] pattern as fs3ethemeview.c's font    */
+    /* pickers (see makeGetFileGadget/GID_THEMEV_PRIMARY_CLEAR there).     */
+    /* ------------------------------------------------------------------ */
+    tv->attachMediaGF = (Object *)NewObject(GETFILE_GetClass(), NULL,
+        GA_ID,                  (ULONG)GID_TOOT_ATTACH_MEDIA,
+        GA_RelVerify,           TRUE,
+        GETFILE_TitleText,      (ULONG)LOC(MSG_TOOT_ATTACH_MEDIA),
+        GETFILE_RejectIcons,    TRUE,
+        GETFILE_DoPatterns,     TRUE,
+        GETFILE_Pattern,        (ULONG)FS3ETOOT_ATTACH_MEDIA_PATTERN,
+        GETFILE_FilterDrawers,  TRUE,
+        GETFILE_ReadOnly,       FALSE,
+        GETFILE_FullFileExpand, FALSE,
+        TAG_END);
+    if (!tv->attachMediaGF) return FALSE;
+
+    tv->attachMediaClearBtn = (Object *)NewObject(BUTTON_GetClass(), NULL,
+        GA_ID,        (ULONG)GID_TOOT_ATTACH_MEDIA_CLEAR,
+        GA_RelVerify, TRUE,
+        GA_Text,      (ULONG)"X",
+        TAG_END);
+    if (!tv->attachMediaClearBtn) return FALSE;
+
+    attachMediaLabel = (Object *)NewObject(LABEL_GetClass(), NULL,
+        LABEL_Text, (ULONG)LOC(MSG_TOOT_ATTACH_MEDIA), TAG_END);
+
+    attachMediaRow = (Object *)NewObject(LAYOUT_GetClass(), NULL,
+        LAYOUT_Orientation,   LAYOUT_ORIENT_HORIZ,
+        LAYOUT_BevelStyle,    BVS_NONE,
+        LAYOUT_SpaceInner,    FALSE,
+        LAYOUT_AddChild,      (ULONG)tv->attachMediaGF,
+        CHILD_WeightedWidth,  1,
+        CHILD_WeightedHeight, 0,
+        LAYOUT_AddChild,      (ULONG)tv->attachMediaClearBtn,
+        CHILD_WeightedWidth,  0,
+        CHILD_WeightedHeight, 0,
+        TAG_END);
+    if (!attachMediaRow) return FALSE;
 
     /* ------------------------------------------------------------------ */
     /* Bottom bar: visibility chooser, char count, emoji buttons, Toot     */
@@ -367,6 +427,9 @@ BOOL FS3ETootView_Create(FS3ETootView *tv, struct URPDrawContext *textDC)
             CHILD_WeightedHeight, 0,
         LAYOUT_AddChild,    (ULONG)tv->bodyEditor,
             CHILD_WeightedHeight, 1,
+        LAYOUT_AddChild,    (ULONG)attachMediaRow,
+            CHILD_WeightedHeight, 0,
+            CHILD_Label,          (ULONG)attachMediaLabel,
         LAYOUT_AddChild,    (ULONG)bottomBar,
             CHILD_WeightedHeight, 0,
         LAYOUT_AddChild,    (ULONG)tv->visibilityMeaning,
@@ -461,6 +524,14 @@ void FS3ETootView_Open(FS3ETootView *tv)
     if (tv->quotePolicyChooser) {
         SetAttrs(tv->quotePolicyChooser, CHOOSER_Active, 0UL, TAG_END);
         FS3ETootView_UpdateVisibilityMeaning(tv);
+    }
+    /* Same reasoning again: a leftover attachment from a previous, unrelated
+     * toot shouldn't silently carry over into this one. */
+    if (tv->attachMediaGF) {
+        SetAttrs(tv->attachMediaGF,
+                 GETFILE_File,   (ULONG)"",
+                 GETFILE_Drawer, (ULONG)"",
+                 TAG_END);
     }
 
     if (CurrentMainScreen) {
@@ -575,6 +646,15 @@ BOOL FS3ETootView_HandleInput(FS3ETootView *tv)
                     FS3ETootView_UpdateCharCount(tv);
                 else if (gadId == GID_TOOT_VISIBILITY || gadId == GID_TOOT_QUOTEPOLICY)
                     FS3ETootView_UpdateVisibilityMeaning(tv);
+                else if (gadId == GID_TOOT_ATTACH_MEDIA) {
+                    gfRequestFile(tv->attachMediaGF, tv->window);
+                } else if (gadId == GID_TOOT_ATTACH_MEDIA_CLEAR) {
+                    SetGadgetAttrs((struct Gadget *)tv->attachMediaGF,
+                                   tv->window, NULL,
+                                   GETFILE_File,   (ULONG)"",
+                                   GETFILE_Drawer, (ULONG)"",
+                                   TAG_DONE);
+                }
 
                 BoopsiDelay_BeginMessage(DelayQueue, gadId);
                 BoopsiDelay_AddTag(DelayQueue, GA_Selected, 0);
@@ -789,24 +869,29 @@ void FS3ETootView_UpdateCharCount(FS3ETootView *tv)
 
 void FS3ETootView_UpdateSendEnabled(FS3ETootView *tv)
 {
-    BOOL connected;
+    BOOL connected, enabled;
 
     if (!tv || !tv->tootBtn || !app) return;
 
     connected = (app->accountAccessToken && app->accountAccessToken[0]) ? TRUE : FALSE;
+    /* Also disabled while an attachment upload is in flight (see
+     * app->tootUploadPending's comment in friendsh3ep.h) -- the actual
+     * PUT/POST can't be built yet without the upload's media id, so a
+     * second click here would just race the first one. */
+    enabled = (BOOL)(connected && !app->tootUploadPending);
 
     if (tv->window)
         SetGadgetAttrs((struct Gadget *)tv->tootBtn, tv->window, NULL,
-                       GA_Disabled, (ULONG)!connected, TAG_DONE);
+                       GA_Disabled, (ULONG)!enabled, TAG_DONE);
     else
-        SetAttrs(tv->tootBtn, GA_Disabled, (ULONG)!connected, TAG_END);
+        SetAttrs(tv->tootBtn, GA_Disabled, (ULONG)!enabled, TAG_END);
 }
 
 /* Everything that varies per FS3ETootKind, kept as one table instead of
  * scattered switch-statements -- adding a future kind (e.g. an actual poll
  * compose UI) means adding one row here, not touching three separate
- * places. FS3ETOOT_KIND_REPLY/QUOTE's titleMsgId is unused (their title is
- * printf-formatted with the target @handle, not a plain lookup) --
+ * places. FS3ETOOT_KIND_REPLY/QUOTE/MESSAGE's titleMsgId is unused (their
+ * title is printf-formatted with the target @handle, not a plain lookup) --
  * handled as an explicit exception in FS3ETootView_SetComposeContext. */
 typedef struct FS3ETootKindConfig {
     ULONG titleMsgId;         /* MSG_TOOT_CONTEXT_* for contextMessage's text */
@@ -818,11 +903,12 @@ typedef struct FS3ETootKindConfig {
 } FS3ETootKindConfig;
 
 static const FS3ETootKindConfig tootKindConfig[] = {
-    /* FS3ETOOT_KIND_NEW    */ { MSG_TOOT_CONTEXT_NEW,    MSG_TOOT_SEND,       FALSE, TRUE  },
-    /* FS3ETOOT_KIND_MODIFY */ { MSG_TOOT_CONTEXT_MODIFY, MSG_TOOT_SEND_MODIFY, TRUE, FALSE },
-    /* FS3ETOOT_KIND_POLL   */ { MSG_TOOT_CONTEXT_POLL,   MSG_TOOT_SEND,       FALSE, TRUE  },
-    /* FS3ETOOT_KIND_REPLY  */ { MSG_TOOT_CONTEXT_NEW /* unused, see above */, MSG_TOOT_SEND_REPLY, TRUE, TRUE },
-    /* FS3ETOOT_KIND_QUOTE  */ { MSG_TOOT_CONTEXT_NEW /* unused, see above */, MSG_TOOT_SEND_QUOTE, FALSE, TRUE },
+    /* FS3ETOOT_KIND_NEW     */ { MSG_TOOT_CONTEXT_NEW,    MSG_TOOT_SEND,       FALSE, TRUE  },
+    /* FS3ETOOT_KIND_MODIFY  */ { MSG_TOOT_CONTEXT_MODIFY, MSG_TOOT_SEND_MODIFY, TRUE, FALSE },
+    /* FS3ETOOT_KIND_POLL    */ { MSG_TOOT_CONTEXT_POLL,   MSG_TOOT_SEND,       FALSE, TRUE  },
+    /* FS3ETOOT_KIND_REPLY   */ { MSG_TOOT_CONTEXT_NEW /* unused, see above */, MSG_TOOT_SEND_REPLY, TRUE, TRUE },
+    /* FS3ETOOT_KIND_QUOTE   */ { MSG_TOOT_CONTEXT_NEW /* unused, see above */, MSG_TOOT_SEND_QUOTE, FALSE, TRUE },
+    /* FS3ETOOT_KIND_MESSAGE */ { MSG_TOOT_CONTEXT_NEW /* unused, see above */, MSG_TOOT_SEND,       TRUE, TRUE },
 };
 
 /* Updates tv->visibilityMeaning's text -- blank for kinds whose
@@ -930,6 +1016,10 @@ void FS3ETootView_SetComposeContext(FS3ETootView *tv, FS3ETootKind kind,
         snprintf(textBuf, sizeof(textBuf)-1, LOC(MSG_TOOT_CONTEXT_QUOTE_FORMAT),
                  (params && params->acct && params->acct[0]) ? params->acct : "?");
         text = textBuf;
+    } else if (kind == FS3ETOOT_KIND_MESSAGE) {
+        snprintf(textBuf, sizeof(textBuf)-1, LOC(MSG_TOOT_CONTEXT_MESSAGE_FORMAT),
+                 (params && params->acct && params->acct[0]) ? params->acct : "?");
+        text = textBuf;
     } else {
         text = LOC(cfg->titleMsgId);
     }
@@ -970,12 +1060,15 @@ void FS3ETootView_SetComposeContext(FS3ETootView *tv, FS3ETootKind kind,
      * QUOTE does NOT prefill the quoted text -- quoted_status_id already
      * makes the server (and every quote-aware client) render the quoted
      * toot as its own embedded card; copying its text into the body too
-     * would just duplicate it in the posted status' own text. */
+     * would just duplicate it in the posted status' own text. MESSAGE
+     * prefills the same "@acct " mention prefix as REPLY -- it's a fresh
+     * toot (no in_reply_to_id), but still needs the mention so the target
+     * actually sees it in their notifications. */
     if (cfg->prefillBody && tv->bodyEditor) {
         char bodyBuf[300];
         const char *body;
 
-        if (kind == FS3ETOOT_KIND_REPLY) {
+        if (kind == FS3ETOOT_KIND_REPLY || kind == FS3ETOOT_KIND_MESSAGE) {
             snprintf(bodyBuf, sizeof(bodyBuf), "@%s ",
                      (params && params->acct && params->acct[0]) ? params->acct : "");
             body = bodyBuf;
@@ -1025,4 +1118,76 @@ LONG FS3ETootView_GetQuotePolicy(FS3ETootView *tv)
 
     GetAttr(CHOOSER_Active, tv->quotePolicyChooser, &active);
     return (LONG)active;
+}
+
+/* Case-insensitive full-string match -- avoids a Stricmp()/UtilityBase
+ * dependency just for this one small check. */
+static BOOL ExtEquals(const char *ext, const char *want)
+{
+    for (; *ext && *want; ext++, want++) {
+        char a = *ext;
+        if (a >= 'A' && a <= 'Z') a = (char)(a + 32);
+        if (a != *want) return FALSE;
+    }
+    return (BOOL)(*ext == '\0' && *want == '\0');
+}
+
+FS3ETootAttachStatus FS3ETootView_CheckAttachment(FS3ETootView *tv,
+    char *outPath, ULONG outPathSize, const char **outMimeType)
+{
+    ULONG filePtr = 0, drawerPtr = 0;
+    const char *file, *drawer;
+    const char *ext;
+    BPTR lock;
+    struct FileInfoBlock *fib;
+    BOOL sizeOk;
+
+    if (!tv || !tv->attachMediaGF || !outPath || outPathSize < 1)
+        return FS3ETOOT_ATTACH_NONE;
+
+    GetAttr(GETFILE_File, tv->attachMediaGF, &filePtr);
+    file = (const char *)filePtr;
+    if (!file || !file[0])
+        return FS3ETOOT_ATTACH_NONE;
+
+    GetAttr(GETFILE_Drawer, tv->attachMediaGF, &drawerPtr);
+    drawer = (const char *)drawerPtr;
+
+    if (drawer && drawer[0]) {
+        ULONG dirLen = (ULONG)strlen(drawer);
+        BOOL  needSlash = drawer[dirLen - 1] != ':' && drawer[dirLen - 1] != '/';
+        snprintf(outPath, (size_t)outPathSize, "%s%s%s", drawer, needSlash ? "/" : "", file);
+    } else {
+        strncpy(outPath, file, outPathSize - 1);
+        outPath[outPathSize - 1] = '\0';
+    }
+
+    ext = strrchr(outPath, '.');
+    if (!ext) return FS3ETOOT_ATTACH_BADEXT;
+    ext++;
+
+         if (ExtEquals(ext, "gif"))                          { if (outMimeType) *outMimeType = "image/gif";  }
+    else if (ExtEquals(ext, "jpeg") || ExtEquals(ext, "jpg")) { if (outMimeType) *outMimeType = "image/jpeg"; }
+    else if (ExtEquals(ext, "png"))                           { if (outMimeType) *outMimeType = "image/png";  }
+    else if (ExtEquals(ext, "mp3"))                           { if (outMimeType) *outMimeType = "audio/mpeg"; }
+    else if (ExtEquals(ext, "ogg"))                           { if (outMimeType) *outMimeType = "audio/ogg";  }
+    else if (ExtEquals(ext, "mpg"))                           { if (outMimeType) *outMimeType = "video/mpeg"; }
+    else if (ExtEquals(ext, "mp4"))                           { if (outMimeType) *outMimeType = "video/mp4";  }
+    else return FS3ETOOT_ATTACH_BADEXT;
+
+    lock = Lock((STRPTR)outPath, SHARED_LOCK);
+    if (!lock) return FS3ETOOT_ATTACH_MISSING;
+
+    fib = (struct FileInfoBlock *)AllocDosObject(DOS_FIB, NULL);
+    if (!fib) { UnLock(lock); return FS3ETOOT_ATTACH_MISSING; }
+
+    sizeOk = (BOOL)(Examine(lock, fib) && fib->fib_DirEntryType < 0 &&
+                    fib->fib_Size > 0 && (ULONG)fib->fib_Size <= FS3ENET_UPLOAD_MAX_BYTES);
+
+    FreeDosObject(DOS_FIB, fib);
+    UnLock(lock);
+
+    if (!sizeOk) return FS3ETOOT_ATTACH_TOOBIG;
+
+    return FS3ETOOT_ATTACH_OK;
 }

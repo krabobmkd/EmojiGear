@@ -404,37 +404,67 @@ static void ttl_profile_header_render(TTLData *inst, struct RastPort *rp,
         URPDrawTextUTF8(rp, dc, &pos, followingLabel, (ULONG)nc);
     }
 
-    /* ---- Follow/Unfollow button -- reserved as the LAST row before the
-     * separator (see .layout and ttl_profile_button_row_height's comment);
-     * boxH/boxY MUST match that reservation exactly, or the button ends up
-     * drawn over whatever .layout actually left space for. ---- */
+    /* ---- Follow/Unfollow button (left) + Message button (right) -- same
+     * row, reserved as the LAST row before the separator (see .layout and
+     * ttl_profile_button_row_height's comment); boxH/boxY MUST match that
+     * reservation exactly, or the buttons end up drawn over whatever
+     * .layout actually left space for. Message shares Follow/Unfollow's
+     * visibility condition (post->mediaCount != 0, i.e. hidden on a
+     * self-profile -- see ttl_profile_header_alloc) since messaging
+     * yourself isn't a useful action either. ---- */
     if (post->mediaCount != 0 && inst->style && inst->style->dcNormal) {
-        const char *label = post->following ? "Following" : "Follow";
         struct URPDrawContext *dc = inst->style->dcNormal;
-        struct URPTextMetric m;
+        WORD  boxH = ttl_profile_button_row_height(inst);
+        WORD  boxY = (WORD)(drawY + post->height - 1 - TTL_POST_PAD_BOT - boxH);
         struct URPTextPos    pos;
-        LONG  nc = utf8_codepoints_range(label, label + strlen(label));
-        WORD  boxW, boxH, boxX, boxY;
-        WORD  textX = (WORD)(padLeft + avatarW +
-                              (inst->style ? inst->style->avatarGap : 6));
 
-        URPDC_TextSizeUTF8(dc, label, nc, &m);
-        boxH = ttl_profile_button_row_height(inst);
-        boxW = (WORD)(m.width + TTL_PROFILE_BUTTON_PADX * 2);
-        boxX = textX;
-        boxY = (WORD)(drawY + post->height - 1 - TTL_POST_PAD_BOT - boxH);
+        /* Follow/Unfollow */
+        {
+            const char *label = post->following ? "Following" : "Follow";
+            struct URPTextMetric m;
+            LONG  nc = utf8_codepoints_range(label, label + strlen(label));
+            WORD  boxW, boxX;
+            WORD  textX = (WORD)(padLeft + avatarW +
+                                  (inst->style ? inst->style->avatarGap : 6));
 
-        SetAPen(rp, (LONG)FS3E_PEN(inst->style,
-            post->following ? FS3E_COLOR_BUTTON_SELECTED_BG : FS3E_COLOR_BUTTON_BG));
-        RectFill(rp, boxX, boxY, (WORD)(boxX + boxW - 1), (WORD)(boxY + boxH - 1));
+            URPDC_TextSizeUTF8(dc, label, nc, &m);
+            boxW = (WORD)(m.width + TTL_PROFILE_BUTTON_PADX * 2);
+            boxX = textX;
 
-        URPDC_SetDrawColorFromPen(dc, inst->screen,
-            (LONG)FS3E_PEN(inst->style, FS3E_COLOR_ACTION_TEXT),
-            (LONG)FS3E_PEN(inst->style,
+            SetAPen(rp, (LONG)FS3E_PEN(inst->style,
                 post->following ? FS3E_COLOR_BUTTON_SELECTED_BG : FS3E_COLOR_BUTTON_BG));
-        pos.x = (WORD)(boxX + TTL_PROFILE_BUTTON_PADX);
-        pos.y = (WORD)(boxY + TTL_PROFILE_BUTTON_PADY + inst->lineAscent);
-        URPDrawTextUTF8(rp, dc, &pos, label, (ULONG)nc);
+            RectFill(rp, boxX, boxY, (WORD)(boxX + boxW - 1), (WORD)(boxY + boxH - 1));
+
+            URPDC_SetDrawColorFromPen(dc, inst->screen,
+                (LONG)FS3E_PEN(inst->style, FS3E_COLOR_ACTION_TEXT),
+                (LONG)FS3E_PEN(inst->style,
+                    post->following ? FS3E_COLOR_BUTTON_SELECTED_BG : FS3E_COLOR_BUTTON_BG));
+            pos.x = (WORD)(boxX + TTL_PROFILE_BUTTON_PADX);
+            pos.y = (WORD)(boxY + TTL_PROFILE_BUTTON_PADY + inst->lineAscent);
+            URPDrawTextUTF8(rp, dc, &pos, label, (ULONG)nc);
+        }
+
+        /* Message -- right-aligned, same row */
+        {
+            const char *label = "Message";
+            struct URPTextMetric m;
+            LONG  nc = utf8_codepoints_range(label, label + strlen(label));
+            WORD  boxW, boxX;
+
+            URPDC_TextSizeUTF8(dc, label, nc, &m);
+            boxW = (WORD)(m.width + TTL_PROFILE_BUTTON_PADX * 2);
+            boxX = (WORD)(inst->gadWidth - TTL_POST_PAD_RIGHT - boxW);
+
+            SetAPen(rp, (LONG)FS3E_PEN(inst->style, FS3E_COLOR_BUTTON_BG));
+            RectFill(rp, boxX, boxY, (WORD)(boxX + boxW - 1), (WORD)(boxY + boxH - 1));
+
+            URPDC_SetDrawColorFromPen(dc, inst->screen,
+                (LONG)FS3E_PEN(inst->style, FS3E_COLOR_ACTION_TEXT),
+                (LONG)FS3E_PEN(inst->style, FS3E_COLOR_BUTTON_BG));
+            pos.x = (WORD)(boxX + TTL_PROFILE_BUTTON_PADX);
+            pos.y = (WORD)(boxY + TTL_PROFILE_BUTTON_PADY + inst->lineAscent);
+            URPDrawTextUTF8(rp, dc, &pos, label, (ULONG)nc);
+        }
     }
 }
 
@@ -487,20 +517,37 @@ static void ttl_profile_header_build_hotspots(TTLData *inst, TTLPost *post)
     }
 
     /* Same row as .render draws into -- see ttl_profile_button_row_height's
-     * comment for why boxH/boxY must match that exactly. */
+     * comment for why boxH/boxY must match that exactly. Message shares
+     * Follow/Unfollow's visibility condition -- see .render's comment. */
     if (post->mediaCount != 0 && inst->style && inst->style->dcNormal) {
-        const char *label = post->following ? "Following" : "Follow";
-        struct URPTextMetric m;
-        LONG  nc = utf8_codepoints_range(label, label + strlen(label));
-        WORD  boxW, boxH, boxX, boxY;
+        WORD boxH = ttl_profile_button_row_height(inst);
+        WORD boxY = (WORD)(post->height - 1 - TTL_POST_PAD_BOT - boxH);
 
-        URPDC_TextSizeUTF8(inst->style->dcNormal, label, nc, &m);
-        boxH = ttl_profile_button_row_height(inst);
-        boxW = (WORD)(m.width + TTL_PROFILE_BUTTON_PADX * 2);
-        boxX = textX;
-        boxY = (WORD)(post->height - 1 - TTL_POST_PAD_BOT - boxH);
+        {
+            const char *label = post->following ? "Following" : "Follow";
+            struct URPTextMetric m;
+            LONG  nc = utf8_codepoints_range(label, label + strlen(label));
+            WORD  boxW = 0, boxX;
 
-        ttl_hs_add(post, TTL_HOT_FOLLOW, boxX, boxY, boxW, boxH, NULL, 0);
+            URPDC_TextSizeUTF8(inst->style->dcNormal, label, nc, &m);
+            boxW = (WORD)(m.width + TTL_PROFILE_BUTTON_PADX * 2);
+            boxX = textX;
+
+            ttl_hs_add(post, TTL_HOT_FOLLOW, boxX, boxY, boxW, boxH, NULL, 0);
+        }
+
+        {
+            const char *label = "Message";
+            struct URPTextMetric m;
+            LONG  nc = utf8_codepoints_range(label, label + strlen(label));
+            WORD  boxW, boxX;
+
+            URPDC_TextSizeUTF8(inst->style->dcNormal, label, nc, &m);
+            boxW = (WORD)(m.width + TTL_PROFILE_BUTTON_PADX * 2);
+            boxX = (WORD)(inst->gadWidth - TTL_POST_PAD_RIGHT - boxW);
+
+            ttl_hs_add(post, TTL_HOT_MESSAGE, boxX, boxY, boxW, boxH, NULL, 0);
+        }
     }
 }
 

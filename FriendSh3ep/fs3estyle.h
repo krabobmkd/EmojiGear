@@ -28,6 +28,7 @@
 #include <utility/hooks.h>
 
 #include "bmimage.h"
+#include "rgbimage.h"
 
 /* ------------------------------------------------------------------ */
 /* FS3EManagedColor — one color role: RGB definition + runtime pen     */
@@ -241,6 +242,21 @@ typedef struct {
      * see TTIMELINE_ViewMode in TootTimeline/fs3etoottimeline.h. Optional --
      * if missing, the timeline just draws the waiting text alone. */
     BmImage waitImage;
+
+    /* Audio attachment placeholder (media.soundplay in style.txt, default
+     * "soundplay.png"), drawn box-fit-scaled into a toot's media preview
+     * hotspot in place of a real thumbnail for TTL_MEDIA_KIND_AUDIO
+     * attachments (see ttl_render_tile in TootTimeline/fs3etoottimeline_
+     * tiles.c) -- audio has nothing to decode a thumbnail from. RgbImage,
+     * not BmImage, unlike every other theme asset here: loaded once via
+     * RgbImage_LoadViaDatatype (screen-independent RGB24, no per-screen
+     * remap) and box-fit-scaled at render time with RgbImage_DrawScaled(),
+     * the exact same mechanism AvatarImages_GetMedia's real media
+     * thumbnails already use -- so it composes into that code path as a
+     * fallback RgbImage instead of needing a separate BmImage draw path.
+     * Optional -- if missing, TTL_HOT_PLAY_AUDIO falls back to the plain
+     * filled-rect play glyph it always drew before this existed. */
+    RgbImage soundPlayImage;
 } FS3EStyle;
 
 /* ------------------------------------------------------------------ */

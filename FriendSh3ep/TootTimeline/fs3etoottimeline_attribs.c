@@ -752,6 +752,11 @@ ULONG ttl_apply_tags(Class *cl, Object *o, struct opSet *msg, int couldRefreshDr
                 break;
             }
 
+            case TTIMELINE_ActionOnDoubleClick:
+                inst->actionOnDoubleClick = tag->ti_Data ? TRUE : FALSE;
+                used = 1;
+                break;
+
             case TTIMELINE_InvalidateImages:
                 /* No layout/height change -- just redraw the currently
                  * active tiles so they pick up whatever image just
@@ -836,6 +841,9 @@ ULONG TTL_OnNew(Class *cl, Object *o, struct opSet *msg)
     for (ch = 0; ch < TTL_HOTSPOT_POOL_TOOTS; ch++)
         inst->hotSpotBucketOwner[ch] = NULL;
     inst->hotSpotNextBucket = 0;
+
+    inst->actionOnDoubleClick = FALSE;
+    inst->pendingClickArmed   = FALSE;
 
     ttl_apply_tags(cl,newObj, msg,FALSE);
 
@@ -934,6 +942,9 @@ ULONG TTL_OnGet(Class *cl, Object *o, struct opGet *msg)
             return 1;
         case TTIMELINE_LastHotSpotPostId:
             *msg->opg_Storage = inst->lastHotSpotPostId[0] ? (ULONG)inst->lastHotSpotPostId : 0;
+            return 1;
+        case TTIMELINE_ActionOnDoubleClick:
+            *msg->opg_Storage = (ULONG)inst->actionOnDoubleClick;
             return 1;
         case TTIMELINE_NewestPostId: {
             /* Head-to-tail: first post with a known id is the newest one --

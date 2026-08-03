@@ -13,6 +13,9 @@
 
 #include <exec/memory.h>
 #include <proto/exec.h>
+#include <proto/dos.h>
+
+#include "bdbprintf.h"
 
 static const char FS3EMASTODON_HEX[] = "0123456789ABCDEF";
 
@@ -427,6 +430,7 @@ BOOL FS3EMastodon_PostStatus(const char *apiBaseUrl, const char *accessToken,
                             const char *inReplyToId,
                             const char *quoteApprovalPolicy,
                             const char *quotedStatusId,
+                            const char *const *mediaIds, ULONG mediaCount,
                             char *outStatusId, ULONG outStatusIdSize)
 {
     char url[256];
@@ -449,6 +453,18 @@ BOOL FS3EMastodon_PostStatus(const char *apiBaseUrl, const char *accessToken,
         cJSON_AddStringToObject(reqJson, "in_reply_to_id", inReplyToId);
     if (quotedStatusId && quotedStatusId[0])
         cJSON_AddStringToObject(reqJson, "quoted_status_id", quotedStatusId);
+    if (mediaIds && mediaCount > 0)
+    {
+        cJSON *arr = cJSON_CreateArray();
+        if (arr)
+        {
+            ULONG i;
+            for (i = 0; i < mediaCount; i++)
+                if (mediaIds[i] && mediaIds[i][0])
+                    cJSON_AddItemToArray(arr, cJSON_CreateString(mediaIds[i]));
+            cJSON_AddItemToObject(reqJson, "media_ids", arr);
+        }
+    }
 
     reqBody = cJSON_PrintUnformatted(reqJson);
     cJSON_Delete(reqJson);
@@ -464,19 +480,40 @@ BOOL FS3EMastodon_PostStatus(const char *apiBaseUrl, const char *accessToken,
     headers[1].fhh_Name  = NULL;
     headers[1].fhh_Value = NULL;
 
-    if (FS3EHttp_Post(url, headers, "application/json", reqBody, strlen(reqBody), &resp))
+    /* FS3EHttp_PostRaw(), not FS3EHttp_Post() -- same reasoning as
+     * FS3EMastodon_UploadMedia() above: this endpoint can answer with
+     * something other than 200 (notably 422 if statusText references a
+     * media_id still being transcoded server-side), and FS3EHttp_Post()'s
+     * OSSL_HTTP_transfer() path would discard that body and fail outright
+     * with no clue why. */
+    if (FS3EHttp_PostRaw(url, headers, "application/json", reqBody, strlen(reqBody), &resp))
     {
-        json = cJSON_Parse((char *)resp.fhr_Body);
-        if (json)
-        {
-            FS3EMastodon_CopyJsonString(json, "id", outStatusId, outStatusIdSize);
+        if (resp.fhr_StatusCode >= 200 && resp.fhr_StatusCode < 300) {
+            json = cJSON_Parse((char *)resp.fhr_Body);
+            if (json)
+            {
+                FS3EMastodon_CopyJsonString(json, "id", outStatusId, outStatusIdSize);
 
-            ok = (outStatusId[0] != '\0');
+                ok = (outStatusId[0] != '\0');
 
-            cJSON_Delete(json);
+                cJSON_Delete(json);
+            }
+        }
+        if (!ok) {
+            char preview[201];
+            ULONG plen = resp.fhr_BodyLen < 200 ? resp.fhr_BodyLen : 200;
+            if (resp.fhr_Body) CopyMem(resp.fhr_Body, preview, plen); else plen = 0;
+            preview[plen] = '\0';
+            bdbprintf_now("PostStatus: no status id (status=%lu bodyLen=%lu) body=%s\n",
+                           resp.fhr_StatusCode, resp.fhr_BodyLen, preview);
         }
 
         FS3EHttp_FreeResponse(&resp);
+    }
+    else
+    {
+        bdbprintf_now("PostStatus: FS3EHttp_PostRaw failed outright\n");
+        FS3EHttp_PrintErrors();
     }
 
     cJSON_free(reqBody);
@@ -569,6 +606,168 @@ BOOL FS3EMastodon_DeleteStatus(const char *apiBaseUrl, const char *accessToken,
     }
 
     return ok;
+}
+
+/* Fixed rather than randomly generated -- see the header comment: for a
+ * boundary this distinctive to collide with real file bytes by coincidence
+ * is astronomically unlikely, and every other request in this file already
+ * avoids extra complexity where it isn't load-bearing. */
+#define FS3EMASTODON_UPLOAD_BOUNDARY "----FriendSh3epBoundary7f3a9c2e"
+
+BOOL FS3EMastodon_UploadMedia(const char *apiBaseUrl, const char *accessToken,
+                              const void *fileBytes, ULONG fileLen,
+                              const char *fileName, const char *mimeType,
+                              char *outMediaId, ULONG outMediaIdSize)
+{
+    char url[256];
+    char authHeader[300];
+    FS3EHttpHeader headers[2];
+    FS3EHttpResponse resp;
+    cJSON *json;
+    BOOL ok = FALSE;
+
+    char partHead[512];
+    int  partHeadLen;
+    static const char partTail[] = "\r\n--" FS3EMASTODON_UPLOAD_BOUNDARY "--\r\n";
+    ULONG  bodyLen;
+    UBYTE *body;
+
+    if (!fileBytes || fileLen == 0)
+        return FALSE;
+
+    /* Single "file" part -- Mastodon's media endpoint ignores any other
+     * form field for a plain upload (description/focus are separate,
+     * unsupported here -- see the header comment). Body is built as one
+     * raw byte buffer (not a C string -- fileBytes may contain NULs) so it
+     * can go straight to FS3EHttp_Post()'s body/bodyLen. */
+    partHeadLen = snprintf(partHead, sizeof(partHead),
+        "--" FS3EMASTODON_UPLOAD_BOUNDARY "\r\n"
+        "Content-Disposition: form-data; name=\"file\"; filename=\"%s\"\r\n"
+        "Content-Type: %s\r\n"
+        "\r\n",
+        fileName ? fileName : "attachment",
+        mimeType ? mimeType : "application/octet-stream");
+    if (partHeadLen < 0 || partHeadLen >= (int)sizeof(partHead))
+        return FALSE;
+
+    bodyLen = (ULONG)partHeadLen + fileLen + (ULONG)(sizeof(partTail) - 1);
+    body = (UBYTE *)AllocVec(bodyLen, MEMF_ANY);
+    if (!body)
+        return FALSE;
+
+    CopyMem(partHead, body, (ULONG)partHeadLen);
+    CopyMem((APTR)fileBytes, body + partHeadLen, fileLen);
+    CopyMem((APTR)partTail, body + partHeadLen + fileLen, (ULONG)(sizeof(partTail) - 1));
+
+    snprintf(url, sizeof(url), "%s/api/v2/media", apiBaseUrl);
+    FS3EMastodon_BuildAuthHeader(authHeader, sizeof(authHeader), accessToken);
+
+    headers[0].fhh_Name  = "Authorization";
+    headers[0].fhh_Value = authHeader;
+    headers[1].fhh_Name  = NULL;
+    headers[1].fhh_Value = NULL;
+
+    /* FS3EHttp_PostRaw(), NOT FS3EHttp_Post() -- Mastodon's /api/v2/media
+     * answers 200 OK for an image (processed synchronously) but 202
+     * Accepted for audio/video it has to transcode asynchronously, and
+     * FS3EHttp_Post()'s OSSL_HTTP_transfer() path only accepts 200/301/302
+     * as success. Any 2xx is accepted here. */
+    if (FS3EHttp_PostRaw(url, headers,
+            "multipart/form-data; boundary=" FS3EMASTODON_UPLOAD_BOUNDARY,
+            body, bodyLen, &resp))
+    {
+        if (resp.fhr_StatusCode >= 200 && resp.fhr_StatusCode < 300) {
+            json = cJSON_Parse((char *)resp.fhr_Body);
+            if (json)
+            {
+                FS3EMastodon_CopyJsonString(json, "id", outMediaId, outMediaIdSize);
+                ok = (outMediaId[0] != '\0');
+                cJSON_Delete(json);
+            }
+        }
+        if (!ok) {
+            /* Mastodon answered, just not with a 2xx + "id" -- log what
+             * it actually said instead of just failing silently. */
+            char preview[201];
+            ULONG plen = resp.fhr_BodyLen < 200 ? resp.fhr_BodyLen : 200;
+            if (resp.fhr_Body) CopyMem(resp.fhr_Body, preview, plen); else plen = 0;
+            preview[plen] = '\0';
+            bdbprintf_now("UploadMedia: no media id (fileName=%s mimeType=%s "
+                           "status=%lu bodyLen=%lu) body=%s\n",
+                           fileName ? fileName : "?", mimeType ? mimeType : "?",
+                           resp.fhr_StatusCode, resp.fhr_BodyLen, preview);
+        }
+        FS3EHttp_FreeResponse(&resp);
+    }
+    else
+    {
+        bdbprintf_now("UploadMedia: FS3EHttp_PostRaw failed outright "
+                       "(fileName=%s mimeType=%s fileLen=%lu)\n",
+                       fileName ? fileName : "?", mimeType ? mimeType : "?", fileLen);
+        FS3EHttp_PrintErrors();
+    }
+
+    FreeVec(body);
+    return ok;
+}
+
+/* See this function's doc comment in fs3enet_mastodon.h. */
+#define FS3EMASTODON_MEDIA_POLL_MAX_ATTEMPTS 15
+#define FS3EMASTODON_MEDIA_POLL_DELAY_TICKS  50 /* dos.library ticks -- ~1s, see TICKS_PER_SECOND */
+
+BOOL FS3EMastodon_WaitMediaReady(const char *apiBaseUrl, const char *accessToken,
+                                 const char *mediaId)
+{
+    char url[300];
+    char authHeader[300];
+    FS3EHttpHeader headers[2];
+    UWORD attempt;
+
+    if (!mediaId || !mediaId[0])
+        return FALSE;
+
+    snprintf(url, sizeof(url), "%s/api/v1/media/%s", apiBaseUrl, mediaId);
+    FS3EMastodon_BuildAuthHeader(authHeader, sizeof(authHeader), accessToken);
+
+    headers[0].fhh_Name  = "Authorization";
+    headers[0].fhh_Value = authHeader;
+    headers[1].fhh_Name  = NULL;
+    headers[1].fhh_Value = NULL;
+
+    for (attempt = 0; attempt < FS3EMASTODON_MEDIA_POLL_MAX_ATTEMPTS; attempt++)
+    {
+        FS3EHttpResponse resp;
+        ULONG status;
+
+        if (!FS3EHttp_GetRaw(url, headers, &resp))
+        {
+            bdbprintf_now("WaitMediaReady: GetRaw failed outright (mediaId=%s attempt=%u)\n",
+                          mediaId, (unsigned)attempt);
+            return FALSE;
+        }
+
+        status = resp.fhr_StatusCode;
+        FS3EHttp_FreeResponse(&resp);
+
+        if (status == 200)
+            return TRUE;
+
+        if (status != 206)
+        {
+            /* Some other status (401/404/...) -- not a "still processing"
+             * state we can wait out, so give up now instead of burning
+             * the rest of the poll budget. */
+            bdbprintf_now("WaitMediaReady: unexpected status=%lu (mediaId=%s attempt=%u)\n",
+                          status, mediaId, (unsigned)attempt);
+            return FALSE;
+        }
+
+        Delay(FS3EMASTODON_MEDIA_POLL_DELAY_TICKS);
+    }
+
+    bdbprintf_now("WaitMediaReady: still processing after %d attempts, giving up (mediaId=%s)\n",
+                  FS3EMASTODON_MEDIA_POLL_MAX_ATTEMPTS, mediaId);
+    return FALSE;
 }
 
 BOOL FS3EMastodon_Favourite(const char *apiBaseUrl, const char *accessToken,

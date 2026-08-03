@@ -658,6 +658,33 @@ typedef struct TTLData {
     BOOL   pendingScroll;
     LONG   pendingScrollY;   /* new scrollY to apply in GM_RENDER */
 
+    /* ---- TTIMELINE_ActionOnDoubleClick (see fs3etoottimeline.h) ---- */
+    BOOL   actionOnDoubleClick;
+
+    /* ---- Double-click gating for hot-spot activation (used only when
+     * actionOnDoubleClick is TRUE, see TTL_OnHandleInput in
+     * fs3etoottimeline_input.c) ---- Tracks the most recent qualifying
+     * click (matched down/up hot-spot, not a drag) that did NOT activate
+     * yet, purely to detect a second click on the same target within the
+     * timing window DoubleClick() (intuition.library) checks. Identifies
+     * the target by hot-spot type + a bounded copy of its data bytes +
+     * the owning post's id, NOT by TTLPost pointer or hs->data pointer:
+     * hs->data may point into a TTLTextSpan row buffer freed on the next
+     * relayout (same reasoning as lastHotSpotStr above), and a post can
+     * scroll away and be freed too -- both plausible in the gap between
+     * two clicks of a double-click, unlike within a single click's own
+     * down/up match. pendingClickArmed FALSE means "no candidate armed"
+     * (can't just test pendingClickData[0] for that -- data is legitimately
+     * NULL/empty for button-style hot-spots like Reply/Boost/Fave). */
+    BOOL   pendingClickArmed;
+    UBYTE  pendingClickType;
+    char   pendingClickPostId[64]; /* same size as lastHotSpotPostId above */
+    char   pendingClickData[256];  /* raw bytes, NOT NUL-terminated -- see
+                                     * TTLHotSpot.data's own comment */
+    ULONG  pendingClickDataLen;
+    ULONG  pendingClickSecs;
+    ULONG  pendingClickMicros;
+
     /* ---- Color theme (not owned; pointer set via TTIMELINE_Style) ---- */
     FS3EStyle *style;
 

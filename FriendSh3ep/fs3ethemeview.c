@@ -675,10 +675,15 @@ BOOL FS3EThemeView_HandleInput(FS3EThemeView *tv)
                 return TRUE;
 
             case WMHI_RAWKEY:
-                if ((result & WMHI_KEYMASK) == 0x45) { /* Esc */
+            {
+                ULONG key = result & 0x07f;
+                ULONG isUp = (result & 0x080);
+
+                if (key == 0x45 && isUp) { /* Esc */
                     FS3EThemeView_Close(tv);
                     return TRUE;
                 }
+            }
                 break;
 
             case WMHI_GADGETUP:

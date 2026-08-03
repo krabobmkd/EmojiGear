@@ -311,6 +311,33 @@ static BOOL bmimage_scale_read_source_rgb(BmImage *img,
     return TRUE;
 }
 
+BOOL BmImage_ReadSourceRgb(const char *srcPath, UBYTE **outBuf,
+                            ULONG *outWidth, ULONG *outHeight,
+                            BmImageError *outError)
+{
+    BmImage tmp;
+    BOOL    ok;
+
+    if (outError) *outError = BMIMAGE_OK;
+
+    if (!srcPath || srcPath[0] == '\0' || !outBuf || !outWidth || !outHeight) {
+        if (outError) *outError = BMIMAGE_ERR_NO_PATH;
+        return FALSE;
+    }
+
+    if (!DataTypesBase) {
+        if (outError) *outError = BMIMAGE_ERR_NO_DATATYPES;
+        return FALSE;
+    }
+
+    memset(&tmp, 0, sizeof(tmp));
+    tmp.filePath = (char *)srcPath; /* read-only use; not owned/freed here */
+
+    ok = bmimage_scale_read_source_rgb(&tmp, outBuf, outWidth, outHeight);
+    if (!ok && outError) *outError = tmp.error;
+    return ok;
+}
+
 #define BMIMAGE_BMP_HEADER_SIZE 54  /* BITMAPFILEHEADER(14) + BITMAPINFOHEADER(40) */
 
 static void bmimage_put_u16le(UBYTE *p, UWORD v)

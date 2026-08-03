@@ -46,16 +46,29 @@ enum FS3EAudioRequestType
 {
     FS3EAUDIOQ_SHUTDOWN = 0,  /* ask the audio process to exit (stops playback first) */
     FS3EAUDIOQ_PLAY,          /* decode+stream a new MP3 file, replacing whatever is playing */
-    FS3EAUDIOQ_STOP           /* stop whatever is playing; no file loaded after */
+    FS3EAUDIOQ_STOP,          /* stop whatever is playing; no file loaded after */
+    FS3EAUDIOQ_PAUSE          /* pause/resume the CURRENTLY loaded track in place -- decode
+                                * and AHI state are left untouched, just not fed/advanced
+                                * while paused, so resume continues exactly where it left
+                                * off (see FS3EAudioState.paused in fs3eaudio.c). fs3eam_Pause
+                                * TRUE=pause, FALSE=resume. A no-op (still acked OK) if
+                                * nothing is loaded. */
 };
 
 enum FS3EAudioResult
 {
-    FS3EAUDIOR_OK = 0,        /* PLAY: now streaming. STOP/SHUTDOWN: done. */
+    FS3EAUDIOR_OK = 0,        /* PLAY/PAUSE: now streaming/paused-or-resumed. STOP/SHUTDOWN: done. */
     FS3EAUDIOR_ERROR,         /* PLAY: couldn't open mpega.library / the file / ahi.device */
-    FS3EAUDIOR_FINISHED       /* spontaneous notify, fs3eam_Type left at FS3EAUDIOQ_PLAY:
+    FS3EAUDIOR_FINISHED,      /* spontaneous notify, fs3eam_Type left at FS3EAUDIOQ_PLAY:
                                 * the track decoded to EOF on its own. Never sent for a
                                 * track a STOP or a later PLAY replaced first. */
+    FS3EAUDIOR_PROGRESS       /* spontaneous notify, fs3eam_Type left at FS3EAUDIOQ_PLAY,
+                                * sent periodically (every FS3EAUDIO_PROGRESS_EVERY_N_BUFFERS
+                                * buffers, see fs3eaudio.c) while playing and not paused --
+                                * fs3eam_ElapsedMs/fs3eam_TotalMs (TotalMs from MPEGA_STREAM's
+                                * ms_duration) let the caller drive a position slider. Never
+                                * sent while paused; TotalMs is 0 if the stream didn't report
+                                * a duration. */
 };
 
 #define FS3EAUDIO_PATH_SIZE 256
@@ -88,11 +101,18 @@ typedef struct FS3EAudioMessage
     /* FS3EAUDIOQ_PLAY request field, filled by the caller. */
     char  fs3eam_Path[FS3EAUDIO_PATH_SIZE]; /* local file path to play, already on disk */
 
-    /* Caller key, echoed back unchanged on the PLAY ack AND on the eventual
-     * spontaneous FS3EAUDIOR_FINISHED notify for that same track -- lets
-     * the GUI tell which track a FINISHED notify is about without tracking
-     * it itself. Empty/unused for STOP/SHUTDOWN. */
+    /* Caller key, echoed back unchanged on the PLAY ack AND on every
+     * eventual spontaneous FS3EAUDIOR_FINISHED/PROGRESS notify for that
+     * same track -- lets the GUI tell which track a notify is about
+     * without tracking it itself. Empty/unused for STOP/SHUTDOWN/PAUSE. */
     char  fs3eam_Key[FS3EAUDIO_KEY_SIZE];
+
+    /* FS3EAUDIOQ_PAUSE request field, filled by the caller. Unused otherwise. */
+    BOOL  fs3eam_Pause;
+
+    /* FS3EAUDIOR_PROGRESS notify fields, filled by the process. Unused otherwise. */
+    ULONG fs3eam_ElapsedMs;
+    ULONG fs3eam_TotalMs;
 } FS3EAudioMessage;
 
 /* Start the audio process. Returns the request MsgPort, or NULL on failure. */
@@ -134,5 +154,14 @@ BOOL FS3EAudio_Play(struct MsgPort *requestPort, struct MsgPort *replyPort,
  * requestPort is missing.
  */
 BOOL FS3EAudio_PlayStop(struct MsgPort *requestPort, struct MsgPort *replyPort);
+
+/*
+ * Ask the audio process to pause (pause=TRUE) or resume (pause=FALSE)
+ * whatever is currently loaded -- a no-op, still acked, if nothing is.
+ * Returns immediately; FS3EAUDIOR_OK arrives later on replyPort, same as
+ * FS3EAudio_Play()/PlayStop(). Returns FALSE (nothing queued) if
+ * requestPort is missing.
+ */
+BOOL FS3EAudio_Pause(struct MsgPort *requestPort, struct MsgPort *replyPort, BOOL pause);
 
 #endif /* FS3EAUDIO_H */

@@ -180,8 +180,8 @@ static void FS3EThumb_HandleMake(FS3EThumbMessage *msg)
 
     msg->fs3etm_DetectedFormat = (ULONG)BMFMT_UNKNOWN;
 
- bdbprintf("FS3EThumb_HandleMake:%s\n%s\n",msg->fs3etm_CacheKeyPath,
-                        msg->fs3etm_SrcPath);
+ // bdbprintf("FS3EThumb_HandleMake:%s\n%s\n",msg->fs3etm_CacheKeyPath,
+ //                        msg->fs3etm_SrcPath);
 
     /* Sniffed proactively here (not just on BMIMAGE_ERR_OPEN_FAILED below)
      * purely so the trace line below can show it -- picture.datatype does

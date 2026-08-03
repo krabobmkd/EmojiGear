@@ -76,6 +76,7 @@ static FS3EAction s_actions[FS3EACTION_COUNT] = {
 
     /* FS3EACTION_SETTINGS_THEME   */ { Action_SettingsTheme,  MSG_SETTINGS_THEME,        NULL },
     /* FS3EACTION_SETTINGS_GENERAL */ { Action_SettingsGeneral,MSG_SETTINGS_GENERAL,      NULL },
+    /* FS3EACTION_NETWORK_VIEW     */ { Action_NetworkView,    MSG_NETWORKV_TITLE,        NULL },
     /* FS3EACTION_SETTINGS_FONTSIZEM*/{ Action_FontSizeMinus,  MSG_SETTINGS_FONTSIZEM,    NULL },
     /* FS3EACTION_SETTINGS_FONTSIZEP*/{ Action_FontSizePlus,   MSG_SETTINGS_FONTSIZEP,    NULL },
 };
@@ -613,6 +614,13 @@ BOOL Action_SettingsGeneral(struct App *ctx)
 {
     if (!ctx) return FALSE;
     FS3ESettingsView_Open(&ctx->settingsView);
+    return TRUE;
+}
+
+BOOL Action_NetworkView(struct App *ctx)
+{
+    if (!ctx) return FALSE;
+    FS3ENetworkView_Open(&ctx->networkView);
     return TRUE;
 }
 

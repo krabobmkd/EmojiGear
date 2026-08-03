@@ -38,6 +38,21 @@ typedef struct RgbImage {
  */
 BOOL RgbImage_LoadBmp(RgbImage *img, const char *path);
 
+/*
+ * Alternative to RgbImage_LoadBmp() for the "no minify" thumbnail path
+ * (fs3esettings.h's minifyThumbnails FALSE): decodes an arbitrary
+ * datatype-openable source file (JPEG/PNG/etc, NOT necessarily a real BMP
+ * despite the deterministic ".<W>x<H>.bmp" name it's typically called
+ * with -- see FS3EApp_HandleNetReply's FS3ENETQ_FETCH_IMAGE case) via
+ * picture.datatype (BmImage_ReadSourceRgb, bmimage.h), at native size, no
+ * resize. Frees any previously loaded buffer first, same ownership/
+ * lifetime as RgbImage_LoadBmp(). Costs a full datatype decode on the
+ * calling task, unlike RgbImage_LoadBmp's cheap direct file read -- only
+ * used where that's the accepted trade-off (see minifyThumbnails' doc
+ * comment). Returns FALSE (img left unloaded) on decode failure.
+ */
+BOOL RgbImage_LoadViaDatatype(RgbImage *img, const char *path);
+
 /* Frees img->pixels (if any) and zeroes the struct. */
 void RgbImage_Free(RgbImage *img);
 

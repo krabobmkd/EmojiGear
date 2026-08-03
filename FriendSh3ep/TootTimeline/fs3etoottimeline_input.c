@@ -138,6 +138,43 @@ static BOOL ttl_hit_hotspot(TTLData *inst, WORD gadX, WORD gadY,
     return FALSE;
 }
 
+/* TTIMELINE_ActionOnDoubleClick gating -- see TTLData.pendingClick* doc
+ * comment in fs3etoottimeline_private.h for why this compares copied
+ * type/data/postId instead of pointers. */
+static BOOL ttl_click_matches_pending(TTLData *inst, TTLPost *post, TTLHotSpot *hs)
+{
+    const char *postId = post->postId ? post->postId : "";
+
+    if (!inst->pendingClickArmed) return FALSE;
+    if (inst->pendingClickType != hs->type) return FALSE;
+    if (inst->pendingClickDataLen != hs->dataLen) return FALSE;
+    if (hs->dataLen > 0 && memcmp(inst->pendingClickData, hs->data, hs->dataLen) != 0)
+        return FALSE;
+    if (strncmp(inst->pendingClickPostId, postId, sizeof(inst->pendingClickPostId) - 1) != 0)
+        return FALSE;
+    return TRUE;
+}
+
+static void ttl_click_arm_pending(TTLData *inst, TTLPost *post, TTLHotSpot *hs,
+                                    ULONG secs, ULONG micros)
+{
+    const char *postId = post->postId ? post->postId : "";
+    ULONG n = hs->dataLen;
+
+    if (n > sizeof(inst->pendingClickData)) n = sizeof(inst->pendingClickData);
+
+    inst->pendingClickArmed   = TRUE;
+    inst->pendingClickType    = hs->type;
+    inst->pendingClickDataLen = n;
+    if (n > 0) memcpy(inst->pendingClickData, hs->data, n);
+
+    strncpy(inst->pendingClickPostId, postId, sizeof(inst->pendingClickPostId) - 1);
+    inst->pendingClickPostId[sizeof(inst->pendingClickPostId) - 1] = '\0';
+
+    inst->pendingClickSecs   = secs;
+    inst->pendingClickMicros = micros;
+}
+
 /* The link-click action. Every activation is forwarded to external code
  * via ttl_notify_hotspot() -- TTIMELINE_HotSpotNotify (value=hs->type)
  * plus the hot-spot's string data and the id every hot-spot ACTION should
@@ -352,7 +389,27 @@ ULONG TTL_OnHandleInput(Class *cl, Object *o, struct gpInput *msg)
                 if (downHit && upHit && downPost == upPost && downIdx == upIdx) {
                     TTLHotSpot *hs = &upPost->hotSpots[upIdx];
 
-                    ttl_activate_hotspot(inst, cl, o, msg->gpi_GInfo, upPost, hs);
+                    if (!inst->actionOnDoubleClick) {
+                        ttl_activate_hotspot(inst, cl, o, msg->gpi_GInfo, upPost, hs);
+                    } else {
+                        /* See TTIMELINE_ActionOnDoubleClick's doc comment
+                         * in fs3etoottimeline.h -- only the second click on
+                         * the same target within DoubleClick()'s timing
+                         * window actually activates; a lone click just
+                         * arms the pending candidate. */
+                        ULONG curSecs   = (ULONG)ie->ie_TimeStamp.tv_secs;
+                        ULONG curMicros = (ULONG)ie->ie_TimeStamp.tv_micro;
+
+                        if (ttl_click_matches_pending(inst, upPost, hs) &&
+                            DoubleClick(inst->pendingClickSecs, inst->pendingClickMicros,
+                                        curSecs, curMicros))
+                        {
+                            inst->pendingClickArmed = FALSE; /* consumed */
+                            ttl_activate_hotspot(inst, cl, o, msg->gpi_GInfo, upPost, hs);
+                        } else {
+                            ttl_click_arm_pending(inst, upPost, hs, curSecs, curMicros);
+                        }
+                    }
                 }
 
                 ReleaseSemaphore(&inst->listSem);

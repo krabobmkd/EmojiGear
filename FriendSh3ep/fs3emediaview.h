@@ -57,6 +57,20 @@
 
 #include "bmimage.h"
 #include "network_fs3e/fs3enet.h"
+#include "fs3eaudio.h"
+
+/* Which decode routine an audio attachment's URL extension mapped to --
+ * see mediaview_audio_backend_for_url() in fs3emediaview.c. Only MPEGA is
+ * actually playable today; WAV/OGG are recognized and shown as such
+ * (rather than silently doing nothing) but need a decode routine other
+ * than mpega.library (mpega.library is MP3/MPEG-audio only) -- a
+ * follow-up, same "prepared, not finished" state fs3eaudio.c was in
+ * before this file wired it up. */
+typedef enum FS3EMVAudioBackend {
+    FS3EMV_AUDIO_NONE = 0,
+    FS3EMV_AUDIO_MPEGA,
+    FS3EMV_AUDIO_UNSUPPORTED
+} FS3EMVAudioBackend;
 
 typedef struct FS3EMediaView {
     Object        *windowObj;  /* BOOPSI window object (persistent) */
@@ -64,14 +78,23 @@ typedef struct FS3EMediaView {
 
     LONG left, top; /* remembered across closes (not persisted to disk) */
 
-    /* Rendering: layout -> picGadget is the one and only child, for the
-     * whole life of the window (built once by mediaview_ensure_window(),
-     * never removed/replaced -- see the header comment above for why).
-     * picClass is MakeClass'd once and FreeClass'd in Dispose(), same
-     * lifecycle as fs3eemojibox.c's gridClass. */
+    /* Rendering: layout -> transportRow (tapeDeckGadget + sliderGadget),
+     * picGadget -- all permanent children, for the whole life of the window
+     * (built once by mediaview_ensure_window(), never removed/replaced --
+     * see the header comment above for why picGadget itself works this
+     * way). picClass is MakeClass'd once and FreeClass'd in Dispose(), same
+     * lifecycle as fs3eemojibox.c's gridClass. transportRow is the layout's
+     * first line, above picGadget: tapeDeckGadget (stock tapedeck.gadget,
+     * see friendsh3ep.c's TapeDeckBase) on the left, sliderGadget (stock
+     * slider.gadget, SORIENT_HORIZ, see friendsh3ep.c's SliderBase) filling
+     * the rest of the row -- transport controls only for now, neither is
+     * yet wired to actually drive audio/video playback (see
+     * GID_MEDIAVIEW_TAPEDECK/GID_MEDIAVIEW_SLIDER). */
     Object *layout;
     Class  *picClass;
     Object *picGadget;
+    Object *tapeDeckGadget;
+    Object *sliderGadget;
 
     /* Currently decoded/remapped picture, if any (see bmimage.h).
      * picGadget's MEDIAPIC_* attributes are pushed from this struct's
@@ -101,6 +124,30 @@ typedef struct FS3EMediaView {
      * Used by "Save Media..." to build a meaningful default filename --
      * see fs3emediaview.c's mediaview_build_default_name(). */
     char poster[128];
+
+    /* Audio playback (mp3/wav/ogg attachments) -- counterpart to the
+     * picture/BmImage fields above, driven by FS3EMediaView_ShowAudioUrl()
+     * instead of ShowUrl(). isAudio TRUE means picGadget shows
+     * MEDIAPIC_Message text only (mv->image stays unloaded/irrelevant) and
+     * tapeDeckGadget/sliderGadget are live; FALSE means they're inert
+     * leftovers from a previous audio attachment (GID_MEDIAVIEW_TAPEDECK
+     * clicks are ignored while isAudio is FALSE -- see
+     * FS3EMediaView_TapeDeckPressed). audioRequestPort/audioReplyPort are
+     * cached from ShowAudioUrl's caller (app->audioRequestPort/
+     * audioReplyPort, see friendsh3ep.h) so later calls -- the fetch reply
+     * starting playback, TapeDeckPressed sending Play/Pause/Stop -- don't
+     * need them threaded through every function signature; NULL/harmless
+     * once isAudio is FALSE again. audioKey doubles as the FS3EAudioMessage
+     * key (see fs3eaudio.h) so FS3EMediaView_OnAudioReply can tell a reply/
+     * notify is about the attachment currently shown. */
+    BOOL   isAudio;
+    ULONG  audioBackend;                        /* FS3EMVAudioBackend */
+    char   audioLocalPath[FS3EAUDIO_PATH_SIZE]; /* filled once the fetch completes */
+    char   audioKey[FS3EAUDIO_KEY_SIZE];
+    BOOL   audioPlaying;
+    BOOL   audioPaused;
+    struct MsgPort *audioRequestPort;
+    struct MsgPort *audioReplyPort;
 } FS3EMediaView;
 
 /* Zeroes mv. Nothing to allocate up front -- the window/layout/picClass
@@ -145,6 +192,47 @@ void FS3EMediaView_OnFetchReply(FS3EMediaView *mv, ULONG result,
  */
 void FS3EMediaView_OnFetchProgress(FS3EMediaView *mv, const char *key,
                                     ULONG bytesSoFar, ULONG totalBytes);
+
+/*
+ * Opens (or brings to front) the "FriendSh3ep Media" window for an audio
+ * attachment (mp3/wav/ogg) -- counterpart to FS3EMediaView_ShowUrl() for
+ * pictures. Fetches url the same way (FS3ENETQ_FETCH_IMAGE, keepOriginal=
+ * TRUE, its own cache subdir -- see FS3E_CACHE_SUBDIR_AUDIO in fs3enet.h),
+ * then once downloaded starts playback via audioRequestPort/audioReplyPort
+ * (app->audioRequestPort/audioReplyPort, see friendsh3ep.h) -- but only for
+ * a .mp3 URL (FS3EMV_AUDIO_MPEGA); .wav/.ogg are detected and shown as
+ * "not supported yet" in the window instead of silently doing nothing (see
+ * FS3EMVAudioBackend's doc comment). Stops whatever audio attachment was
+ * previously playing in this same window first. Returns immediately, same
+ * as ShowUrl(). No-op if url is NULL/empty.
+ *
+ * posterAcct: see FS3EMediaView_ShowUrl()'s doc comment.
+ */
+void FS3EMediaView_ShowAudioUrl(FS3EMediaView *mv, const char *url,
+                                 const char *posterAcct,
+                                 struct MsgPort *audioRequestPort,
+                                 struct MsgPort *audioReplyPort);
+
+/*
+ * Feed every FS3EAudioMessage reply/notify (PLAY/PAUSE/STOP acks, the
+ * eventual FINISHED, and periodic PROGRESS pings -- see fs3eaudio.h)
+ * through here from friendsh3ep.c's audio reply drain. Updates mv's
+ * playing/paused state, picGadget's status text, and sliderGadget's
+ * position from PROGRESS. Ignored unless mv->isAudio and msg's key matches
+ * the attachment FS3EMediaView_ShowAudioUrl() is currently showing.
+ */
+void FS3EMediaView_OnAudioReply(FS3EMediaView *mv, const FS3EAudioMessage *msg);
+
+/*
+ * GID_MEDIAVIEW_TAPEDECK's WMHI_GADGETUP handler -- reads TDECK_Mode off
+ * tapeDeckGadget (whichever button was just pressed) and sends the
+ * matching FS3EAUDIOQ_PLAY(restart)/PAUSE(toggle)/STOP command via the
+ * cached audioRequestPort/audioReplyPort. No-op if mv->isAudio is FALSE or
+ * mv->audioBackend isn't FS3EMV_AUDIO_MPEGA (nothing playable loaded).
+ * Call from FS3EMediaView_HandleInput() when result's WMHI_GADGETMASK is
+ * GID_MEDIAVIEW_TAPEDECK.
+ */
+void FS3EMediaView_TapeDeckPressed(FS3EMediaView *mv);
 
 void  FS3EMediaView_Close(FS3EMediaView *mv);
 BOOL  FS3EMediaView_HandleInput(FS3EMediaView *mv);

@@ -23,6 +23,10 @@
 #define GID_TOOT_EMOJI_BUTTON    23
 #define GID_TOOT_SEND_BUTTON     24
 #define GID_TOOT_QUOTEPOLICY     25
+#define GID_TOOT_ATTACH_MEDIA       26
+#define GID_TOOT_ATTACH_MEDIA_CLEAR 27
+#define GID_MEDIAVIEW_TAPEDECK      28
+#define GID_MEDIAVIEW_SLIDER        29
 
 /* Title bar (Part A, TitleBarLayout) */
 #define GID_TITLEBAR_CLOSE       30
@@ -87,6 +91,15 @@
 #define GID_SETTINGSV_RGB_DRAW_FUNCTION   309
 #define GID_SETTINGSV_PLAY_TOOT_TIME      310
 #define GID_SETTINGSV_ALLOW_NEXT_TOOT_SCROLL 311
+#define GID_SETTINGSV_MINIFY_THUMBNAILS      312
+#define GID_SETTINGSV_TABS                   313
+#define GID_SETTINGSV_URLLINK_ACTION          314
+#define GID_SETTINGSV_DIRECT_DL_ARCHIVES       315
+#define GID_SETTINGSV_DOWNLOAD_PATH            316
+#define GID_SETTINGSV_TOOT_ACTIONS_DBLCLICK    317
+
+/* Network downloads window (fs3enetworkview.c) */
+#define GID_NETWORKV_LIST                      318
 
 /* Emoji picker window (fs3eemojibox.c), opened from GID_TOOT_EMOJI_BUTTON */
 #define GID_EMOJIBOX_CHOOSER  400  /* emoji-set popup chooser */

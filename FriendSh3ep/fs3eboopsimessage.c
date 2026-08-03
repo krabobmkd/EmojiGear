@@ -24,6 +24,7 @@
 #include <gadgets/button.h>
 #include <gadgets/unitexteditor.h>
 #include <gadgets/listbrowser.h>
+#include <gadgets/tapedeck.h>
 
 #include "TitleBarLayout/fs3etitlebar.h"
 #include "TootTimeline/fs3etoottimeline.h"
@@ -135,6 +136,8 @@ static ULONG delayedAttribs[] = {
      * comment). */
     TTIMELINE_LastHotSpotAcct,
     TTIMELINE_ScrollStarted,
+
+    TDECK_Mode,
 
     /* from UniButtonBGBM (nav_btns[]) -- see ubgbm_notify_refresh_needed()
      * in UniButtonBGBM/unibuttonbgbm_attribs.c */

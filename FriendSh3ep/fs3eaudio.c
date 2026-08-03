@@ -32,6 +32,7 @@
 #include <clib/mpega_protos.h>
 #include <inline/mpega.h>  /* see fs3eaudio.h: <proto/mpega.h> doesn't compile here */
 
+
 #include "compilers.h"
 #include "bdbprintf.h"
 
@@ -96,10 +97,16 @@ typedef struct
     BOOL                ahiOpen;     /* TRUE once OpenDevice() succeeded (CloseDevice needed) */
 
     /* Active track bookkeeping -- who to notify, and with what key, once
-     * this track reaches EOF on its own (see FS3EAUDIOR_FINISHED). */
+     * this track reaches EOF on its own (see FS3EAUDIOR_FINISHED), or
+     * periodically while playing (see FS3EAUDIOR_PROGRESS). */
     struct MsgPort *replyPort;
     char            key[FS3EAUDIO_KEY_SIZE];
     BOOL            playing;
+    BOOL            paused;        /* see FS3EAUDIOQ_PAUSE's doc comment in fs3eaudio.h */
+    ULONG           samplesDecoded; /* running total this track, for FS3EAUDIOR_PROGRESS's
+                                     * elapsed-ms (samplesDecoded / dec_frequency) */
+    UWORD           buffersSinceProgress; /* throttles FS3EAUDIOR_PROGRESS -- see
+                                           * FS3EAUDIO_PROGRESS_EVERY_N_BUFFERS */
 } FS3EAudioState;
 
 /* -------------------------------------------------------------------------
@@ -198,6 +205,9 @@ static void FS3EAudio_StopTrack(FS3EAudioState *st)
     if (st->stream) { MPEGA_close(st->stream); st->stream = NULL; }
     st->sampleLeft = 0;
     st->playing = FALSE;
+    st->paused  = FALSE;
+    st->samplesDecoded       = 0;
+    st->buffersSinceProgress = 0;
 }
 
 /*
@@ -280,6 +290,8 @@ static BOOL FS3EAudio_StreamOneBuffer(FS3EAudioState *st)
     numSampleWritten = FS3EAudio_DecodeInto(st, dst, FS3EAUDIO_BUFFER_SAMPLES);
     if (numSampleWritten == 0)
         return FALSE;
+
+    st->samplesDecoded += numSampleWritten;
 
     req = st->io1;
     req->ahir_Std.io_Message.mn_Node.ln_Pri = 127; /* highest normal priority -- prompt handling */
@@ -411,6 +423,26 @@ BOOL FS3EAudio_PlayStop(struct MsgPort *requestPort, struct MsgPort *replyPort)
     return TRUE;
 }
 
+BOOL FS3EAudio_Pause(struct MsgPort *requestPort, struct MsgPort *replyPort, BOOL pause)
+{
+    FS3EAudioMessage *msg;
+
+    if (!requestPort)
+        return FALSE;
+
+    msg = (FS3EAudioMessage *)AllocVec(sizeof(FS3EAudioMessage), MEMF_CLEAR | MEMF_PUBLIC);
+    if (!msg)
+        return FALSE;
+
+    msg->fs3eam_Msg.mn_ReplyPort = replyPort;
+    msg->fs3eam_Msg.mn_Length    = sizeof(*msg);
+    msg->fs3eam_Type             = FS3EAUDIOQ_PAUSE;
+    msg->fs3eam_Pause            = pause;
+
+    PutMsg(requestPort, (struct Message *)&msg->fs3eam_Msg);
+    return TRUE;
+}
+
 /* -------------------------------------------------------------------------
  * Process entry
  * ---------------------------------------------------------------------- */
@@ -436,6 +468,45 @@ static void FS3EAudio_NotifyFinished(FS3EAudioState *st)
     note->fs3eam_Type             = FS3EAUDIOQ_PLAY;
     note->fs3eam_Result           = FS3EAUDIOR_FINISHED;
     strcpy(note->fs3eam_Key, st->key);
+
+    PutMsg(st->replyPort, (struct Message *)&note->fs3eam_Msg);
+}
+
+/* Every Nth streamed buffer, not every single one -- each buffer is only
+ * ~46ms at 44100Hz/FS3EAUDIO_BUFFERSIZE, so sending a notify per buffer
+ * would needlessly flood replyPort; ~740ms between updates is plenty for a
+ * position slider. */
+#define FS3EAUDIO_PROGRESS_EVERY_N_BUFFERS 16
+
+/* Sends an FS3EAUDIOR_PROGRESS notify for the track currently playing, same
+ * one-way/no-reply convention as FS3EAudio_NotifyFinished() above -- called
+ * from the main loop every FS3EAUDIO_PROGRESS_EVERY_N_BUFFERS buffers while
+ * playing and not paused (see FS3EAudio_ProcEntry()). */
+static void FS3EAudio_NotifyProgress(FS3EAudioState *st)
+{
+    FS3EAudioMessage *note;
+    ULONG freq;
+
+    if (!st->replyPort) return;
+
+    note = (FS3EAudioMessage *)AllocVec(sizeof(FS3EAudioMessage), MEMF_CLEAR | MEMF_PUBLIC);
+    if (!note) return;
+
+    freq = (ULONG)(st->stream ? st->stream->dec_frequency : 44100);
+
+    note->fs3eam_Msg.mn_ReplyPort = NULL;
+    note->fs3eam_Msg.mn_Length    = sizeof(*note);
+    note->fs3eam_Type             = FS3EAUDIOQ_PLAY;
+    note->fs3eam_Result           = FS3EAUDIOR_PROGRESS;
+    strcpy(note->fs3eam_Key, st->key);
+    /* (samples/freq)*1000 done as whole-seconds + remainder separately --
+     * avoids a 32-bit overflow on samplesDecoded*1000, which a plain ULONG
+     * multiply would hit after well under two minutes of playback at
+     * 44100Hz (no UQUAD/64-bit type in this NDK's exec/types.h). */
+    note->fs3eam_ElapsedMs = freq
+        ? (st->samplesDecoded / freq) * 1000 + ((st->samplesDecoded % freq) * 1000) / freq
+        : 0;
+    note->fs3eam_TotalMs   = st->stream ? st->stream->ms_duration : 0;
 
     PutMsg(st->replyPort, (struct Message *)&note->fs3eam_Msg);
 }
@@ -471,8 +542,12 @@ static void FS3EAudio_ProcEntry(void)
         /* Idle: block for the next request. Streaming: only poll --
          * FS3EAudio_StreamOneBuffer() below is what actually blocks
          * (bounded to one buffer's playback duration), so a request
-         * arriving mid-track is seen well within that same bound. */
-        if (!st.playing)
+         * arriving mid-track is seen well within that same bound. Also
+         * blocks while paused -- st.playing stays TRUE across a pause (see
+         * FS3EAUDIOQ_PAUSE), but nothing is being streamed/decoded then, so
+         * without this the loop would spin GetMsg() on an empty port
+         * instead of sleeping until resume/stop/shutdown arrives. */
+        if (!st.playing || st.paused)
             WaitPort(requestPort);
 
         while ((msg = (FS3EAudioMessage *)GetMsg(requestPort)) != NULL)
@@ -494,6 +569,13 @@ static void FS3EAudio_ProcEntry(void)
 
                 case FS3EAUDIOQ_STOP:
                     if (st.playing) FS3EAudio_StopTrack(&st);
+                    msg->fs3eam_Result = FS3EAUDIOR_OK;
+                    break;
+
+                case FS3EAUDIOQ_PAUSE:
+                    /* No-op (still OK) if nothing is loaded -- see the
+                     * request's own doc comment in fs3eaudio.h. */
+                    if (st.playing) st.paused = msg->fs3eam_Pause;
                     msg->fs3eam_Result = FS3EAUDIOR_OK;
                     break;
 
@@ -530,10 +612,18 @@ static void FS3EAudio_ProcEntry(void)
 
         if (!running) break;
 
-        if (st.playing && !FS3EAudio_StreamOneBuffer(&st))
+        if (st.playing && !st.paused)
         {
-            FS3EAudio_NotifyFinished(&st);
-            FS3EAudio_StopTrack(&st);
+            if (!FS3EAudio_StreamOneBuffer(&st))
+            {
+                FS3EAudio_NotifyFinished(&st);
+                FS3EAudio_StopTrack(&st);
+            }
+            else if (++st.buffersSinceProgress >= FS3EAUDIO_PROGRESS_EVERY_N_BUFFERS)
+            {
+                st.buffersSinceProgress = 0;
+                FS3EAudio_NotifyProgress(&st);
+            }
         }
     }
 

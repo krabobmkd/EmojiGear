@@ -53,6 +53,8 @@
 #include <proto/window.h>
 #include <classes/window.h>
 
+#include <gadgets/tapedeck.h>
+
 #include <proto/layout.h>
 #include <gadgets/layout.h>
 
@@ -89,6 +91,9 @@
 #include <proto/locale.h>
 #include <libraries/locale.h>
 
+#include <proto/openurl.h>
+#include <libraries/openurl.h>
+
 #include <workbench/startup.h>
 
 #include "compilers.h"
@@ -107,6 +112,7 @@
 #include "fs3eaction.h"
 #include "fs3etimer.h"
 #include "fs3esettings.h"
+#include "fs3emanageurl.h"
 #include "fs3emachineid.h"
 #include "fs3erequests.h"
 #include "fs3eaccounts.h"
@@ -182,9 +188,19 @@ struct Library *CheckboxBase       = NULL;
 struct Library *ChooserBase        = NULL;
 struct Library *GetFileBase        = NULL;
 struct Library *IntegerBase        = NULL;
+struct Library *ClickTabBase       = NULL;  /* fs3esettingsview.c's tab bar */
 struct Library *UniTextEditorBase  = NULL;
 struct Library *UniButtonBase      = NULL;
 struct Library *ListBrowserBase    = NULL;  /* proto/listbrowser.h's inline stubs need this exact name */
+/* No proto/tapedeck.h ships with this NDK -- unlike every other gadget class
+ * above, its Class isn't obtained via a TAPEDECK_GetClass() macro reading this
+ * Base; NewObject(NULL, "tapedeck.gadget", ...) (the public-class-name form,
+ * see fs3emediaview.c) looks it up by name instead, same as the official
+ * TapeDeck.c NDK example does. Kept here anyway, opened/closed exactly like
+ * every other required gadget class, purely so it's loaded before anything
+ * tries to NewObject() it. */
+struct Library *TapeDeckBase       = NULL;
+struct Library *SliderBase         = NULL;  /* proto/slider.h's SLIDER_GetClass() needs this exact name */
 
 /* utf8rastport.library – required by UniButtonP9 (private UniButton class) */
 struct Library *URPBase  = NULL;
@@ -204,6 +220,9 @@ struct Library *CyberGfxBase = NULL;
 
 /* locale.library - soft failure (English fallback) */
 struct LocaleBase *LocaleBase = NULL;
+
+/* optional openurl.library  */
+struct Library *OpenURLBase = NULL;
 
 typedef struct {
     const char     *name;
@@ -230,9 +249,12 @@ static LibraryEntry libraryTable[] = {
     {"gadgets/chooser.gadget",       44, &ChooserBase},
     {"gadgets/getfile.gadget",       42, &GetFileBase},
     {"gadgets/integer.gadget",       44, &IntegerBase},
+    {"gadgets/clicktab.gadget",      44, &ClickTabBase},
     {"gadgets/unitexteditor.gadget",  4, &UniTextEditorBase},
     {"gadgets/unibutton.gadget",     4, &UniButtonBase},
     {"gadgets/listbrowser.gadget",  40, &ListBrowserBase},
+    {"gadgets/tapedeck.gadget",     39, &TapeDeckBase},
+    {"gadgets/slider.gadget",       40, &SliderBase},
     {"utf8rastport.library",         5, &URPBase},
     {"datatypes.library",           44, &DataTypesBase},
 
@@ -258,6 +280,12 @@ void cleanexit(const char *pmessage)
 {
     if (pmessage) printf("%s\n", pmessage);
     exit(0);
+}
+
+/* See its doc comment in friendsh3ep.h. */
+void notifyMessage(const char *message, int level)
+{
+    FS3ENetworkView_SetStatus(&app->networkView, message, level);
 }
 
 /* The connected account's avatar (row 2 of the title bar) just became
@@ -409,6 +437,85 @@ static const char *QuotePolicyString(LONG idx)
     static const char *const s[] = { "public", "followers", "nobody" };
     if (idx < 0 || idx > 2) return "public";
     return s[(ULONG)idx];
+}
+
+/* Builds and sends the actual PUT/POST status request for the toot
+ * currently configured in app->tootView (composeKind/composePostId +
+ * whatever the compose window's own gadgets currently hold) -- shared by
+ * GID_TOOT_SEND_BUTTON below (newMediaId=NULL, the common no-attachment
+ * path) and fs3erequests.c's FS3ENETQ_UPLOAD_MEDIA reply handler
+ * (newMediaId = the just-uploaded attachment's id, once an upload
+ * finishes -- see app->tootUploadPending in friendsh3ep.h). Takes
+ * ownership of body: FreeVec()'d here, the same "caller must free
+ * FS3ETootView_GetUTF8Body()'s result" contract GID_TOOT_SEND_BUTTON
+ * always had, just centralized now instead of duplicated at both call
+ * sites (and a third one, this function itself, for the deferred-upload
+ * path via pendingTootBody).
+ *
+ * Not static: fs3erequests.c's FS3ENETQ_UPLOAD_MEDIA reply handler calls
+ * this directly too -- see the extern declaration there. */
+void FS3EApp_SubmitToot(const char *body, LONG visibility, LONG quotePolicy,
+                         const char *newMediaId)
+{
+    if (!body || !body[0] || !app->accountAccessToken) {
+        if (body) FreeVec((APTR)body);
+        return;
+    }
+
+    if (app->tootView.composeKind == FS3ETOOT_KIND_MODIFY &&
+        app->tootView.composePostId)
+    {
+        /* Editing an existing toot -- PUT, not POST. Resends the media ids
+         * captured when Modify was opened (composeMediaIds[]/composeMedia
+         * Count) so the edit doesn't strip attached media, PLUS newMediaId
+         * if this edit also picked a brand new attachment -- media_ids is
+         * a full replace-list server-side (see FS3EMastodon_EditStatus),
+         * so appending here is what makes it additive from the user's
+         * point of view instead of dropping the old ones. No visibility/
+         * spoiler: Mastodon's edit endpoint doesn't accept either. */
+        const char *mediaIds[FS3ENET_MAX_MEDIA];
+        ULONG mediaCount = 0, i;
+        FS3ENetEditStatusReq *req;
+
+        for (i = 0; i < app->tootView.composeMediaCount && mediaCount < FS3ENET_MAX_MEDIA; i++)
+            mediaIds[mediaCount++] = app->tootView.composeMediaIds[i];
+        if (newMediaId && newMediaId[0] && mediaCount < FS3ENET_MAX_MEDIA)
+            mediaIds[mediaCount++] = newMediaId;
+
+        req = FS3ENetEditStatusReq_Alloc(
+                app->accountApiBaseUrl, app->accountAccessToken,
+                app->tootView.composePostId, body,
+                mediaIds, mediaCount);
+        FreeVec((APTR)body);
+        FS3EApp_NetSend(FS3ENETQ_EDIT_STATUS, req, sizeof(*req));
+    }
+    else
+    {
+        /* No subject/CW field in this window (see fs3etootview.h's
+         * contextMessage) -- Mastodon toots have no subject concept, so
+         * spoiler text is always empty. REPLY's composePostId is the
+         * status being replied to -- see FS3EMastodon_PostStatus's
+         * inReplyToId. QUOTE's composePostId is the status being quoted. */
+        const char *inReplyToId =
+            (app->tootView.composeKind == FS3ETOOT_KIND_REPLY)
+            ? app->tootView.composePostId : "";
+        const char *quotedStatusId =
+            (app->tootView.composeKind == FS3ETOOT_KIND_QUOTE)
+            ? app->tootView.composePostId : "";
+        const char *mediaIds[1];
+        ULONG mediaCount = 0;
+        FS3ENetPostStatusReq *req;
+
+        if (newMediaId && newMediaId[0]) mediaIds[mediaCount++] = newMediaId;
+
+        req = FS3ENetPostStatusReq_Alloc(
+                app->accountApiBaseUrl, app->accountAccessToken,
+                body, VisibilityString(visibility), "",
+                inReplyToId, QuotePolicyString(quotePolicy), quotedStatusId,
+                mediaIds, mediaCount);
+        FreeVec((APTR)body);
+        FS3EApp_NetSend(FS3ENETQ_POST_STATUS, req, sizeof(*req));
+    }
 }
 
 /* - - - - - - - - - - - - - - - - - - - HELPERS - - - - - - - - - - - - - */
@@ -804,6 +911,7 @@ static void closeExternalViews(void)
     FS3ETootView_Close(&app->tootView);
     FS3EThemeView_Close(&app->themeView);
     FS3ESettingsView_Close(&app->settingsView);
+    FS3ENetworkView_Close(&app->networkView);
     FS3EEmojiBoxWindow_Close(&app->emojiBoxWindow);
 }
 
@@ -918,6 +1026,8 @@ int main(int argc, char **argv)
     /* CyberGfxBase NULL accepted */
     CyberGfxBase = OpenLibrary("cybergraphics.library", 1);
 
+    /* OpenURLBase NULL accepted */
+    OpenURLBase = OpenLibrary("openurl.library", 1);
 
     BevelBase  = OpenLibrary("images/bevel.image",  32); /* optional, no check */
     BitMapBase = OpenLibrary("images/bitmap.image", 44); /* optional, no check */
@@ -1039,6 +1149,9 @@ int main(int argc, char **argv)
 
     if (!FS3ESettingsView_Create(&app->settingsView, LOC(MSG_SETTINGSV_TITLE)))
         cleanexit("Can't create settings view");
+
+    if (!FS3ENetworkView_Create(&app->networkView, LOC(MSG_NETWORKV_TITLE)))
+        cleanexit("Can't create network view");
 
     FS3EMediaView_Init(&app->mediaView);
 
@@ -1188,6 +1301,7 @@ int main(int argc, char **argv)
     app->tootTimeline = (Object *)NewObject(TootTimelineClass, NULL,
         TTIMELINE_Style, (ULONG)(&app->style),
         TTIMELINE_DpiHeight, (ULONG)dpiH,
+        TTIMELINE_ActionOnDoubleClick, TRUE,
         ICA_TARGET, (ULONG)TargetInstance,
         GA_ID,      GID_TTIMELINE,
         GA_BackFill, NULL,
@@ -1384,10 +1498,11 @@ int main(int argc, char **argv)
             tootSig  = FS3ETootView_GetSignalMask(&app->tootView);
             ULONG themeSig = FS3EThemeView_GetSignalMask(&app->themeView);
             ULONG settingsSig = FS3ESettingsView_GetSignalMask(&app->settingsView);
+            ULONG networkSig = FS3ENetworkView_GetSignalMask(&app->networkView);
             ULONG emojiSig = FS3EEmojiBoxWindow_GetSignalMask(&app->emojiBoxWindow);
             ULONG mediaSig = FS3EMediaView_GetSignalMask(&app->mediaView);
 
-            waitedSignals = winsignal | loginSig | tootSig | themeSig | settingsSig | emojiSig | mediaSig |
+            waitedSignals = winsignal | loginSig | tootSig | themeSig | settingsSig | networkSig | emojiSig | mediaSig |
                 (1L << app->app_port->mp_SigBit) |
                 (app->netReplyPort ? (1L << app->netReplyPort->mp_SigBit) : 0) |
                 (app->thumbReplyPort ? (1L << app->thumbReplyPort->mp_SigBit) : 0) |
@@ -1634,6 +1749,7 @@ int main(int argc, char **argv)
             FS3ETootView_HandleInput(&app->tootView);
             FS3EThemeView_HandleInput(&app->themeView);
             FS3ESettingsView_HandleInput(&app->settingsView);
+            FS3ENetworkView_HandleInput(&app->networkView);
             FS3EEmojiBoxWindow_HandleInput(&app->emojiBoxWindow);
             FS3EEmojiBoxWindow_FlushPendingRender(&app->emojiBoxWindow);
             FS3EMediaView_HandleInput(&app->mediaView);
@@ -1661,16 +1777,16 @@ int main(int argc, char **argv)
                 }
             }
 
-            /* Drain audio-process replies/notifies -- generic player only
-             * for now (see fs3eaudio.h), nothing sends FS3EAUDIOQ_PLAY yet,
-             * so there is nothing to act on here besides not leaking the
-             * message; still drained unconditionally the same way the other
-             * processes' reply ports are, ready for toot-audio wiring later. */
+            /* Drain audio-process replies/notifies -- acks for the PLAY/
+             * STOP/PAUSE this window's tapedeck sends (see
+             * FS3EMediaView_TapeDeckPressed()) plus the spontaneous
+             * FINISHED/PROGRESS notifies fs3eaudio.c sends on its own. */
             if (app->audioReplyPort &&
                 (currentSignals & (1L << app->audioReplyPort->mp_SigBit)))
             {
                 FS3EAudioMessage *audioMsg;
                 while ((audioMsg = (FS3EAudioMessage *)GetMsg(app->audioReplyPort)) != NULL) {
+                    FS3EMediaView_OnAudioReply(&app->mediaView, audioMsg);
                     FreeVec(audioMsg);
                 }
             }
@@ -1883,58 +1999,61 @@ int main(int argc, char **argv)
                                 const char *body    = FS3ETootView_GetUTF8Body(&app->tootView);
                                 LONG visibility     = FS3ETootView_GetVisibility(&app->tootView);
                                 LONG quotePolicy    = FS3ETootView_GetQuotePolicy(&app->tootView);
-                                if (body && body[0] && app->accountAccessToken) {
-                                    if (app->tootView.composeKind == FS3ETOOT_KIND_MODIFY &&
-                                        app->tootView.composePostId)
-                                    {
-                                        /* Editing an existing toot -- PUT, not
-                                         * POST. Resends the media ids captured
-                                         * when Modify was opened
-                                         * (composeMediaIds[]/composeMediaCount)
-                                         * so the edit doesn't strip attached
-                                         * media -- see FS3EMastodon_EditStatus.
-                                         * No visibility/spoiler: Mastodon's
-                                         * edit endpoint doesn't accept either. */
-                                        FS3ENetEditStatusReq *req =
-                                            FS3ENetEditStatusReq_Alloc(
+
+                                if (body && body[0] && app->accountAccessToken &&
+                                    !app->tootUploadPending)
+                                {
+                                    char attachPath[512];
+                                    const char *mimeType = NULL;
+                                    FS3ETootAttachStatus attachStatus =
+                                        FS3ETootView_CheckAttachment(&app->tootView,
+                                            attachPath, sizeof(attachPath), &mimeType);
+
+                                    if (attachStatus == FS3ETOOT_ATTACH_NONE) {
+                                        FS3EApp_SubmitToot(body, visibility, quotePolicy, NULL);
+                                    } else if (attachStatus == FS3ETOOT_ATTACH_OK) {
+                                        /* Defer the actual PUT/POST -- FS3ENETQ_UPLOAD_MEDIA
+                                         * must finish first and hand back a media id (see
+                                         * app->tootUploadPending's comment in friendsh3ep.h
+                                         * and the FS3ENETQ_UPLOAD_MEDIA reply handler in
+                                         * fs3erequests.c, which calls FS3EApp_SubmitToot()
+                                         * once that id is in hand). body's ownership moves
+                                         * into app->pendingTootBody here -- NOT freed below. */
+                                        FS3ENetUploadMediaReq *req =
+                                            FS3ENetUploadMediaReq_Alloc(
                                                 app->accountApiBaseUrl,
                                                 app->accountAccessToken,
-                                                app->tootView.composePostId,
-                                                body,
-                                                (const char *const *)app->tootView.composeMediaIds,
-                                                app->tootView.composeMediaCount);
-                                        if(body) FreeVec(body);
-                                        FS3EApp_NetSend(FS3ENETQ_EDIT_STATUS, req, sizeof(*req));
+                                                attachPath, mimeType);
+
+                                        app->pendingTootBody        = (char *)body;
+                                        app->pendingTootVisibility  = visibility;
+                                        app->pendingTootQuotePolicy = quotePolicy;
+                                        app->tootUploadPending      = TRUE;
+                                        FS3ETootView_UpdateSendEnabled(&app->tootView);
+
+                                        FS3EApp_NetSend(FS3ENETQ_UPLOAD_MEDIA, req, sizeof(*req));
+                                    } else {
+                                        /* Bad extension / file missing / too big -- see
+                                         * FS3ETootAttachStatus's doc comment. Nothing sent;
+                                         * the user can fix or clear the attachment (the "X"
+                                         * button) and try again. */
+                                        const char *errText =
+                                            (attachStatus == FS3ETOOT_ATTACH_BADEXT)  ?
+                                                "Unsupported attachment type." :
+                                            (attachStatus == FS3ETOOT_ATTACH_MISSING) ?
+                                                "Could not find the attached file." :
+                                                "The attached file is too large.";
+                                        struct EasyStruct es = {
+                                            sizeof(struct EasyStruct), 0,
+                                            (UBYTE *)"FriendSh3ep - Attachment Error",
+                                            (UBYTE *)errText,
+                                            (UBYTE *)"OK"
+                                        };
+                                        EasyRequestArgs(app->tootView.window, &es, NULL, NULL);
+                                        FreeVec((APTR)body);
                                     }
-                                    else
-                                    {
-                                        /* No subject/CW field in this window (see
-                                         * fs3etootview.h's contextMessage) -- Mastodon
-                                         * toots have no subject concept, so spoiler
-                                         * text is always empty. REPLY's composePostId
-                                         * is the status being replied to -- see
-                                         * FS3EMastodon_PostStatus's inReplyToId.
-                                         * QUOTE's composePostId is the status being
-                                         * quoted -- see quotedStatusId. */
-                                        const char *inReplyToId =
-                                            (app->tootView.composeKind == FS3ETOOT_KIND_REPLY)
-                                            ? app->tootView.composePostId : "";
-                                        const char *quotedStatusId =
-                                            (app->tootView.composeKind == FS3ETOOT_KIND_QUOTE)
-                                            ? app->tootView.composePostId : "";
-                                        FS3ENetPostStatusReq *req =
-                                            FS3ENetPostStatusReq_Alloc(
-                                                app->accountApiBaseUrl,
-                                                app->accountAccessToken,
-                                                body,
-                                                VisibilityString(visibility),
-                                                "",
-                                                inReplyToId,
-                                                QuotePolicyString(quotePolicy),
-                                                quotedStatusId);
-                                        if(body) FreeVec(body);
-                                        FS3EApp_NetSend(FS3ENETQ_POST_STATUS, req, sizeof(*req));
-                                    }
+                                } else if (body) {
+                                    FreeVec((APTR)body);
                                 }
                             }
                             break;
@@ -2106,6 +2225,17 @@ int main(int argc, char **argv)
                                             StartSearchFromLine();
                                             break;
 
+                                        case TTL_HOT_URL:
+                                            /* Plain http(s):// link in the
+                                             * body text -- hotSpotString
+                                             * carries the URL as it
+                                             * appears in the text. See
+                                             * fs3emanageurl.c/
+                                             * app->settings.urlLinkAction
+                                             * for Ask/OpenURL/Clipboard. */
+                                            ManageUrl(hotSpotString);
+                                            break;
+
                                         case TTL_HOT_THREAD:
                                             /* hotSpotId is the status whose
                                              * discussion to open -- see
@@ -2167,6 +2297,25 @@ int main(int argc, char **argv)
                                             FS3EApp_ShowFollowing();
                                             break;
 
+                                        case TTL_HOT_MESSAGE:
+                                            /* Fresh, non-reply toot addressed
+                                             * at the open profile -- data/
+                                             * postId are NULL (see
+                                             * TTL_HOT_MESSAGE's doc comment),
+                                             * so the target acct comes from
+                                             * app->searchProfileAcct, same
+                                             * as TTL_HOT_FOLLOW reads
+                                             * searchProfileAccountId. */
+                                            if (app->searchProfileAcct) {
+                                                FS3ETootComposeParams params;
+                                                memset(&params, 0, sizeof(params));
+                                                params.acct = app->searchProfileAcct;
+                                                FS3ETootView_SetComposeContext(&app->tootView,
+                                                    FS3ETOOT_KIND_MESSAGE, &params);
+                                                FS3ETootView_Open(&app->tootView);
+                                            }
+                                            break;
+
                                         case TTL_HOT_MEDIA_PREV:
                                         case TTL_HOT_MEDIA_NEXT:
                                             /* The gadget already advanced
@@ -2209,22 +2358,27 @@ int main(int argc, char **argv)
                                             break;
 
                                         case TTL_HOT_PLAY_AUDIO:
-                                            /* TODO: actual MP3 playback
-                                             * (deliberately not via
-                                             * datatypes.library) is a
-                                             * separate follow-up; for now
-                                             * just surface the click.
-                                             * hotSpotString carries the
-                                             * attachment URL. */
+                                            /* Toot audio attachment (mp3/
+                                             * wav/ogg) clicked -- hotSpotString
+                                             * carries the attachment URL,
+                                             * same convention as TTL_HOT_IMAGE
+                                             * above. Opens/reuses the same
+                                             * "FriendSh3ep Media" viewer
+                                             * window in audio mode; actual
+                                             * decode+playback is deliberately
+                                             * not via datatypes.library --
+                                             * see fs3eaudio.c/fs3emediaview.c. */
+                                            FS3EMediaView_ShowAudioUrl(&app->mediaView, hotSpotString, hotSpotAcct,
+                                                                       app->audioRequestPort, app->audioReplyPort);
                                             break;
 
                                         case TTL_HOT_CARD:
-                                            /* TODO: clipboard copy, and
-                                             * later an optional AmigaOS
-                                             * browser-launch library --
-                                             * deferred, same as TTL_HOT_URL
-                                             * (body-text links). hotSpotString
-                                             * carries the card's article URL. */
+                                            /* Link-preview card clicked --
+                                             * hotSpotString carries the
+                                             * card's article URL, same
+                                             * Ask/OpenURL/Clipboard handling
+                                             * as TTL_HOT_URL above. */
+                                            ManageUrl(hotSpotString);
                                             break;
 
                                         case TTL_HOT_FAVORITE:
@@ -2497,6 +2651,7 @@ void exitclose(void)
         FS3ETootView_Dispose(&app->tootView);
         FS3EThemeView_Dispose(&app->themeView);
         FS3ESettingsView_Dispose(&app->settingsView);
+        FS3ENetworkView_Dispose(&app->networkView);
         FS3EEmojiBoxWindow_Dispose(&app->emojiBoxWindow);
         FS3EMediaView_Dispose(&app->mediaView);
         if (app->window_obj)
@@ -2621,6 +2776,7 @@ wait2sec();
         if (app->searchProfileAccountId) { FreeVec(app->searchProfileAccountId); app->searchProfileAccountId = NULL; }
         if (app->searchDiscussionStatusId) { FreeVec(app->searchDiscussionStatusId); app->searchDiscussionStatusId = NULL; }
         if (app->searchLastQueryText)    { FreeVec(app->searchLastQueryText);    app->searchLastQueryText    = NULL; }
+        if (app->pendingTootBody)        { FreeVec(app->pendingTootBody);        app->pendingTootBody        = NULL; }
         FS3EApp_SearchStackClear();
 
 wait2sec();

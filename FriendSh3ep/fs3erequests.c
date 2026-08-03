@@ -28,6 +28,7 @@
 #include "fs3etootview.h"
 #include "fs3emediaview.h"
 #include "avatarimages.h"
+#include "bmimage.h"
 
 #include "TootTimeline/fs3etoottimeline.h"
 
@@ -42,6 +43,8 @@
  * the "Not static" comment on each definition. */
 extern void  FS3EApp_CheckConnectionState(void);
 extern void  FS3EApp_UpdateUserIcon(void);
+extern void  FS3EApp_SubmitToot(const char *body, LONG visibility, LONG quotePolicy,
+                                 const char *newMediaId);
 
 /* Send a pre-allocated request block to the network process asynchronously.
  * On failure, frees data and returns FALSE.
@@ -928,7 +931,11 @@ static void FS3EApp_TriggerMediaFetchesForStatus(const FS3ENetStatus *st)
     /* Trigger a thumbnail download for each attachment not already
      * requested -- same pipeline as avatars above, just a different cache
      * subdir/pool (see AvatarImages_IsMediaRequested and the file header
-     * comment in avatarimages.h). */
+     * comment in avatarimages.h). KeepOriginal is forced TRUE whenever
+     * minifyThumbnails is off (regardless of keepBigThumbnails): with no
+     * minify step, the downloaded original itself *is* the thumbnail, so
+     * it must land straight in the persistent cache, not RAM:T -- see
+     * FS3EApp_UseRawAsThumbnail() in the FS3ENETQ_FETCH_IMAGE reply below. */
     if (app->avatarImages) {
         ULONG mi;
         for (mi = 0; mi < st->fmas_MediaCount && mi < TTL_POST_MAX_MEDIA; mi++) {
@@ -948,7 +955,8 @@ static void FS3EApp_TriggerMediaFetchesForStatus(const FS3ENetStatus *st)
                 FS3ENetFetchImageReq *req =
                     FS3ENetFetchImageReq_Alloc(url, url,
                                                FS3E_CACHE_SUBDIR_THUMBNAILS,
-                                               (BOOL)app->settings.keepBigThumbnails,
+                                               (BOOL)(!app->settings.minifyThumbnails ||
+                                                      app->settings.keepBigThumbnails),
                                                FALSE);
                 if (req) {
                     if (FS3EApp_NetSend(FS3ENETQ_FETCH_IMAGE, req, reqSize))
@@ -977,7 +985,8 @@ static void FS3EApp_TriggerMediaFetchesForStatus(const FS3ENetStatus *st)
         FS3ENetFetchImageReq *req =
             FS3ENetFetchImageReq_Alloc(st->fmas_CardImageUrl, st->fmas_CardImageUrl,
                                        FS3E_CACHE_SUBDIR_CARDIMAGES,
-                                       (BOOL)app->settings.keepBigThumbnails,
+                                       (BOOL)(!app->settings.minifyThumbnails ||
+                                              app->settings.keepBigThumbnails),
                                        FALSE);
         if (req) {
             if (FS3EApp_NetSend(FS3ENETQ_FETCH_IMAGE, req, reqSize))
@@ -1013,6 +1022,19 @@ static void FS3EApp_TriggerMediaFetchesForStatus(const FS3ENetStatus *st)
             else
                 FreeVec(req);
         }
+    }
+}
+
+/* A thumbnail/card image just became available in the cache via the raw
+ * (no-minify) path above -- same one-shot "redraw whatever tile drew a
+ * placeholder for this" notification FS3EApp_HandleThumbReply() sends for
+ * the normal minified-thumbnail-process path. */
+static void FS3EApp_InvalidateTimelineImages(void)
+{
+    if (app->tootTimeline) {
+        SetAttrs(app->tootTimeline, TTIMELINE_InvalidateImages, TRUE, TAG_DONE);
+        if (CurrentMainWindow)
+            RefreshGList((struct Gadget *)app->tootTimeline, CurrentMainWindow, NULL, 1);
     }
 }
 
@@ -1469,7 +1491,8 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                                 FS3ENetFetchImageReq *req =
                                     FS3ENetFetchImageReq_Alloc(url, url,
                                                                FS3E_CACHE_SUBDIR_THUMBNAILS,
-                                                               (BOOL)app->settings.keepBigThumbnails,
+                                                               (BOOL)(!app->settings.minifyThumbnails ||
+                                                                      app->settings.keepBigThumbnails),
                                                                FALSE);
                                 if (req) {
                                     if (FS3EApp_NetSend(FS3ENETQ_FETCH_IMAGE, req, reqSize))
@@ -1696,10 +1719,28 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                            strcmp(reply->fs3enf_Subdir, FS3E_CACHE_SUBDIR_THUMBNAILS) == 0;
             BOOL isCard  = reply && reply->fs3enf_Subdir &&
                            strcmp(reply->fs3enf_Subdir, FS3E_CACHE_SUBDIR_CARDIMAGES) == 0;
+            BOOL isAudio = reply && reply->fs3enf_Subdir &&
+                           strcmp(reply->fs3enf_Subdir, FS3E_CACHE_SUBDIR_AUDIO) == 0;
+            /* fs3enf_ExactLocalPath downloads (fs3emanageurl.c's archive
+             * download, via FS3ENetFetchImageReq_AllocDownload) always come
+             * back with an empty fs3enf_CachePath -- see FS3ENet_
+             * HandleFetchImage()'s isExactPath branch in fs3enet.c, the
+             * only path that ever leaves it empty. Same "not a thumbnail-
+             * able image, don't fall into the avatar-thumbnail else branch"
+             * reasoning as isAudio -- there is nothing further to do here,
+             * the file is already at its final user-chosen destination. */
+            BOOL isDownload = reply && (!reply->fs3enf_CachePath || !reply->fs3enf_CachePath[0]);
 
-            if (reply && reply->fs3enf_Key && reply->fs3enf_LocalPath &&
-                app->thumbRequestPort && app->thumbReplyPort)
-            {
+            /* Marks the Network window's row (if any -- a no-op for any
+             * fetch that never sent a progress ping, see
+             * FS3ENetworkView_OnFinished's doc comment) OK. Covers every
+             * wantProgress fetch, not just isDownload ones -- e.g.
+             * fs3emediaview.c's "click to view full image" also tracks
+             * progress and deserves the same row update. */
+            if (reply && reply->fs3enf_Key)
+                FS3ENetworkView_OnFinished(&app->networkView, reply->fs3enf_Key, TRUE);
+
+            if (reply && reply->fs3enf_Key && reply->fs3enf_LocalPath && !isAudio && !isDownload) {
                 /* Hand the (possibly large, original-size) downloaded file
                  * to the thumbnail process instead of decoding/scaling it
                  * here -- see fs3ethumb.h. Its reply lands in
@@ -1708,26 +1749,76 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                  * their doc comments in fs3enet.h) make sure the resized
                  * thumbnail always lands under a name stable across runs
                  * and that a RAM:T download gets cleaned up afterwards,
-                 * regardless of whether the original itself was kept. */
+                 * regardless of whether the original itself was kept.
+                 *
+                 * Media/card thumbnails additionally honor minifyThumbnails
+                 * (fs3esettings.h): when FALSE, TriggerMediaFetchesForStatus/
+                 * RefreshVisibleToots already forced fs3enf_KeepOriginal so
+                 * fs3enf_LocalPath is the untouched original sitting straight
+                 * in the persistent cache, hash-named exactly like any other
+                 * cached original -- skip the thumbnail process entirely and
+                 * decode it in place from THAT path (AvatarImages_*ThumbReady's
+                 * rawOriginal=TRUE), no rename/copy. Renaming it to the
+                 * "<cachePath>.<W>x<H>.bmp" minified-style name would orphan
+                 * it from FS3ECache_Lookup's hash-name lookup, forcing a
+                 * re-download the next time anything (a timeline refresh, or
+                 * fs3emediaview.c's "click to view full size", which re-fetches
+                 * this exact URL/subdir on-demand) asks for it -- that
+                 * ".<W>x<H>.bmp" naming stays reserved for genuinely minified
+                 * output. Avatars/user icons always minify -- useful there
+                 * since one user's icon is reused across many toots, unlike
+                 * a thumbnail. */
                 if (isMedia) {
-                    if (!AvatarImages_IsMediaThumbRequested(app->avatarImages, reply->fs3enf_Key) &&
-                        FS3EThumb_Request(app->thumbRequestPort, app->thumbReplyPort,
-                            reply->fs3enf_LocalPath, reply->fs3enf_Key, FS3ETHUMB_KIND_MEDIA,
-                            reply->fs3enf_CachePath, reply->fs3enf_IsTemp,
-                            FS3ETHUMB_MEDIA_WIDTH, FS3ETHUMB_MEDIA_HEIGHT_CAP))
-                        AvatarImages_MarkMediaThumbRequested(app->avatarImages, reply->fs3enf_Key);
+                    if (!AvatarImages_IsMediaThumbRequested(app->avatarImages, reply->fs3enf_Key)) {
+                        if (!app->settings.minifyThumbnails) {
+                            AvatarImages_MarkMediaThumbRequested(app->avatarImages, reply->fs3enf_Key);
+                            if (AvatarImages_MediaThumbReady(app->avatarImages, reply->fs3enf_Key,
+                                    reply->fs3enf_LocalPath, TRUE))
+                            {
+                                FS3EApp_InvalidateTimelineImages();
+                            } else {
+                                UBYTE fmt = (UBYTE)BmImage_SniffFormat(reply->fs3enf_LocalPath);
+                               /* bdbprintf("FS3EApp: raw media thumbnail decode failed key=%s path=%s fmt=%ld\n",
+                                          reply->fs3enf_Key, reply->fs3enf_LocalPath, (long)fmt);*/
+                                AvatarImages_MarkMediaFailed(app->avatarImages, reply->fs3enf_Key, fmt);
+                            }
+                        } else if (app->thumbRequestPort && app->thumbReplyPort &&
+                                   FS3EThumb_Request(app->thumbRequestPort, app->thumbReplyPort,
+                                       reply->fs3enf_LocalPath, reply->fs3enf_Key, FS3ETHUMB_KIND_MEDIA,
+                                       reply->fs3enf_CachePath, reply->fs3enf_IsTemp,
+                                       FS3ETHUMB_MEDIA_WIDTH, FS3ETHUMB_MEDIA_HEIGHT_CAP))
+                        {
+                            AvatarImages_MarkMediaThumbRequested(app->avatarImages, reply->fs3enf_Key);
+                        }
+                    }
                 } else if (isCard) {
                     /* Reuses MEDIA's box-fit size cap -- a card image is
                      * the same kind of arbitrary-aspect photo a media
                      * attachment is, just tracked in its own pool (see
                      * FS3ETHUMB_KIND_CARD's doc comment). */
-                    if (!AvatarImages_IsCardThumbRequested(app->avatarImages, reply->fs3enf_Key) &&
-                        FS3EThumb_Request(app->thumbRequestPort, app->thumbReplyPort,
-                            reply->fs3enf_LocalPath, reply->fs3enf_Key, FS3ETHUMB_KIND_CARD,
-                            reply->fs3enf_CachePath, reply->fs3enf_IsTemp,
-                            FS3ETHUMB_MEDIA_WIDTH, FS3ETHUMB_MEDIA_HEIGHT_CAP))
-                        AvatarImages_MarkCardThumbRequested(app->avatarImages, reply->fs3enf_Key);
-                } else {
+                    if (!AvatarImages_IsCardThumbRequested(app->avatarImages, reply->fs3enf_Key)) {
+                        if (!app->settings.minifyThumbnails) {
+                            AvatarImages_MarkCardThumbRequested(app->avatarImages, reply->fs3enf_Key);
+                            if (AvatarImages_CardThumbReady(app->avatarImages, reply->fs3enf_Key,
+                                    reply->fs3enf_LocalPath, TRUE))
+                            {
+                                FS3EApp_InvalidateTimelineImages();
+                            } else {
+                                UBYTE fmt = (UBYTE)BmImage_SniffFormat(reply->fs3enf_LocalPath);
+                                /*bdbprintf("FS3EApp: raw card thumbnail decode failed key=%s path=%s fmt=%ld\n",
+                                          reply->fs3enf_Key, reply->fs3enf_LocalPath, (long)fmt);*/
+                                AvatarImages_MarkCardFailed(app->avatarImages, reply->fs3enf_Key, fmt);
+                            }
+                        } else if (app->thumbRequestPort && app->thumbReplyPort &&
+                                   FS3EThumb_Request(app->thumbRequestPort, app->thumbReplyPort,
+                                       reply->fs3enf_LocalPath, reply->fs3enf_Key, FS3ETHUMB_KIND_CARD,
+                                       reply->fs3enf_CachePath, reply->fs3enf_IsTemp,
+                                       FS3ETHUMB_MEDIA_WIDTH, FS3ETHUMB_MEDIA_HEIGHT_CAP))
+                        {
+                            AvatarImages_MarkCardThumbRequested(app->avatarImages, reply->fs3enf_Key);
+                        }
+                    }
+                } else if (app->thumbRequestPort && app->thumbReplyPort) {
                     if (!AvatarImages_IsThumbRequested(app->avatarImages, reply->fs3enf_Key) &&
                         FS3EThumb_Request(app->thumbRequestPort, app->thumbReplyPort,
                             reply->fs3enf_LocalPath, reply->fs3enf_Key, FS3ETHUMB_KIND_AVATAR,
@@ -1735,6 +1826,57 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                             FS3ETHUMB_AVATAR_SIZE, FS3ETHUMB_AVATAR_SIZE))
                         AvatarImages_MarkThumbRequested(app->avatarImages, reply->fs3enf_Key);
                 }
+            }
+
+            /* fs3emanageurl.c's archive download landed successfully --
+             * see isDownload's doc comment above. Nothing else consumes
+             * this reply (it skipped the whole thumbnail dispatch above),
+             * so this is the only place a success ever gets surfaced. */
+            if (isDownload && reply && reply->fs3enf_LocalPath) {
+                char note[300];
+                snprintf(note, sizeof(note), "Downloaded: %s", reply->fs3enf_LocalPath);
+                notifyMessage(note, FS3ENOTIFY_OK);
+            }
+        } else if (msg->fs3em_Result != FS3ENETR_OK) {
+            /* The network process's own fetch failed (bad HTTP status, a
+             * chunked-download retry giving up, a stalled/dead connection
+             * timing out, ...) -- msg->fs3em_Data on failure is still the
+             * original FS3ENetFetchImageReq, not a reply, but fs3enf_Key/
+             * Subdir sit at the same struct offset in both (see the
+             * FS3EMediaView_OnFetchReply comment below), so reading them
+             * through the Reply type here is the same established trick.
+             * Previously silent: this request's key/url stays latched
+             * "requested" forever with nothing logged, so the corresponding
+             * tile is stuck showing a placeholder until something else
+             * (a slot eviction, an app restart) clears that flag and lets
+             * it be tried again. */
+            const FS3ENetFetchImageReply *failedReply =
+                (const FS3ENetFetchImageReply *)msg->fs3em_Data;
+            /* Unlike failedReply's Key/Subdir above, fs3enf_Url/
+             * fs3enf_ExactLocalPath have no Reply-side counterpart at all
+             * (Reply has no 6th field to alias) -- this failure path's
+             * fs3em_Data really is still the original FS3ENetFetchImageReq,
+             * so read those two through the real type instead of pretending
+             * it's still a Reply. */
+            const FS3ENetFetchImageReq *failedReq =
+                (const FS3ENetFetchImageReq *)msg->fs3em_Data;
+            BOOL failedIsDownload = failedReq && failedReq->fs3enf_ExactLocalPath &&
+                                     failedReq->fs3enf_ExactLocalPath[0];
+
+            bdbprintf("FS3EApp: FETCH_IMAGE failed result=%ld key=%s subdir=%s\n",
+                      (long)msg->fs3em_Result,
+                      (failedReply && failedReply->fs3enf_Key) ? failedReply->fs3enf_Key : "?",
+                      (failedReply && failedReply->fs3enf_Subdir) ? failedReply->fs3enf_Subdir : "?");
+
+            /* Same "no-op if no row" rule as the success path above. */
+            if (failedReply && failedReply->fs3enf_Key)
+                FS3ENetworkView_OnFinished(&app->networkView, failedReply->fs3enf_Key, FALSE);
+
+            if (failedIsDownload) {
+                char note[300];
+                snprintf(note, sizeof(note), "Download failed: %s",
+                         failedReq->fs3enf_Url ? failedReq->fs3enf_Url : "?");
+                notifyMessage(note, FS3ENOTIFY_ERROR);
             }
         }
 
@@ -1755,9 +1897,12 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
          * this download still arrives exactly once, handled above. */
         {
             FS3ENetFetchProgress *prog = (FS3ENetFetchProgress *)msg->fs3em_Data;
-            if (prog && prog->fs3efp_Key)
+            if (prog && prog->fs3efp_Key) {
                 FS3EMediaView_OnFetchProgress(&app->mediaView, prog->fs3efp_Key,
                                               prog->fs3efp_BytesSoFar, prog->fs3efp_TotalBytes);
+                FS3ENetworkView_OnProgress(&app->networkView, prog->fs3efp_Key,
+                                           prog->fs3efp_BytesSoFar, prog->fs3efp_TotalBytes);
+            }
         }
         break;
 
@@ -1802,6 +1947,22 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
             }
 
             FS3ETootView_Close(&app->tootView);
+        } else {
+            /* Previously silent: the window just sat there with no clue
+             * why nothing happened. Text/attachment/choosers are left
+             * exactly as they were so the user can just retry -- most
+             * failures here are transient (network) or, when this toot
+             * carried a still-processing video/audio attachment, the
+             * server 422ing because it isn't ready yet (see
+             * FS3EMastodon_UploadMedia's doc comment in fs3enet_mastodon.h
+             * for why that isn't polled around). */
+            struct EasyStruct es = {
+                sizeof(struct EasyStruct), 0,
+                (UBYTE *)"FriendSh3ep - Toot Error",
+                (UBYTE *)"Could not post the toot.\nCheck your connection and try again.",
+                (UBYTE *)"OK"
+            };
+            EasyRequestArgs(app->tootView.window, &es, NULL, NULL);
         }
         break;
 
@@ -1815,6 +1976,47 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
          * behaves (no local insert either). */
         if (msg->fs3em_Result == FS3ENETR_OK) {
             FS3ETootView_Close(&app->tootView);
+        } else {
+            struct EasyStruct es = {
+                sizeof(struct EasyStruct), 0,
+                (UBYTE *)"FriendSh3ep - Toot Error",
+                (UBYTE *)"Could not save the edit.\nCheck your connection and try again.",
+                (UBYTE *)"OK"
+            };
+            EasyRequestArgs(app->tootView.window, &es, NULL, NULL);
+        }
+        break;
+
+    case FS3ENETQ_UPLOAD_MEDIA:
+        /* GID_TOOT_SEND_BUTTON deferred the actual PUT/POST until this
+         * reply -- see app->tootUploadPending's doc comment in
+         * friendsh3ep.h. Either way that wait is now over. */
+        app->tootUploadPending = FALSE;
+        FS3ETootView_UpdateSendEnabled(&app->tootView);
+
+        if (msg->fs3em_Result == FS3ENETR_OK) {
+            FS3ENetUploadMediaReply *reply = (FS3ENetUploadMediaReply *)msg->fs3em_Data;
+            /* Ownership of pendingTootBody moves into FS3EApp_SubmitToot(),
+             * which FreeVec()s it -- clear our own pointer right after so
+             * nothing else could ever double-free it. */
+            char *pendingBody = app->pendingTootBody;
+            app->pendingTootBody = NULL;
+            FS3EApp_SubmitToot(pendingBody, app->pendingTootVisibility,
+                                app->pendingTootQuotePolicy,
+                                (reply && reply->fs3eum_MediaId) ? reply->fs3eum_MediaId : NULL);
+        } else {
+            struct EasyStruct es = {
+                sizeof(struct EasyStruct), 0,
+                (UBYTE *)"FriendSh3ep - Attachment Error",
+                (UBYTE *)"Could not upload the attached file.\nCheck your connection and try again, "
+                         "or remove the attachment to post without it.",
+                (UBYTE *)"OK"
+            };
+            EasyRequestArgs(app->tootView.window, &es, NULL, NULL);
+            if (app->pendingTootBody) {
+                FreeVec(app->pendingTootBody);
+                app->pendingTootBody = NULL;
+            }
         }
         break;
 
@@ -2060,10 +2262,10 @@ void FS3EApp_HandleThumbReply(FS3EThumbMessage *msg)
     {
         if (msg->fs3etm_Kind == FS3ETHUMB_KIND_MEDIA) {
             AvatarImages_MediaThumbReady(app->avatarImages, msg->fs3etm_Key,
-                                          msg->fs3etm_ThumbPath);
+                                          msg->fs3etm_ThumbPath, FALSE);
         } else if (msg->fs3etm_Kind == FS3ETHUMB_KIND_CARD) {
             AvatarImages_CardThumbReady(app->avatarImages, msg->fs3etm_Key,
-                                         msg->fs3etm_ThumbPath);
+                                         msg->fs3etm_ThumbPath, FALSE);
         } else {
             AvatarImages_ThumbReady(app->avatarImages, msg->fs3etm_Key,
                                      msg->fs3etm_ThumbPath);
@@ -2093,6 +2295,8 @@ void FS3EApp_HandleThumbReply(FS3EThumbMessage *msg)
          * FS3EThumb_HandleMake/BmImage_SniffFormat) so the tile renderer
          * can show e.g. "webp" instead of a bare box. */
         UBYTE fmt = (UBYTE)msg->fs3etm_DetectedFormat;
+        bdbprintf("FS3EApp: thumbnail process failed key=%s src=%s kind=%ld fmt=%ld\n",
+                  msg->fs3etm_Key, msg->fs3etm_SrcPath, (long)msg->fs3etm_Kind, (long)fmt);
         if (msg->fs3etm_Kind == FS3ETHUMB_KIND_MEDIA)
             AvatarImages_MarkMediaFailed(app->avatarImages, msg->fs3etm_Key, fmt);
         else if (msg->fs3etm_Kind == FS3ETHUMB_KIND_CARD)

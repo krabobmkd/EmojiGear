@@ -12,6 +12,7 @@
 #include "scalepixelarraybilinear.h"
 #include "friendsh3ep.h"
 #include "fs3esettings.h"
+#include "bmimage.h"
 
 #include <proto/exec.h>
 #include <proto/dos.h>
@@ -125,6 +126,25 @@ BOOL RgbImage_LoadBmp(RgbImage *img, const char *path)
     Close(fh);
 
     img->pixels = outBuf;
+    img->width  = (UWORD)w;
+    img->height = (UWORD)h;
+    return TRUE;
+}
+
+BOOL RgbImage_LoadViaDatatype(RgbImage *img, const char *path)
+{
+    UBYTE *buf = NULL;
+    ULONG  w = 0, h = 0;
+
+    if (!img) return FALSE;
+    RgbImage_Free(img);
+
+    if (!path || !path[0]) return FALSE;
+
+    if (!BmImage_ReadSourceRgb(path, &buf, &w, &h, NULL)) return FALSE;
+    if (w > 32767 || h > 32767) { FreeVec(buf); return FALSE; }
+
+    img->pixels = buf;
     img->width  = (UWORD)w;
     img->height = (UWORD)h;
     return TRUE;
