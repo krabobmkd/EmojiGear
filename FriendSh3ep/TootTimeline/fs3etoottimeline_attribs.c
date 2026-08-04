@@ -867,6 +867,7 @@ ULONG TTL_OnDispose(Class *cl, Object *o, Msg msg)
     ttl_tiles_free(inst);
     if (inst->waitText) { FreeVec(inst->waitText); inst->waitText = NULL; }
     if (inst->selectedText) { FreeVec(inst->selectedText); inst->selectedText = NULL; }
+    if (inst->lastHotSpotStr) { FreeVec(inst->lastHotSpotStr); inst->lastHotSpotStr = NULL; }
 
     return DoSuperMethodA(cl, o, (APTR)msg);
 }
@@ -941,7 +942,7 @@ ULONG TTL_OnGet(Class *cl, Object *o, struct opGet *msg)
             *msg->opg_Storage = (ULONG)inst->waitText;
             return 1;
         case TTIMELINE_LastHotSpotString:
-            *msg->opg_Storage = inst->lastHotSpotStr[0] ? (ULONG)inst->lastHotSpotStr : 0;
+            *msg->opg_Storage = inst->lastHotSpotStr ? (ULONG)inst->lastHotSpotStr : 0;
             return 1;
         case TTIMELINE_LastHotSpotPostId:
             *msg->opg_Storage = inst->lastHotSpotPostId[0] ? (ULONG)inst->lastHotSpotPostId : 0;

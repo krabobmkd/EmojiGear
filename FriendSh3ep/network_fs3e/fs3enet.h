@@ -490,8 +490,10 @@ FS3ENetTimelineReq *FS3ENetTimelineReq_Alloc(ULONG viewModeBit,
 #define FS3ENET_UPLOAD_MAX_BYTES (16UL * 1024UL * 1024UL) /* 16 MiB */
 
 /* Max media_attachments entries kept per status (Mastodon itself caps
- * normal posts at 4 attachments, so this never truncates in practice). */
-#define FS3ENET_MAX_MEDIA 4
+ * normal posts at 4 attachments, so this never truncates in practice).
+  KRB says; yes but could evolve, and does not cost : ->8
+ */
+#define FS3ENET_MAX_MEDIA 8
 
 /* Max poll options kept per status. Vanilla Mastodon's own default cap is
  * 4, but some instances raise it -- 8 leaves headroom without a real cost

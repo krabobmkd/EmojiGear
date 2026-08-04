@@ -1784,7 +1784,7 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                 /* Hand the (possibly large, original-size) downloaded file
                  * to the thumbnail process instead of decoding/scaling it
                  * here -- see fs3ethumb.h. Its reply lands in
-                 * FS3EApp_HandleThumbReply(), which uses fs3etm_Kind to
+                 * FS3EApp_HandleThumbReply(), which uses fs3etmy_Kind to
                  * tell the three apart again. fs3enf_CachePath/IsTemp (see
                  * their doc comments in fs3enet.h) make sure the resized
                  * thumbnail always lands under a name stable across runs
@@ -2357,25 +2357,34 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
 
 /* FS3ETHUMBQ_MAKE reply -- the thumbnail process has finished decoding and
  * box-fit-scaling one avatar's or media attachment's original download
- * down to a small BMP (see fs3ethumb.h); fs3etm_Kind says which. All that
+ * down to a small BMP (see fs3ethumb.h); fs3etmy_Kind says which. All that
  * remains on the GUI task is a cheap direct read of that already-small
  * file's pixels; scaling to the live display size happens at draw time
  * (RgbImage_DrawScaled), not here. */
 void FS3EApp_HandleThumbReply(FS3EThumbMessage *msg)
 {
+    FS3EThumbMakeReply *reply = (FS3EThumbMakeReply *)msg->fs3etm_Data;
+
+    /* NULL only if FS3EThumb_BuildReply()'s own reply allocation failed on
+     * the thumbnail process side -- nothing left to identify which entry
+     * this was for, so there's nothing to do but drop it (same best-effort
+     * "an allocation failure isn't worth failing over" precedent as
+     * network_fs3e/fs3enet.c's FS3ENet_SendProgress). */
+    if (!reply) return;
+
     if (msg->fs3etm_Result == FS3ETHUMBR_OK && app->avatarImages &&
-        msg->fs3etm_Key[0] && msg->fs3etm_ThumbPath[0])
+        reply->fs3etmy_Key[0] && reply->fs3etmy_ThumbPath[0])
     {
-        if (msg->fs3etm_Kind == FS3ETHUMB_KIND_MEDIA) {
-            AvatarImages_MediaThumbReady(app->avatarImages, msg->fs3etm_Key,
-                                          msg->fs3etm_ThumbPath, FALSE);
-        } else if (msg->fs3etm_Kind == FS3ETHUMB_KIND_CARD) {
-            AvatarImages_CardThumbReady(app->avatarImages, msg->fs3etm_Key,
-                                         msg->fs3etm_ThumbPath, FALSE);
+        if (reply->fs3etmy_Kind == FS3ETHUMB_KIND_MEDIA) {
+            AvatarImages_MediaThumbReady(app->avatarImages, reply->fs3etmy_Key,
+                                          reply->fs3etmy_ThumbPath, FALSE);
+        } else if (reply->fs3etmy_Kind == FS3ETHUMB_KIND_CARD) {
+            AvatarImages_CardThumbReady(app->avatarImages, reply->fs3etmy_Key,
+                                         reply->fs3etmy_ThumbPath, FALSE);
         } else {
-            AvatarImages_ThumbReady(app->avatarImages, msg->fs3etm_Key,
-                                     msg->fs3etm_ThumbPath);
-            if (app->accountAcct && strcmp(msg->fs3etm_Key, app->accountAcct) == 0)
+            AvatarImages_ThumbReady(app->avatarImages, reply->fs3etmy_Key,
+                                     reply->fs3etmy_ThumbPath);
+            if (app->accountAcct && strcmp(reply->fs3etmy_Key, app->accountAcct) == 0)
                 FS3EApp_UpdateUserIcon();
         }
         if (app->tootTimeline) {
@@ -2391,7 +2400,7 @@ void FS3EApp_HandleThumbReply(FS3EThumbMessage *msg)
                          CurrentMainWindow, NULL, 1);
     }
     else if (msg->fs3etm_Result == FS3ETHUMBR_ERROR && app->avatarImages &&
-             msg->fs3etm_Key[0])
+             reply->fs3etmy_Key[0])
     {
         /* Previously silently dropped: a failed decode left the entry's
          * .requested flag latched forever with no distinction from
@@ -2400,16 +2409,16 @@ void FS3EApp_HandleThumbReply(FS3EThumbMessage *msg)
          * Latch it explicitly instead, with the sniffed format (see
          * FS3EThumb_HandleMake/BmImage_SniffFormat) so the tile renderer
          * can show e.g. "webp" instead of a bare box. */
-        UBYTE fmt = (UBYTE)msg->fs3etm_DetectedFormat;
+        UBYTE fmt = (UBYTE)reply->fs3etmy_DetectedFormat;
         /* bdbprintf("FS3EApp: thumbnail process failed key=%s src=%s kind=%ld fmt=%ld\n",
-                   msg->fs3etm_Key, msg->fs3etm_SrcPath, (long)msg->fs3etm_Kind, (long)fmt);
+                   reply->fs3etmy_Key, reply->fs3etmy_SrcPath, (long)reply->fs3etmy_Kind, (long)fmt);
         */
-        if (msg->fs3etm_Kind == FS3ETHUMB_KIND_MEDIA)
-            AvatarImages_MarkMediaFailed(app->avatarImages, msg->fs3etm_Key, fmt);
-        else if (msg->fs3etm_Kind == FS3ETHUMB_KIND_CARD)
-            AvatarImages_MarkCardFailed(app->avatarImages, msg->fs3etm_Key, fmt);
+        if (reply->fs3etmy_Kind == FS3ETHUMB_KIND_MEDIA)
+            AvatarImages_MarkMediaFailed(app->avatarImages, reply->fs3etmy_Key, fmt);
+        else if (reply->fs3etmy_Kind == FS3ETHUMB_KIND_CARD)
+            AvatarImages_MarkCardFailed(app->avatarImages, reply->fs3etmy_Key, fmt);
         else
-            AvatarImages_MarkFailed(app->avatarImages, msg->fs3etm_Key, fmt);
+            AvatarImages_MarkFailed(app->avatarImages, reply->fs3etmy_Key, fmt);
 
         if (app->tootTimeline)
             SetAttrs(app->tootTimeline, TTIMELINE_InvalidateImages, TRUE, TAG_DONE);

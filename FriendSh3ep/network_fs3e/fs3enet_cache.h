@@ -37,9 +37,6 @@
  * point it at a real, slower drive, defeating the whole point). */
 #define FS3ECACHE_RAM_TEMP_DIR "RAM:T"
 
-/* Maximum length of a cache file path including NUL. */
-#define FS3ECACHE_PATH_SIZE 256
-
 /*
  * Set the cache directory and create it (recursively) if absent.
  * Pass NULL or "" to use FS3ECACHE_DEFAULT_DIR.
@@ -73,11 +70,15 @@ void FS3ECache_Cleanup(void);
 BOOL FS3ECache_Flush(void);
 
 /*
- * If url is already cached under subdir (NULL/"" = cache root), fills
- * outPath with the local AmigaOS path and returns TRUE.  Returns FALSE
- * when the file is absent or Init() failed.
+ * Returns the AllocVec'd deterministic local AmigaOS path url would live at
+ * under subdir (NULL/"" = cache root) -- same computation as
+ * FS3ECache_ComputePath, filled in whether or not the file is actually
+ * there, since callers use it as the target path for a fresh download on a
+ * miss. *found is set to whether the file exists (always FALSE if Init()
+ * failed). Returns NULL only on allocation failure. Caller must FreeVec()
+ * the result.
  */
-BOOL FS3ECache_Lookup(const char *url, const char *subdir, char *outPath, ULONG pathSize);
+char *FS3ECache_Lookup(const char *url, const char *subdir, BOOL *found);
 
 /*
  * Creates cache/<subdir> (recursively, idempotent) if it doesn't already
@@ -87,39 +88,40 @@ BOOL FS3ECache_Lookup(const char *url, const char *subdir, char *outPath, ULONG 
  * going through Store() -- e.g. a resized thumbnail written directly by
  * the thumbnail process from a cacheKeyPath rooted there, even when the
  * *original* it was generated from went to FS3ECACHE_RAM_TEMP_DIR
- * instead (see fs3ethumb.h's fs3etm_CacheKeyPath and "Keep big user
+ * instead (see fs3ethumb.h's fs3etmr_CacheKeyPath and "Keep big user
  * icons/thumbnails" in Settings) and so never created this subdir itself.
  */
 BOOL FS3ECache_EnsureSubdir(const char *subdir);
 
 /*
  * Writes data to the cache as a new file keyed by url, under subdir
- * (NULL/"" = cache root; created if absent).  Fills outPath.
- * Returns FALSE on I/O error or if Init() failed.
- * A truncated write deletes the partial file to keep the cache clean.
+ * (NULL/"" = cache root; created if absent). Returns the AllocVec'd path it
+ * was written to, or NULL on I/O error, allocation failure, or if Init()
+ * failed. A truncated write deletes the partial file to keep the cache
+ * clean. Caller must FreeVec() the result.
  */
-BOOL FS3ECache_Store(const char *url, const char *subdir, const void *data, ULONG dataLen,
-                     char *outPath, ULONG pathSize);
+char *FS3ECache_Store(const char *url, const char *subdir, const void *data, ULONG dataLen);
 
 /*
- * Pure path computation, no I/O, no Init() dependency: fills outPath with
- * the deterministic path url would live at under subdir (same hash-based
- * naming Lookup/Store use) without checking whether anything is actually
- * there. Lets a caller derive a stable name for something related (e.g. a
- * resized sibling thumbnail, see BmImage_GenerateScaledBmp's cacheKeyPath)
- * even when the original itself isn't going to be stored persistently --
- * see FS3ECache_StoreRAM.
+ * Pure path computation, no I/O, no Init() dependency: returns the
+ * AllocVec'd deterministic path url would live at under subdir (same
+ * hash-based naming Lookup/Store use) without checking whether anything is
+ * actually there. Lets a caller derive a stable name for something related
+ * (e.g. a resized sibling thumbnail, see BmImage_GenerateScaledBmp's
+ * cacheKeyPath) even when the original itself isn't going to be stored
+ * persistently -- see FS3ECache_StoreRAM. Returns NULL only on allocation
+ * failure. Caller must FreeVec() the result.
  */
-void FS3ECache_ComputePath(const char *url, const char *subdir, char *outPath, ULONG pathSize);
+char *FS3ECache_ComputePath(const char *url, const char *subdir);
 
 /*
  * Like FS3ECache_Store, but always writes to FS3ECACHE_RAM_TEMP_DIR
  * (verified/created here, independent of the persistent cache dir/Init())
  * instead of under the persistent cache -- for downloads the caller plans
- * to delete right after use (see fs3ethumb.h's fs3etm_DeleteSrcAfter).
+ * to delete right after use (see fs3ethumb.h's fs3etmr_DeleteSrcAfter).
+ * Returns the AllocVec'd path, or NULL on failure; caller must FreeVec().
  */
-BOOL FS3ECache_StoreRAM(const char *url, const void *data, ULONG dataLen,
-                        char *outPath, ULONG pathSize);
+char *FS3ECache_StoreRAM(const char *url, const void *data, ULONG dataLen);
 
 /*
  * Checks whether url's RAM:T temp file (the exact deterministic path
@@ -131,11 +133,12 @@ BOOL FS3ECache_StoreRAM(const char *url, const void *data, ULONG dataLen,
  * (e.g. the thumbnail process, mid-decode of an earlier still-in-flight
  * request for the same URL) still has it open for reading -- a
  * write-while-read race that real trackdisk devices mostly tolerate but
- * UAE's shared-filesystem driver has been observed not to. Fills outPath
- * either way (same as FS3ECache_Lookup); returns TRUE only if the file
- * exists.
+ * UAE's shared-filesystem driver has been observed not to. Returns the
+ * AllocVec'd path either way (same as FS3ECache_Lookup), *found set to
+ * whether the file exists. NULL only on allocation failure; caller must
+ * FreeVec() the result.
  */
-BOOL FS3ECache_LookupRAM(const char *url, char *outPath, ULONG pathSize);
+char *FS3ECache_LookupRAM(const char *url, BOOL *found);
 
 /*
  * Creates RAM:T (idempotent) if it doesn't already exist -- the same

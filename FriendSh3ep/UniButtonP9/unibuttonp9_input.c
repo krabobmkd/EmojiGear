@@ -97,7 +97,9 @@ ULONG UniButtonP9_OnHandleInput(Class *cl, Object *o, struct gpInput *msg)
             render(cl, o, msg->gpi_GInfo);
 
             if (over) {
-                ubtp9_notify_pressed(cl, o, msg->gpi_GInfo);
+             /*no, because auto managed by intuition WMHI_GadgetUp
+              *    ubtp9_notify_pressed(cl, o, msg->gpi_GInfo);
+              *    */
                 *msg->gpi_Termination = 0;
                 return GMR_NOREUSE | GMR_VERIFY;
             }

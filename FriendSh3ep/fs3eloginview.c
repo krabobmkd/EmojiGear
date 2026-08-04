@@ -375,7 +375,7 @@ void FS3ELoginView_Open(FS3ELoginView *lv)
     if (lv->window) {
         WindowToFront(lv->window);
         ActivateWindow(lv->window);
-        DoMethod(lv->windowObj, WM_RETHINK);
+      //no   DoMethod(lv->windowObj, WM_RETHINK);
         return;
     }
 

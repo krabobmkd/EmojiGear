@@ -94,7 +94,9 @@ ULONG UniButtonBGBM_OnHandleInput(Class *cl, Object *o, struct gpInput *msg)
             G(o)->Flags &= ~GFLG_SELECTED;
             render(cl, o, msg->gpi_GInfo);
             if (over) {
+            /* no, because intuition WMHI_GadgetUp makes it
                 ubgbm_notify_pressed(cl, o, msg->gpi_GInfo);
+                */
                 *msg->gpi_Termination = 0;
                 return GMR_NOREUSE | GMR_VERIFY;
             }

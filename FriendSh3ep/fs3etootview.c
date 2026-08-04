@@ -218,6 +218,7 @@ static Object *Spacer(void)
 BOOL FS3ETootView_Create(FS3ETootView *tv, struct URPDrawContext *textDC)
 {
     Object *bottomBar;
+    Object *choosersCol;
     Object *attachMediaRow;
     Object *attachMediaLabel;
 
@@ -396,12 +397,25 @@ BOOL FS3ETootView_Create(FS3ETootView *tv, struct URPDrawContext *textDC)
         TAG_END);
     if (!tv->tootBtn) return FALSE;
 
+    /* visibilityChooser/quotePolicyChooser stacked vertically in their own
+     * sub-layout instead of sitting side by side in bottomBar -- two
+     * Choosers plus the char-count label, emoji button, and toot button
+     * all in one horizontal row forced the window too wide. Stacking the
+     * two Choosers halves the horizontal space they need, at the cost of
+     * bottomBar's row getting a little taller (both Choosers are short
+     * gadgets, so this fits comfortably). */
+    choosersCol = (Object *)NewObject(LAYOUT_GetClass(), NULL,
+        LAYOUT_Orientation,  LAYOUT_ORIENT_VERT,
+        LAYOUT_AddChild,     (ULONG)tv->visibilityChooser,
+            CHILD_WeightedHeight, 0,
+        LAYOUT_AddChild,     (ULONG)tv->quotePolicyChooser,
+            CHILD_WeightedHeight, 0,
+        TAG_END);
+    if (!choosersCol) return FALSE;
+
     bottomBar = (Object *)NewObject(LAYOUT_GetClass(), NULL,
         LAYOUT_Orientation,  LAYOUT_ORIENT_HORIZ,
-        LAYOUT_AddChild,     (ULONG)tv->visibilityChooser,
-            CHILD_WeightedWidth, 0,
-            CHILD_MinWidth,      130,
-        LAYOUT_AddChild,     (ULONG)tv->quotePolicyChooser,
+        LAYOUT_AddChild,     (ULONG)choosersCol,
             CHILD_WeightedWidth, 0,
             CHILD_MinWidth,      130,
         LAYOUT_AddChild,     (ULONG)tv->charCountLabel,
@@ -507,7 +521,7 @@ void FS3ETootView_Open(FS3ETootView *tv)
     if (tv->window) {
         WindowToFront(tv->window);
         ActivateWindow(tv->window);
-       DoMethod(tv->windowObj, WM_RETHINK, NULL);
+  //no need    DoMethod(tv->windowObj, WM_RETHINK, NULL);
         return; /* already open */
     }
 

@@ -1270,14 +1270,23 @@ void ttl_notify_hotspot(Class *cl, Object *o, struct GadgetInfo *gi,
 
     /* Copy into the gadget-owned buffers first -- see the TTLData comment
      * on lastHotSpotStr/lastHotSpotPostId for why these can't just be
-     * pointed at directly. */
+     * pointed at directly. lastHotSpotStr itself is AllocVec'd to the
+     * exact size needed (see its doc comment) rather than a fixed cap --
+     * toot bodies carried by TTL_HOT_MODIFY are unbounded. */
     if (data && dataLen > 0) {
-        ULONG n = dataLen;
-        if (n >= sizeof(inst->lastHotSpotStr)) n = sizeof(inst->lastHotSpotStr) - 1;
-        CopyMem((APTR)data, inst->lastHotSpotStr, n);
-        inst->lastHotSpotStr[n] = '\0';
+        char *copy = (char *)AllocVec(dataLen + 1, MEMF_ANY);
+        if (copy) {
+            CopyMem((APTR)data, copy, dataLen);
+            copy[dataLen] = '\0';
+            FreeVec(inst->lastHotSpotStr);
+            inst->lastHotSpotStr = copy;
+        }
+        /* Allocation failure: leave whatever was previously stored there
+         * rather than losing it -- matches every other AllocVec'd owned
+         * copy in this file (e.g. selectedText in fs3etoottimeline_input.c). */
     } else {
-        inst->lastHotSpotStr[0] = '\0';
+        FreeVec(inst->lastHotSpotStr);
+        inst->lastHotSpotStr = NULL;
     }
 
     if (postId && postId[0]) {
@@ -1314,7 +1323,7 @@ void ttl_notify_hotspot(Class *cl, Object *o, struct GadgetInfo *gi,
     tags[1].ti_Tag  = TTIMELINE_HotSpotNotify;
     tags[1].ti_Data = (ULONG)type;
     tags[2].ti_Tag  = TTIMELINE_LastHotSpotString;
-    tags[2].ti_Data = inst->lastHotSpotStr[0]     ? (ULONG)inst->lastHotSpotStr     : 0;
+    tags[2].ti_Data = inst->lastHotSpotStr        ? (ULONG)inst->lastHotSpotStr     : 0;
     tags[3].ti_Tag  = TTIMELINE_LastHotSpotPostId;
     tags[3].ti_Data = inst->lastHotSpotPostId[0]  ? (ULONG)inst->lastHotSpotPostId  : 0;
     tags[4].ti_Tag  = TTIMELINE_LastHotSpotFavourited;

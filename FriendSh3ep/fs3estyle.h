@@ -209,6 +209,20 @@ typedef struct {
     WORD    titlebarTitleX;
     WORD    titlebarTitleY;
 
+    /* Title bar border images: titlebar.left/titlebar.right in style.txt,
+     * blitted directly onto the RastPort by TitleBarLayout_OnRender, right
+     * after the EraseRect background fill. Unlike titlebarTitle, these
+     * have no configurable offset -- titlebarLeft is always anchored to
+     * the title bar's top-left corner, titlebarRight to its top-right
+     * corner (right-aligned using its own width), each drawn at its
+     * native size. Same masked-on-color-0-if-present convention as every
+     * other BmImage here (see BmImage_Load's PDTA_MaskPlane) -- masked
+     * blit via BltMaskBitMapRastPort when a mask was found, opaque
+     * BltBitMapRastPort otherwise. Optional -- a missing file just means
+     * that border isn't drawn (see BmImage_IsLoaded). */
+    BmImage titlebarLeft;
+    BmImage titlebarRight;
+
     /* UniButtonP9 patch9 background skins, one per FS3ESTYLE_PATCH9_* slot
      * (bt1Patch9.x / bt2Patch9.x in style.txt) -- each a 4-sub-image strip
      * (PATCH9_NORMAL/SELECTED/DISABLED/HOVER, left to right). Loaded from
@@ -379,12 +393,13 @@ void FS3EStyle_SyncTitleBarButtons(FS3EStyle *st,
 
 /* Push UBTP9_Patch9 onto accountBtn/newtootBtn (the two UniButtonP9
  * gadgets skinned from st->patch9[FS3ESTYLE_PATCH9_BT1]/[_BT2] instead of
- * a plain GA_Image) -- unlike FS3EStyle_SyncTitleBarButtons above, this
- * explicitly clears to NULL when that slot isn't loaded (Patch9_IsLoaded
- * false), not just when it is, since it must also be able to take a
- * button back to its flat colour fill on an unload/theme switch, not only
- * push a freshly loaded image. Call this every time theme images are
- * (re)loaded or unloaded, not just once at window-open time -- see
+ * a plain GA_Image) -- always the slot's address, never NULL, whether or
+ * not that slot's skin image loaded (see this function's own doc comment
+ * in fs3estyle.c for why: the colours are always valid even when the
+ * image isn't). Call this every time theme images are (re)loaded or
+ * unloaded, not just once at window-open time -- a button holding this
+ * same pointer needs telling to redraw even though *st->patch9[slot]
+ * changing underneath it isn't something it notices on its own -- see
  * FS3EApp_LoadTheme in friendsh3ep.c. */
 void FS3EStyle_SyncPatch9Buttons(FS3EStyle *st, Object *accountBtn, Object *newtootBtn);
 

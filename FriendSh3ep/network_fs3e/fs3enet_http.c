@@ -194,11 +194,13 @@ void FS3EHttp_PrintErrors(void)
     while ((errCode = ERR_get_error()) != 0) {
         char errBuf[256];
         ERR_error_string_n(errCode, errBuf, sizeof(errBuf));
-        bdbprintf_now("FS3EHttp: %s\n", errBuf);
+     //   bdbprintf_now("FS3EHttp: %s\n", errBuf);
         any = TRUE;
     }
+    /*
     if (!any)
         bdbprintf_now("FS3EHttp: (no OpenSSL error queue entries)\n");
+    */
 }
 
 /* Reads all of bio into an AllocVec()'d, NUL-terminated buffer. */

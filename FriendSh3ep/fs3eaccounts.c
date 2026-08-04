@@ -36,6 +36,8 @@
 #include "fs3eaccounts.h"
 #include "fs3enetworkhelper.h"
 
+void wait2sec();
+
 /* Free stored account credentials.
  * Not static: friendsh3ep.c's exitclose() calls this too -- see the
  * extern declaration there. */
@@ -150,11 +152,16 @@ void FS3EApp_SetAccount(const char *apiBaseUrl, const char *accessToken,
                                        FS3E_CACHE_SUBDIR_USERICONS,
                                        (BOOL)app->settings.keepBigUserIcons,
                                        FALSE);
+
         if (req) {
             if (FS3EApp_NetSend(FS3ENETQ_FETCH_IMAGE, req, reqSize))
+            {
                 AvatarImages_MarkRequested(app->avatarImages, app->accountAcct);
-            else
-                FreeVec(req);
+            }
+            /* done by FS3EApp_NetSend if return false because no internet, was freed twice.
+               else
+                 FreeVec(req);
+            */
         }
     }
 }
@@ -473,6 +480,7 @@ BOOL FS3EApp_LoadAccount(void)
     ULONG n;
 
     if (!FS3EApp_AccountDatPath(path, sizeof(path))) return FALSE;
+
     f = Open(path, MODE_OLDFILE);
     if (!f) return FALSE;
 

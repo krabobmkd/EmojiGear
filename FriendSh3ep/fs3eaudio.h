@@ -82,10 +82,10 @@ enum FS3EAudioResult
 };
 
 #define FS3EAUDIO_PATH_SIZE 256
-/* Long enough for a full media CDN URL, same reasoning as fs3ethumb.h's
- * FS3ETHUMB_KEY_SIZE -- unused for now (fs3eam_Key is caller-opaque, just
- * echoed back unchanged), but sized ahead for when this is wired to toot
- * audio attachments (see this file's header comment). */
+/* Long enough for a full media CDN URL -- unused for now (fs3eam_Key is
+ * caller-opaque, just echoed back unchanged), but sized ahead for when
+ * this is wired to toot audio attachments (see this file's header
+ * comment). */
 #define FS3EAUDIO_KEY_SIZE   384
 
 /*

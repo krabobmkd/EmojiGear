@@ -334,16 +334,16 @@ static ULONG TitleBarLayout_OnLayout(Class *cl, Object *o, struct gpLayout *msg)
     /* Row 1 -------------------------------------------------------- */
     /* children[0] = close (far left) */
     if (inst->childCount > 0)
-        setBounds(inst->children[0], left, y1, btnW, btnH);
+        setBounds(inst->children[0], left+gap, y1, btnW, btnH);
 
     /* children[3..1] = depth, altpos, iconify — packed at far right,
      * a quarter-button-width gap between each pair. */
     if (inst->childCount > 3)
-        setBounds(inst->children[3], left + w - btnW,                     y1, btnW, btnH);
+        setBounds(inst->children[3], left + w - btnW - gap,                     y1, btnW, btnH);
     if (inst->childCount > 2)
-        setBounds(inst->children[2], left + w - btnW*2 - gap,             y1, btnW, btnH);
+        setBounds(inst->children[2], left + w - btnW*2 - gap*2,             y1, btnW, btnH);
     if (inst->childCount > 1)
-        setBounds(inst->children[1], left + w - btnW*3 - gap*2,           y1, btnW, btnH);
+        setBounds(inst->children[1], left + w - btnW*3 - gap*3,           y1, btnW, btnH);
 
     /* Row 2 -------------------------------------------------------- */
     /* User icon: iconSz × iconSz, avatarGap padding on the left and top
@@ -472,7 +472,13 @@ static ULONG TitleBarLayout_OnRender(Class *cl, Object *o, struct gpRender *msg)
     //     return 1;
     // }
 
-    if (rp && rp->Layer && rp->Layer->BackFill == NULL && inst->style->tbBg.bitmap) {
+    if (rp && rp->Layer && rp->Layer->BackFill == NULL &&
+        (inst->style->tbBg.bitmap || inst->style->titlebarLeft.bitmap ||
+         inst->style->titlebarRight.bitmap)) {
+        /* Also installed for a theme that has titlebar.left/right but no
+         * titlebar.bg -- FS3EStyle_TitleBarBackFillFunc draws the border
+         * images too now (see its own comment), so it must run even when
+         * there's no tiled background to trigger it otherwise. */
         struct Hook *backFill = NULL;
         GetAttr(GA_BackFill, o, (ULONG *)&backFill);
         if (backFill)
@@ -481,6 +487,16 @@ static ULONG TitleBarLayout_OnRender(Class *cl, Object *o, struct gpRender *msg)
 
     if (rp && w > 0 && h > 0)
         EraseRect(rp, left, top, left + w - 1, top + h - 1);
+
+    /* Title bar border images (titlebar.left/titlebar.right in style.txt)
+     * are drawn from FS3EStyle_TitleBarBackFillFunc (fs3estyle.c) instead
+     * of here -- they're conceptually part of the background, and that
+     * hook is what actually owns painting it (this EraseRect above is
+     * what triggers it, via the installed GA_BackFill hook, same as the
+     * tiled tbBg image). See the hook's own comment for why a background
+     * hook can't just reuse this function's rp the way titlebarTitle below
+     * still safely does (it doesn't run through the same Layer-clipped
+     * GM_RENDER path). */
 
     if(rp->Layer->BackFill == NULL || !inst->style->tbBg.bitmap)
     {

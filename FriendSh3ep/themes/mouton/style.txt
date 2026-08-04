@@ -10,6 +10,12 @@ titlebar.title = titlebigsheep.png
 titlebar.title.x = 50
 titlebar.title.y = 2
 
+; titlebar border images, color 0 transparent, drawn at native size with
+; no configurable offset: titlebar.left pinned to the title bar's top-left
+; corner, titlebar.right pinned to its top-right corner.
+;titlebar.left = tbleft.png
+;titlebar.right = tbright.png
+
 ; will consider color 0 transparent:
 titlebar.buttons = tbbuttons.iff
 

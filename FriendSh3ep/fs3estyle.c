@@ -310,6 +310,8 @@ void FS3EStyle_InitDefaults(FS3EStyle *st)
     memset(&st->titlebarTitle, 0, sizeof(st->titlebarTitle));
     st->titlebarTitleX = 0;
     st->titlebarTitleY = 0;
+    memset(&st->titlebarLeft, 0, sizeof(st->titlebarLeft));
+    memset(&st->titlebarRight, 0, sizeof(st->titlebarRight));
 
     memset(&st->patch9, 0, sizeof(st->patch9));
     memset(&st->btbgbmBitmap, 0, sizeof(st->btbgbmBitmap));
@@ -382,6 +384,19 @@ static struct BitMap *tbBgBitmap = NULL;
 static LONG           tbBgWidth  = 0;
 static LONG           tbBgHeight = 0;
 
+/* Same mirroring, same reason, for the title bar border images
+ * (titlebarLeft/titlebarRight) -- these are conceptually part of the
+ * background too (see FS3EStyle_TitleBarBackFillFunc), so they're painted
+ * from this same hook rather than TitleBarLayout_OnRender. */
+static struct BitMap *tbLeftBitmap  = NULL;
+static PLANEPTR       tbLeftMask   = NULL;
+static LONG           tbLeftWidth  = 0;
+static LONG           tbLeftHeight = 0;
+static struct BitMap *tbRightBitmap  = NULL;
+static PLANEPTR       tbRightMask   = NULL;
+static LONG           tbRightWidth  = 0;
+static LONG           tbRightHeight = 0;
+
 /* Tile tbBgBitmap across bfm->bf_Bounds. Verified against the working
  * reference (amigapetmate's BackFillHook_Pattern): BltBitMap operates on
  * the raw RastPort BitMap directly and is unaffected by Layer clipping, so
@@ -396,8 +411,6 @@ static void ASM SAVEDS FS3EStyle_TitleBarBackFillFunc(
     LONG srcStartX, srcStartY;
     LONG x, y, srcX, srcY, chunkW, chunkH;
 
-    if (!tbBgBitmap || tbBgWidth <= 0 || tbBgHeight <= 0) return;
-
     dst  = rp->BitMap;
     dstX = (LONG)bfm->bf_Bounds.MinX;
     dstY = (LONG)bfm->bf_Bounds.MinY;
@@ -405,32 +418,89 @@ static void ASM SAVEDS FS3EStyle_TitleBarBackFillFunc(
     dstH = (LONG)bfm->bf_Bounds.MaxY - dstY + 1;
     if (dstW <= 0 || dstH <= 0) return;
 
-    /* Phase of the pattern at the top-left of the damage rect, anchored to
-     * the layer's own origin so tiles stay aligned across separate
-     * (partial) backfill calls and when the window moves. */
-    srcStartX = (((dstX - rp->Layer->bounds.MinX) % tbBgWidth)  + tbBgWidth)  % tbBgWidth;
-    srcStartY = (((dstY - rp->Layer->bounds.MinY) % tbBgHeight) + tbBgHeight) % tbBgHeight;
+    if (tbBgBitmap && tbBgWidth > 0 && tbBgHeight > 0) {
+        /* Phase of the pattern at the top-left of the damage rect, anchored
+         * to the layer's own origin so tiles stay aligned across separate
+         * (partial) backfill calls and when the window moves. */
+        srcStartX = (((dstX - rp->Layer->bounds.MinX) % tbBgWidth)  + tbBgWidth)  % tbBgWidth;
+        srcStartY = (((dstY - rp->Layer->bounds.MinY) % tbBgHeight) + tbBgHeight) % tbBgHeight;
 
-    /* only tile on X axis */
-    y = 0;
-   // while (y < dstH) {
-        srcY   = srcStartY;// (srcStartY + y) % tbBgHeight;
-        chunkH = tbBgHeight - srcY;
-        if (chunkH > dstH - y) chunkH = dstH - y;
+        /* only tile on X axis */
+        y = 0;
+       // while (y < dstH) {
+            srcY   = srcStartY;// (srcStartY + y) % tbBgHeight;
+            chunkH = tbBgHeight - srcY;
+            if (chunkH > dstH - y) chunkH = dstH - y;
 
-        x = 0;
-        while (x < dstW) {
-            srcX   = (srcStartX + x) % tbBgWidth;
-            chunkW = tbBgWidth - srcX;
-            if (chunkW > dstW - x) chunkW = dstW - x;
+            x = 0;
+            while (x < dstW) {
+                srcX   = (srcStartX + x) % tbBgWidth;
+                chunkW = tbBgWidth - srcX;
+                if (chunkW > dstW - x) chunkW = dstW - x;
 
-            BltBitMap(tbBgBitmap, srcX, srcY,
-                      dst, dstX + x, dstY + y,
-                      (WORD)chunkW, (WORD)chunkH, 0xC0, 0xFF, NULL);
-            x += chunkW;
+                BltBitMap(tbBgBitmap, srcX, srcY,
+                          dst, dstX + x, dstY + y,
+                          (WORD)chunkW, (WORD)chunkH, 0xC0, 0xFF, NULL);
+                x += chunkW;
+            }
+        //    y += chunkH;
+        // }
+    }
+
+    /* Title bar border images (titlebar.left/titlebar.right in style.txt),
+     * anchored to the layer's own top-left/top-right corner -- same
+     * absolute coordinate space as bf_Bounds and dst (rp->BitMap), NOT
+     * gadget-local -- then clipped by hand against the current damage
+     * rect (bf_Bounds) before blitting, since BltBitMap/
+     * BltMaskBitMapRastPort have no clip region of their own the way a
+     * Layer-attached RastPort draw call would; a corner image bigger than
+     * whatever sliver of the title bar is being repaired this call could
+     * otherwise paint outside bf_Bounds and corrupt whatever's there. */
+    if (tbLeftBitmap && tbLeftWidth > 0 && tbLeftHeight > 0) {
+        LONG imgX = rp->Layer->bounds.MinX;
+        LONG imgY = rp->Layer->bounds.MinY;
+        LONG clipX0 = imgX > dstX ? imgX : dstX;
+        LONG clipY0 = imgY > dstY ? imgY : dstY;
+        LONG clipX1 = (imgX + tbLeftWidth)  < (dstX + dstW) ? (imgX + tbLeftWidth)  : (dstX + dstW);
+        LONG clipY1 = (imgY + tbLeftHeight) < (dstY + dstH) ? (imgY + tbLeftHeight) : (dstY + dstH);
+        if (clipX1 > clipX0 && clipY1 > clipY0) {
+            LONG w = clipX1 - clipX0, h = clipY1 - clipY0;
+            if (tbLeftMask) {
+                struct RastPort tmpRp;
+                InitRastPort(&tmpRp);
+                tmpRp.BitMap = dst;
+                BltMaskBitMapRastPort(tbLeftBitmap, clipX0 - imgX, clipY0 - imgY,
+                                      &tmpRp, clipX0, clipY0, (LONG)w, (LONG)h,
+                                      PATCH9_MASK_MINTERM, tbLeftMask);
+            } else {
+                BltBitMap(tbLeftBitmap, clipX0 - imgX, clipY0 - imgY,
+                          dst, clipX0, clipY0, (WORD)w, (WORD)h, 0xC0, 0xFF, NULL);
+            }
         }
-    //    y += chunkH;
-    // }
+    }
+
+    if (tbRightBitmap && tbRightWidth > 0 && tbRightHeight > 0) {
+        LONG imgX = rp->Layer->bounds.MaxX - tbRightWidth + 1;
+        LONG imgY = rp->Layer->bounds.MinY;
+        LONG clipX0 = imgX > dstX ? imgX : dstX;
+        LONG clipY0 = imgY > dstY ? imgY : dstY;
+        LONG clipX1 = (imgX + tbRightWidth)  < (dstX + dstW) ? (imgX + tbRightWidth)  : (dstX + dstW);
+        LONG clipY1 = (imgY + tbRightHeight) < (dstY + dstH) ? (imgY + tbRightHeight) : (dstY + dstH);
+        if (clipX1 > clipX0 && clipY1 > clipY0) {
+            LONG w = clipX1 - clipX0, h = clipY1 - clipY0;
+            if (tbRightMask) {
+                struct RastPort tmpRp;
+                InitRastPort(&tmpRp);
+                tmpRp.BitMap = dst;
+                BltMaskBitMapRastPort(tbRightBitmap, clipX0 - imgX, clipY0 - imgY,
+                                      &tmpRp, clipX0, clipY0, (LONG)w, (LONG)h,
+                                      PATCH9_MASK_MINTERM, tbRightMask);
+            } else {
+                BltBitMap(tbRightBitmap, clipX0 - imgX, clipY0 - imgY,
+                          dst, clipX0, clipY0, (WORD)w, (WORD)h, 0xC0, 0xFF, NULL);
+            }
+        }
+    }
 }
 
 void FS3EStyle_SetThemePath(FS3EStyle *st, const char *path)
@@ -465,10 +535,10 @@ typedef struct {
 static const FS3EPatch9SlotDef patch9Slots[FS3ESTYLE_PATCH9_COUNT] = {
     { "bt1Patch9", "bt1patch9.iff", 8,
       { 0x007B7BE3, 0x00BCBCFF, 0x00777777, 0x007B7BE3 },
-      { 0x00CCCCCC, 0x00FFFFFF, 0x00999999, 0x00EEEE44 } },
+      { 0x00000000, 0x00000000, 0x00000000, 0x00000000 } },
     { "bt2Patch9", "bt2patch9.iff", 8,
       { 0x0083ED60, 0x00B2FFC8, 0x00777777, 0x0083ED60 },
-      { 0x00CCCCCC, 0x00FFFFFF, 0x00999999, 0x00EEEE44 } },
+      { 0x00000000, 0x00000000, 0x00000000, 0x00000000 } },
     { "btbgbmPatch9", "btbgbmpatch9.iff", 8,
       { 0x00888888, 0x00BCBCFF, 0x00777777, 0x00888888 },
       { 0x00CCCCCC, 0x00FFFFFF, 0x00999999, 0x00EEEE44 } },
@@ -660,6 +730,35 @@ BOOL FS3EStyle_LoadThemeImages(FS3EStyle *st, struct Screen *scr)
     st->titlebarTitleX = (WORD)StyleFile_GetInt(&sf, "titlebar.title.x", 0);
     st->titlebarTitleY = (WORD)StyleFile_GetInt(&sf, "titlebar.title.y", 0);
 
+    /* Title bar border images: titlebar.left/titlebar.right in style.txt,
+     * blitted at the title bar's top-left/top-right corners by
+     * FS3EStyle_TitleBarBackFillFunc (below) -- like tbBg, these are
+     * conceptually part of the background, not something
+     * TitleBarLayout_OnRender draws itself. No configurable offset (see
+     * the titlebarLeft/titlebarRight doc comment in fs3estyle.h) --
+     * optional, a missing file just means that border isn't drawn.
+     * tbLeftBitmap/tbRightBitmap etc. mirror these for the hook the same
+     * way tbBgBitmap mirrors tbBg above. */
+    snprintf(path, sizeof(path), "%s/%s", st->themePath,
+             StyleFile_GetString(&sf, "titlebar.left", "left.iff"));
+    if (BmImage_Init(&st->titlebarLeft, path) &&
+        BmImage_Load(&st->titlebarLeft, scr)) {
+        tbLeftBitmap = st->titlebarLeft.bitmap;
+        tbLeftMask   = st->titlebarLeft.mask;
+        tbLeftWidth  = st->titlebarLeft.width;
+        tbLeftHeight = st->titlebarLeft.height;
+    }
+
+    snprintf(path, sizeof(path), "%s/%s", st->themePath,
+             StyleFile_GetString(&sf, "titlebar.right", "right.iff"));
+    if (BmImage_Init(&st->titlebarRight, path) &&
+        BmImage_Load(&st->titlebarRight, scr)) {
+        tbRightBitmap = st->titlebarRight.bitmap;
+        tbRightMask   = st->titlebarRight.mask;
+        tbRightWidth  = st->titlebarRight.width;
+        tbRightHeight = st->titlebarRight.height;
+    }
+
     /* UniButtonP9 patch9 background skins: one Patch9 per
      * FS3ESTYLE_PATCH9_* slot (see patch9Slots[] above), each a 4
      * equal-size sub-image strip (PATCH9_NORMAL/SELECTED/DISABLED/HOVER)
@@ -786,35 +885,38 @@ void FS3EStyle_SyncTitleBarButtons(FS3EStyle *st,
 /* Push UBTP9_Patch9 onto accountBtn (FS3ESTYLE_PATCH9_BT1) and newtootBtn
  * (FS3ESTYLE_PATCH9_BT2) -- the two UniButtonP9 gadgets skinned from a
  * Patch9 slot instead of a plain GA_Image (see FS3EStyle_SyncTitleBarButtons
- * just above, for those). Explicitly sets NULL when that slot's image
- * isn't loaded (Patch9_IsLoaded false), not just when it IS -- unlike
- * FS3EStyle_SyncTitleBarButtons's tbImages[] check, this must also be able
- * to *clear* a button back to its flat colour fill, since it's called
- * again on every theme (re)load or unload, not just once at window-open
- * time. UBTP9_Patch9 is a plain pointer into st->patch9[slot]; a button
- * left holding a stale one never notices st->patch9[slot] changing
- * underneath it on its own -- confirmed bug this fixes: loading a theme
- * live (FS3EApp_LoadTheme in friendsh3ep.c) decoded bt1patch9.iff/
- * bt2patch9.iff into st->patch9[] correctly, but without this, nothing
- * ever told the already-created account/newtoot buttons about it, so they
- * kept showing their flat-colour fallback regardless. Uses SetGdAttrs()
- * (targets CurrentMainWindow when open, plain SetAttrs() otherwise), same
- * as FS3EStyle_SyncTitleBarButtons. */
+ * just above, for those). Always passes &st->patch9[slot] -- never NULL --
+ * even when that slot's image isn't loaded: st->patch9[slot] is a plain
+ * struct member of the one, stable FS3EStyle instance (not a separately
+ * AllocVec'd/freed object), so the pointer itself is always valid for the
+ * app's whole lifetime, and its bgcolors[]/textcolors[] are always
+ * populated from style.txt regardless of whether the image loaded (see
+ * fs3estyle_load_patch9_slot's doc comment) -- a button whose skin image
+ * failed to load still needs the theme's own per-state colours for its
+ * flat-fill fallback, not just some image or nothing. UniButtonP9's own
+ * ubtp9_state_pens/ubtp9_blit_state (unibuttonp9_render.c/attribs.c)
+ * already correctly test Patch9_IsLoaded(inst->patch9) to decide
+ * image-vs-flat-fill, separately from the inst->patch9 NULL check that
+ * only means "no Patch9 attached at all yet" -- confirmed bug this fixes:
+ * passing 0 here instead collapsed those two distinct cases into one,
+ * silently losing the theme's flat-fill colours whenever a skin image was
+ * merely missing. Still called again on every theme (re)load or unload
+ * (not just once at window-open time), since a button holding this same
+ * pointer never notices *st->patch9[slot] changing underneath it on its
+ * own, and still needs telling to redraw. Uses SetGdAttrs() (targets
+ * CurrentMainWindow when open, plain SetAttrs() otherwise), same as
+ * FS3EStyle_SyncTitleBarButtons. */
 void FS3EStyle_SyncPatch9Buttons(FS3EStyle *st, Object *accountBtn, Object *newtootBtn)
 {
     if (!st) return;
 
     if (accountBtn)
         SetGdAttrs(accountBtn, UBTP9_Patch9,
-            Patch9_IsLoaded(&st->patch9[FS3ESTYLE_PATCH9_BT1])
-                ? (ULONG)&st->patch9[FS3ESTYLE_PATCH9_BT1] : 0UL,
-            TAG_DONE);
+            (ULONG)&st->patch9[FS3ESTYLE_PATCH9_BT1], TAG_DONE);
 
     if (newtootBtn)
         SetGdAttrs(newtootBtn, UBTP9_Patch9,
-            Patch9_IsLoaded(&st->patch9[FS3ESTYLE_PATCH9_BT2])
-                ? (ULONG)&st->patch9[FS3ESTYLE_PATCH9_BT2] : 0UL,
-            TAG_DONE);
+            (ULONG)&st->patch9[FS3ESTYLE_PATCH9_BT2], TAG_DONE);
 }
 
 void FS3EStyle_UnloadThemeImages(FS3EStyle *st)
@@ -825,6 +927,8 @@ void FS3EStyle_UnloadThemeImages(FS3EStyle *st)
     BmImage_Unload(&st->tbButtons);
     BmImage_Unload(&st->tbBg);
     BmImage_Unload(&st->titlebarTitle);
+    BmImage_Unload(&st->titlebarLeft);
+    BmImage_Unload(&st->titlebarRight);
     for (i = 0; i < FS3ESTYLE_PATCH9_COUNT; i++)
         Patch9_Unload(&st->patch9[i]);
     for (i = 0; i < FS3ESTYLE_BTBGBM_COUNT; i++)
@@ -839,6 +943,14 @@ void FS3EStyle_UnloadThemeImages(FS3EStyle *st)
     tbBgBitmap = NULL;
     tbBgWidth  = 0;
     tbBgHeight = 0;
+    tbLeftBitmap  = NULL;
+    tbLeftMask    = NULL;
+    tbLeftWidth   = 0;
+    tbLeftHeight  = 0;
+    tbRightBitmap = NULL;
+    tbRightMask   = NULL;
+    tbRightWidth  = 0;
+    tbRightHeight = 0;
     /* No image loaded -- TitleBarLayout must fall back to dpiHeight sizing. */
     st->tbButtonWidth  = 0;
     st->tbButtonHeight = 0;
@@ -857,6 +969,8 @@ void FS3EStyle_FreeThemeImages(FS3EStyle *st)
     BmImage_Free(&st->tbButtons);
     BmImage_Free(&st->tbBg);
     BmImage_Free(&st->titlebarTitle);
+    BmImage_Free(&st->titlebarLeft);
+    BmImage_Free(&st->titlebarRight);
     for (i = 0; i < FS3ESTYLE_PATCH9_COUNT; i++)
         Patch9_Free(&st->patch9[i]);
     for (i = 0; i < FS3ESTYLE_BTBGBM_COUNT; i++)

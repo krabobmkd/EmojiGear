@@ -604,9 +604,20 @@ typedef struct TTLData {
      * that, but not the post itself scrolling away and being freed. Since
      * "last activated" is meant to stay readable via GetAttr until the
      * *next* activation regardless of what happens to the post it came
-     * from, ttl_notify_hotspot() copies both into these fixed buffers up
-     * front rather than handing out pointers into someone else's memory. */
-    char   lastHotSpotStr[512];
+     * from, ttl_notify_hotspot() copies both into these gadget-owned
+     * buffers up front rather than handing out pointers into someone
+     * else's memory.
+     *
+     * lastHotSpotStr is AllocVec'd, not a fixed buffer, same "unbounded"
+     * reasoning as selectedText below: TTL_HOT_MODIFY carries the full
+     * toot body here (see ttl_toot_build_hotspots() in
+     * fs3etoottimeline_posts.c) so the compose window can prefill it for
+     * editing, and Mastodon toot bodies have no fixed byte cap -- a fixed
+     * buffer here previously truncated (silently, mid-UTF-8-sequence)
+     * any body past its size, which multi-byte characters like emoji hit
+     * far sooner than the visible character count would suggest. NULL =
+     * no click yet, or the click carried no data (e.g. TTL_HOT_DELETE). */
+    char  *lastHotSpotStr;
     char   lastHotSpotPostId[64];
     char   lastHotSpotMediaIds[96]; /* comma-joined, see TTIMELINE_LastHotSpotMediaIds --
                                       * 96 bytes comfortably covers TTL_POST_MAX_MEDIA (4)

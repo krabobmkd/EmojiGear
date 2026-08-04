@@ -145,8 +145,9 @@ struct Task *myTask = NULL;
 static struct MsgPort *SIPCPort = NULL;
 
 void wait2sec() {
+if(!GfxBase) return;
 int i;
- //re   for(i=0;i<75;i++) WaitTOF();
+   for(i=0;i<75;i++) WaitTOF();
 }
 
 /* Window drag state — written by TitleBarLayout GM_HITTEST (inside
@@ -1022,6 +1023,7 @@ int main(int argc, char **argv)
     {
         LibraryEntry *entry;
         for (entry = libraryTable; entry->name != NULL; entry++) {
+       // printf("go open %s %d\n",entry->name, entry->version);
             *(entry->base) = OpenLibrary(entry->name, entry->version);
             if (!*(entry->base)) {
                 printf("Can't open %s v%u\n",
@@ -1092,9 +1094,6 @@ int main(int argc, char **argv)
 // printf("FS3EStyle_InitDefaults done\n");
 
     app->avatarImages = AvatarImages_Create();
-
-
-// printf("FS3ENet_Start\n");
     /* --- Network process ------------------------------------------------ */
     app->netReplyPort = CreateMsgPort();
     if (!app->netReplyPort) cleanexit("Can't create network reply port");
@@ -1103,6 +1102,7 @@ int main(int argc, char **argv)
                                          (ULONG)app->settings.maxCacheSizeMB);
 
 // printf("FS3EThumb_Start\n");
+
     /* --- Thumbnail process ------------------------------------------------ */
     app->thumbReplyPort = CreateMsgPort();
     if (!app->thumbReplyPort) cleanexit("Can't create thumbnail reply port");
@@ -1128,8 +1128,6 @@ int main(int argc, char **argv)
      * see FS3EApp_LoadAccount); timeline fetch fires later in setViewMode */
     FS3EApp_LoadAccount();
     FS3EApp_BackfillAccountId();
-
-
 
 // printf("FS3ELoginView_Create\n");
     /* --- Classic BOOPSI sub-windows ------------------------------------- */
@@ -1598,8 +1596,7 @@ int main(int argc, char **argv)
                         /* UniButton gadgets use GMR_VERIFY + GACT_RELVERIFY so
                          * clicks arrive here with the gadget's GA_ID. */
                         ULONG senderId = result & WMHI_GADGETMASK;
-
-                        // test: do not redirect those
+                        // gadgetup up event, so notify 0, unselected
                         BoopsiDelay_BeginMessage(DelayQueue, senderId);
                         BoopsiDelay_AddTag(DelayQueue, GA_Selected, 0);
                         BoopsiDelay_EndMessage(DelayQueue);
@@ -1809,7 +1806,7 @@ int main(int argc, char **argv)
                 FS3EThumbMessage *thumbMsg;
                 while ((thumbMsg = (FS3EThumbMessage *)GetMsg(app->thumbReplyPort)) != NULL) {
                     FS3EApp_HandleThumbReply(thumbMsg);
-                    FreeVec(thumbMsg);
+                    FS3EThumb_FreeMessage(thumbMsg);
                 }
             }
 
@@ -1996,7 +1993,7 @@ int main(int argc, char **argv)
 
                         case GID_TITLEBAR_ACCOUNTS:
                             ptag = FindTagItem(GA_Selected, msg);
-                            if (ptag /*&& ptag->ti_Data*/)  /* when push button down (selected true) */
+                            if (ptag && ptag->ti_Data == 0)  /* when push button up */
                             {
                                 FS3EApp_RefreshLoginAccountsList(); /* never stale when shown */
                                 FS3ELoginView_Open(&app->loginView);
@@ -2005,7 +2002,7 @@ int main(int argc, char **argv)
 
                         case GID_SEARCH_BACK_BUTTON:
                             ptag = FindTagItem(GA_Selected, msg);
-                            if (ptag /*&& ptag->ti_Data*/)  /* when push button down (selected true) */
+                            if (ptag && ptag->ti_Data == 0)  /* when push button down (selected true) */
                             {
                                 FS3EApp_SearchGoBack();
                             }
@@ -2764,7 +2761,6 @@ void exitclose(void)
         FS3EStyle_ReleaseDrawContexts(&app->style);
         FS3EStyle_FreeThemeImages(&app->style);
 
-wait2sec();
         if (app->netRequestPort)
         {
             /* Always a fresh, dedicated port for the shutdown handshake --
@@ -2782,13 +2778,13 @@ wait2sec();
              * handshake ever touches makes the ambiguity impossible. */
             struct MsgPort *stopReplyPort = CreateMsgPort();
             if (stopReplyPort) {
-wait2sec();
+
                 FS3ENet_Stop(app->netRequestPort, stopReplyPort);
-wait2sec();
+
                 DeleteMsgPort(stopReplyPort);
             }
         }
-wait2sec();
+
         /* Drain and free any remaining async replies -- safe now: the
          * network process only replies to the dedicated port above once
          * every earlier request already sitting in its queue has been
@@ -2804,29 +2800,29 @@ wait2sec();
             DeleteMsgPort(app->netReplyPort);
             app->netReplyPort = NULL;
         }
-wait2sec();
+
         if (app->thumbRequestPort)
         {
             /* Same dedicated-port reasoning as netRequestPort above. */
             struct MsgPort *stopReplyPort = CreateMsgPort();
             if (stopReplyPort) {
-wait2sec();
+
                 FS3EThumb_Stop(app->thumbRequestPort, stopReplyPort);
-wait2sec();
+
                 DeleteMsgPort(stopReplyPort);
             }
         }
-wait2sec();
+
         /* Drain and free any remaining async replies */
         if (app->thumbReplyPort) {
             FS3EThumbMessage *thumbMsg;
             while ((thumbMsg = (FS3EThumbMessage *)GetMsg(app->thumbReplyPort)) != NULL) {
-                FreeVec(thumbMsg);
+                FS3EThumb_FreeMessage(thumbMsg);
             }
             DeleteMsgPort(app->thumbReplyPort);
             app->thumbReplyPort = NULL;
         }
-wait2sec();
+
         if (app->audioRequestPort)
         {
             /* Same dedicated-port reasoning as netRequestPort/thumbRequestPort
@@ -2835,13 +2831,13 @@ wait2sec();
              * FS3EAUDIOQ_SHUTDOWN case). */
             struct MsgPort *stopReplyPort = CreateMsgPort();
             if (stopReplyPort) {
-wait2sec();
+
                 FS3EAudio_Stop(app->audioRequestPort, stopReplyPort);
-wait2sec();
+
                 DeleteMsgPort(stopReplyPort);
             }
         }
-wait2sec();
+
         /* Drain and free any remaining async replies */
         if (app->audioReplyPort) {
             FS3EAudioMessage *audioMsg;
@@ -2851,7 +2847,7 @@ wait2sec();
             DeleteMsgPort(app->audioReplyPort);
             app->audioReplyPort = NULL;
         }
-wait2sec();
+
         FS3EApp_FreeLoginState();
         FS3EApp_FreeAccount();
         if (app->searchProfileAcct)      { FreeVec(app->searchProfileAcct);      app->searchProfileAcct      = NULL; }
@@ -2861,9 +2857,9 @@ wait2sec();
         if (app->pendingTootBody)        { FreeVec(app->pendingTootBody);        app->pendingTootBody        = NULL; }
         FS3EApp_SearchStackClear();
 
-wait2sec();
+
         FS3EMsg_Close();
-wait2sec();
+
         if (app->app_port)
             DeleteMsgPort(app->app_port);
 
@@ -2871,7 +2867,7 @@ wait2sec();
         FreeVec(app);
         app = NULL;
     }
-wait2sec();
+
     FS3ELocale_Close();
     if (LocaleBase) {
         CloseLibrary((struct Library *)LocaleBase);

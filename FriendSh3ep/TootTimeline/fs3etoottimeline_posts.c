@@ -1012,7 +1012,26 @@ void ttl_scan_span_tokens(TTLPost *post, TTLTextSpan *sp)
         const unsigned char *tokStart = p;
 
         if (*p == '@') hotType = TTL_HOT_MENTION;
-        else if (*p == '#') hotType = TTL_HOT_HASHTAG;
+        else if (*p == '#') {
+            /* A bare '#' only starts a hashtag when nothing but whitespace
+             * (or nothing at all -- start of the post) immediately
+             * precedes it, matching official Mastodon clients -- otherwise
+             * a URL fragment like "example.com/page#section" (no
+             * recognized http(s):// prefix to swallow it whole the way
+             * the URL branch below does) would wrongly turn "#section"
+             * into its own hashtag hotspot. Looked up in sp->bodySrc (the
+             * persistent, unwrapped post body), not sp->utf8 (this
+             * wrapped row): word-wrap can start a row mid-word (see this
+             * function's own doc comment), so "first byte of this row"
+             * doesn't necessarily mean "first byte of a word" in the real
+             * text. */
+            const unsigned char *bodyPos = (const unsigned char *)sp->bodySrc +
+                                            (p - (const unsigned char *)sp->utf8);
+            if (bodyPos == (const unsigned char *)sp->bodySrc ||
+                bodyPos[-1] == ' '  || bodyPos[-1] == '\t' ||
+                bodyPos[-1] == '\n' || bodyPos[-1] == '\r')
+                hotType = TTL_HOT_HASHTAG;
+        }
         else if (ttl_bytes_match(p, end, "https://") || ttl_bytes_match(p, end, "http://"))
             hotType = TTL_HOT_URL;
 

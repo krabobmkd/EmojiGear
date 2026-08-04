@@ -1141,8 +1141,8 @@ typedef struct FS3ENetActiveDownload
     FS3ENetMessage       *fs3ead_OrigMsg;  /* held -- ReplyMsg()'d only by FS3ENet_FinishDownload */
     FS3ENetFetchImageReq *fs3ead_Req;      /* == fs3ead_OrigMsg->fs3em_Data throughout */
     BPTR                  fs3ead_FH;       /* opened once at registration, Write() per chunk */
-    char                  fs3ead_LocalPath[FS3ECACHE_PATH_SIZE];
-    char                  fs3ead_CachePath[FS3ECACHE_PATH_SIZE];
+    char                 *fs3ead_LocalPath; /* AllocVec'd, owned by dl -- see FS3ENet_FreeActiveDownload */
+    char                 *fs3ead_CachePath; /* AllocVec'd, owned by dl -- see FS3ENet_FreeActiveDownload */
     BOOL                  fs3ead_IsTemp;
     ULONG                 fs3ead_BytesSoFar;
     ULONG                 fs3ead_TotalBytes;      /* 0 = unknown until first chunk (or never) */
@@ -1194,6 +1194,44 @@ static void FS3ENet_BuildFetchImageReply(FS3ENetMessage *fs3em, FS3ENetFetchImag
     fs3em->fs3em_Data    = reply;
     fs3em->fs3em_DataLen = total;
     fs3em->fs3em_Result  = FS3ENETR_OK;
+}
+
+/* AllocVec'd strdup, local to this module -- network_fs3e is a separate
+ * static library from the GUI's fs3enetworkhelper.c/NetStrDup, so it has
+ * its own copy rather than reaching across that boundary. NULL in yields
+ * NULL out. */
+static char *FS3ENet_StrDup(const char *s)
+{
+    ULONG len;
+    char *out;
+
+    if (!s) return NULL;
+
+    len = (ULONG)strlen(s) + 1;
+    out = (char *)AllocVec(len, MEMF_ANY);
+    if (out) memcpy(out, s, len);
+    return out;
+}
+
+/* Frees the two AllocVec'd path strings FS3ENet_HandleFetchImage() builds,
+ * for an early return that doesn't hand them off to a FS3ENetActiveDownload
+ * (see FS3ENet_FreeActiveDownload for the case where it does). Either
+ * argument may be NULL. */
+static void FS3ENet_FreePathPair(char *localPath, char *cachePath)
+{
+    FreeVec(localPath);
+    FreeVec(cachePath);
+}
+
+/* Frees dl's two AllocVec'd path strings alongside dl itself -- the
+ * FS3ENetActiveDownload-owns-them counterpart to FS3ENet_FreePathPair
+ * above, used everywhere a dl is torn down. */
+static void FS3ENet_FreeActiveDownload(FS3ENetActiveDownload *dl)
+{
+    if (!dl) return;
+    FreeVec(dl->fs3ead_LocalPath);
+    FreeVec(dl->fs3ead_CachePath);
+    FreeVec(dl);
 }
 
 /* Removes dl from g_FS3EActiveDownloads (wherever it is in the list) and
@@ -1336,7 +1374,7 @@ static void FS3ENet_FinishDownload(FS3ENetActiveDownload *dl, ULONG result)
 
     FS3ENet_UnlinkActiveDownload(dl);
     ReplyMsg((struct Message *)fs3em);
-    FreeVec(dl);
+    FS3ENet_FreeActiveDownload(dl);
 }
 
 /* Abandons every active download AND every still-queued FETCH_IMAGE request
@@ -1399,8 +1437,10 @@ static void FS3ENet_StepActiveDownloads(void)
              * per-turn StepDL trace above this is always worth a line, no
              * BDBTRACEMULTIPART needed to see WHY a FETCH_IMAGE came back
              * FS3ENETR_HTTP_ERROR. */
+             /*
             bdbprintf_now("StepDL: giving up on %s after %u failed chunks\n",
                            dl->fs3ead_Req->fs3enf_Url, (unsigned)dl->fs3ead_RetryCount);
+                           */
             finished      = TRUE;
             finishResult  = FS3ENETR_HTTP_ERROR;
         }
@@ -1414,8 +1454,9 @@ static void FS3ENet_StepActiveDownloads(void)
             Write(dl->fs3ead_FH, resp.fhr_Body, (LONG)gotLen) != (LONG)gotLen)
         {
             /* Terminal failure -- see the retry-exhausted comment above. */
-            bdbprintf_now("StepDL: Write() failed for %s, IoErr=%ld\n",
+           /* bdbprintf_now("StepDL: Write() failed for %s, IoErr=%ld\n",
                            dl->fs3ead_Req->fs3enf_Url, (long)IoErr());
+                           */
             finished     = TRUE;
             finishResult = FS3ENETR_HTTP_ERROR;
         }
@@ -1498,10 +1539,11 @@ static void FS3ENet_StepActiveDownloads(void)
 static BOOL FS3ENet_HandleFetchImage(FS3ENetMessage *fs3em)
 {
     FS3ENetFetchImageReq *req = (FS3ENetFetchImageReq *)fs3em->fs3em_Data;
-    char localPath[FS3ECACHE_PATH_SIZE];
-    char cachePath[FS3ECACHE_PATH_SIZE];
-    BOOL isTemp = FALSE;
-    BOOL isExactPath;
+    char *localPath = NULL;
+    char *cachePath = NULL;
+    BOOL  isTemp = FALSE;
+    BOOL  isExactPath;
+    BOOL  cacheHit = FALSE;
 
     if (!req || fs3em->fs3em_DataLen < sizeof(*req))
     {
@@ -1522,9 +1564,8 @@ static BOOL FS3ENet_HandleFetchImage(FS3ENetMessage *fs3em)
 
     if (isExactPath)
     {
-        strncpy(localPath, req->fs3enf_ExactLocalPath, sizeof(localPath) - 1);
-        localPath[sizeof(localPath) - 1] = '\0';
-        cachePath[0] = '\0';
+        localPath = FS3ENet_StrDup(req->fs3enf_ExactLocalPath);
+        cachePath = FS3ENet_StrDup("");
     }
     else
     {
@@ -1537,11 +1578,19 @@ static BOOL FS3ENet_HandleFetchImage(FS3ENetMessage *fs3em)
          * it) never runs against the persistent cache, but the thumbnail
          * process still needs to write the resized sibling under this same
          * subdir a moment from now. */
-        FS3ECache_ComputePath(req->fs3enf_Url, req->fs3enf_Subdir, cachePath, sizeof(cachePath));
+        cachePath = FS3ECache_ComputePath(req->fs3enf_Url, req->fs3enf_Subdir);
         FS3ECache_EnsureSubdir(req->fs3enf_Subdir);
+        localPath = FS3ECache_Lookup(req->fs3enf_Url, req->fs3enf_Subdir, &cacheHit);
     }
 
-    if (isExactPath || !FS3ECache_Lookup(req->fs3enf_Url, req->fs3enf_Subdir, localPath, sizeof(localPath)))
+    if (!localPath || !cachePath)
+    {
+        FS3ENet_FreePathPair(localPath, cachePath);
+        fs3em->fs3em_Result = FS3ENETR_NETWORK_ERROR;
+        return TRUE;
+    }
+
+    if (isExactPath || !cacheHit)
     {
         /* Not in the persistent cache -- but for a !KeepOriginal request,
          * the deterministic RAM:T path a fresh download would write to may
@@ -1554,8 +1603,22 @@ static BOOL FS3ENet_HandleFetchImage(FS3ENetMessage *fs3em)
          * is suspected to crash real UAE (not real hardware) setups.
          * Never applies to an exact-path download -- there is no RAM:T
          * equivalent for those, always a fresh fetch. */
-        BOOL haveExisting = (!isExactPath) && (!req->fs3enf_KeepOriginal) &&
-                             FS3ECache_LookupRAM(req->fs3enf_Url, localPath, sizeof(localPath));
+        BOOL haveExisting = FALSE;
+
+        if (!isExactPath && !req->fs3enf_KeepOriginal)
+        {
+            BOOL  ramFound = FALSE;
+            char *ramPath = FS3ECache_LookupRAM(req->fs3enf_Url, &ramFound);
+            if (!ramPath)
+            {
+                FS3ENet_FreePathPair(localPath, cachePath);
+                fs3em->fs3em_Result = FS3ENETR_NETWORK_ERROR;
+                return TRUE;
+            }
+            FreeVec(localPath);
+            localPath = ramPath;
+            haveExisting = ramFound;
+        }
 
         if (haveExisting)
         {
@@ -1590,6 +1653,7 @@ static BOOL FS3ENet_HandleFetchImage(FS3ENetMessage *fs3em)
             {
                 FS3ENetPendingFetch *dup =
                     (FS3ENetPendingFetch *)AllocVec(sizeof(*dup), MEMF_ANY | MEMF_CLEAR);
+                FS3ENet_FreePathPair(localPath, cachePath);
                 if (!dup)
                 {
                     fs3em->fs3em_Result = FS3ENETR_NETWORK_ERROR;
@@ -1619,6 +1683,7 @@ static BOOL FS3ENet_HandleFetchImage(FS3ENetMessage *fs3em)
                 bdbprintf_now("FetchImage: at concurrency cap (%lu), queuing %s\n",
                                (unsigned long)g_FS3EActiveDownloadCount, req->fs3enf_Url);
 #endif
+                FS3ENet_FreePathPair(localPath, cachePath);
                 if (!pending)
                 {
                     fs3em->fs3em_Result = FS3ENETR_NETWORK_ERROR;
@@ -1639,16 +1704,21 @@ static BOOL FS3ENet_HandleFetchImage(FS3ENetMessage *fs3em)
             {
                 /* Terminal failure -- always worth a line, same reasoning
                  * as the two StepActiveDownloads ones above. */
+                 /*
                 bdbprintf_now("FetchImage: FS3ECache_EnsureRAMTempDir failed for %s\n", req->fs3enf_Url);
+                */
+                FS3ENet_FreePathPair(localPath, cachePath);
                 fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
                 return TRUE;
             }
 
             fh = Open(localPath, MODE_NEWFILE);
             if (!fh)
-            {
+            {   /*
                 bdbprintf_now("FetchImage: Open(%s, MODE_NEWFILE) failed, IoErr=%ld\n",
                                localPath, (long)IoErr());
+                               */
+                FS3ENet_FreePathPair(localPath, cachePath);
                 fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
                 return TRUE;
             }
@@ -1658,6 +1728,7 @@ static BOOL FS3ENet_HandleFetchImage(FS3ENetMessage *fs3em)
             {
                 Close(fh);
                 DeleteFile(localPath);
+                FS3ENet_FreePathPair(localPath, cachePath);
                 fs3em->fs3em_Result = FS3ENETR_NETWORK_ERROR;
                 return TRUE;
             }
@@ -1665,8 +1736,8 @@ static BOOL FS3ENet_HandleFetchImage(FS3ENetMessage *fs3em)
             dl->fs3ead_OrigMsg = fs3em;
             dl->fs3ead_Req     = req;
             dl->fs3ead_FH      = fh;
-            strncpy(dl->fs3ead_LocalPath, localPath, sizeof(dl->fs3ead_LocalPath) - 1);
-            strncpy(dl->fs3ead_CachePath, cachePath, sizeof(dl->fs3ead_CachePath) - 1);
+            dl->fs3ead_LocalPath = localPath;   /* ownership transferred to dl */
+            dl->fs3ead_CachePath = cachePath;   /* ownership transferred to dl */
             dl->fs3ead_IsTemp  = isExactPath ? FALSE : !req->fs3enf_KeepOriginal;
 
             dl->fs3ead_Next        = g_FS3EActiveDownloads;
@@ -1684,6 +1755,7 @@ static BOOL FS3ENet_HandleFetchImage(FS3ENetMessage *fs3em)
      * request is now sharing rather than re-fetching. */
 
     FS3ENet_BuildFetchImageReply(fs3em, req, localPath, cachePath, isTemp);
+    FS3ENet_FreePathPair(localPath, cachePath);
     return TRUE;
 }
 

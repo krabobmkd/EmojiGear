@@ -123,7 +123,7 @@ BOOL BmImage_LoadScaled(BmImage *img, struct Screen *screen,
  * case -- source and thumbnail live side by side). Pass a non-NULL path
  * when srcPath is itself transient (e.g. a RAM:T download that gets
  * deleted right after this call) but the thumbnail still needs a stable
- * name persistent across runs -- see FS3EThumbMessage.fs3etm_CacheKeyPath.
+ * name persistent across runs -- see FS3EThumbMakeReq.fs3etmr_CacheKeyPath.
  * Either way this is purely a naming/cache-hit-check input, never opened
  * or read as a file itself.
  *

@@ -119,21 +119,28 @@ static void ubgbm_build_one_state(UniButtonBGBMData *inst, WORD gadW, WORD gadH,
         if (!obm->_bm) return;
         rp = &obm->_srp;
 
-        if (p9 && Patch9_IsLoaded(p9)) {
+        if (p9) {
             /* Per-state colours come from the Patch9 slot itself, same as
              * UniButtonP9's ubtp9_state_pens -- not the dynamic disabled-
              * dimming computed above, since the theme already authors a
-             * distinct colour for every PATCH9_* state. Also update
-             * obm->_bgpen (set above from inst->bgPen/selBgPen, the
-             * flat-mode pens) to match -- GM_RENDER's fallback path reads
-             * obm->_bgpen whenever the cache is momentarily invalid (e.g.
-             * mid-resize, before a same-task rebuild has run), and it must
-             * show the Patch9 skin's own colour there, not a leftover
-             * flat-mode one. */
-            Patch9_DrawOpaque(p9, state, rp, 0, 0, w, h);
+             * distinct colour for every PATCH9_* state. This is
+             * independent of whether the skin image itself loaded: p9's
+             * bgcolors[]/textcolors[] are always populated from style.txt
+             * regardless (see fs3estyle_load_patch9_slot's doc comment),
+             * so a slot whose image is merely missing still needs its own
+             * authored colour here, not the generic flat-mode bgPen/txtPen
+             * computed above. Also update obm->_bgpen to match -- GM_RENDER's
+             * fallback path reads obm->_bgpen whenever the cache is
+             * momentarily invalid (e.g. mid-resize, before a same-task
+             * rebuild has run), and it must show the Patch9 slot's own
+             * colour there, not a leftover flat-mode one. */
             bgPen  = (ULONG)p9->bgcolors[state].pen;
             txtPen = (ULONG)p9->textcolors[state].pen;
             obm->_bgpen = bgPen;
+        }
+
+        if (p9 && Patch9_IsLoaded(p9)) {
+            Patch9_DrawOpaque(p9, state, rp, 0, 0, w, h);
         } else {
             SetAPen(rp, (LONG)bgPen);
             SetDrMd(rp, JAM1);

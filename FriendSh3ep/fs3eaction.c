@@ -456,7 +456,7 @@ BOOL Action_TimelineTop(struct App *ctx)
     if (!ctx || !ctx->tootTimeline) return FALSE;
 
     Action_TimelineStopScrollAnimation();
-    SetAttrs(ctx->tootTimeline, TTIMELINE_ScrollToNewest, TRUE, TAG_DONE);
+    SetGdAttrs(ctx->tootTimeline, TTIMELINE_ScrollToNewest, TRUE, TAG_DONE);
     return TRUE;
 }
 

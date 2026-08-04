@@ -46,27 +46,20 @@ enum FS3EThumbResult
     FS3ETHUMBR_ERROR
 };
 
-/* What fs3etm_Key identifies and which live-cache pool the reply belongs
- * in -- set by the caller, simply echoed back untouched (this message is
- * one AllocVec'd block reused for both directions, not packed req/reply
- * blocks, so anything the caller fills in is still there on reply; see
- * FS3EThumb_Request). */
+/* What fs3etmr_Key/fs3etmy_Key identifies and which live-cache pool the
+ * reply belongs in -- set by the caller in FS3EThumbMakeReq, echoed back
+ * into FS3EThumbMakeReply by FS3EThumb_HandleMake (see FS3EThumb_Request). */
 enum FS3EThumbKind
 {
-    FS3ETHUMB_KIND_AVATAR = 0,  /* fs3etm_Key is an @acct */
-    FS3ETHUMB_KIND_MEDIA  = 1,  /* fs3etm_Key is the attachment's preview/URL */
-    FS3ETHUMB_KIND_CARD   = 2   /* fs3etm_Key is a link preview card's image URL --
-                                 * this process itself never branches on fs3etm_Kind
+    FS3ETHUMB_KIND_AVATAR = 0,  /* Key is an @acct */
+    FS3ETHUMB_KIND_MEDIA  = 1,  /* Key is the attachment's preview/URL */
+    FS3ETHUMB_KIND_CARD   = 2   /* Key is a link preview card's image URL --
+                                 * this process itself never branches on Kind
                                  * (width/height are separate explicit args below), it's
                                  * purely an echo the GUI uses to route the reply to the
                                  * right AvatarImages_*ThumbReady pool (see
                                  * FS3EApp_HandleThumbReply) */
 };
-
-#define FS3ETHUMB_PATH_SIZE 256
-/* Long enough for a full media CDN URL (often 150-250+ chars with signed
- * query params), not just the short @acct strings avatar requests use. */
-#define FS3ETHUMB_KEY_SIZE  384
 
 /* Fixed avatar thumbnail box size (see PlanToReworkThumbnails.txt): user
  * icons are minified once to this size regardless of the current
@@ -87,56 +80,76 @@ enum FS3EThumbKind
 #define FS3ETHUMB_MEDIA_HEIGHT_CAP 600
 
 /*
- * Fixed-layout request/reply message (no separate AllocVec'd data block,
- * unlike FS3ENetMessage -- the two paths and two dimensions here always
- * fit fixed-size fields, so there is no variable-length payload to pack).
- * Allocated with AllocVec() by FS3EThumb_Request() and freed by the
- * receiver once drained, exactly like FS3ENetMessage's lifecycle.
+ * Header-plus-payload message, same shape network_fs3e/fs3enet.h's
+ * FS3ENetMessage already uses: fs3etm_Data is a separate AllocVec'd block
+ * holding an FS3EThumbMakeReq while the request is in flight to the
+ * thumbnail process, then freed and replaced with a freshly AllocVec'd
+ * FS3EThumbMakeReply once handled (see FS3EThumb_HandleMake) -- not
+ * appended to, not reused in place. Neither payload struct bounds its path/
+ * key strings to a fixed size: each is a packed variable-length string
+ * living right after the struct's fixed fields, addressed by a char*
+ * pointing into that same allocation (see FS3EThumb_PackStr in
+ * fs3ethumb.c). fs3etm_Data is NULL for FS3ETHUMBQ_SHUTDOWN, which carries
+ * no payload.
  */
 typedef struct FS3EThumbMessage
 {
     struct Message fs3etm_Msg;
     ULONG          fs3etm_Type;    /* enum FS3EThumbRequestType */
     ULONG          fs3etm_Result;  /* enum FS3EThumbResult, set on reply */
+    void          *fs3etm_Data;    /* FS3EThumbMakeReq, then FS3EThumbMakeReply -- see above */
+    ULONG          fs3etm_DataLen;
+} FS3EThumbMessage;
 
-    /* FS3ETHUMBQ_MAKE request fields, filled by the caller. */
-    char  fs3etm_SrcPath[FS3ETHUMB_PATH_SIZE];
-    char  fs3etm_Key[FS3ETHUMB_KEY_SIZE];   /* echoed back; e.g. @acct or a media URL */
-    ULONG fs3etm_Kind;                      /* enum FS3EThumbKind; echoed back */
-    UWORD fs3etm_TargetW;
-    UWORD fs3etm_TargetH;
-
-    /* Deterministic path (no extension) the resulting thumbnail should be
-     * named/found after, independent of where fs3etm_SrcPath actually
-     * lives -- passed straight through to BmImage_GenerateScaledBmp's
-     * cacheKeyPath (see bmimage.h). Empty = derive the name from SrcPath
-     * itself (the common case: source and thumbnail are siblings). Needed
-     * when SrcPath is a transient RAM:T download (see fs3etm_DeleteSrcAfter)
-     * but the thumbnail itself must still get a name stable across runs --
-     * see FS3ENetFetchImageReply.fs3enf_CachePath, which is exactly this
-     * path for the source URL. */
-    char  fs3etm_CacheKeyPath[FS3ETHUMB_PATH_SIZE];
-    /* TRUE = delete fs3etm_SrcPath once this request is handled (success
+/* FS3ETHUMBQ_MAKE request payload -- fs3etm_Data while a request is in
+ * flight to the thumbnail process. Built by FS3EThumb_Request(). */
+typedef struct FS3EThumbMakeReq
+{
+    ULONG fs3etmr_Kind;    /* enum FS3EThumbKind; echoed back in the reply */
+    UWORD fs3etmr_TargetW;
+    UWORD fs3etmr_TargetH;
+    /* TRUE = delete fs3etmr_SrcPath once this request is handled (success
      * or failure) -- set when the caller downloaded it to RAM:T rather
      * than the persistent cache (see FS3ENetFetchImageReply.fs3enf_IsTemp
      * and the "Keep big user icons/thumbnails" settings). */
-    BOOL  fs3etm_DeleteSrcAfter;
+    BOOL  fs3etmr_DeleteSrcAfter;
 
-    /* FS3ETHUMBQ_MAKE reply field, filled by the thumbnail process on
-     * success. Deterministic ("<CacheKeyPath or SrcPath>.<TargetW>x
-     * <TargetH>.bmp") so the GUI could derive it itself, but it's handed
-     * back anyway to keep the reply self-contained. Empty on
-     * FS3ETHUMBR_ERROR. */
-    char  fs3etm_ThumbPath[FS3ETHUMB_PATH_SIZE];
+    char *fs3etmr_SrcPath;      /* packed string -- source image to decode/scale */
+    char *fs3etmr_Key;          /* packed string; echoed back, e.g. @acct or a media URL */
 
-    /* FS3ETHUMBQ_MAKE reply field, filled by the thumbnail process only on
-     * FS3ETHUMBR_ERROR (BMFMT_UNKNOWN/meaningless on success): the sniffed
-     * format (enum BmImageFormat, see bmimage.h) of fs3etm_SrcPath, so the
-     * GUI can tell "unsupported format" (e.g. WebP with no webp.datatype
-     * installed) apart from a corrupt download or a non-picture file --
-     * see BmImage_SniffFormat(). */
-    ULONG fs3etm_DetectedFormat;
-} FS3EThumbMessage;
+    /* Deterministic path (no extension) the resulting thumbnail should be
+     * named/found after, independent of where fs3etmr_SrcPath actually
+     * lives -- passed straight through to BmImage_GenerateScaledBmp's
+     * cacheKeyPath (see bmimage.h). Empty = derive the name from SrcPath
+     * itself (the common case: source and thumbnail are siblings). Needed
+     * when SrcPath is a transient RAM:T download (see fs3etmr_DeleteSrcAfter)
+     * but the thumbnail itself must still get a name stable across runs --
+     * see FS3ENetFetchImageReply.fs3enf_CachePath, which is exactly this
+     * path for the source URL. */
+    char *fs3etmr_CacheKeyPath; /* packed string; "" = derive from SrcPath */
+} FS3EThumbMakeReq;
+
+/* FS3ETHUMBQ_MAKE reply payload -- replaces fs3etm_Data once
+ * FS3EThumb_HandleMake() (or the shutdown-time abandon path) finishes. */
+typedef struct FS3EThumbMakeReply
+{
+    ULONG fs3etmy_Kind; /* echoed from the request */
+
+    /* Filled only on FS3ETHUMBR_ERROR (BMFMT_UNKNOWN/meaningless on
+     * success): the sniffed format (enum BmImageFormat, see bmimage.h) of
+     * fs3etmy_SrcPath, so the GUI can tell "unsupported format" (e.g. WebP
+     * with no webp.datatype installed) apart from a corrupt download or a
+     * non-picture file -- see BmImage_SniffFormat(). */
+    ULONG fs3etmy_DetectedFormat;
+
+    char *fs3etmy_Key;       /* packed string; echoed from the request */
+    char *fs3etmy_SrcPath;   /* packed string; echoed from the request, for error logging */
+
+    /* Deterministic ("<CacheKeyPath or SrcPath>.<TargetW>x<TargetH>.bmp")
+     * so the GUI could derive it itself, but it's handed back anyway to
+     * keep the reply self-contained. Empty on FS3ETHUMBR_ERROR. */
+    char *fs3etmy_ThumbPath; /* packed string */
+} FS3EThumbMakeReply;
 
 /* Start the thumbnail process. Returns the request MsgPort, or NULL on failure. */
 struct MsgPort *FS3EThumb_Start(void);
@@ -156,16 +169,27 @@ void FS3EThumb_Stop(struct MsgPort *requestPort, struct MsgPort *replyPort);
  * in the reply (e.g. @acct, or a media URL for kind==FS3ETHUMB_KIND_MEDIA)
  * so the caller knows which entry to update; kind tells it which cache
  * pool that is (see enum FS3EThumbKind). cacheKeyPath/deleteSrcAfter are
- * forwarded straight to fs3etm_CacheKeyPath/fs3etm_DeleteSrcAfter (see
+ * forwarded straight to fs3etmr_CacheKeyPath/fs3etmr_DeleteSrcAfter (see
  * their doc comments above) -- pass NULL/FALSE for the common case where
- * srcPath is itself the persistent, sibling-naming-worthy location.
- * Returns FALSE (nothing queued, no allocation left behind) if
- * requestPort/srcPath are missing or srcPath/key/cacheKeyPath don't fit
- * the fixed-size fields.
+ * srcPath is itself the persistent, sibling-naming-worthy location. No
+ * length limit on srcPath/key/cacheKeyPath -- each is packed to its exact
+ * size (see FS3EThumbMakeReq). Returns FALSE (nothing queued, no
+ * allocation left behind) if requestPort/srcPath are missing or an
+ * allocation fails.
  */
 BOOL FS3EThumb_Request(struct MsgPort *requestPort, struct MsgPort *replyPort,
                         const char *srcPath, const char *key, ULONG kind,
                         const char *cacheKeyPath, BOOL deleteSrcAfter,
                         UWORD targetW, UWORD targetH);
+
+/*
+ * Frees a drained FS3EThumbMessage completely, including fs3etm_Data (an
+ * FS3EThumbMakeReply by the time the GUI sees it -- a separate AllocVec'd
+ * block now that fs3etm_Data replaced the old fixed-size fields, unlike
+ * before when a bare FreeVec(msg) was enough). Callers that used to
+ * FreeVec() a drained message directly must call this instead. msg may be
+ * NULL.
+ */
+void FS3EThumb_FreeMessage(FS3EThumbMessage *msg);
 
 #endif /* FS3ETHUMB_H */

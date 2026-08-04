@@ -44,10 +44,21 @@ static void manageurl_open(const char *url)
 
 /* FS3E_URLLINK_ASK: "Open with ?" -- Copy to Clipboard / Open with
  * OpenURL, the latter only offered when OpenURLBase is available (asking
- * a question with only one real answer isn't a question). Either way
- * exactly 2 gadgets, so EasyRequestArgs' real numbering is rightmost=0,
- * leftmost=1 (see TTL_HOT_BOOST's comment in friendsh3ep.c for the
- * general N-gadget rule this is the 2-gadget special case of). */
+ * a question with only one real answer isn't a question) -- plus an
+ * explicit Cancel, always placed last/rightmost so it lands on gadget ID
+ * 0. EasyRequestArgs' real numbering for N gadgets is left-to-right
+ * 1, 2, ..., N, 0 -- confirmed against the intuition.library/
+ * EasyRequestArgs autodoc's RESULT section, which explains 0 is
+ * deliberately the rightmost gadget "for compatibility with
+ * AutoRequest(), which has FALSE for the rightmost gadget" (see
+ * TTL_HOT_BOOST's comment in friendsh3ep.c for the general N-gadget rule
+ * this follows). Putting Cancel there -- rather than leaving the
+ * rightmost slot to whichever real action happened to be listed last --
+ * means gadget ID 0 unambiguously means "did nothing" everywhere this
+ * requester can terminate, including via a window-close gadget if the
+ * running environment provides one on system requesters (classic
+ * EasyRequestArgs itself has none, but this makes the return value safe
+ * either way instead of depending on it). */
 static void manageurl_ask(const char *url)
 {
     struct EasyStruct es = {
@@ -59,17 +70,21 @@ static void manageurl_ask(const char *url)
     LONG choice;
 
     if (OpenURLBase) {
-        es.es_GadgetFormat = (UBYTE *)"Copy to Clipboard|Open with OpenURL";
+        es.es_GadgetFormat = (UBYTE *)"Copy to Clipboard|Open with OpenURL|Cancel";
         choice = EasyRequestArgs(CurrentMainWindow, &es, NULL, NULL);
         if (choice == 1)
             Clipboard_WriteText(url);
-        else if (choice == 0)
+        else if (choice == 2)
             URL_Open((STRPTR)url, TAG_DONE);
+        /* choice == 0: Cancel, or the requester otherwise closed without
+         * picking a real action -- do nothing. */
     } else {
         es.es_GadgetFormat = (UBYTE *)"Copy to Clipboard|Cancel";
         choice = EasyRequestArgs(CurrentMainWindow, &es, NULL, NULL);
         if (choice == 1)
             Clipboard_WriteText(url);
+        /* choice == 0: Cancel -- do nothing (already the rightmost/0
+         * gadget in this 2-gadget case, so no change needed here). */
     }
 }
 

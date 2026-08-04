@@ -7,6 +7,8 @@
 
 #include <dos/dos.h>
 #include <proto/dos.h>
+#include <exec/memory.h>
+#include <proto/exec.h>
 
 #include <stdio.h>
 #include <string.h>
@@ -16,8 +18,53 @@
  * ---------------------------------------------------------------------- */
 
 static BOOL  g_CacheReady = FALSE;
-static char  g_CacheDir[512];  /* set once by FS3ECache_Init */
+static char *g_CacheDir = NULL;    /* AllocVec'd; set once by FS3ECache_Init */
 static ULONG g_MaxCacheBytes = 0;  /* 0 = unbounded; set once by FS3ECache_Init */
+
+/* -------------------------------------------------------------------------
+ * Small AllocVec'd string helpers
+ *
+ * Paths here can no longer be assumed to fit some fixed stack buffer: the
+ * cache directory itself is user-configurable, AmigaOS dir nesting can go
+ * arbitrarily deep, and a task's stack is a scarcer resource on real
+ * hardware than heap. Every path is therefore built to its exact needed
+ * size on the heap instead.
+ * ---------------------------------------------------------------------- */
+
+/* AllocVec'd strdup. NULL in yields NULL out. */
+static char *FS3ECache_StrDup(const char *s)
+{
+    ULONG len;
+    char *out;
+
+    if (!s) return NULL;
+
+    len = (ULONG)strlen(s) + 1;
+    out = (char *)AllocVec(len, MEMF_ANY);
+    if (out) memcpy(out, s, len);
+    return out;
+}
+
+/* Returns an AllocVec'd "a/b", or NULL on allocation failure or a missing
+ * argument. Caller must FreeVec() the result. */
+static char *FS3ECache_JoinPath(const char *a, const char *b)
+{
+    ULONG lenA, lenB;
+    char *out;
+
+    if (!a || !b) return NULL;
+
+    lenA = (ULONG)strlen(a);
+    lenB = (ULONG)strlen(b);
+    out = (char *)AllocVec(lenA + 1 + lenB + 1, MEMF_ANY);
+    if (!out) return NULL;
+
+    memcpy(out, a, lenA);
+    out[lenA] = '/';
+    memcpy(out + lenA + 1, b, lenB);
+    out[lenA + 1 + lenB] = '\0';
+    return out;
+}
 
 /* Hard cap on FS3ECache_EnforceLimit()'s delete-the-oldest iterations --
  * guards against looping forever if every remaining file happens to be
@@ -46,8 +93,9 @@ static BOOL FS3ECache_MakeDir(const char *path)
 {
     BPTR        lock;
     const char *sep;
-    char        parent[512];
+    char       *parent;
     ULONG       parentLen;
+    BOOL        parentOk;
 
     lock = Lock(path, SHARED_LOCK);
     if (lock) { UnLock(lock); return TRUE; }
@@ -56,20 +104,26 @@ static BOOL FS3ECache_MakeDir(const char *path)
     if (sep) {
         /* Parent is everything before the last '/'. */
         parentLen = (ULONG)(sep - path);
-        if (parentLen == 0 || parentLen >= sizeof(parent)) return FALSE;
+        if (parentLen == 0) return FALSE;
+        parent = (char *)AllocVec(parentLen + 1, MEMF_ANY);
+        if (!parent) return FALSE;
         memcpy(parent, path, parentLen);
         parent[parentLen] = '\0';
-        if (!FS3ECache_MakeDir(parent)) return FALSE;
+        parentOk = FS3ECache_MakeDir(parent);
+        FreeVec(parent);
+        if (!parentOk) return FALSE;
     } else {
         /* No slash: path is "VOL:leaf".  Parent is the volume/assign root
          * "VOL:" which must already exist (we can't create a volume). */
         sep = strchr(path, ':');
         if (!sep) return FALSE;  /* relative path with no drive — refuse */
         parentLen = (ULONG)(sep - path + 1);   /* include ':' */
-        if (parentLen >= sizeof(parent)) return FALSE;
+        parent = (char *)AllocVec(parentLen + 1, MEMF_ANY);
+        if (!parent) return FALSE;
         memcpy(parent, path, parentLen);
         parent[parentLen] = '\0';
         lock = Lock(parent, SHARED_LOCK);
+        FreeVec(parent);
         if (!lock) return FALSE;   /* volume/assign offline */
         UnLock(lock);
     }
@@ -100,14 +154,23 @@ static ULONG FS3ECache_Hash(const char *url)
     return hash;
 }
 
-void FS3ECache_ComputePath(const char *url, const char *subdir, char *out, ULONG outSize)
+char *FS3ECache_ComputePath(const char *url, const char *subdir)
 {
-    if (subdir && subdir[0])
-        snprintf(out, (size_t)outSize, "%s/%s/%08lx",
-                 g_CacheDir, subdir, (unsigned long)FS3ECache_Hash(url));
-    else
-        snprintf(out, (size_t)outSize, "%s/%08lx",
-                 g_CacheDir, (unsigned long)FS3ECache_Hash(url));
+    char  hash[9];  /* 8 hex digits + NUL -- fixed width, not path-derived */
+    char *out;
+
+    snprintf(hash, sizeof(hash), "%08lx", (unsigned long)FS3ECache_Hash(url));
+
+    if (subdir && subdir[0]) {
+        char *dir = FS3ECache_JoinPath(g_CacheDir, subdir);
+        if (!dir) return NULL;
+        out = FS3ECache_JoinPath(dir, hash);
+        FreeVec(dir);
+    } else {
+        out = FS3ECache_JoinPath(g_CacheDir, hash);
+    }
+
+    return out;
 }
 
 /* -------------------------------------------------------------------------
@@ -121,9 +184,17 @@ BOOL FS3ECache_Init(const char *cacheDir, ULONG maxSizeMB)
     if (!cacheDir || cacheDir[0] == '\0')
         cacheDir = FS3ECACHE_DEFAULT_DIR;
 
-    snprintf(g_CacheDir, sizeof(g_CacheDir), "%s", cacheDir);
+    /* Called exactly once per network-process lifetime in practice (see
+     * fs3enet.c's FS3ENet_ProcEntry) -- the FreeVec() here is defensive,
+     * not something a live re-Init() actually needs to support. */
+    FreeVec(g_CacheDir);
+    g_CacheDir = FS3ECache_StrDup(cacheDir);
+    if (!g_CacheDir) {
+        g_CacheReady = FALSE;
+        return FALSE;
+    }
 
-    /* Strip any trailing '/' to avoid double-slash in MakePath. */
+    /* Strip any trailing '/' to avoid double-slash when joining. */
     len = (ULONG)strlen(g_CacheDir);
     while (len > 0 && g_CacheDir[len - 1] == '/') g_CacheDir[--len] = '\0';
 
@@ -153,6 +224,8 @@ BOOL FS3ECache_Init(const char *cacheDir, ULONG maxSizeMB)
 void FS3ECache_Cleanup(void)
 {
     g_CacheReady = FALSE;
+    FreeVec(g_CacheDir);
+    g_CacheDir = NULL;
 }
 
 /* Delete every plain file directly under dirPath (the directory itself,
@@ -163,7 +236,6 @@ static BOOL FS3ECache_FlushDir(const char *dirPath)
 {
     BPTR                   lock;
     struct FileInfoBlock  *fib;
-    char                   path[FS3ECACHE_PATH_SIZE];
     BOOL                   ok = TRUE;
 
     lock = Lock(dirPath, SHARED_LOCK);
@@ -178,8 +250,9 @@ static BOOL FS3ECache_FlushDir(const char *dirPath)
     if (Examine(lock, fib)) {
         while (ExNext(lock, fib)) {
             if (fib->fib_DirEntryType < 0) {   /* plain file, not a dir */
-                snprintf(path, sizeof(path), "%s/%s", dirPath, fib->fib_FileName);
-                if (!DeleteFile(path)) ok = FALSE;
+                char *path = FS3ECache_JoinPath(dirPath, (const char *)fib->fib_FileName);
+                if (!path || !DeleteFile(path)) ok = FALSE;
+                FreeVec(path);
             }
         }
     } else {
@@ -195,7 +268,6 @@ BOOL FS3ECache_Flush(void)
 {
     BPTR                   lock;
     struct FileInfoBlock  *fib;
-    char                   subPath[FS3ECACHE_PATH_SIZE];
     BOOL                   ok;
 
     if (!g_CacheReady) return FALSE;
@@ -219,8 +291,9 @@ BOOL FS3ECache_Flush(void)
     if (Examine(lock, fib)) {
         while (ExNext(lock, fib)) {
             if (fib->fib_DirEntryType >= 0) {   /* directory */
-                snprintf(subPath, sizeof(subPath), "%s/%s", g_CacheDir, fib->fib_FileName);
-                if (!FS3ECache_FlushDir(subPath)) ok = FALSE;
+                char *subPath = FS3ECache_JoinPath(g_CacheDir, (const char *)fib->fib_FileName);
+                if (!subPath || !FS3ECache_FlushDir(subPath)) ok = FALSE;
+                FreeVec(subPath);
             }
         }
     } else {
@@ -281,7 +354,6 @@ static ULONG FS3ECache_TotalSize(void)
     ULONG                  total = 0;
     BPTR                   lock;
     struct FileInfoBlock  *fib;
-    char                   subPath[FS3ECACHE_PATH_SIZE];
 
     FS3ECache_SizeDir(g_CacheDir, &total);
 
@@ -294,8 +366,9 @@ static ULONG FS3ECache_TotalSize(void)
     if (Examine(lock, fib)) {
         while (ExNext(lock, fib)) {
             if (fib->fib_DirEntryType >= 0) {   /* directory */
-                snprintf(subPath, sizeof(subPath), "%s/%s", g_CacheDir, fib->fib_FileName);
-                FS3ECache_SizeDir(subPath, &total);
+                char *subPath = FS3ECache_JoinPath(g_CacheDir, (const char *)fib->fib_FileName);
+                if (subPath) FS3ECache_SizeDir(subPath, &total);
+                FreeVec(subPath);
             }
         }
     }
@@ -306,14 +379,15 @@ static ULONG FS3ECache_TotalSize(void)
 }
 
 /* Scans dirPath (one level, plain files only) for the file with the
- * oldest fib_Date, updating *bestDate, outPath, and *outFound if it's
- * older than whatever's already been found -- called once per directory by
+ * oldest fib_Date, updating *bestDate, *bestPath (AllocVec'd, replacing
+ * whatever it previously pointed to), and *found if it's older than
+ * whatever's already been found -- called once per directory by
  * FS3ECache_DeleteOldest() below so the comparison spans the whole cache
  * tree, not just one directory. Day+minute granularity (ds_Days/
  * ds_Minute) is plenty for LRU-style eviction; ds_Tick isn't needed to
  * break ties meaningfully here. */
 static void FS3ECache_FindOldestInDir(const char *dirPath, struct DateStamp *bestDate,
-                                       char *outPath, ULONG outPathSize, BOOL *outFound)
+                                       char **bestPath, BOOL *found)
 {
     BPTR                   lock;
     struct FileInfoBlock  *fib;
@@ -327,14 +401,18 @@ static void FS3ECache_FindOldestInDir(const char *dirPath, struct DateStamp *bes
     if (Examine(lock, fib)) {
         while (ExNext(lock, fib)) {
             if (fib->fib_DirEntryType < 0) {   /* plain file, not a dir */
-                BOOL older = !*outFound ||
+                BOOL older = !*found ||
                              fib->fib_Date.ds_Days  <  bestDate->ds_Days ||
                              (fib->fib_Date.ds_Days == bestDate->ds_Days &&
                               fib->fib_Date.ds_Minute < bestDate->ds_Minute);
                 if (older) {
-                    *bestDate = fib->fib_Date;
-                    snprintf(outPath, (size_t)outPathSize, "%s/%s", dirPath, fib->fib_FileName);
-                    *outFound = TRUE;
+                    char *path = FS3ECache_JoinPath(dirPath, (const char *)fib->fib_FileName);
+                    if (path) {
+                        FreeVec(*bestPath);
+                        *bestPath = path;
+                        *bestDate = fib->fib_Date;
+                        *found = TRUE;
+                    }
                 }
             }
         }
@@ -351,15 +429,14 @@ static void FS3ECache_FindOldestInDir(const char *dirPath, struct DateStamp *bes
 static BOOL FS3ECache_DeleteOldest(void)
 {
     struct DateStamp        bestDate;
-    char                     path[FS3ECACHE_PATH_SIZE];
+    char                    *path = NULL;
     BOOL                     found = FALSE;
     BPTR                     lock;
     struct FileInfoBlock    *fib;
-    char                     subPath[FS3ECACHE_PATH_SIZE];
 
     memset(&bestDate, 0, sizeof(bestDate));
 
-    FS3ECache_FindOldestInDir(g_CacheDir, &bestDate, path, sizeof(path), &found);
+    FS3ECache_FindOldestInDir(g_CacheDir, &bestDate, &path, &found);
 
     lock = Lock(g_CacheDir, SHARED_LOCK);
     if (lock) {
@@ -368,8 +445,9 @@ static BOOL FS3ECache_DeleteOldest(void)
             if (Examine(lock, fib)) {
                 while (ExNext(lock, fib)) {
                     if (fib->fib_DirEntryType >= 0) {   /* directory */
-                        snprintf(subPath, sizeof(subPath), "%s/%s", g_CacheDir, fib->fib_FileName);
-                        FS3ECache_FindOldestInDir(subPath, &bestDate, path, sizeof(path), &found);
+                        char *subPath = FS3ECache_JoinPath(g_CacheDir, (const char *)fib->fib_FileName);
+                        if (subPath) FS3ECache_FindOldestInDir(subPath, &bestDate, &path, &found);
+                        FreeVec(subPath);
                     }
                 }
             }
@@ -378,8 +456,12 @@ static BOOL FS3ECache_DeleteOldest(void)
         UnLock(lock);
     }
 
-    if (!found) return FALSE;
-    return DeleteFile(path) ? TRUE : FALSE;
+    if (!found) { FreeVec(path); return FALSE; }
+    {
+        BOOL ok = DeleteFile(path) ? TRUE : FALSE;
+        FreeVec(path);
+        return ok;
+    }
 }
 
 /* Deletes the oldest cached files until the total is back under
@@ -397,52 +479,63 @@ void FS3ECache_EnforceLimit(void)
     }
 }
 
-BOOL FS3ECache_Lookup(const char *url, const char *subdir, char *outPath, ULONG pathSize)
+char *FS3ECache_Lookup(const char *url, const char *subdir, BOOL *found)
 {
-    BPTR fh;
+    char *path;
+    BPTR  fh;
 
-    if (!g_CacheReady || !url) return FALSE;
+    *found = FALSE;
+    if (!url) return NULL;
 
-    FS3ECache_ComputePath(url, subdir, outPath, pathSize);
+    path = FS3ECache_ComputePath(url, subdir);
+    if (!path) return NULL;
 
-    fh = Open(outPath, MODE_OLDFILE);
-    if (!fh) return FALSE;
-    Close(fh);
-    return TRUE;
+    if (g_CacheReady) {
+        fh = Open(path, MODE_OLDFILE);
+        if (fh) { Close(fh); *found = TRUE; }
+    }
+
+    return path;
 }
 
 BOOL FS3ECache_EnsureSubdir(const char *subdir)
 {
-    char subPath[FS3ECACHE_PATH_SIZE];
+    char *subPath;
+    BOOL  ok;
 
     if (!g_CacheReady) return FALSE;
     if (!subdir || !subdir[0]) return TRUE;   /* cache root itself already exists (Init) */
 
-    snprintf(subPath, sizeof(subPath), "%s/%s", g_CacheDir, subdir);
-    return FS3ECache_MakeDir(subPath);
+    subPath = FS3ECache_JoinPath(g_CacheDir, subdir);
+    if (!subPath) return FALSE;
+    ok = FS3ECache_MakeDir(subPath);
+    FreeVec(subPath);
+    return ok;
 }
 
-BOOL FS3ECache_Store(const char *url, const char *subdir, const void *data, ULONG dataLen,
-                     char *outPath, ULONG pathSize)
+char *FS3ECache_Store(const char *url, const char *subdir, const void *data, ULONG dataLen)
 {
-    BPTR fh;
-    LONG written;
+    char *path;
+    BPTR  fh;
+    LONG  written;
 
-    if (!g_CacheReady || !url || !data || dataLen == 0) return FALSE;
+    if (!g_CacheReady || !url || !data || dataLen == 0) return NULL;
 
-    if (!FS3ECache_EnsureSubdir(subdir)) return FALSE;
+    if (!FS3ECache_EnsureSubdir(subdir)) return NULL;
 
-    FS3ECache_ComputePath(url, subdir, outPath, pathSize);
+    path = FS3ECache_ComputePath(url, subdir);
+    if (!path) return NULL;
 
-    fh = Open(outPath, MODE_NEWFILE);
-    if (!fh) return FALSE;
+    fh = Open(path, MODE_NEWFILE);
+    if (!fh) { FreeVec(path); return NULL; }
 
     written = Write(fh, (APTR)data, (LONG)dataLen);
     Close(fh);
 
     if (written != (LONG)dataLen) {
-        DeleteFile(outPath);   /* don't leave a truncated file in the cache */
-        return FALSE;
+        DeleteFile(path);   /* don't leave a truncated file in the cache */
+        FreeVec(path);
+        return NULL;
     }
 
     /* Keep the persistent cache under its configured size budget. Always
@@ -453,13 +546,15 @@ BOOL FS3ECache_Store(const char *url, const char *subdir, const void *data, ULON
      * avatar/thumbnail cache. */
     FS3ECache_EnforceLimit();
 
-    return TRUE;
+    return path;
 }
 
-static void FS3ECache_ComputeRAMPath(const char *url, char *outPath, ULONG pathSize)
+static char *FS3ECache_ComputeRAMPath(const char *url)
 {
-    snprintf(outPath, (size_t)pathSize, "%s/%08lx",
-             FS3ECACHE_RAM_TEMP_DIR, (unsigned long)FS3ECache_Hash(url));
+    char hash[9];  /* 8 hex digits + NUL -- fixed width, not path-derived */
+
+    snprintf(hash, sizeof(hash), "%08lx", (unsigned long)FS3ECache_Hash(url));
+    return FS3ECache_JoinPath(FS3ECACHE_RAM_TEMP_DIR, hash);
 }
 
 BOOL FS3ECache_EnsureRAMTempDir(void)
@@ -467,44 +562,49 @@ BOOL FS3ECache_EnsureRAMTempDir(void)
     return FS3ECache_MakeDir(FS3ECACHE_RAM_TEMP_DIR);
 }
 
-BOOL FS3ECache_LookupRAM(const char *url, char *outPath, ULONG pathSize)
+char *FS3ECache_LookupRAM(const char *url, BOOL *found)
 {
-    BPTR fh;
+    char *path;
+    BPTR  fh;
 
-    if (!url) return FALSE;
+    *found = FALSE;
+    if (!url) return NULL;
 
-    FS3ECache_ComputeRAMPath(url, outPath, pathSize);
+    path = FS3ECache_ComputeRAMPath(url);
+    if (!path) return NULL;
 
-    fh = Open(outPath, MODE_OLDFILE);
-    if (!fh) return FALSE;
-    Close(fh);
-    return TRUE;
+    fh = Open(path, MODE_OLDFILE);
+    if (fh) { Close(fh); *found = TRUE; }
+
+    return path;
 }
 
-BOOL FS3ECache_StoreRAM(const char *url, const void *data, ULONG dataLen,
-                        char *outPath, ULONG pathSize)
+char *FS3ECache_StoreRAM(const char *url, const void *data, ULONG dataLen)
 {
-    BPTR fh;
-    LONG written;
+    char *path;
+    BPTR  fh;
+    LONG  written;
 
-    if (!url || !data || dataLen == 0) return FALSE;
+    if (!url || !data || dataLen == 0) return NULL;
 
     /* Independent of g_CacheReady/g_CacheDir -- RAM:T should work even if
      * the persistent cache dir failed to init. */
-    if (!FS3ECache_MakeDir(FS3ECACHE_RAM_TEMP_DIR)) return FALSE;
+    if (!FS3ECache_MakeDir(FS3ECACHE_RAM_TEMP_DIR)) return NULL;
 
-    FS3ECache_ComputeRAMPath(url, outPath, pathSize);
+    path = FS3ECache_ComputeRAMPath(url);
+    if (!path) return NULL;
 
-    fh = Open(outPath, MODE_NEWFILE);
-    if (!fh) return FALSE;
+    fh = Open(path, MODE_NEWFILE);
+    if (!fh) { FreeVec(path); return NULL; }
 
     written = Write(fh, (APTR)data, (LONG)dataLen);
     Close(fh);
 
     if (written != (LONG)dataLen) {
-        DeleteFile(outPath);
-        return FALSE;
+        DeleteFile(path);
+        FreeVec(path);
+        return NULL;
     }
 
-    return TRUE;
+    return path;
 }
