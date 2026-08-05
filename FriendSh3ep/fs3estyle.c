@@ -816,6 +816,13 @@ BOOL FS3EStyle_LoadThemeImages(FS3EStyle *st, struct Screen *scr)
              StyleFile_GetString(&sf, "media.soundplay", "soundplay.png"));
     RgbImage_LoadViaDatatype(&st->soundPlayImage, path);
 
+    /* Loading screen bitmap datatypes allocs/free colors to screen palette */
+    if(st->dcMini) URPDC_UpdateColorMap(st->dcMini,scr);
+    if(st->dcNormal) URPDC_UpdateColorMap(st->dcNormal,scr);
+    if(st->dcUsername) URPDC_UpdateColorMap(st->dcUsername,scr);
+    if(app->buttonDC)  URPDC_UpdateColorMap(app->buttonDC,scr);
+
+
     return TRUE;
 }
 

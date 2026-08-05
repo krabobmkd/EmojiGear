@@ -84,6 +84,8 @@ extern WORD windowDragLastScreenY;
 #define G(o) ((struct Gadget *)(o))
 #endif
 
+#include "../friendsh3ep.h"
+
 /* Title bar button cell size: from the theme image when loaded
  * (FS3EStyle_LoadThemeImages sets tbButtonWidth/Height > 0), else a
  * dpiH x dpiH square. */
@@ -463,6 +465,7 @@ static ULONG TitleBarLayout_OnRender(Class *cl, Object *o, struct gpRender *msg)
     struct gpRender childMsg;
     UWORD i;
 
+    SetDrMd(rp, JAM1);
     // test, doesnt work
     // if(inst->allowedTask != FindTask(NULL) || msg->gpr_Redraw == 0)
     // {
@@ -572,8 +575,11 @@ static ULONG TitleBarLayout_OnRender(Class *cl, Object *o, struct gpRender *msg)
         }
     } else
     {
-        if(inst->style && inst->style->dcUsername && screen)
+        if(/*inst->style && inst->style->dcUsername*/
+            app && app->buttonDC
+             && screen)
         {
+            struct URPDrawContext *titledc = app->buttonDC; // inst->style->dcUsername
             struct URPTextMetric tm;
             struct URPTextPos tpos;
             struct URPTextPos tpos2;
@@ -584,17 +590,19 @@ static ULONG TitleBarLayout_OnRender(Class *cl, Object *o, struct gpRender *msg)
             if(inst->style->titlebarTitleX>0)  tpos.x = left + inst->style->titlebarTitleX;
             if(inst->style->titlebarTitleY>0)  tpos.y = top  + inst->style->titlebarTitleY;
 
-            URPDC_SetDrawColorFromPen(inst->style->dcUsername,screen,1,rp->BgPen);
-    // VOID URPDrawTextUTF8(struct RastPort * rp, struct URPDrawContext * dc, struct URPTextPos * pos, CONST STRPTR utf8, ULONG maxChars);
-            URPDC_TextSizeUTF8(inst->style->dcUsername,ptext,-1,&tm);
+            SetDrMd(rp, JAM1);
+            URPDC_SetDrawColorFromPen(titledc,screen,1,rp->BgPen);
+
+            URPDC_TextSizeUTF8(titledc,ptext,-1,&tm);
             tpos.y += tm.baseY;
             tpos2 = tpos;
-            URPDrawTextUTF8(rp, inst->style->dcUsername,&tpos,ptext,-1);
+            URPDrawTextUTF8(rp, titledc,&tpos,ptext,-1);
 
             tpos2.x -=1;
             tpos2.y -=1;
-            URPDC_SetDrawColorFromPen(inst->style->dcUsername,screen,2,rp->BgPen);
-            URPDrawTextUTF8(rp, inst->style->dcUsername,&tpos2,ptext,-1);
+
+            URPDC_SetDrawColorFromPen(titledc,screen,2,rp->BgPen);
+            URPDrawTextUTF8(rp, titledc,&tpos2,ptext,-1);
         }
     }
 

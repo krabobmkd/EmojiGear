@@ -45,7 +45,7 @@ struct URPGlyphEntry {
     /* kepp 4b alignment as possible */
     UBYTE   style;       /* URP_STYLE_* – part of the cache key */
     UBYTE   pixelFmt;    /* URP_CACHE_MONO / GRAY / RGBA */
-    UBYTE   pixelsIsInChip; /* bool, may realloc pixels */
+    UBYTE   DUMMY; // pixelsIsInChip; /* bool, may realloc pixels */
     UBYTE   pad;
 
     WORD   width;
@@ -109,9 +109,10 @@ struct URPDrawContext {
      * P96 hack something to blit chip from fast
      * but it can be generalized.
      */
-    // UWORD *tempChipRam;
-
-    // ULONG tempChipRamSize;
+    UBYTE *tempChipRamA;
+    UBYTE *tempChipRamB;
+    UBYTE *tempChipRamAlloc;
+    ULONG tempChipRamSize;
 
     /* Foreground colour for GRAY glyph rendering (default white) */
     union {

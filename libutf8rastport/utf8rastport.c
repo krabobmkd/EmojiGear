@@ -745,7 +745,7 @@ static struct URPGlyphEntry *urp_fill_cache_entry(struct URPDrawContext *dc,
     entry->pitch     = (WORD)pitch;
     entry->pixels    = pixels;
     entry->next      = NULL;
-    entry->pixelsIsInChip = FALSE; /* may realloc in chip*/
+ //   entry->pixelsIsInChip = FALSE; /* may realloc in chip*/
 
 
 
@@ -1151,6 +1151,11 @@ void URPDC_Release(REG(a0, struct URPDrawContext *dc))
     ObtainSemaphore(&dc->sem);
 
     urp_cache_free_all(&dc->cache);
+    if(dc->tempChipRamAlloc)
+    {
+        FreeVec(dc->tempChipRamAlloc);
+        dc->tempChipRamAlloc = NULL;
+    }
 
     for (i = 0; i < dc->numFonts; i++) {
         if (dc->fonts[i].face) {
@@ -2575,15 +2580,15 @@ static void urp_draw_text_clut(struct RastPort      *rp,
                  */
                 if(targetIsChipRam)
                 {
-                    if(!ge->pixelsIsInChip && ge->pixels)
-                    {
-                        ULONG maskSize = ge->rows * ge->pitch;
-                        UBYTE *f = ge->pixels;
-                        ge->pixels = AllocVec(maskSize,MEMF_CHIP);
-                        if(ge->pixels) CopyMem(f,ge->pixels,maskSize);
-                        FreeVec(f);
-                        ge->pixelsIsInChip = TRUE;
-                    }
+                    // if(!ge->pixelsIsInChip && ge->pixels)
+                    // {
+                    //     ULONG maskSize = ge->rows * ge->pitch;
+                    //     UBYTE *f = ge->pixels;
+                    //     ge->pixels = AllocVec(maskSize,MEMF_CHIP);
+                    //     if(ge->pixels) CopyMem(f,ge->pixels,maskSize);
+                    //     FreeVec(f);
+                    //     ge->pixelsIsInChip = TRUE;
+                    // }
                     if(ge->pixels)
                     {
                         WORD bx1, by1, bx2, by2, srcx, srcy;
@@ -2594,56 +2599,64 @@ static void urp_draw_text_clut(struct RastPort      *rp,
                         by1 = gy > cy1 ? gy : cy1;
                         bx2 = (gx + (WORD)ge->width) < cx2 ? (gx + (WORD)ge->width) : cx2;
                         by2 = (gy + (WORD)ge->rows)  < cy2 ? (gy + (WORD)ge->rows)  : cy2;
-                        if (bx1 < bx2 && by1 < by2) {
+                        if (bx1 < bx2 && by1 < by2 && dc->tempChipRamAlloc) {
+                            /* swap because previous buffer may be still in use ,
+                             *  and we're not going to WaitBlit(). */
+                            UWORD *swp = dc->tempChipRamB;
+                            ULONG byteOfsx=0;
+                            dc->tempChipRamB = dc->tempChipRamA;
+                            dc->tempChipRamA = swp;
 
                             srcx = bx1 - gx; srcy = by1 - gy;
+                            if(srcx>15)
+                            {
+                                byteOfsx = (srcx>>4)*2;
+                                srcx &= 15;
+                            }
+
+                            CopyMem(ge->pixels + ((ULONG)srcy * ge->pitch),
+                                dc->tempChipRamA,(by2 - by1) * ge->pitch);
+
+                            /* was ok if pixels in chip
                             BltTemplate(
                                 (PLANEPTR)((UBYTE *)ge->pixels + (ULONG)srcy * ge->pitch),
                                 (LONG)srcx, (LONG)ge->pitch,
                                 rp, (LONG)bx1, (LONG)by1,
                                 (LONG)(bx2 - bx1), (LONG)(by2 - by1));
+                            */
+                    /*note we keep external code draw mode */
+                            BltTemplate(
+                                (PLANEPTR)(dc->tempChipRamA+byteOfsx),
+                                (LONG)srcx, (LONG)ge->pitch,
+                                rp, (LONG)bx1, (LONG)by1,
+                                (LONG)(bx2 - bx1), (LONG)(by2 - by1));
+
                         }
-                    }
-                        //THIS WAS  a TEST
-                        // struct BitMap bm; ULONG i;
-                        // InitBitMap(&bm,targetDepth,ge->width,ge->rows);
-                        // bm.BytesPerRow = ge->pitch;
-                        // for(i=0;i<8;i++)
-                        // {
-                        //     if(dc->txtPen & (1L<<i))
-                        //     bm.Planes[i] = ((dc->txtPen & (1L<<i))!=0)
-                        //         ? (dc->tempChipRam): (dc->tempChipRamEmpty);
-                        // }
-
-                        // CopyMem(ge->pixels,dc->tempChipRam,maskSize);
-
-                        // BltMaskBitMapRastPort(&bm, 0, 0,
-                        //     rp, (LONG)gx, (LONG)gy,
-                        //     (LONG)ge->width, (LONG)ge->rows,
-                        //     0xe0, (PLANEPTR)dc->tempChipRam);
-
+                    } // end if ->pixels ok
 
 
                 } else
                 {
-                /*to test
-                    WORD bx1, by1, bx2, by2, srcx, srcy;
-                    WORD cx1 = 0, cy1 = 0;
-                    WORD cx2 = rp->Layer ? (WORD)(rp->Layer->bounds.MaxX - rp->Layer->bounds.MinX + 1) : 0x7FFF;
-                    WORD cy2 = rp->Layer ? (WORD)(rp->Layer->bounds.MaxY - rp->Layer->bounds.MinY + 1) : 0x7FFF;
-                    bx1 = gx > cx1 ? gx : cx1;
-                    by1 = gy > cy1 ? gy : cy1;
-                    bx2 = (gx + (WORD)ge->width) < cx2 ? (gx + (WORD)ge->width) : cx2;
-                    by2 = (gy + (WORD)ge->rows)  < cy2 ? (gy + (WORD)ge->rows)  : cy2;
-                    if (bx1 < bx2 && by1 < by2) {
-                        srcx = bx1 - gx; srcy = by1 - gy;
-                        BltTemplate(
-                            (PLANEPTR)(ge->pixels + (ULONG)srcy * ge->pitch),
-                            (LONG)srcx, (LONG)ge->pitch,
-                            rp, (LONG)bx1, (LONG)by1,
-                            (LONG)(bx2 - bx1), (LONG)(by2 - by1));
+                    if(ge->pixels)
+                    {
+                        WORD bx1, by1, bx2, by2, srcx, srcy;
+                        WORD cx1 = 0, cy1 = 0;
+                        WORD cx2 = rp->Layer ? (WORD)(rp->Layer->bounds.MaxX - rp->Layer->bounds.MinX + 1) : 0x7FFF;
+                        WORD cy2 = rp->Layer ? (WORD)(rp->Layer->bounds.MaxY - rp->Layer->bounds.MinY + 1) : 0x7FFF;
+                        bx1 = gx > cx1 ? gx : cx1;
+                        by1 = gy > cy1 ? gy : cy1;
+                        bx2 = (gx + (WORD)ge->width) < cx2 ? (gx + (WORD)ge->width) : cx2;
+                        by2 = (gy + (WORD)ge->rows)  < cy2 ? (gy + (WORD)ge->rows)  : cy2;
+                        if (bx1 < bx2 && by1 < by2) {
+                            srcx = bx1 - gx; srcy = by1 - gy;
+                            BltTemplate(
+                                (PLANEPTR)(ge->pixels + (ULONG)srcy * ge->pitch),
+                                (LONG)srcx, (LONG)ge->pitch,
+                                rp, (LONG)bx1, (LONG)by1,
+                                (LONG)(bx2 - bx1), (LONG)(by2 - by1));
+                        }
                     }
-                    */
+
                 }
             }
                 break;
@@ -2761,34 +2774,35 @@ static void urp_draw_text_clut_forcedmono(struct RastPort      *rp,
 
                 if(targetIsChipRam)
                 {
-                    if(!ge->pixelsIsInChip && ge->pixels)
-                    {
-                        ULONG maskSize = ge->rows * ge->pitch;
-                        UBYTE *f = ge->pixels;
-                        ge->pixels = AllocVec(maskSize,MEMF_CHIP);
-                        if(ge->pixels) CopyMem(f,ge->pixels,maskSize);
-                        FreeVec(f);
-                        ge->pixelsIsInChip = TRUE;
-                    }
-                    if(ge->pixels)
-                    {
-                        WORD bx1, by1, bx2, by2, srcx, srcy;
-                        WORD cx1 = 0, cy1 = 0;
-                        WORD cx2 = rp->Layer ? (WORD)(rp->Layer->bounds.MaxX - rp->Layer->bounds.MinX + 1) : 0x7FFF;
-                        WORD cy2 = rp->Layer ? (WORD)(rp->Layer->bounds.MaxY - rp->Layer->bounds.MinY + 1) : 0x7FFF;
-                        bx1 = gx > cx1 ? gx : cx1;
-                        by1 = gy > cy1 ? gy : cy1;
-                        bx2 = (gx + (WORD)ge->width) < cx2 ? (gx + (WORD)ge->width) : cx2;
-                        by2 = (gy + (WORD)ge->rows)  < cy2 ? (gy + (WORD)ge->rows)  : cy2;
-                        if (bx1 < bx2 && by1 < by2) {
-                            srcx = bx1 - gx; srcy = by1 - gy;
-                            BltTemplate(
-                                (PLANEPTR)((UBYTE *)ge->pixels + (ULONG)srcy * ge->pitch),
-                                (LONG)srcx, (LONG)ge->pitch,
-                                rp, (LONG)bx1, (LONG)by1,
-                                (LONG)(bx2 - bx1), (LONG)(by2 - by1));
-                        }
-                    }
+                    //TODO
+                    // if(!ge->pixelsIsInChip && ge->pixels)
+                    // {
+                    //     ULONG maskSize = ge->rows * ge->pitch;
+                    //     UBYTE *f = ge->pixels;
+                    //     ge->pixels = AllocVec(maskSize,MEMF_CHIP);
+                    //     if(ge->pixels) CopyMem(f,ge->pixels,maskSize);
+                    //     FreeVec(f);
+                    //     ge->pixelsIsInChip = TRUE;
+                    // }
+                    // if(ge->pixels)
+                    // {
+                    //     WORD bx1, by1, bx2, by2, srcx, srcy;
+                    //     WORD cx1 = 0, cy1 = 0;
+                    //     WORD cx2 = rp->Layer ? (WORD)(rp->Layer->bounds.MaxX - rp->Layer->bounds.MinX + 1) : 0x7FFF;
+                    //     WORD cy2 = rp->Layer ? (WORD)(rp->Layer->bounds.MaxY - rp->Layer->bounds.MinY + 1) : 0x7FFF;
+                    //     bx1 = gx > cx1 ? gx : cx1;
+                    //     by1 = gy > cy1 ? gy : cy1;
+                    //     bx2 = (gx + (WORD)ge->width) < cx2 ? (gx + (WORD)ge->width) : cx2;
+                    //     by2 = (gy + (WORD)ge->rows)  < cy2 ? (gy + (WORD)ge->rows)  : cy2;
+                    //     if (bx1 < bx2 && by1 < by2) {
+                    //         srcx = bx1 - gx; srcy = by1 - gy;
+                    //         BltTemplate(
+                    //             (PLANEPTR)((UBYTE *)ge->pixels + (ULONG)srcy * ge->pitch),
+                    //             (LONG)srcx, (LONG)ge->pitch,
+                    //             rp, (LONG)bx1, (LONG)by1,
+                    //             (LONG)(bx2 - bx1), (LONG)(by2 - by1));
+                    //     }
+                    // }
 
 
                 } else
@@ -2899,6 +2913,16 @@ void URPDrawTextUTF8(REG(a0, struct RastPort      *rp),
 
     dc->currentFriendBitmap = rp->BitMap;
 
+    /* disambiguation from previous version: if you used SetColorFromPen(),
+    no need to set SetAPen/BPen yourself, which is only used in monocolor+8bit target
+    note rastport's SetDrMd() is used in that case.
+    */
+    if(dc->pensSet)
+    {
+        SetAPen(rp,dc->txtPen);
+        SetBPen(rp,dc->bgPen);
+    }
+
     if (CyberGfxBase != NULL &&
         GetCyberMapAttr(rp->BitMap, CYBRMATTR_ISCYBERGFX) != 0 &&
         GetCyberMapAttr(rp->BitMap, CYBRMATTR_PIXFMT) != PIXFMT_LUT8)
@@ -2909,6 +2933,34 @@ void URPDrawTextUTF8(REG(a0, struct RastPort      *rp),
             urp_draw_text_cgx(rp, dc, pos, p, remaining);
     } else {
 
+        /* if no antialias and target is chipram,
+            We'll blit 2 color characters with BltTemplate,
+            which needs source in chipram. Yet to save chipram
+            we'll keep glyph source in fast as planar,
+            and do copy to a short temp chip buffer. Then due
+            to the Blitter delaying, we need double buffer for this.
+         */
+         BOOL targetIsChipRam = (GetBitMapAttr(rp->BitMap,BMA_FLAGS) & BMF_STANDARD);
+         /* here we manage both native 8bit modes and CGX 8 bit modes !
+            We have to differentiate true native modes like this.
+            "no antialias" would means vector glyphs would be "mono, 2 colors"
+         */
+         if(targetIsChipRam && !(dc->prefFlags & URP_PREF_ANTIALIAS) &&
+            dc->tempChipRamAlloc == NULL
+            )
+         {
+            /* max for maximum char size: 48*40 than *2 for double buff 576b */
+            int maxbm = 6*48;
+            dc->tempChipRamSize = maxbm;
+            dc->tempChipRamAlloc = (UBYTE *) AllocVec(maxbm*2,MEMF_CHIP);
+            if(dc->tempChipRamAlloc)
+            {
+                dc->tempChipRamA = (UWORD*) (dc->tempChipRamAlloc );
+                dc->tempChipRamB = (UWORD*) (dc->tempChipRamAlloc +maxbm);
+            }
+         }
+
+        /* then only go */
         if (dc->prefFlags & URP_PREF_FORCE_MONOSPACE)
             urp_draw_text_clut_forcedmono(rp, dc, pos, p, remaining);
         else

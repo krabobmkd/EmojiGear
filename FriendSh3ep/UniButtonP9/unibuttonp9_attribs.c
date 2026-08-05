@@ -60,7 +60,7 @@ void ubtp9_blit_state(UniButtonP9Data *inst, struct Gadget *g,
         URPDC_SetDrawColorFromPen(inst->dc, inst->screen, (LONG)txtPen, (LONG)bgPen);
         SetAPen(rp, (LONG)txtPen);
         SetBPen(rp, (LONG)bgPen);
-        SetDrMd(rp, JAM2);
+        SetDrMd(rp, JAM1); /* important for mono/antialias */
         URPDrawTextUTF8(rp, inst->dc, &pos, inst->text, (ULONG)(-1));
     }
 }

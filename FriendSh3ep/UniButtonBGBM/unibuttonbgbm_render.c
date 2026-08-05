@@ -155,7 +155,7 @@ static void ubgbm_build_one_state(UniButtonBGBMData *inst, WORD gadW, WORD gadH,
             URPDC_SetDrawColorFromPen(inst->dc, scr, (LONG)txtPen, (LONG)bgPen);
             SetAPen(rp, (LONG)txtPen);
             SetBPen(rp, (LONG)bgPen);
-            SetDrMd(rp, JAM2);
+            SetDrMd(rp, JAM1);
             URPDrawTextUTF8(rp, inst->dc, &pos, inst->text, (ULONG)(-1));
         }
         return;
@@ -198,7 +198,7 @@ static void ubgbm_build_one_state(UniButtonBGBMData *inst, WORD gadW, WORD gadH,
         URPDC_SetDrawColorFromPen(inst->dc, scr, (LONG)txtPen, (LONG)bgPen);
         SetAPen(rp, (LONG)txtPen);
         SetBPen(rp, (LONG)bgPen);
-        SetDrMd(rp, JAM2);
+        SetDrMd(rp, JAM1);
         URPDrawTextUTF8(rp, inst->dc, &pos, inst->text, (ULONG)(-1));
     }
 }

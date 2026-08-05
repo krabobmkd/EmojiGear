@@ -122,7 +122,7 @@ void ubgbm_blit_state(UniButtonBGBMData *inst, struct Gadget *g,
             URPDC_SetDrawColorFromPen(inst->dc, inst->screen, (LONG)txtPen, (LONG)bgPen);
             SetAPen(rp, (LONG)txtPen);
             SetBPen(rp, (LONG)bgPen);
-            SetDrMd(rp, JAM2);
+            SetDrMd(rp, JAM1); /* important for mono no aa fonts and BltTemplate */
             URPDrawTextUTF8(rp, inst->dc, &pos, inst->text, (ULONG)(-1));
         }
         return;
