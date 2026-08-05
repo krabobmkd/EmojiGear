@@ -191,6 +191,10 @@ static void urp_cache_free_all(struct URPGlyphCache *cache)
          //   nbmskfreed++;
               FreeBitMap(e->maskBitmap);
             }
+            if (e->chk_clutBitmap)
+            {
+                FreeVec(e->chk_clutBitmap);
+            }
             FreeVec(e);
             e = next;
         }
@@ -214,6 +218,7 @@ static void urp_flush_clut_bitmaps(struct URPGlyphCache *cache)
         for (e = cache->buckets[i]; e; e = e->next) {
             if (e->clutBitmap) { FreeBitMap(e->clutBitmap); e->clutBitmap = NULL; }
             if (e->maskBitmap) { FreeBitMap(e->maskBitmap); e->maskBitmap = NULL; }
+            if (e->chk_clutBitmap) { FreeVec(e->chk_clutBitmap); e->chk_clutBitmap = NULL; }
         }
     }
 
@@ -885,8 +890,8 @@ static int urp_commit_clut_bitmaps(struct URPDrawContext *dc,
     ULONG  x, y;
 
     ge->clutBitmap = AllocBitMap((ULONG)ge->width, (ULONG)ge->rows,
-                                 dc->lastFriendBitmap->Depth, BMF_CLEAR,
-                                 dc->lastFriendBitmap);
+                                 dc->currentFriendBitmap->Depth, BMF_CLEAR,
+                                 dc->currentFriendBitmap);
     if (!ge->clutBitmap) {
         FreeVec(chunky);
         FreeVec(maskBuf);
@@ -944,7 +949,7 @@ static int urp_build_clut_bitmaps_gray(struct URPDrawContext *dc,
     ULONG  size, x, y;
     UBYTE bgpen;
 
-    if (!dc->lastFriendBitmap || !dc->clutValid) return 0;
+    if (!dc->currentFriendBitmap || !dc->clutValid) return 0;
     if (ge->width <= 0 || ge->rows <= 0 || !ge->pixels) return 0;
 
     /* wait pending draw to end - must be done before any FreeBitMap(); */
@@ -955,33 +960,58 @@ static int urp_build_clut_bitmaps_gray(struct URPDrawContext *dc,
 
     if (ge->clutBitmap) { FreeBitMap(ge->clutBitmap); ge->clutBitmap = NULL; }
     if (ge->maskBitmap) { FreeBitMap(ge->maskBitmap); ge->maskBitmap = NULL; }
+    if (ge->chk_clutBitmap) { FreeVec(ge->chk_clutBitmap); ge->chk_clutBitmap = NULL; }
 
     size    = (ULONG)ge->width * (ULONG)ge->rows;
     chunky  = (UBYTE *)AllocVec(size, MEMF_CLEAR);
     if (!chunky) return 0;
-    maskBuf = (UBYTE *)AllocVec(size, MEMF_CLEAR);
-    if (!maskBuf) { FreeVec(chunky); return 0; }
 
     bgpen = dc->aaRemap[0];
 
-    /* GRAY: 1 byte per pixel = alpha.
-     * Use the precomputed 16-entry AA shade ramp: aaRemap[alpha>>4]. */
-    for (y = 0; y < (ULONG)ge->rows; y++) {
-        const UBYTE *srcRow  = ge->pixels + y * (ULONG)ge->pitch; /* Y-constant */
-        UBYTE       *dstRow  = chunky     + y * (ULONG)ge->width;  /* Y-constant */
-        UBYTE       *maskRow = maskBuf    + y * (ULONG)ge->width;  /* Y-constant */
-        for (x = 0; x < (ULONG)ge->width; x++) {
-            UBYTE alpha = srcRow[x];
-            if (alpha > 16) {
+    if(dc->saveChipMode)
+    {
+        /* GRAY antialias: 1 byte per pixel = alpha.
+         * Use the precomputed 16-entry AA shade ramp: aaRemap[alpha>>4]. */
+        for (y = 0; y < (ULONG)ge->rows; y++) {
+            const UBYTE *srcRow  = ge->pixels + y * (ULONG)ge->pitch; /* Y-constant */
+            UBYTE       *dstRow  = chunky     + y * (ULONG)ge->width;  /* Y-constant */
+            for (x = 0; x < (ULONG)ge->width; x++) {
+                UBYTE alpha = srcRow[x];
                 dstRow[x]  = dc->aaRemap[alpha >> 4];
-                maskRow[x] = 1;
-            } else {
-                dstRow[x]  = bgpen;
             }
         }
-    }
 
-    return urp_commit_clut_bitmaps(dc, ge, chunky, maskBuf);
+        /* only keep remaped table pixel array, do not create Amiga Bitmap
+            only use WritePixel at drawings (experimental)
+         */
+        ge->chk_clutBitmap = chunky;
+
+        return TRUE;
+    } else
+    {
+
+        maskBuf = (UBYTE *)AllocVec(size, MEMF_CLEAR);
+        if (!maskBuf) { FreeVec(chunky); return 0; }
+
+        /* GRAY antialias: 1 byte per pixel = alpha.
+         * Use the precomputed 16-entry AA shade ramp: aaRemap[alpha>>4]. */
+        for (y = 0; y < (ULONG)ge->rows; y++) {
+            const UBYTE *srcRow  = ge->pixels + y * (ULONG)ge->pitch; /* Y-constant */
+            UBYTE       *dstRow  = chunky     + y * (ULONG)ge->width;  /* Y-constant */
+            UBYTE       *maskRow = maskBuf    + y * (ULONG)ge->width;  /* Y-constant */
+            for (x = 0; x < (ULONG)ge->width; x++) {
+                UBYTE alpha = srcRow[x];
+                if (alpha > 16) {
+                    dstRow[x]  = dc->aaRemap[alpha >> 4];
+                    maskRow[x] = 1;
+                } else {
+                    dstRow[x]  = bgpen;
+                }
+            }
+        }
+
+        return urp_commit_clut_bitmaps(dc, ge, chunky, maskBuf);
+    }
 }
 
 /*
@@ -997,7 +1027,7 @@ static int urp_build_clut_bitmaps_rgba(struct URPDrawContext *dc,
     UBYTE *chunky, *maskBuf;
     ULONG  size, x, y;
     UBYTE bgpen;
-    if (!dc->lastFriendBitmap || !dc->clutValid) return 0;
+    if (!dc->currentFriendBitmap || !dc->clutValid) return 0;
     if (ge->width <= 0 || ge->rows <= 0 || !ge->pixels) return 0;
 
     /* wait pending draw to end - must be done before any FreeBitMap(); */
@@ -1008,33 +1038,63 @@ static int urp_build_clut_bitmaps_rgba(struct URPDrawContext *dc,
 
     if (ge->clutBitmap) { FreeBitMap(ge->clutBitmap); ge->clutBitmap = NULL; }
     if (ge->maskBitmap) { FreeBitMap(ge->maskBitmap); ge->maskBitmap = NULL; }
+    if (ge->chk_clutBitmap) { FreeVec(ge->chk_clutBitmap); ge->chk_clutBitmap = NULL; }
 
     size    = (ULONG)ge->width * (ULONG)ge->rows;
     chunky  = (UBYTE *)AllocVec(size, MEMF_CLEAR);
     if (!chunky) return 0;
-    maskBuf = (UBYTE *)AllocVec(size, MEMF_CLEAR);
-    if (!maskBuf) { FreeVec(chunky); return 0; }
 
     bgpen = dc->aaRemap[0];
 
-    /* RGBA: 4 bytes per pixel = R,G,B,A (FreeType pre-multiplied). */
-    for (y = 0; y < (ULONG)ge->rows; y++) {
-        const UBYTE *srcRow  = ge->pixels + y * (ULONG)ge->pitch; /* Y-constant */
-        UBYTE       *dstRow  = chunky     + y * (ULONG)ge->width;  /* Y-constant */
-        UBYTE       *maskRow = maskBuf    + y * (ULONG)ge->width;  /* Y-constant */
-        for (x = 0; x < (ULONG)ge->width; x++) {
-            const UBYTE *sp = srcRow + x * 4UL;
-            if (sp[3] > 192) {
-                dstRow[x] = dc->clutRemap[
-                    ((ULONG)(sp[0] >> 4) << 8) |
-                    ((ULONG)(sp[1] >> 4) << 4) |
-                     (ULONG)(sp[2] >> 4)];
-                maskRow[x] = 1;
-            } else dstRow[x] = bgpen;
+    if(dc->saveChipMode)
+    {
+        /* full AllocBitMap() mode */
+        /* RGBA: 4 bytes per pixel = R,G,B,A (FreeType pre-multiplied). */
+        for (y = 0; y < (ULONG)ge->rows; y++) {
+            const UBYTE *srcRow  = ge->pixels + y * (ULONG)ge->pitch; /* Y-constant */
+            UBYTE       *dstRow  = chunky     + y * (ULONG)ge->width;  /* Y-constant */
+            for (x = 0; x < (ULONG)ge->width; x++) {
+                const UBYTE *sp = srcRow + x * 4UL;
+                if (sp[3] > 192) {
+                    dstRow[x] = dc->clutRemap[
+                        ((ULONG)(sp[0] >> 4) << 8) |
+                        ((ULONG)(sp[1] >> 4) << 4) |
+                         (ULONG)(sp[2] >> 4)];
+                } else dstRow[x] = bgpen;
+            }
         }
+        /* only keep remaped table pixel array, do not create Amiga Bitmap
+            only use WritePixel at drawings (experimental)
+         */
+        ge->chk_clutBitmap = chunky;
+
+        return 1;
+    } else
+    {
+        maskBuf = (UBYTE *)AllocVec(size, MEMF_CLEAR);
+        if (!maskBuf) { FreeVec(chunky); return 0; }
+
+        /* full AllocBitMap() mode */
+        /* RGBA: 4 bytes per pixel = R,G,B,A (FreeType pre-multiplied). */
+        for (y = 0; y < (ULONG)ge->rows; y++) {
+            const UBYTE *srcRow  = ge->pixels + y * (ULONG)ge->pitch; /* Y-constant */
+            UBYTE       *dstRow  = chunky     + y * (ULONG)ge->width;  /* Y-constant */
+            UBYTE       *maskRow = maskBuf    + y * (ULONG)ge->width;  /* Y-constant */
+            for (x = 0; x < (ULONG)ge->width; x++) {
+                const UBYTE *sp = srcRow + x * 4UL;
+                if (sp[3] > 192) {
+                    dstRow[x] = dc->clutRemap[
+                        ((ULONG)(sp[0] >> 4) << 8) |
+                        ((ULONG)(sp[1] >> 4) << 4) |
+                         (ULONG)(sp[2] >> 4)];
+                    maskRow[x] = 1;
+                } else dstRow[x] = bgpen;
+            }
+        }
+
+        return urp_commit_clut_bitmaps(dc, ge, chunky, maskBuf);
     }
 
-    return urp_commit_clut_bitmaps(dc, ge, chunky, maskBuf);
 }
 
 
@@ -1055,11 +1115,13 @@ struct URPDrawContext *URPDC_Create(REG(a0, const char *name))
     InitSemaphore(&dc->sem);
 
     dc->numFonts     = 0;
-    dc->lastFriendBitmap = NULL;
+    dc->currentFriendBitmap = NULL;
     dc->prefFlags    = 0;
     dc->draw.ARGB    = 0x00FFFFFF;
     dc->bgPen = dc->txtPen = -1;
     dc->tabSpaces    = 4;
+
+    dc->saveChipMode = TRUE; /* experimental */
 
     memset(dc->fonts,  0, sizeof(dc->fonts));
     memset(&dc->cache, 0, sizeof(dc->cache));
@@ -1351,7 +1413,7 @@ void  URPDC_SetDrawColorFromPen(
 
     if (!dc || !screen )
     {
-        dc->lastFriendBitmap = NULL;
+        dc->currentFriendBitmap = NULL;
         return;
     }
     if(txtPen>=0 && screen->ViewPort.ColorMap)
@@ -1384,7 +1446,6 @@ void  URPDC_SetDrawColorFromPen(
         urp_rebuild_aa_remap(dc);
     }
 
-    dc->lastFriendBitmap = screen->RastPort.BitMap;
 }
 /* Internal implementation shared by URPDC_SetDrawScreen and URPDC_UpdateColorMap.
  * Must be called with dc->sem already held. */
@@ -2587,9 +2648,19 @@ static void urp_draw_text_clut(struct RastPort      *rp,
             }
                 break;
             case URP_CACHE_GRAY:
-                if (dc->clutValid && dc->lastFriendBitmap) {
-                    if (!ge->clutBitmap)
+                if (dc->clutValid && dc->currentFriendBitmap) {
+                    if (!ge->clutBitmap && !ge->chk_clutBitmap)
                         urp_build_clut_bitmaps_gray(dc, ge);
+                    if(ge->chk_clutBitmap)
+                    {
+                        /* chip saving mode, */
+                        WriteChunkyPixels(rp,(ULONG)gx, (ULONG)gy,
+                                        (ULONG)(gx+ge->width-1),
+                                        (ULONG)(gy+ge->rows-1),
+                                        ge->chk_clutBitmap,
+                                        ge->width
+                                        );
+                    } else
                     if (ge->clutBitmap) {
                         if (ge->maskBitmap) {
                             BltMaskBitMapRastPort(ge->clutBitmap, 0, 0,
@@ -2605,9 +2676,20 @@ static void urp_draw_text_clut(struct RastPort      *rp,
                 }
                 break;
             case URP_CACHE_RGBA:
-                if (dc->clutValid && dc->lastFriendBitmap) {
-                    if (!ge->clutBitmap)
+                if (dc->clutValid && dc->currentFriendBitmap) {
+                    if (!ge->clutBitmap && !ge->chk_clutBitmap)
                         urp_build_clut_bitmaps_rgba(dc, ge);
+
+                    if(ge->chk_clutBitmap)
+                    {
+                        /* chip saving mode, */
+                        WriteChunkyPixels(rp,(ULONG)gx, (ULONG)gy,
+                                        (ULONG)(gx+ge->width-1),
+                                        (ULONG)(gy+ge->rows-1),
+                                        ge->chk_clutBitmap,
+                                        ge->width
+                                        );
+                    } else
                     if (ge->clutBitmap) {
                         if (ge->maskBitmap) {
                             BltMaskBitMapRastPort(ge->clutBitmap, 0, 0,
@@ -2732,9 +2814,20 @@ static void urp_draw_text_clut_forcedmono(struct RastPort      *rp,
 
                 break;
             case URP_CACHE_GRAY:
-                if (dc->clutValid && dc->lastFriendBitmap) {
-                    if (!ge->clutBitmap)
+                if (dc->clutValid && dc->currentFriendBitmap) {
+                    if (!ge->clutBitmap && !ge->chk_clutBitmap)
                         urp_build_clut_bitmaps_gray(dc, ge);
+
+                    if(ge->chk_clutBitmap)
+                    {
+                        /* chip saving mode, */
+                        WriteChunkyPixels(rp,(ULONG)gx, (ULONG)gy,
+                                        (ULONG)(gx+ge->width-1),
+                                        (ULONG)(gy+ge->rows-1),
+                                        ge->chk_clutBitmap,
+                                        ge->width
+                                        );
+                    } else
                     if (ge->clutBitmap) {
                         if (ge->maskBitmap) {
                             BltMaskBitMapRastPort(ge->clutBitmap, 0, 0,
@@ -2750,9 +2843,20 @@ static void urp_draw_text_clut_forcedmono(struct RastPort      *rp,
                 }
                 break;
             case URP_CACHE_RGBA:
-                if (dc->clutValid && dc->lastFriendBitmap) {
-                    if (!ge->clutBitmap)
+                if (dc->clutValid && dc->currentFriendBitmap) {
+                    if (!ge->clutBitmap && !ge->chk_clutBitmap)
                         urp_build_clut_bitmaps_rgba(dc, ge);
+
+                    if(ge->chk_clutBitmap)
+                    {
+                        /* chip saving mode, */
+                        WriteChunkyPixels(rp,(ULONG)gx, (ULONG)gy,
+                                        (ULONG)(gx+ge->width-1),
+                                        (ULONG)(gy+ge->rows-1),
+                                        ge->chk_clutBitmap,
+                                        ge->width
+                                        );
+                    } else
                     if (ge->clutBitmap) {
                         if (ge->maskBitmap) {
                             BltMaskBitMapRastPort(ge->clutBitmap, 0, 0,
@@ -2793,7 +2897,7 @@ void URPDrawTextUTF8(REG(a0, struct RastPort      *rp),
 
 // bdbprintf("\n ** URPDrawTextUTF8 ** \n");
 
-    dc->lastFriendBitmap = rp->BitMap;
+    dc->currentFriendBitmap = rp->BitMap;
 
     if (CyberGfxBase != NULL &&
         GetCyberMapAttr(rp->BitMap, CYBRMATTR_ISCYBERGFX) != 0 &&
@@ -2811,6 +2915,6 @@ void URPDrawTextUTF8(REG(a0, struct RastPort      *rp),
             urp_draw_text_clut(rp, dc, pos, p, remaining);
     }
     /* can't retain that */
-    dc->lastFriendBitmap = NULL;
+    dc->currentFriendBitmap = NULL;
 
 }

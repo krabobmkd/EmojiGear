@@ -57,7 +57,8 @@ struct URPGlyphEntry {
     WORD   advanceX;
     WORD   pitch;
 
-    UBYTE *pixels;
+    UBYTE *pixels;  /* the freetype gray or rgb format */
+    UBYTE *chk_clutBitmap; /* the remaped chunky image we can use with WritePixelArray() */
     struct BitMap *clutBitmap;
     struct BitMap *maskBitmap;
     struct URPGlyphEntry *next;
@@ -96,7 +97,7 @@ struct URPDrawContext {
     int                  numFonts;
     /* last screen bitmap we have drawn with,
      *  would flush remaped cache if change. */
-    struct BitMap       *lastFriendBitmap;
+    struct BitMap       *currentFriendBitmap;
     struct Screen       *lastScreen; /* just to check screen id difference */
     ULONG               lastScreenDepth; /* in case lastscreen has same pointer */
 
@@ -152,6 +153,9 @@ struct URPDrawContext {
     /* Cached advance width for URP_PREF_FORCE_MONOSPACE: advance of 'M' in
      * the primary font.  0 means not yet computed (computed lazily). */
     WORD monoAdvanceX;
+
+    /* experimental */
+    int saveChipMode;
 };
 
 #endif /* URP_INTERNAL_H */
