@@ -16,6 +16,8 @@
 #define GID_LOGIN_URL_EDITOR         14  /* read-only display of authorize URL */
 #define GID_LOGIN_SUBMIT_CODE_BUTTON 15  /* phase 2: submit the auth code */
 #define GID_LOGIN_ACCOUNTS_LIST      16  /* listbrowser.gadget: known accounts, click to switch */
+#define GID_LOGIN_ANON_BUTTON        17  /* phase 1: connect to the typed server anonymously, no OAuth */
+#define GID_LOGIN_DELETE_SERVER_BUTTON 18 /* below the accounts list: forget the currently active account */
 
 /* New toot window (fs3etootview.c) */
 #define GID_TOOT_BODY_EDITOR     21

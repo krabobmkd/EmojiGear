@@ -84,7 +84,7 @@ extern struct Library *AslBase;
 
 #define MEDIAPIC_Dummy      (TAG_USER + 0x4D50)  /* 'MP' */
 #define MEDIAPIC_BitMap     (MEDIAPIC_Dummy + 1) /* [IS] struct BitMap * or NULL */
-#define MEDIAPIC_MaskPlane  (MEDIAPIC_Dummy + 2) /* [IS] PLANEPTR or NULL */
+//no #define MEDIAPIC_MaskPlane  (MEDIAPIC_Dummy + 2) /* [IS] PLANEPTR or NULL */
 #define MEDIAPIC_Width      (MEDIAPIC_Dummy + 3) /* [IS] UWORD */
 #define MEDIAPIC_Height     (MEDIAPIC_Dummy + 4) /* [IS] UWORD */
 #define MEDIAPIC_Message    (MEDIAPIC_Dummy + 5) /* [IS] const char *; shown centered
@@ -100,12 +100,14 @@ extern struct Library *AslBase;
 
 typedef struct {
     struct BitMap *bitmap;  /* borrowed -- owned by FS3EMediaView's BmImage */
-    PLANEPTR       mask;    /* borrowed; NULL if no transparency */
+   // PLANEPTR       mask;    /* borrowed; NULL if no transparency */
     UWORD          width, height;
     const char    *message; /* borrowed static string; see MEDIAPIC_Message above */
+    struct Region *clipRegion;
 } FS3EMediaPicInst;
 
 #define MEDIAPIC_INST(cl, o) ((FS3EMediaPicInst *)INST_DATA((cl), (o)))
+#define G(o) ((struct Gadget *)(o))
 
 static ULONG FS3EMediaPic_OnRender(Class *cl, Object *o, struct gpRender *msg)
 {
@@ -114,29 +116,55 @@ static ULONG FS3EMediaPic_OnRender(Class *cl, Object *o, struct gpRender *msg)
     struct Gadget    *g    = (struct Gadget *)o;
     WORD gx = g->LeftEdge, gy = g->TopEdge;
     WORD gw = g->Width,    gh = g->Height;
+    struct Region *oldClipRegion=NULL;
 
     if (!rp || gw <= 0 || gh <= 0) return 0;
 
-    SetAPen(rp, 0);
-    SetDrMd(rp, JAM1);
-    RectFill(rp, (LONG)gx, (LONG)gy, (LONG)(gx + gw - 1), (LONG)(gy + gh - 1));
+    if (inst->clipRegion)
+    {
+        struct Rectangle framerect;
+        framerect.MinX = G(o)->LeftEdge ;
+        framerect.MinY = G(o)->TopEdge ;
+        framerect.MaxX = G(o)->LeftEdge  + G(o)->Width -1 ;
+        framerect.MaxY = G(o)->TopEdge + G(o)->Height -1 ;
 
+        /* note you can go wild with Or/And boolean operation on geometry.
+           But a single rect (should be) enough at Gadget level.
+           Note there are issues on "Virtual.class" up to OS3.2.2 with this.
+           One of the reason we don't use Virtual.class.
+           */
+        ClearRegion(inst->clipRegion);
+        OrRectRegion(inst->clipRegion, &framerect);
+
+       oldClipRegion = InstallClipRegion( rp->Layer, inst->clipRegion);
+    }
+
+
+
+
+    SetAPen(rp, 1);
+    SetDrMd(rp, JAM1);
     if (inst->bitmap && inst->width > 0 && inst->height > 0) {
-        if (inst->mask) {
-            BltMaskBitMapRastPort(inst->bitmap, 0, 0, rp, gx, gy,
-                                  (LONG)inst->width, (LONG)inst->height,
-                                  FS3EMV_MASK_MINTERM, inst->mask);
-        } else {
+        // if (inst->mask) {
+        //     BltMaskBitMapRastPort(inst->bitmap, 0, 0, rp, gx, gy,
+        //                           (LONG)inst->width, (LONG)inst->height,
+        //                           FS3EMV_MASK_MINTERM, inst->mask);
+        // } else {
             BltBitMapRastPort(inst->bitmap, 0, 0, rp, gx, gy,
                               (LONG)inst->width, (LONG)inst->height, 0xC0);
-        }
+//        }
     } else if (inst->message) {
+
+        RectFill(rp, (LONG)gx, (LONG)gy, (LONG)(gx + gw - 1), (LONG)(gy + gh - 1));
+
+
         SetAPen(rp, 1);
         SetBPen(rp, 0);
         SetDrMd(rp, JAM2);
         Move(rp, (LONG)(gx + 8), (LONG)(gy + 20));
         Text(rp, (STRPTR)inst->message, (ULONG)strlen(inst->message));
     }
+    InstallClipRegion( rp->Layer,oldClipRegion);
 
     return 0;
 }
@@ -181,7 +209,21 @@ static ULONG FS3EMediaPic_OnNew(Class *cl, Object *o, struct opSet *msg)
     ptag = FindTagItem(MEDIAPIC_Message, msg->ops_AttrList);
     if (ptag) inst->message = (const char *)ptag->ti_Data;
 
+
+    inst->clipRegion = NewRegion();
+
     return (ULONG)newObj;
+}
+
+
+static ULONG EmojiGrid_OnDispose(Class *cl, Object *o, Msg msg)
+{
+    FS3EMediaPicInst *inst  = MEDIAPIC_INST(cl, o);
+    if(inst->clipRegion) {
+        DisposeRegion( inst->clipRegion );
+        inst->clipRegion = NULL;
+    }
+    return DoSuperMethodA(cl, o, (APTR)msg);
 }
 
 static ULONG FS3EMediaPic_OnSet(Class *cl, Object *o, struct opSet *msg)
@@ -197,10 +239,10 @@ static ULONG FS3EMediaPic_OnSet(Class *cl, Object *o, struct opSet *msg)
                 inst->bitmap = (struct BitMap *)tag->ti_Data;
                 redraw = TRUE;
                 break;
-            case MEDIAPIC_MaskPlane:
-                inst->mask = (PLANEPTR)tag->ti_Data;
-                redraw = TRUE;
-                break;
+            // case MEDIAPIC_MaskPlane:
+            //     inst->mask = (PLANEPTR)tag->ti_Data;
+            //     redraw = TRUE;
+            //     break;
             case MEDIAPIC_Width:
                 inst->width = (UWORD)tag->ti_Data;
                 redraw = TRUE;
@@ -238,6 +280,7 @@ static ULONG ASM SAVEDS FS3EMediaPic_Dispatch(
         case OM_UPDATE:   return FS3EMediaPic_OnSet(cl, o, (struct opSet *)msg);
         case GM_DOMAIN:   return FS3EMediaPic_OnDomain(cl, o, (struct gpDomain *)msg);
         case GM_RENDER:   return FS3EMediaPic_OnRender(cl, o, (struct gpRender *)msg);
+        case OM_DISPOSE: return EmojiGrid_OnDispose(cl, o, (struct gpRender *)msg);
         default:          return DoSuperMethodA(cl, o, (Msg)msg);
     }
 }
@@ -249,11 +292,13 @@ static ULONG ASM SAVEDS FS3EMediaPic_Dispatch(
 static struct NewMenu s_mvMenuTemplate[] = {
     { NM_TITLE, (STRPTR)"Media",         NULL,        0, 0, NULL },
     { NM_ITEM,  (STRPTR)"Close",         (STRPTR)"K", 0, 0, (APTR)1 },
-    { NM_ITEM,  (STRPTR)"Save Media...", (STRPTR)"S", 0, 0, (APTR)2 },
+    { NM_ITEM,  (STRPTR)"Save Image...", (STRPTR)"S", 0, 0, (APTR)2 },
+    { NM_ITEM,  (STRPTR)"Save Audio...", (STRPTR)"A", 0, 0, (APTR)3 },
     { NM_END,   NULL,                    NULL,        0, 0, NULL },
 };
-#define FS3EMV_MENU_CLOSE 1
-#define FS3EMV_MENU_SAVE  2
+#define FS3EMV_MENU_CLOSE       1
+#define FS3EMV_MENU_SAVE_IMAGE  2
+#define FS3EMV_MENU_SAVE_AUDIO  3
 
 static char *mediaview_strdup(const char *s)
 {
@@ -274,6 +319,10 @@ static char *mediaview_strdup(const char *s)
 static void mediaview_resize_to(FS3EMediaView *mv, WORD w, WORD h)
 {
     if (!mv->windowObj) return;
+    if(mv->last_w == w && mv->last_h == h) return;
+    mv->last_w = w;
+    mv->last_h = h;
+
     SetAttrs(mv->windowObj,
         WA_InnerWidth,  (ULONG)w,
         WA_InnerHeight, (ULONG)h,
@@ -291,14 +340,14 @@ static void mediaview_push_picture(FS3EMediaView *mv, const char *placeholderMsg
     UWORD    w      = loaded ? mv->image.width  : 0;
     UWORD    h      = loaded ? mv->image.height : 0;
     struct BitMap *bm   = loaded ? mv->image.bitmap : NULL;
-    PLANEPTR       mask = loaded ? mv->image.mask   : NULL;
+    //PLANEPTR       mask = loaded ? mv->image.mask   : NULL;
 
     if (!mv->picGadget) return;
 
     if (mv->window) {
         SetGadgetAttrs((struct Gadget *)mv->picGadget, mv->window, NULL,
             MEDIAPIC_BitMap,    (ULONG)bm,
-            MEDIAPIC_MaskPlane, (ULONG)mask,
+       //     MEDIAPIC_MaskPlane, (ULONG)mask,
             MEDIAPIC_Width,     (ULONG)w,
             MEDIAPIC_Height,    (ULONG)h,
             MEDIAPIC_Message,   (ULONG)placeholderMsg,
@@ -306,7 +355,7 @@ static void mediaview_push_picture(FS3EMediaView *mv, const char *placeholderMsg
     } else {
         SetAttrs(mv->picGadget,
             MEDIAPIC_BitMap,    (ULONG)bm,
-            MEDIAPIC_MaskPlane, (ULONG)mask,
+       //     MEDIAPIC_MaskPlane, (ULONG)mask,
             MEDIAPIC_Width,     (ULONG)w,
             MEDIAPIC_Height,    (ULONG)h,
             MEDIAPIC_Message,   (ULONG)placeholderMsg,
@@ -516,56 +565,83 @@ static void mediaview_dispose_menu(FS3EMediaView *mv)
     }
 }
 
-/* Builds the default "Save Media..." filename (no path, no directory):
- * mv->poster (sanitized) if set, else the cache file's own hash-id name,
- * plus the extension for whatever format BmImage_SniffFormat() actually
- * detects in the loaded file -- never trusted from the source URL, which
- * may have no extension at all (see fs3enet.h's FS3ENetFetchImageReply
- * doc comment: cache paths carry no extension either). */
-static void mediaview_build_default_name(FS3EMediaView *mv, char *out, ULONG outSize)
+/* Sanitizes an @user@instance poster string for use as a filename base:
+ * strips a leading '@', replaces '/' and ':' (path separators) with '_'.
+ * Shared by both channels' default-name builders below. */
+static void mediaview_sanitize_poster(const char *poster, char *out, ULONG outSize)
+{
+    const char *src = poster;
+    ULONG i = 0;
+    if (*src == '@') src++;
+    for (; *src && i < outSize - 1; src++) {
+        char c = *src;
+        if (c == '/' || c == ':') c = '_';
+        out[i++] = c;
+    }
+    out[i] = '\0';
+}
+
+/* Builds the default "Save Image..." filename (no path, no directory):
+ * mv->imagePoster (sanitized) if set, else the cache file's own hash-id
+ * name, plus the extension for whatever format BmImage_SniffFormat()
+ * actually detects in the loaded file -- never trusted from the source
+ * URL, which may have no extension at all (see fs3enet.h's
+ * FS3ENetFetchImageReply doc comment: cache paths carry no extension
+ * either). */
+static void mediaview_build_image_default_name(FS3EMediaView *mv, char *out, ULONG outSize)
+{
+    char sanitized[128];
+    const char *base;
+    const char *ext;
+
+    if (mv->imagePoster[0]) {
+        mediaview_sanitize_poster(mv->imagePoster, sanitized, sizeof(sanitized));
+        base = sanitized;
+    } else {
+        base = (const char *)FilePart((STRPTR)(mv->image.filePath ? mv->image.filePath : "media"));
+    }
+
+    switch (BmImage_SniffFormat(mv->image.filePath)) {
+        case BMFMT_PNG:  ext = ".png";  break;
+        case BMFMT_JPEG: ext = ".jpg";  break;
+        case BMFMT_GIF:  ext = ".gif";  break;
+        case BMFMT_WEBP: ext = ".webp"; break;
+        case BMFMT_BMP:  ext = ".bmp";  break;
+        default:         ext = ".dat";  break;
+    }
+
+    snprintf(out, (size_t)outSize, "%s%s", base, ext);
+}
+
+/* Builds the default "Save Audio..." filename -- same rationale as
+ * mediaview_build_image_default_name() above, but mv->audioPoster/
+ * mv->audioLocalPath/mv->audioKey (this channel's own fields) and the
+ * extension taken from the source URL instead of sniffed magic bytes:
+ * audio cache files are hash-named, no extension, and there's no
+ * BmImage_SniffFormat equivalent for audio -- the URL is the only source
+ * left (same one FS3EMediaView_ShowAudioUrl's backend detection already
+ * reads). */
+static void mediaview_build_audio_default_name(FS3EMediaView *mv, char *out, ULONG outSize)
 {
     char sanitized[128];
     char extBuf[16];
     const char *base;
     const char *ext;
+    const char *dot;
 
-    if (mv->poster[0]) {
-        const char *src = mv->poster;
-        ULONG i = 0;
-        if (*src == '@') src++;
-        for (; *src && i < sizeof(sanitized) - 1; src++) {
-            char c = *src;
-            if (c == '/' || c == ':') c = '_';
-            sanitized[i++] = c;
-        }
-        sanitized[i] = '\0';
+    if (mv->audioPoster[0]) {
+        mediaview_sanitize_poster(mv->audioPoster, sanitized, sizeof(sanitized));
         base = sanitized;
-    } else if (mv->isAudio) {
-        base = (const char *)FilePart((STRPTR)(mv->audioLocalPath[0] ? mv->audioLocalPath : "audio"));
     } else {
-        base = (const char *)FilePart((STRPTR)(mv->image.filePath ? mv->image.filePath : "media"));
+        base = (const char *)FilePart((STRPTR)(mv->audioLocalPath[0] ? mv->audioLocalPath : "audio"));
     }
 
-    if (mv->isAudio) {
-        /* Cache files are hash-named, no extension -- take it from the
-         * attachment URL instead (same source FS3EMediaView_ShowAudioUrl's
-         * backend detection already reads). */
-        const char *dot = strrchr(mv->audioKey, '.');
-        if (dot && strlen(dot) < sizeof(extBuf)) {
-            strcpy(extBuf, dot);
-            ext = extBuf;
-        } else {
-            ext = ".dat";
-        }
+    dot = strrchr(mv->audioKey, '.');
+    if (dot && strlen(dot) < sizeof(extBuf)) {
+        strcpy(extBuf, dot);
+        ext = extBuf;
     } else {
-        switch (BmImage_SniffFormat(mv->image.filePath)) {
-            case BMFMT_PNG:  ext = ".png";  break;
-            case BMFMT_JPEG: ext = ".jpg";  break;
-            case BMFMT_GIF:  ext = ".gif";  break;
-            case BMFMT_WEBP: ext = ".webp"; break;
-            case BMFMT_BMP:  ext = ".bmp";  break;
-            default:         ext = ".dat";  break;
-        }
+        ext = ".dat";
     }
 
     snprintf(out, (size_t)outSize, "%s%s", base, ext);
@@ -601,28 +677,25 @@ static BOOL mediaview_copy_file(const char *srcPath, const char *dstPath)
     return ok;
 }
 
-/* "Save Media..." action: ASL file requester defaulting to RAM: and the
- * name mediaview_build_default_name() derives, then a plain file copy from
- * the cache -- no re-fetch, no re-encode. Silently does nothing if no
- * image is currently loaded (still loading, or the fetch failed) or if
- * asl.library isn't open. */
-static void mediaview_save_media(FS3EMediaView *mv)
+/* "Save Image..." action: ASL file requester defaulting to RAM: and the
+ * name mediaview_build_image_default_name() derives, then a plain file
+ * copy from the cache -- no re-fetch, no re-encode. Silently does nothing
+ * if no image is currently loaded (still loading, or the fetch failed) or
+ * if asl.library isn't open. Independent of the audio channel -- see
+ * mediaview_save_audio() below. */
+static void mediaview_save_image(FS3EMediaView *mv)
 {
     struct FileRequester *req;
     char defaultName[160];
 
     if (!mv->window || !AslBase) return;
-    if (mv->isAudio) {
-        if (!mv->audioLocalPath[0]) return;
-    } else {
-        if (!BmImage_IsLoaded(&mv->image) || !mv->image.filePath) return;
-    }
+    if (!BmImage_IsLoaded(&mv->image) || !mv->image.filePath) return;
 
-    mediaview_build_default_name(mv, defaultName, sizeof(defaultName));
+    mediaview_build_image_default_name(mv, defaultName, sizeof(defaultName));
 
     req = (struct FileRequester *)AllocAslRequestTags(ASL_FileRequest,
         ASLFR_Window,        (ULONG)mv->window,
-        ASLFR_TitleText,     (ULONG)"Save Media",
+        ASLFR_TitleText,     (ULONG)"Save Image",
         ASLFR_DoSaveMode,    TRUE,
         ASLFR_RejectIcons,   TRUE,
         ASLFR_InitialDrawer, (ULONG)"RAM:",
@@ -640,23 +713,67 @@ static void mediaview_save_media(FS3EMediaView *mv)
         snprintf(destPath, sizeof(destPath), "%s%s%s",
                  req->fr_Drawer, needSlash ? "/" : "", req->fr_File);
 
-        mediaview_copy_file(mv->isAudio ? mv->audioLocalPath : mv->image.filePath, destPath);
+        mediaview_copy_file(mv->image.filePath, destPath);
+    }
+
+    FreeAslRequest(req);
+}
+
+/* "Save Audio..." action -- same rationale as mediaview_save_image()
+ * above, but this channel's own fields (mv->hasAudio/audioLocalPath/
+ * mediaview_build_audio_default_name()). Silently does nothing if no
+ * audio attachment is currently loaded. Independent of the image
+ * channel. */
+static void mediaview_save_audio(FS3EMediaView *mv)
+{
+    struct FileRequester *req;
+    char defaultName[160];
+
+    if (!mv->window || !AslBase) return;
+    if (!mv->hasAudio || !mv->audioLocalPath[0]) return;
+
+    mediaview_build_audio_default_name(mv, defaultName, sizeof(defaultName));
+
+    req = (struct FileRequester *)AllocAslRequestTags(ASL_FileRequest,
+        ASLFR_Window,        (ULONG)mv->window,
+        ASLFR_TitleText,     (ULONG)"Save Audio",
+        ASLFR_DoSaveMode,    TRUE,
+        ASLFR_RejectIcons,   TRUE,
+        ASLFR_InitialDrawer, (ULONG)"RAM:",
+        ASLFR_InitialFile,   (ULONG)defaultName,
+        TAG_DONE);
+    if (!req) return;
+
+    if (AslRequest(req, NULL)) {
+        char destPath[512];
+        ULONG dirLen = (ULONG)strlen((char *)req->fr_Drawer);
+        BOOL  needSlash = dirLen > 0 &&
+                          req->fr_Drawer[dirLen - 1] != ':' &&
+                          req->fr_Drawer[dirLen - 1] != '/';
+
+        snprintf(destPath, sizeof(destPath), "%s%s%s",
+                 req->fr_Drawer, needSlash ? "/" : "", req->fr_File);
+
+        mediaview_copy_file(mv->audioLocalPath, destPath);
     }
 
     FreeAslRequest(req);
 }
 
 /* Stops whatever audio attachment mv is currently playing/paused (if any)
- * and clears the audio-mode state back to inert -- shared by Dispose(),
- * ShowUrl() (switching to a picture) and ShowAudioUrl() (switching to a
- * different audio attachment). Leaves audioRequestPort/audioReplyPort
- * as-is; they're either about to be overwritten by ShowAudioUrl, or
- * harmless-but-unused while isAudio is FALSE otherwise. */
+ * and clears the audio channel's state back to inert -- shared by
+ * Dispose()/Close() and ShowAudioUrl() (switching to a different audio
+ * attachment; the audio channel only ever holds one track at a time,
+ * unlike image-vs-audio which coexist -- see fs3emediaview.h's "two
+ * channels" note). Never touches the image channel (mv->image). Leaves
+ * audioRequestPort/audioReplyPort as-is; they're either about to be
+ * overwritten by ShowAudioUrl, or harmless-but-unused while hasAudio is
+ * FALSE otherwise. */
 static void mediaview_stop_audio(FS3EMediaView *mv)
 {
-    if (mv->isAudio && (mv->audioPlaying || mv->audioPaused))
+    if (mv->hasAudio && (mv->audioPlaying || mv->audioPaused))
         FS3EAudio_PlayStop(mv->audioRequestPort, mv->audioReplyPort);
-    mv->isAudio          = FALSE;
+    mv->hasAudio         = FALSE;
     mv->audioBackend     = FS3EMV_AUDIO_NONE;
     mv->audioPlaying     = FALSE;
     mv->audioPaused      = FALSE;
@@ -697,7 +814,8 @@ void FS3EMediaView_Dispose(FS3EMediaView *mv)
     }
 
     BmImage_Free(&mv->image);
-    if (mv->pendingUrl) { FreeVec(mv->pendingUrl); mv->pendingUrl = NULL; }
+    if (mv->pendingImageUrl) { FreeVec(mv->pendingImageUrl); mv->pendingImageUrl = NULL; }
+    if (mv->pendingAudioUrl) { FreeVec(mv->pendingAudioUrl); mv->pendingAudioUrl = NULL; }
 }
 
 /* Keeps tapedeck.gadget's two independent attributes -- TDECK_Mode (the
@@ -716,17 +834,11 @@ static void mediaview_sync_tapedeck(FS3EMediaView *mv)
         TAG_END);
 }
 
-void FS3EMediaView_ShowUrl(FS3EMediaView *mv, const char *url, const char *posterAcct)
+void FS3EMediaView_Open(FS3EMediaView *mv)
 {
-    FS3ENetFetchImageReq *req;
-
-    if (!mv || !url || !url[0]) return;
-
     if (!mv->windowObj) {
-        if (!CurrentMainScreen) return;
-        if (!mediaview_ensure_window(mv)) return;
+        return;
     }
-
     if (!mv->window) {
         if (CurrentMainScreen)
             SetAttrs(mv->windowObj, WA_CustomScreen, (ULONG)CurrentMainScreen, TAG_END);
@@ -738,23 +850,43 @@ void FS3EMediaView_ShowUrl(FS3EMediaView *mv, const char *url, const char *poste
         WindowToFront(mv->window);
         ActivateWindow(mv->window);
     }
+}
 
-    if (posterAcct && posterAcct[0]) {
-        strncpy(mv->poster, posterAcct, sizeof(mv->poster) - 1);
-        mv->poster[sizeof(mv->poster) - 1] = '\0';
-    } else {
-        mv->poster[0] = '\0';
+
+void FS3EMediaView_ShowUrl(FS3EMediaView *mv, const char *url, const char *posterAcct)
+{
+    FS3ENetFetchImageReq *req;
+
+    if (!mv || !url || !url[0]) return;
+
+    if (!mv->windowObj) {
+        if (!CurrentMainScreen) return;
+        if (!mediaview_ensure_window(mv)) return;
     }
 
-    mediaview_stop_audio(mv);
+    FS3EMediaView_Open(mv);
 
-    if (mv->pendingUrl) { FreeVec(mv->pendingUrl); mv->pendingUrl = NULL; }
-    mv->pendingUrl = mediaview_strdup(url);
+
+    if (posterAcct && posterAcct[0]) {
+        strncpy(mv->imagePoster, posterAcct, sizeof(mv->imagePoster) - 1);
+        mv->imagePoster[sizeof(mv->imagePoster) - 1] = '\0';
+    } else {
+        mv->imagePoster[0] = '\0';
+    }
+
+    if (mv->pendingImageUrl && strcmp(url, mv->pendingImageUrl) == 0) return;
+
+    /* The audio channel, if any, is left exactly as it was -- see
+     * fs3emediaview.h's "two channels" note. An earlier version of this
+     * function stopped/cleared audio here too. */
+
+    if (mv->pendingImageUrl) { FreeVec(mv->pendingImageUrl); mv->pendingImageUrl = NULL; }
+    mv->pendingImageUrl = mediaview_strdup(url);
     mv->progressBytesSoFar = 0;
     mv->progressTotalBytes = 0;
 
     BmImage_Free(&mv->image);
-    mv->loading = TRUE;
+    mv->imageLoading = TRUE;
     mediaview_push_picture(mv, "Loading media...");
 
     /* keepOriginal=TRUE: an explicit click means the user wants this image,
@@ -827,43 +959,32 @@ void FS3EMediaView_ShowAudioUrl(FS3EMediaView *mv, const char *url,
         if (!mediaview_ensure_window(mv)) return;
     }
 
-    if (!mv->window) {
-        if (CurrentMainScreen)
-            SetAttrs(mv->windowObj, WA_CustomScreen, (ULONG)CurrentMainScreen, TAG_END);
-
-        mv->window = (struct Window *)DoMethod(mv->windowObj, WM_OPEN, NULL);
-        if (mv->window)
-            mediaview_create_menu(mv);
-    } else {
-        WindowToFront(mv->window);
-        ActivateWindow(mv->window);
-    }
+    FS3EMediaView_Open(mv);
 
     if (posterAcct && posterAcct[0]) {
-        strncpy(mv->poster, posterAcct, sizeof(mv->poster) - 1);
-        mv->poster[sizeof(mv->poster) - 1] = '\0';
+        strncpy(mv->audioPoster, posterAcct, sizeof(mv->audioPoster) - 1);
+        mv->audioPoster[sizeof(mv->audioPoster) - 1] = '\0';
     } else {
-        mv->poster[0] = '\0';
+        mv->audioPoster[0] = '\0';
     }
 
-    /* Stop whatever audio attachment was previously showing in this same
-     * window before switching to a new one -- ShowUrl()'s picture path
-     * uses the same helper for the reverse direction. */
+    /* Stop whatever audio attachment was previously playing in this same
+     * window before switching to a new one -- the audio channel only ever
+     * holds one track at a time. The image channel, if any, is left
+     * exactly as it was -- see fs3emediaview.h's "two channels" note. An
+     * earlier version of this function also cleared mv->image here. */
     mediaview_stop_audio(mv);
-    BmImage_Free(&mv->image);
 
-    if (mv->pendingUrl) { FreeVec(mv->pendingUrl); mv->pendingUrl = NULL; }
-    mv->pendingUrl = mediaview_strdup(url);
-    mv->progressBytesSoFar = 0;
-    mv->progressTotalBytes = 0;
+    if (mv->pendingAudioUrl) { FreeVec(mv->pendingAudioUrl); mv->pendingAudioUrl = NULL; }
+    mv->pendingAudioUrl = mediaview_strdup(url);
 
-    mv->isAudio           = TRUE;
+    mv->hasAudio           = TRUE;
     mv->audioRequestPort  = audioRequestPort;
     mv->audioReplyPort    = audioReplyPort;
     strncpy(mv->audioKey, url, sizeof(mv->audioKey) - 1);
     mv->audioKey[sizeof(mv->audioKey) - 1] = '\0';
 
-    mv->loading = TRUE;
+    mv->audioLoading = TRUE;
     mediaview_push_picture(mv, "Loading audio...");
     mediaview_sync_tapedeck(mv);
 
@@ -878,46 +999,71 @@ void FS3EMediaView_ShowAudioUrl(FS3EMediaView *mv, const char *url,
 void FS3EMediaView_OnFetchReply(FS3EMediaView *mv, ULONG result,
                                  const FS3ENetFetchImageReply *reply)
 {
-    if (!mv || !mv->pendingUrl || !reply || !reply->fs3enf_Key) return;
-    if (strcmp(reply->fs3enf_Key, mv->pendingUrl) != 0) return;
+    if (!mv || !reply || !reply->fs3enf_Key) return;
 
-    FreeVec(mv->pendingUrl);
-    mv->pendingUrl = NULL;
-    mv->loading    = FALSE;
+    /* Two independent channels, two independent pending fetches -- see
+     * fs3emediaview.h's "two channels" note. Checked in turn rather than a
+     * single shared pendingUrl (this function's earlier, single-channel
+     * design), since both can have a download in flight at once. */
+    if (mv->pendingImageUrl && strcmp(reply->fs3enf_Key, mv->pendingImageUrl) == 0) {
+        FreeVec(mv->pendingImageUrl);
+        mv->pendingImageUrl = NULL;
+        mv->imageLoading    = FALSE;
 
-    if (mv->isAudio) {
-        mediaview_start_audio(mv, result, reply);
+        if (result == FS3ENETR_OK && reply->fs3enf_LocalPath) {
+            BOOL   ok;
+            UWORD  maxW = 0, maxH = 0;
+
+            /* Cap at the screen size (minus a margin) rather than always
+             * showing a toot attachment at its full native resolution --
+             * PDTM_SCALE halves it once, in-datatype, if it doesn't fit
+             * (see BmImage_LoadFitScreen's own doc comment in bmimage.h
+             * for why this is a single halving, not a fit-to-bounds loop,
+             * and why it's not the same pipeline BmImage_LoadScaled()
+             * uses for thumbnails). */
+            if (CurrentMainScreen) {
+                maxW = (UWORD)(CurrentMainScreen->Width  > 64 ? CurrentMainScreen->Width  - 64 : CurrentMainScreen->Width);
+                maxH = (UWORD)(CurrentMainScreen->Height > 64 ? CurrentMainScreen->Height - 64 : CurrentMainScreen->Height);
+            }
+
+            BmImage_Free(&mv->image);
+            ok = BmImage_Init(&mv->image, reply->fs3enf_LocalPath) &&
+                 BmImage_LoadFitScreen(&mv->image, CurrentMainScreen, maxW, maxH);
+            if (ok) {
+                mediaview_push_picture(mv, NULL);
+            } else {
+                mediaview_push_picture(mv, "Couldn't display this image.");
+            }
+
+            /* fs3enf_IsTemp: a RAM:T download we're the last user of (see its
+             * doc comment in fs3enet.h) -- the persistent-cache case (the
+             * common one now that we always request keepOriginal=TRUE) needs
+             * no cleanup, that copy is meant to stay, and is exactly what
+             * mv->image.filePath/"Save Image..." expect to still be on disk. */
+            if (reply->fs3enf_IsTemp)
+                DeleteFile((STRPTR)reply->fs3enf_LocalPath);
+        } else {
+            BmImage_Free(&mv->image);
+            mediaview_push_picture(mv, "Couldn't load media.");
+        }
         return;
     }
 
-    if (result == FS3ENETR_OK && reply->fs3enf_LocalPath) {
-        BmImage_Free(&mv->image);
-        if (BmImage_Init(&mv->image, reply->fs3enf_LocalPath) &&
-            BmImage_Load(&mv->image, CurrentMainScreen))
-        {
-            mediaview_push_picture(mv, NULL);
-        } else {
-            mediaview_push_picture(mv, "Couldn't display this image.");
-        }
+    if (mv->pendingAudioUrl && strcmp(reply->fs3enf_Key, mv->pendingAudioUrl) == 0) {
+        FreeVec(mv->pendingAudioUrl);
+        mv->pendingAudioUrl = NULL;
+        mv->audioLoading    = FALSE;
 
-        /* fs3enf_IsTemp: a RAM:T download we're the last user of (see its
-         * doc comment in fs3enet.h) -- the persistent-cache case (the
-         * common one now that we always request keepOriginal=TRUE) needs
-         * no cleanup, that copy is meant to stay, and is exactly what
-         * mv->image.filePath/"Save Media..." expect to still be on disk. */
-        if (reply->fs3enf_IsTemp)
-            DeleteFile((STRPTR)reply->fs3enf_LocalPath);
-    } else {
-        BmImage_Free(&mv->image);
-        mediaview_push_picture(mv, "Couldn't load media.");
+        mediaview_start_audio(mv, result, reply);
+        return;
     }
 }
 
 void FS3EMediaView_OnFetchProgress(FS3EMediaView *mv, const char *key,
                                     ULONG bytesSoFar, ULONG totalBytes)
 {
-    if (!mv || !mv->pendingUrl || !key) return;
-    if (strcmp(key, mv->pendingUrl) != 0) return;
+    if (!mv || !mv->pendingImageUrl || !key) return;
+    if (strcmp(key, mv->pendingImageUrl) != 0) return;
 
     mv->progressBytesSoFar = bytesSoFar;
     mv->progressTotalBytes = totalBytes;
@@ -925,7 +1071,7 @@ void FS3EMediaView_OnFetchProgress(FS3EMediaView *mv, const char *key,
 
 void FS3EMediaView_OnAudioReply(FS3EMediaView *mv, const FS3EAudioMessage *msg)
 {
-    if (!mv || !mv->isAudio || !msg) return;
+    if (!mv || !mv->hasAudio || !msg) return;
     if (strcmp(msg->fs3eam_Key, mv->audioKey) != 0) return;
 
     switch (msg->fs3eam_Result) {
@@ -1027,7 +1173,7 @@ void FS3EMediaView_TapeDeckPressed(FS3EMediaView *mv)
     ULONG mode;
     ULONG paused = FALSE;
 
-    if (!mv || !mv->isAudio || !mv->tapeDeckGadget) return;
+    if (!mv || !mv->hasAudio || !mv->tapeDeckGadget) return;
     if (mv->audioBackend != FS3EMV_AUDIO_MPEGA) return;
 
     if (!GetAttr(TDECK_Mode, mv->tapeDeckGadget, &mode)) return;
@@ -1083,7 +1229,7 @@ void FS3EMediaView_SliderMoved(FS3EMediaView *mv, ULONG newLevel)
 {
     ULONG seekMs;
 
-    if (!mv || !mv->isAudio || mv->audioBackend != FS3EMV_AUDIO_MPEGA) return;
+    if (!mv || !mv->hasAudio || mv->audioBackend != FS3EMV_AUDIO_MPEGA) return;
     if (mv->audioTotalMs == 0) return; /* nothing seekable known yet */
     if (newLevel > 100) newLevel = 100;
 
@@ -1162,8 +1308,11 @@ BOOL FS3EMediaView_HandleInput(FS3EMediaView *mv)
                         case FS3EMV_MENU_CLOSE:
                             FS3EMediaView_Close(mv);
                             return TRUE;
-                        case FS3EMV_MENU_SAVE:
-                            mediaview_save_media(mv);
+                        case FS3EMV_MENU_SAVE_IMAGE:
+                            mediaview_save_image(mv);
+                            break;
+                        case FS3EMV_MENU_SAVE_AUDIO:
+                            mediaview_save_audio(mv);
                             break;
                         default:
                             break;

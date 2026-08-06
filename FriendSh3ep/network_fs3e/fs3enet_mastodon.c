@@ -203,7 +203,7 @@ BOOL FS3EMastodon_ExchangeCode(const char *apiBaseUrl, const char *clientId,
 }
 
 BOOL FS3EMastodon_VerifyCredentials(const char *apiBaseUrl, const char *accessToken,
-                                   FS3EMastodonAccount *outAccount)
+                                   FS3EMastodonAccount *outAccount, BOOL *outRejected)
 {
     char url[256];
     char authHeader[300];
@@ -211,6 +211,8 @@ BOOL FS3EMastodon_VerifyCredentials(const char *apiBaseUrl, const char *accessTo
     FS3EHttpResponse resp;
     cJSON *json;
     BOOL ok = FALSE;
+
+    if (outRejected) *outRejected = FALSE;
 
     snprintf(url, sizeof(url), "%s/api/v1/accounts/verify_credentials", apiBaseUrl);
     FS3EMastodon_BuildAuthHeader(authHeader, sizeof(authHeader), accessToken);
@@ -220,8 +222,10 @@ BOOL FS3EMastodon_VerifyCredentials(const char *apiBaseUrl, const char *accessTo
     headers[1].fhh_Name  = NULL;
     headers[1].fhh_Value = NULL;
 
-    if (!FS3EHttp_Get(url, headers, &resp))
+    if (!FS3EHttp_Get(url, headers, &resp)) {
+        bdbprintf_now("FS3EMastodon_VerifyCredentials: FS3EHttp_Get failed outright, url=%s\n", url);
         return FALSE;
+    }
 
     json = cJSON_Parse((char *)resp.fhr_Body);
     if (json)
@@ -234,7 +238,27 @@ BOOL FS3EMastodon_VerifyCredentials(const char *apiBaseUrl, const char *accessTo
 
         ok = (outAccount->fma_Id != NULL);
 
+        /* Got a real, parseable response from the server -- just not one
+         * with an account "id" in it (Mastodon's own shape for a rejected
+         * token is {"error":"The access token is invalid"}). That's a
+         * confirmed rejection of THIS token, not an ambiguous network
+         * failure -- see outRejected's doc comment in the header. */
+        if (!ok && outRejected) *outRejected = TRUE;
+
         cJSON_Delete(json);
+    }
+
+    if (!ok) {
+        char preview[201];
+        ULONG plen = resp.fhr_BodyLen < 200 ? resp.fhr_BodyLen : 200;
+        if (resp.fhr_Body) {
+            CopyMem(resp.fhr_Body, preview, plen);
+            preview[plen] = '\0';
+        } else {
+            preview[0] = '\0';
+        }
+        bdbprintf_now("FS3EMastodon_VerifyCredentials: rejected (rejected=%s), url=%s body=%s\n",
+                       (outRejected && *outRejected) ? "yes" : "no", url, preview);
     }
 
     FS3EHttp_FreeResponse(&resp);
@@ -315,9 +339,18 @@ BOOL FS3EMastodon_GetInstanceInfo(const char *apiBaseUrl, ULONG *outMaxChars)
 #define FS3ENET_TLSHAPE_SEARCH_ACCOUNTS     5
 #define FS3ENET_TLSHAPE_CONTEXT_ANCESTORS   6
 
+/* Exact body Mastodon's Doorkeeper layer sends for an anonymous request to
+ * an endpoint whose "timeline preview" admin setting is off (seen on
+ * mastodon.social's timelines/public even though that's nominally a public
+ * endpoint) -- see outAuthRequired's doc comment in fs3enet_mastodon.h. A
+ * substring match on the raw body rather than re-parsing the already-known-
+ * not-to-be-our-shape JSON object: cheaper, and doesn't care whether
+ * Mastodon ever adds more fields alongside "error" in this response. */
+#define FS3EMASTODON_AUTH_REQUIRED_MARKER "requires an authenticated user"
+
 BOOL FS3EMastodon_GetTimeline(const char *apiBaseUrl, const char *accessToken,
                              const char *timeline, ULONG responseShape,
-                             cJSON **outJson)
+                             cJSON **outJson, BOOL *outAuthRequired)
 {
     char url[512];
     char authHeader[300];
@@ -326,6 +359,7 @@ BOOL FS3EMastodon_GetTimeline(const char *apiBaseUrl, const char *accessToken,
     cJSON *json;
 
     *outJson = NULL;
+    if (outAuthRequired) *outAuthRequired = FALSE;
 
     /* "timeline" already carries the full path for the SINGLE/CONTEXT_
      * DESCENDANTS/SEARCH_STATUSES shapes too (e.g. "statuses/123",
@@ -351,6 +385,8 @@ BOOL FS3EMastodon_GetTimeline(const char *apiBaseUrl, const char *accessToken,
 
 
     if (!FS3EHttp_Get(url, headers, &resp)) {
+        bdbprintf_now("FS3EMastodon_GetTimeline: FS3EHttp_Get failed outright, url=%s auth=%s\n",
+                       url, (accessToken && accessToken[0]) ? "yes" : "no");
         return FALSE;
     }
 
@@ -403,9 +439,19 @@ BOOL FS3EMastodon_GetTimeline(const char *apiBaseUrl, const char *accessToken,
 
     if (!json || !cJSON_IsArray(json))
     {
+        /* Not a real parse-error case in practice (see below) -- Mastodon's
+         * error responses (401 "invalid token", 403, 422 missing scope, a
+         * 5xx HTML error page, ...) are still well-formed JSON/HTML, just
+         * not the array shape a healthy reply has here. cJSON_GetErrorPtr()
+         * only fires on genuinely malformed JSON, so it's usually NULL --
+         * the body preview below is what actually explains the failure. */
         if (!json) {
             const char *errptr = cJSON_GetErrorPtr();
+            bdbprintf_now("FS3EMastodon_GetTimeline: JSON parse failed near \"%.60s\", url=%s\n",
+                           errptr ? errptr : "(unknown)", url);
         } else {
+            bdbprintf_now("FS3EMastodon_GetTimeline: response wasn't an array (shape=%lu), url=%s\n",
+                           responseShape, url);
             cJSON_Delete(json);
             json = NULL;
         }
@@ -415,6 +461,14 @@ BOOL FS3EMastodon_GetTimeline(const char *apiBaseUrl, const char *accessToken,
             ULONG plen = resp.fhr_BodyLen < 200 ? resp.fhr_BodyLen : 200;
             CopyMem(resp.fhr_Body, preview, plen);
             preview[plen] = '\0';
+            bdbprintf_now("FS3EMastodon_GetTimeline: body preview (%lu bytes total): %s\n",
+                           resp.fhr_BodyLen, preview);
+
+            if (outAuthRequired &&
+                strstr((char *)resp.fhr_Body, FS3EMASTODON_AUTH_REQUIRED_MARKER))
+                *outAuthRequired = TRUE;
+        } else {
+            bdbprintf_now("FS3EMastodon_GetTimeline: empty body, url=%s\n", url);
         }
         FS3EHttp_FreeResponse(&resp);
         return FALSE;

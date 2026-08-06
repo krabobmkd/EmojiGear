@@ -267,6 +267,8 @@ TTLPost *ttl_post_alloc(const TTLPostSetup *setup)
         for (mi = 0; mi < post->mediaCount; mi++) {
             post->mediaUrls[mi] = (setup->mediaUrls[mi] && setup->mediaUrls[mi][0])
                                  ? dup_str(setup->mediaUrls[mi]) : NULL;
+            post->mediaAudioUrls[mi] = (setup->mediaAudioUrls[mi] && setup->mediaAudioUrls[mi][0])
+                                      ? dup_str(setup->mediaAudioUrls[mi]) : NULL;
             post->mediaKinds[mi] = setup->mediaKinds[mi];
         }
 
@@ -397,8 +399,10 @@ void ttl_post_refresh_fields(TTLPost *post, const TTLPostSetup *setup)
     if (post->quoteAvatarURL)  FreeVec(post->quoteAvatarURL);
     if (post->quoteBody)       FreeVec(post->quoteBody);
     if (post->quoteTimestamp)  FreeVec(post->quoteTimestamp);
-    for (mi = 0; mi < post->mediaCount; mi++)
+    for (mi = 0; mi < post->mediaCount; mi++) {
         if (post->mediaUrls[mi]) FreeVec(post->mediaUrls[mi]);
+        if (post->mediaAudioUrls[mi]) FreeVec(post->mediaAudioUrls[mi]);
+    }
     for (mi = 0; mi < post->pollOptionCount; mi++)
         if (post->pollOptionTitles[mi]) FreeVec(post->pollOptionTitles[mi]);
 
@@ -416,6 +420,8 @@ void ttl_post_refresh_fields(TTLPost *post, const TTLPostSetup *setup)
     for (mi = 0; mi < post->mediaCount; mi++) {
         post->mediaUrls[mi] = (setup->mediaUrls[mi] && setup->mediaUrls[mi][0])
                              ? dup_str(setup->mediaUrls[mi]) : NULL;
+        post->mediaAudioUrls[mi] = (setup->mediaAudioUrls[mi] && setup->mediaAudioUrls[mi][0])
+                                  ? dup_str(setup->mediaAudioUrls[mi]) : NULL;
         post->mediaKinds[mi] = setup->mediaKinds[mi];
     }
 
@@ -550,8 +556,10 @@ static void ttl_toot_dispose(TTLPost *post)
     if (post->quoteTimestamp)  FreeVec(post->quoteTimestamp);
     {
         ULONG mi;
-        for (mi = 0; mi < post->mediaCount; mi++)
+        for (mi = 0; mi < post->mediaCount; mi++) {
             if (post->mediaUrls[mi]) FreeVec(post->mediaUrls[mi]);
+            if (post->mediaAudioUrls[mi]) FreeVec(post->mediaAudioUrls[mi]);
+        }
         for (mi = 0; mi < post->pollOptionCount; mi++)
             if (post->pollOptionTitles[mi]) FreeVec(post->pollOptionTitles[mi]);
         for (mi = 0; mi < post->cardTitleLineCount; mi++)

@@ -133,6 +133,14 @@
  * TTL_HOT_IMAGE, to build a meaningful default filename for "Save
  * Media..." (see fs3emediaview.c). */
 #define TTIMELINE_LastHotSpotAcct     (TTIMELINE_Base + 32)
+/* [G] STRPTR: the currently-shown attachment's real, playable file URL
+ * (see TTLPostSetup.mediaAudioUrls), or NULL/"" if unknown -- currently
+ * only meaningfully different from TTIMELINE_LastHotSpotString for
+ * TTL_HOT_PLAY_AUDIO, when that attachment also has separate cover art
+ * (TTIMELINE_LastHotSpotString is then the cover IMAGE, this is the
+ * actual audio file to play). Same buffer/pointer as the accompanying
+ * TTIMELINE_HotSpotNotify notification's tag of the same name. */
+#define TTIMELINE_LastHotSpotAudioUrl (TTIMELINE_Base + 41)
 /* [G] STRPTR: Mastodon status id (see TTLPostSetup.postId) of the active
  * channel's newest real post -- skips any non-toot pinned boundary row
  * (e.g. a "look for something new" item, which has no postId; see
@@ -244,8 +252,11 @@
  * hot-spot's data string, e.g. an @handle/#tag/URL, or NULL),
  * TTIMELINE_LastHotSpotPostId (that post's Mastodon status id, or NULL),
  * TTIMELINE_LastHotSpotMediaIds (that post's comma-joined attachment
- * ids, or NULL), and TTIMELINE_LastHotSpotAcct (that post's original
- * author @user@instance, or NULL) -- read them via FindTagItem on the
+ * ids, or NULL), TTIMELINE_LastHotSpotAcct (that post's original
+ * author @user@instance, or NULL), and TTIMELINE_LastHotSpotAudioUrl
+ * (the currently-shown attachment's real playable file URL, or NULL --
+ * see its own doc comment for why this can differ from
+ * TTIMELINE_LastHotSpotString) -- read them via FindTagItem on the
  * notify message rather than a separate GetAttr call. See
  * ttl_notify_hotspot() in fs3etoottimeline_tiles.c. */
 #define TTIMELINE_HotSpotNotify       (TTIMELINE_Base + 24)
@@ -414,7 +425,25 @@ typedef struct TTLPostSetup {
                                * NULL past mediaCount. Gadget copies each
                                * string and drives its own fetch/thumbnail/
                                * draw pipeline the same way it does for
-                               * avatars -- see AvatarImages_GetMedia. */
+                               * avatars -- see AvatarImages_GetMedia. For a
+                               * TTL_MEDIA_KIND_AUDIO slot that has separate
+                               * cover art, this is that cover IMAGE, not
+                               * the audio -- see mediaAudioUrls below. */
+    const char *mediaAudioUrls[TTL_POST_MAX_MEDIA]; /* attachment's real file
+                               * URL (Mastodon's media_attachments[].url,
+                               * unconditionally -- never a preview_url
+                               * fallback), same indexing as mediaUrls. Not
+                               * shown/fetched for anything but a
+                               * TTL_MEDIA_KIND_AUDIO slot; kept for every
+                               * slot regardless only because it costs
+                               * nothing extra to carry through uniformly.
+                               * ttl_activate_hotspot() reads
+                               * mediaAudioUrls[mediaCurrentIndex] instead of
+                               * mediaUrls[...] specifically for
+                               * TTL_HOT_PLAY_AUDIO, so a cover-art audio
+                               * attachment still finds its actual playable
+                               * file even though mediaUrls[...] points at
+                               * the cover instead. NULL past mediaCount. */
     ULONG       mediaKinds[TTL_POST_MAX_MEDIA]; /* TTL_MEDIA_KIND_* per slot,
                                * same indexing as mediaUrls. */
     const char *mediaIds[TTL_POST_MAX_MEDIA]; /* attachment ids (see

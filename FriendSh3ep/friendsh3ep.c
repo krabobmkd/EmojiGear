@@ -340,9 +340,45 @@ void FS3EApp_CheckConnectionState(void)
         if (!app->netRequestPort) {
             text = "No connection.\n"
                    "Need internet and AmiSSLv5.";
-        } else if (!app->accountAccessToken) {
+        } else if (!app->accountApiBaseUrl) {
+            /* True "never connected to anything" -- distinct from an
+             * anonymous account (accountApiBaseUrl set, accountAccessToken
+             * NULL, see FS3EACCOUNT_ANON_ACCT's doc comment in
+             * fs3eaccounts.h), which falls through to the branches below
+             * instead. Since FS3EApp_SeedDefaultAnonymousAccount() seeds
+             * one at first launch, this should now only ever show if that
+             * seeding itself failed (e.g. account.dat couldn't be written)
+             * or the user has actively removed every account. */
             text = "No account.\n"
                    "Open the Login window to connect.";
+        } else if (app->accountTokenRejected) {
+            /* See accountTokenRejected's doc comment in friendsh3ep.h --
+             * the server has positively rejected this token (not just "no
+             * network"). Deliberately worded differently from the
+             * anonymous-connexion branch below: this account used to have
+             * a real, working login, so this is a regression to flag, not
+             * the normal/expected state of an account that was never
+             * logged in to begin with. Shown regardless of app->viewMode,
+             * same as "No account." above -- Local/Federated/a profile's
+             * own statuses still work (Mastodon falls back to anonymous
+             * access for a rejected token), but Home/Notifications/Search
+             * will keep failing until the user logs back in. */
+            text = "Your token has expired.\n"
+                   "You must restart the URL login.";
+        } else if (!app->accountAccessToken &&
+                   (app->viewMode == VIEWMODE_Home  || app->viewMode == VIEWMODE_Notifs ||
+                    app->viewMode == VIEWMODE_Search || app->viewMode == VIEWMODE_User))
+        {
+            /* Deliberately anonymous (see FS3EACCOUNT_ANON_ACCT's doc
+             * comment in fs3eaccounts.h) -- not an error, just a reduced-
+             * capability connection: Local/Federated work anonymously (see
+             * FS3EApp_FetchTimeline's Local/Fed carve-out) and fall through
+             * to the ordinary per-channel logic below; these four channels
+             * don't, and are never even fetched for an anonymous account,
+             * so there is no timelineErrorMask/timelineFetchedMask bit to
+             * key off here -- just say why nothing is happening. */
+            text = "Anonymous connexion.\n"
+                   "Open the Login window to add an account.";
         } else {
             bit = (1UL << app->viewMode);
             if (app->timelineErrorMask & bit) {
@@ -370,6 +406,16 @@ void FS3EApp_CheckConnectionState(void)
                         break;
                     case FS3ENETR_AUTH_ERROR:
                         text = "Authentication failed.";   break;
+                    case FS3ENETR_AUTH_REQUIRED:
+                        /* Confirmed server policy, not a transient error --
+                         * see FS3ENETR_AUTH_REQUIRED's doc comment in
+                         * fs3enet.h. Most likely to be hit here by an
+                         * anonymous account (see FS3EACCOUNT_ANON_ACCT) on
+                         * Local/Fed, since that's the one combination that
+                         * otherwise looks like it should just work. */
+                        text = "This server requires login to view this.\n"
+                               "Try a different server, or log in.";
+                        break;
                     default:
                         text = "Connection error.";        break;
                 }
@@ -396,7 +442,12 @@ void FS3EApp_CheckConnectionState(void)
                  * read as if the search hadn't actually run. */
                 text = "Nothing found.";
             } else {
-                text = "Account connected.";
+                /* Reached for Local/Fed under an anonymous account too
+                 * (see the !accountAccessToken branch above, which only
+                 * intercepts Home/Notifs/Search/User) -- say so instead of
+                 * claiming a nonexistent "account". */
+                text = app->accountAccessToken ? "Account connected."
+                                                : "Browsing anonymously.";
             }
         }
     }
@@ -1055,6 +1106,7 @@ int main(int argc, char **argv)
     app = (struct App *)AllocVec(sizeof(struct App), MEMF_CLEAR);
     if (!app) cleanexit("Can't allocate app");
 
+    app->accountCurrentlyConnecting = ~0;
     /* app->accountMaxChars starts at 0 (MEMF_CLEAR) == "not confirmed by
      * the server yet" -- see its comment in friendsh3ep.h. */
 
@@ -1130,8 +1182,14 @@ int main(int argc, char **argv)
 // printf("FS3EApp_LoadAccount\n");
     /* Try to load saved credentials (and the rest of the accounts list --
      * see FS3EApp_LoadAccount); timeline fetch fires later in setViewMode */
-    FS3EApp_LoadAccount();
-    FS3EApp_BackfillAccountId();
+    if (!FS3EApp_LoadAccount()) {
+        /* Nothing at all to connect to (no account.dat, or an unreadable/
+         * unsupported one) -- see FS3EApp_SeedDefaultAnonymousAccount()'s
+         * own doc comment for why this seeds an anonymous connection
+         * instead of leaving the user staring at "No account.". */
+        FS3EApp_SeedDefaultAnonymousAccount();
+    }
+    FS3EApp_VerifyStoredAccount(); /* no-op for the anonymous account just seeded above (empty token) */
 
 // printf("FS3ELoginView_Create\n");
     /* --- Classic BOOPSI sub-windows ------------------------------------- */
@@ -1145,7 +1203,6 @@ int main(int argc, char **argv)
     if (app->accountApiBaseUrl)
         FS3ELoginView_ClearFields(&app->loginView);
 
-// printf("FS3EApp_RefreshLoginAccountsList\n");
     FS3EApp_RefreshLoginAccountsList();
 // printf("FS3EApp_RefreshLoginAccountsList done\n");
 
@@ -1465,8 +1522,11 @@ int main(int argc, char **argv)
     /* synchronize fonts against settings before first layout */
     FS3EApp_ApplyFontSettings_Delayed();
 // printf("fs3e_setViewMode\n");
-    /* home by default ? */
-    fs3e_setViewMode(VIEWMODE_Home);
+    /* Home by default for a real login -- it needs a token and would just
+     * show "No account."/an empty channel under an anonymous one (see
+     * FS3EACCOUNT_ANON_ACCT), so land on Local instead, which works either
+     * way. */
+    fs3e_setViewMode(app->accountAccessToken ? VIEWMODE_Home : VIEWMODE_Local);
 
     flushbdbprint();
 
@@ -1985,21 +2045,23 @@ int main(int argc, char **argv)
                             ptag = FindTagItem(GA_Selected, msg);
                             if (ptag /*&& ptag->ti_Data*/)  /* when push button down (selected true) */
                             {
-                                /* Resets any leftover MODIFY/REPLY compose
-                                 * state from a previous open (postId, title)
-                                 * -- doesn't touch bodyEditor's text itself,
-                                 * so an in-progress draft still survives a
-                                 * close/reopen the way it always has. */
-                                FS3ETootView_SetComposeContext(&app->tootView, FS3ETOOT_KIND_NEW, NULL);
-                                FS3ETootView_Open(&app->tootView);
+                                if (FS3EApp_RequireRealAccount()) {
+                                    /* Resets any leftover MODIFY/REPLY compose
+                                     * state from a previous open (postId, title)
+                                     * -- doesn't touch bodyEditor's text itself,
+                                     * so an in-progress draft still survives a
+                                     * close/reopen the way it always has. */
+                                    FS3ETootView_SetComposeContext(&app->tootView, FS3ETOOT_KIND_NEW, NULL);
+                                    FS3ETootView_Open(&app->tootView);
+                                }
                             }
                             break;
 
                         case GID_TITLEBAR_ACCOUNTS:
+
                             ptag = FindTagItem(GA_Selected, msg);
                             if (ptag && ptag->ti_Data == 0)  /* when push button up */
                             {
-                                FS3EApp_RefreshLoginAccountsList(); /* never stale when shown */
                                 FS3ELoginView_Open(&app->loginView);
                             }
                             break;
@@ -2015,17 +2077,25 @@ int main(int argc, char **argv)
                         /* ---- Login sub-window: phase 1 ---- */
                         case GID_LOGIN_LOGIN_BUTTON:
                         {
-                            ptag = FindTagItem(GA_Selected, msg);
-                            if (ptag && ptag->ti_Data)  /* when push button down (selected true) */
+                         //   ptag = FindTagItem(GA_Selected, msg);
+                         //   if (ptag && ptag->ti_Data)  /* when push button down (selected true) */
                                 FS3EApp_LoginStart();
+                            break;
+                        }
+
+                        case GID_LOGIN_ANON_BUTTON:
+                        {
+                         //   ptag = FindTagItem(GA_Selected, msg);
+                         //   if (ptag && ptag->ti_Data)  /* when push button down (selected true) */
+                            FS3EApp_ConnectAnonymously();
                             break;
                         }
 
                         /* ---- Login sub-window: phase 2 ---- */
                         case GID_LOGIN_SUBMIT_CODE_BUTTON:
                         {
-                            ptag = FindTagItem(GA_Selected, msg);
-                            if (ptag && ptag->ti_Data)  /* when push button down (selected true) */
+                         //   ptag = FindTagItem(GA_Selected, msg);
+                         //   if (ptag && ptag->ti_Data)  /* when push button down (selected true) */
                                 FS3EApp_LoginSubmitCode();
                             break;
                         }
@@ -2034,8 +2104,16 @@ int main(int argc, char **argv)
                         case GID_LOGIN_ACCOUNTS_LIST:
                         {
                             ptag = FindTagItem(LISTBROWSER_Selected, msg);
-                            if (ptag && (LONG)ptag->ti_Data >= 0)
+                            if (ptag && ptag->ti_Data != (~0))
+                            {
                                 FS3EApp_SwitchAccount((LONG)ptag->ti_Data);
+                            }
+                            break;
+                        }
+
+                        case GID_LOGIN_DELETE_SERVER_BUTTON:
+                        {
+                           FS3EApp_DeleteSelectedAccount();
                             break;
                         }
 
@@ -2194,6 +2272,7 @@ int main(int argc, char **argv)
                                     const char *hotSpotString =NULL,*hotSpotId=NULL;
                                     const char *hotSpotMediaIds = NULL;
                                     const char *hotSpotAcct = NULL;
+                                    const char *hotSpotAudioUrl = NULL;
                                     BOOL hotSpotFavourited = FALSE;
                                     BOOL hotSpotFollowing = FALSE;
                                     BOOL hotSpotReblogged = FALSE;
@@ -2210,6 +2289,9 @@ int main(int argc, char **argv)
 
                                     ptag = FindTagItem(TTIMELINE_LastHotSpotAcct, msg);
                                     if(ptag) hotSpotAcct = (const char *)ptag->ti_Data;
+
+                                    ptag = FindTagItem(TTIMELINE_LastHotSpotAudioUrl, msg);
+                                    if(ptag) hotSpotAudioUrl = (const char *)ptag->ti_Data;
 
                                     ptag = FindTagItem(TTIMELINE_LastHotSpotFavourited, msg);
                                     if(ptag) hotSpotFavourited = (BOOL)ptag->ti_Data;
@@ -2389,7 +2471,7 @@ int main(int argc, char **argv)
                                              * app->searchProfileAcct, same
                                              * as TTL_HOT_FOLLOW reads
                                              * searchProfileAccountId. */
-                                            if (app->searchProfileAcct) {
+                                            if (app->searchProfileAcct && FS3EApp_RequireRealAccount()) {
                                                 FS3ETootComposeParams params;
                                                 memset(&params, 0, sizeof(params));
                                                 params.acct = app->searchProfileAcct;
@@ -2441,19 +2523,56 @@ int main(int argc, char **argv)
                                             break;
 
                                         case TTL_HOT_PLAY_AUDIO:
-                                            /* Toot audio attachment (mp3/
-                                             * wav/ogg) clicked -- hotSpotString
-                                             * carries the attachment URL,
-                                             * same convention as TTL_HOT_IMAGE
-                                             * above. Opens/reuses the same
-                                             * "FriendSh3ep Media" viewer
-                                             * window in audio mode; actual
-                                             * decode+playback is deliberately
-                                             * not via datatypes.library --
-                                             * see fs3eaudio.c/fs3emediaview.c. */
-                                            FS3EMediaView_ShowAudioUrl(&app->mediaView, hotSpotString, hotSpotAcct,
+                                        {
+                                            /* hotSpotAudioUrl (TTLPost.
+                                             * mediaAudioUrls[cur]) is this
+                                             * attachment's real, always-
+                                             * correct playable file --
+                                             * unlike hotSpotString
+                                             * (TTLPost.mediaUrls[cur]),
+                                             * which for an audio attachment
+                                             * WITH separate cover art is
+                                             * that cover IMAGE, not the
+                                             * audio (Mastodon's preview_url
+                                             * points at the cover in that
+                                             * case, not sent as a regular
+                                             * attached image the way the
+                                             * official app would show it --
+                                             * see FS3ENetStatus.
+                                             * fmas_MediaAudioUrls' doc
+                                             * comment). Falls back to
+                                             * hotSpotString if
+                                             * hotSpotAudioUrl is somehow
+                                             * empty, so this never
+                                             * regresses the far more common
+                                             * "audio, no cover" case, where
+                                             * the two are simply the same
+                                             * URL. When they genuinely
+                                             * differ, real cover art exists
+                                             * -- load it into the image
+                                             * channel too, alongside the
+                                             * audio (fs3emediaview.c's two
+                                             * channels coexist, see
+                                             * FS3EMediaView_ShowUrl's own
+                                             * doc comment). Opens/reuses the
+                                             * same "FriendSh3ep Media"
+                                             * viewer window; actual audio
+                                             * decode+playback is
+                                             * deliberately not via
+                                             * datatypes.library -- see
+                                             * fs3eaudio.c/fs3emediaview.c. */
+                                            const char *realAudioUrl =
+                                                (hotSpotAudioUrl && hotSpotAudioUrl[0])
+                                                ? hotSpotAudioUrl : hotSpotString;
+
+                                            if (hotSpotString && hotSpotString[0] && realAudioUrl &&
+                                                strcmp(hotSpotString, realAudioUrl) != 0)
+                                                FS3EMediaView_ShowUrl(&app->mediaView, hotSpotString, hotSpotAcct);
+
+                                            FS3EMediaView_ShowAudioUrl(&app->mediaView, realAudioUrl, hotSpotAcct,
                                                                        app->audioRequestPort, app->audioReplyPort);
                                             break;
+                                        }
 
                                         case TTL_HOT_CARD:
                                             /* Link-preview card clicked --
@@ -2514,7 +2633,7 @@ int main(int argc, char **argv)
 
                                                 if (choice == 1) {
                                                     Action_ToggleReblog(app, hotSpotId, hotSpotReblogged);
-                                                } else if (choice == 2) {
+                                                } else if (choice == 2 && FS3EApp_RequireRealAccount()) {
                                                     FS3ETootComposeParams params;
                                                     memset(&params, 0, sizeof(params));
                                                     params.postId = hotSpotId;
@@ -2541,7 +2660,7 @@ int main(int argc, char **argv)
                                              * a future edit-submit can resend
                                              * the same media_ids and not lose
                                              * the attachments. */
-                                            {
+                                            if (FS3EApp_RequireRealAccount()) {
                                                 FS3ETootComposeParams params;
                                                 char mediaIdsBuf[96];
                                                 ULONG mcount = 0;
@@ -2609,7 +2728,7 @@ int main(int argc, char **argv)
                                              * opens in Reply mode with the
                                              * title/mention-prefix filled
                                              * in with no separate lookup. */
-                                            {
+                                            if (FS3EApp_RequireRealAccount()) {
                                                 FS3ETootComposeParams params;
                                                 memset(&params, 0, sizeof(params));
                                                 params.postId = hotSpotId;

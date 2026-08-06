@@ -102,9 +102,14 @@ typedef struct {
 
 /* Max number of accounts kept in App.accounts[] / persisted to
  * accounts.dat (see FS3EApp_SwitchAccount and fs3eloginview.c's
- * acclistGroup). Plenty for a personal multi-instance/multi-account
- * client; raise if that ever isn't true. */
-#define FS3E_MAX_ACCOUNTS 8
+ * acclistGroup). Was 8 (a personal multi-instance/multi-account budget);
+ * raised once anonymous connections (see FS3EACCOUNT_ANON_ACCT in
+ * fs3eaccounts.h) turned this same list into a "servers I like to browse"
+ * list too, not just real logins -- each FS3EAccount is just 6 small
+ * AllocVec'd pointers, and the one fixed-size array sized off this
+ * (FS3ELoginAccountRow rows[FS3E_MAX_ACCOUNTS], a stack-local in
+ * FS3EApp_RefreshLoginAccountsList) is trivially small even at this size. */
+#define FS3E_MAX_ACCOUNTS 128
 
 /* One known/logged account -- same shape as the App.accountXXX fields
  * below, which always mirror accounts[N] for whichever one is currently
@@ -236,6 +241,28 @@ struct App {
                                 * for VIEWMODE_User's accounts/{id}/statuses
                                 * fetch (see ViewModeTimeline). */
 
+    /* TRUE once a FS3ENETQ_VERIFY_ACCOUNT reply comes back FS3ENETR_AUTH_
+     * ERROR -- the server positively rejected accountAccessToken (a real
+     * HTTP response came back, just not a valid account -- see
+     * FS3EMastodon_VerifyCredentials' outRejected param), as opposed to
+     * merely being unable to reach it at all (FS3ENETR_NETWORK_ERROR,
+     * which leaves this alone -- inconclusive, could just be offline).
+     * Set by FS3EApp_VerifyStoredAccount()'s reply in fs3erequests.c
+     * (fired once at startup, right after FS3EApp_LoadAccount()); cleared
+     * by FS3EApp_SetAccount() on any confirmed-good login/re-verify.
+     * Every other channel (Local/Federated/a profile's own statuses) still
+     * works while this is TRUE -- Mastodon just falls back to anonymous,
+     * public-only access for a rejected token instead of erroring those
+     * endpoints outright -- but FS3EApp_CheckConnectionState() still shows
+     * this as its own "your token has expired" message, distinct from the
+     * "Anonymous connexion" one shown for an account that was deliberately
+     * never logged in to begin with (accountAccessToken NULL from the
+     * start, see FS3EACCOUNT_ANON_ACCT in fs3eaccounts.h) -- this one used
+     * to work and stopped, that one never tried. See
+     * FS3EApp_CheckConnectionState's own comments for the exact wording of
+     * both. */
+    BOOL   accountTokenRejected;
+
     /* Active account's per-toot character limit (instance-specific --
      * varies a lot across the Fediverse, not just Mastodon's own 500
      * default). 0 means "not confirmed by the server yet" (no account
@@ -286,6 +313,8 @@ struct App {
      * -- see FS3EApp_UpsertAccountsList/FS3EApp_SwitchAccount. */
     FS3EAccount accounts[FS3E_MAX_ACCOUNTS];
     ULONG       accountCount;
+    ULONG       accountCurrentlyConnecting;
+    ULONG       accountListJustRefreshing; /*bool, to avoid recursion */
 
     /* Bitmask of VIEWMODE channels with an INITIAL fetch currently in
      * flight -- set the moment the request is sent, cleared the moment

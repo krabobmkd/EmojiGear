@@ -245,9 +245,18 @@ static void ttl_activate_hotspot(TTLData *inst, Class *cl, Object *o,
      * it, and behave exactly as before). */
     const char *targetId = (post->targetId && post->targetId[0]) ? post->targetId : post->postId;
 
+    /* The CURRENTLY-shown attachment's real playable file URL, if this
+     * post has media at all -- see TTLPost.mediaAudioUrls' own doc
+     * comment for why this can differ from hs->data (which, for
+     * TTL_HOT_PLAY_AUDIO, is post->mediaUrls[mediaCurrentIndex] --
+     * the cover image instead of the audio, when one was set). */
+    const char *audioUrl = (post->mediaCurrentIndex < post->mediaCount)
+                          ? post->mediaAudioUrls[post->mediaCurrentIndex] : NULL;
+
     ttl_notify_hotspot(cl, o, gi, hs->type, hs->data, hs->dataLen, targetId,
                         post->favourited, post->following, post->reblogged,
-                        post->quotable, post->mediaIdsJoined, post->acct);
+                        post->quotable, post->mediaIdsJoined, post->acct,
+                        audioUrl);
 
     if (post->cls && post->cls->activate)
         post->cls->activate(inst, cl, o, gi, post, hs);

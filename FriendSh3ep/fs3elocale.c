@@ -30,6 +30,8 @@ static const char *defaultStrings[MSG_COUNT] = {
     "Code",
     /* MSG_LOGIN_LOGIN */
     "Login",
+    /* MSG_LOGIN_DELETE_SERVER */
+    "Delete Server",
 
     /* MSG_TOOT_TITLE */
     "Toot",

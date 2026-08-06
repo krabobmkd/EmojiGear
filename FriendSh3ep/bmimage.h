@@ -76,7 +76,11 @@ BOOL BmImage_Load(BmImage *img, struct Screen *screen);
 
 /*
  * Load (or reload) the bitmap like BmImage_Load(), but scale it first.
- * Does NOT use picture.datatype's PDTM_SCALE (it has known OS bugs), nor a
+ * Does not use picture.datatype's PDTM_SCALE (an earlier concern about it
+ * having OS bugs turned out to be unfounded -- see BmImage_LoadFitScreen()
+ * below, which does use it -- but this function still has its own reasons
+ * to keep the BMP-roundtrip approach: arbitrary aspect-fit target sizes,
+ * not just halving, and its own persistent-on-disk cache), nor a
  * source-less in-memory picture.datatype object (creating one doesn't work
  * on OS3). Instead, the scaled image is materialised as a BMP file next to
  * the source (same directory, named "<filePath>.<targetWidth>x<targetHeight>.bmp")
@@ -104,6 +108,34 @@ BOOL BmImage_Load(BmImage *img, struct Screen *screen);
  */
 BOOL BmImage_LoadScaled(BmImage *img, struct Screen *screen,
                          UWORD targetWidth, UWORD targetHeight);
+
+/*
+ * Load (or reload) the bitmap like BmImage_Load(), except: if the source's
+ * native pixel size is bigger than maxWidth x maxHeight in either
+ * dimension, both dimensions are halved once via picture.datatype's
+ * PDTM_SCALE before the image is ever decoded to a bitmap -- a single
+ * halving, not a repeated fit-to-bounds loop, and not an aspect-preserving
+ * box-fit to an arbitrary target size the way BmImage_LoadScaled() is.
+ * This is the "don't let a huge attachment blow up past the screen" rule
+ * fs3emediaview.c wants (maxWidth/maxHeight = CurrentMainScreen->Width/
+ * Height minus a margin), which only ever needs one halving pass and gets
+ * it essentially for free (PDTM_SCALE happens inside the same decode the
+ * image needed anyway, no extra disk round-trip) -- unlike
+ * BmImage_LoadScaled()'s BMP-roundtrip pipeline, built for a different job
+ * (arbitrary small thumbnail box-fits with their own persistent cache).
+ *
+ * PDTM_SCALE must run before the object's first layout (see
+ * picture_dtc.doc), so the native size is read from PDTA_BitMapHeader
+ * before that happens here -- img->width/height end up reflecting
+ * whatever the FINAL (possibly halved) size actually is, read back the
+ * normal way after layout, same as BmImage_Load().
+ *
+ * maxWidth/maxHeight of 0 disables the check entirely (behaves exactly
+ * like BmImage_Load()). Pass screen=NULL to load raw (un-remapped); same
+ * lifecycle/ownership/mask handling as BmImage_Load() otherwise.
+ */
+BOOL BmImage_LoadFitScreen(BmImage *img, struct Screen *screen,
+                            UWORD maxWidth, UWORD maxHeight);
 
 /*
  * Screen-less half of the BmImage_LoadScaled pipeline: decode srcPath,

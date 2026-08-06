@@ -130,8 +130,16 @@ void BmImage_Unload(BmImage *img)
 /* Shared by BmImage_Load and BmImage_LoadScaled's cache-hit/finish step:
  * opens an on-disk image file and remaps it to the screen's bitmap format
  * (or loads it raw when screen==NULL). Fills img->{dtObject,bitmap,mask,
- * width,height}. Pure "open file, decode, remap" -- no scaling involved. */
-static BOOL bmimage_open_file_to_screen(BmImage *img, const char *path, struct Screen *screen)
+ * width,height}.
+ *
+ * maxW/maxH: 0,0 means "no limit" (BmImage_Load's plain behaviour, exactly
+ * as before this parameter existed). A non-zero pair asks for an in-
+ * datatype PDTM_SCALE halving -- see BmImage_LoadFitScreen()'s own doc
+ * comment in bmimage.h for why this exists as a THIRD scaling path
+ * alongside the unscaled default and BmImage_LoadScaled's BMP-roundtrip
+ * pipeline, rather than reusing either. */
+static BOOL bmimage_open_file_to_screen(BmImage *img, const char *path, struct Screen *screen,
+                                         UWORD maxW, UWORD maxH)
 {
     Object              *dto  = NULL;
     struct BitMapHeader *bmhd = NULL;
@@ -172,6 +180,26 @@ static BOOL bmimage_open_file_to_screen(BmImage *img, const char *path, struct S
     if (!dto) {
         img->error = BMIMAGE_ERR_OPEN_FAILED;
         return FALSE;
+    }
+
+    /* PDTM_SCALE halving, if requested -- MUST happen before the first
+     * layout (picture_dtc.doc, PDTM_SCALE: "Scaling is only possible
+     * before the first GM_LAYOUT has been performed"), so this reads
+     * PDTA_BitMapHeader here, ahead of DTM_PROCLAYOUT below, purely to
+     * decide whether to scale -- img->width/height itself is still filled
+     * from the read AFTER layout further down, since that's the one that
+     * reflects the actual (possibly now-scaled) result. A single halving,
+     * not a fit-to-bounds loop: exactly the rule fs3emediaview.c's
+     * BmImage_LoadFitScreen() caller wants (see its own doc comment). */
+    if (maxW > 0 && maxH > 0) {
+        struct BitMapHeader *nativeBmhd = NULL;
+        GetDTAttrs(dto, PDTA_BitMapHeader, (ULONG)&nativeBmhd, TAG_DONE);
+        if (nativeBmhd && (nativeBmhd->bmh_Width > maxW || nativeBmhd->bmh_Height > maxH)) {
+            DoMethod(dto, PDTM_SCALE,
+                     (ULONG)(nativeBmhd->bmh_Width  / 2),
+                     (ULONG)(nativeBmhd->bmh_Height / 2),
+                     (ULONG)0);
+        }
     }
 
     /* Decode image and perform colour remapping on the calling process.
@@ -236,7 +264,27 @@ BOOL BmImage_Load(BmImage *img, struct Screen *screen)
 
     BmImage_Unload(img);
 
-    return bmimage_open_file_to_screen(img, img->filePath, screen);
+    return bmimage_open_file_to_screen(img, img->filePath, screen, 0, 0);
+}
+
+BOOL BmImage_LoadFitScreen(BmImage *img, struct Screen *screen,
+                            UWORD maxWidth, UWORD maxHeight)
+{
+    if (!img) return FALSE;
+
+    if (!img->filePath || img->filePath[0] == '\0') {
+        img->error = BMIMAGE_ERR_NO_PATH;
+        return FALSE;
+    }
+
+    if (!DataTypesBase) {
+        img->error = BMIMAGE_ERR_NO_DATATYPES;
+        return FALSE;
+    }
+
+    BmImage_Unload(img);
+
+    return bmimage_open_file_to_screen(img, img->filePath, screen, maxWidth, maxHeight);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -568,7 +616,7 @@ BOOL BmImage_LoadScaled(BmImage *img, struct Screen *screen,
         return FALSE;
     }
 
-    return bmimage_open_file_to_screen(img, thumbPath, screen);
+    return bmimage_open_file_to_screen(img, thumbPath, screen, 0, 0);
 }
 
 void BmImage_Free(BmImage *img)

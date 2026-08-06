@@ -72,6 +72,13 @@ void FS3EApp_LoginStart(void);
  * access token. */
 void FS3EApp_LoginSubmitCode(void);
 
+/* GID_LOGIN_ANON_BUTTON -- connect to the server typed into the login
+ * window with no OAuth at all (accessToken left empty, see
+ * FS3EACCOUNT_ANON_ACCT in fs3eaccounts.h). Local/Federated (and a
+ * profile's own public statuses) work under this; Home/Notifications/
+ * Search/posting stay disabled until a real login. */
+void FS3EApp_ConnectAnonymously(void);
+
 /* Handle one reply message from the network process. */
 void FS3EApp_HandleNetReply(FS3ENetMessage *msg);
 

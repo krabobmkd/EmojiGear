@@ -85,9 +85,23 @@ BOOL FS3EMastodon_ExchangeCode(const char *apiBaseUrl, const char *clientId,
 /*
  * GET /api/v1/accounts/verify_credentials - confirms accessToken is valid
  * and returns the logged-in account's basic info.
+ *
+ * outRejected (may be NULL if the caller doesn't care) is set TRUE only
+ * when the server actually answered but the answer wasn't a valid account
+ * (a Doorkeeper-style {"error":"The access token is invalid"} body, or any
+ * other object/response missing "id") -- i.e. a confirmed rejection of
+ * THIS token, not just "couldn't reach the server". Left FALSE (never set
+ * TRUE) when the request didn't get a response at all (FS3EHttp_Get
+ * itself failed -- DNS/connect/TLS failure, no internet, ...), since that
+ * says nothing about the token's own validity. Always FALSE when this
+ * function returns TRUE. Callers that need to tell "your token was
+ * revoked" apart from "we're offline right now" (see
+ * FS3EApp_VerifyStoredAccount() in fs3eaccounts.c) should pass a non-NULL
+ * pointer; FS3ENET_HandleLoginFinish doesn't bother, both cases already
+ * show the same "couldn't log in" message there.
  */
 BOOL FS3EMastodon_VerifyCredentials(const char *apiBaseUrl, const char *accessToken,
-                                   FS3EMastodonAccount *outAccount);
+                                   FS3EMastodonAccount *outAccount, BOOL *outRejected);
 
 /*
  * GET /api/v1/{timeline} (or /api/v2/{timeline} -- see
@@ -142,10 +156,21 @@ BOOL FS3EMastodon_VerifyCredentials(const char *apiBaseUrl, const char *accessTo
  *                                        own plain-int mirror of the enum
  *                                        stays numbered the same as
  *                                        fs3enet.h's real one
+ *
+ * outAuthRequired (may be NULL if the caller doesn't care) is set TRUE only
+ * when the server answered but refused the request outright with
+ * {"error":"This method requires an authenticated user"} -- Mastodon's
+ * "timeline preview" admin setting turned off, which some instances now do
+ * even for nominally-public endpoints like timelines/public (seen on
+ * mastodon.social). Distinct from a plain parse/shape failure: this is a
+ * confirmed, deliberate server policy, not a transient error -- see
+ * FS3ENETR_AUTH_REQUIRED in fs3enet.h, which callers use it to select.
+ * Left FALSE (never set TRUE) for every other failure. Always FALSE when
+ * this function returns TRUE.
  */
 BOOL FS3EMastodon_GetTimeline(const char *apiBaseUrl, const char *accessToken,
                              const char *timeline, ULONG responseShape,
-                             cJSON **outJson);
+                             cJSON **outJson, BOOL *outAuthRequired);
 
 /* application/x-www-form-urlencoded percent-encoding -- see the definition
  * in fs3enet_mastodon.c for the exact rule. Exposed so FS3ENet_HandleTimeline

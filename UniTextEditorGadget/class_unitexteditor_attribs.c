@@ -655,7 +655,7 @@ fail:
         DisposeObject(inst->bevel);
         inst->bevel = NULL;
     }
-
+    return TRUE;
  }
 
 ULONG UniTextEditor_OnDispose(Class *cl, Object *o, Msg msg)

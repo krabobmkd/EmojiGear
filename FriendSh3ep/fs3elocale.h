@@ -26,6 +26,8 @@ enum {
     MSG_LOGIN_USERORMAIL,
     MSG_LOGIN_CODE,
     MSG_LOGIN_LOGIN,
+    MSG_LOGIN_DELETE_SERVER,   /* "Delete Server" button, below the accounts list --
+                                 * see GID_LOGIN_DELETE_SERVER_BUTTON */
 
     /* New toot window (fs3etootview.c) */
     MSG_TOOT_TITLE,

@@ -162,6 +162,13 @@ void FS3EApp_FetchTimeline(ULONG viewMode)
     if (viewMode == VIEWMODE_Notifs) {
         FS3ENetNotificationsReq *nreq;
 
+        /* Unlike Local/Fed below, Notifications always needs a real token
+         * -- there is no anonymous/public equivalent of "your
+         * notifications" (see FS3EACCOUNT_ANON_ACCT's doc comment; a
+         * deliberately anonymous account has accountAccessToken NULL).
+         * Left un-fetched (rather than sent anonymously to fail server-
+         * side) so FS3EApp_CheckConnectionState() can show its own
+         * "log in to see this" text instead of a generic fetch-error one. */
         if (!app->accountApiBaseUrl || !app->accountAccessToken) return;
         if (app->channelPopulatedMask & bit) return; /* already has its first page -- see the field comment */
         if (app->timelineFetchedMask & bit) return;
@@ -180,7 +187,15 @@ void FS3EApp_FetchTimeline(ULONG viewMode)
         return;
     }
 
-    if (!app->accountApiBaseUrl || !app->accountAccessToken) return;
+    /* Local/Federated are genuinely public Mastodon endpoints -- only
+     * Home needs a real token (see the Notifs branch above for the same
+     * distinction). An anonymous account's accountAccessToken is NULL
+     * (see FS3EACCOUNT_ANON_ACCT), sent below as "" so
+     * FS3ENetTimelineReq_Alloc/FS3EMastodon_GetTimeline build a clean
+     * unauthenticated GET (no Authorization header) rather than needing
+     * any special-casing here. */
+    if (!app->accountApiBaseUrl) return;
+    if (viewMode == VIEWMODE_Home && !app->accountAccessToken) return;
     if (app->channelPopulatedMask & bit) return; /* already has its first page -- see the field comment */
     if (app->timelineFetchedMask & bit) return;
     if (!ViewModeTimeline(viewMode, tl, sizeof(tl))) return;
@@ -188,7 +203,7 @@ void FS3EApp_FetchTimeline(ULONG viewMode)
 
     req = FS3ENetTimelineReq_Alloc(viewMode, FS3ENETPAGE_INITIAL,
               app->accountGeneration, FS3ENET_TLSHAPE_ARRAY,
-              app->accountApiBaseUrl, app->accountAccessToken,
+              app->accountApiBaseUrl, app->accountAccessToken ? app->accountAccessToken : "",
               tl, NULL, NULL, NULL);
     if (!req) return;
 
@@ -221,7 +236,9 @@ void FS3EApp_FetchTimelinePage(ULONG viewMode, ULONG direction)
     ULONG  fromIdVal = 0;
     const char *fromId;
 
-    if (!app->accountApiBaseUrl || !app->accountAccessToken) return;
+    /* Same Local/Fed-vs-Home/Notifs token distinction as
+     * FS3EApp_FetchTimeline() above -- see its comments. */
+    if (!app->accountApiBaseUrl) return;
     if (*inFlightMask & bit) return;
     if (!app->tootTimeline) return;
 
@@ -234,6 +251,8 @@ void FS3EApp_FetchTimelinePage(ULONG viewMode, ULONG direction)
      * max_id/min_id pagination needs. */
     if (viewMode == VIEWMODE_Notifs) {
         FS3ENetNotificationsReq *nreq;
+
+        if (!app->accountAccessToken) return;
 
         GetAttr(attrTag, app->tootTimeline, &fromIdVal);
         fromId = (const char *)fromIdVal;
@@ -251,6 +270,8 @@ void FS3EApp_FetchTimelinePage(ULONG viewMode, ULONG direction)
         return;
     }
 
+    if (viewMode == VIEWMODE_Home && !app->accountAccessToken) return;
+
     if (!ViewModeTimeline(viewMode, tl, sizeof(tl))) return;
 
     GetAttr(attrTag, app->tootTimeline, &fromIdVal);
@@ -260,7 +281,7 @@ void FS3EApp_FetchTimelinePage(ULONG viewMode, ULONG direction)
 
     req = FS3ENetTimelineReq_Alloc(viewMode, direction,
               app->accountGeneration, FS3ENET_TLSHAPE_ARRAY,
-              app->accountApiBaseUrl, app->accountAccessToken, tl,
+              app->accountApiBaseUrl, app->accountAccessToken ? app->accountAccessToken : "", tl,
               (direction == FS3ENETPAGE_OLDER) ? fromId : NULL,
               (direction == FS3ENETPAGE_NEWER) ? fromId : NULL,
               NULL);
@@ -843,6 +864,51 @@ void FS3EApp_LoginStart(void)
     }
 }
 
+/* GID_LOGIN_ANON_BUTTON -- connect to whatever server is typed into the
+ * login window with no OAuth round-trip at all: apiBaseUrl is set,
+ * accessToken is deliberately left "" (see FS3EACCOUNT_ANON_ACCT's doc
+ * comment in fs3eaccounts.h for why this is the app-wide "not logged in"
+ * convention, not NULL). Mirrors FS3EApp_LoginStart()'s "add another
+ * account, don't touch the current one's session" semantics -- switching
+ * to an already-known row is still the acclistGroup listbrowser's job. No
+ * server round-trip happens here at all (nothing to authenticate), so this
+ * is instant; FS3EApp_SetAccount()'s own account-change side effects
+ * (FS3ENETQ_INSTANCE_INFO fetch, clearing stale per-account state) double
+ * as a lightweight "does this even look like a real server" signal without
+ * a dedicated check. */
+void FS3EApp_ConnectAnonymously(void)
+{
+    char serverBuf[256];
+    const char *server = NormalizeServerUrl(
+        FS3ELoginView_GetANSIServer(&app->loginView),
+        serverBuf, sizeof(serverBuf));
+
+    if (!server || !server[0]) return;
+
+    FS3EApp_FreeLoginState(); /* discard any half-finished OAuth flow, same as LoginStart */
+
+    FS3EApp_SetAccount(server, "", "", FS3EACCOUNT_ANON_ACCT, "", "");
+    FS3EApp_SaveAccount();
+
+    /* Without this, the previous account's timelineFetchedMask/
+     * channelPopulatedMask bits are still set, so FS3EApp_FetchTimeline()
+     * below (via fs3e_setViewMode) silently no-ops thinking Local/Fed
+     * already have their first page -- the old server's toots just sit
+     * there, looking like the connection never changed even though
+     * accountApiBaseUrl/accountAccessToken (and the list's highlighted
+     * row) already did. Same reset FS3EApp_SwitchAccount()/
+     * FS3EApp_DeleteSelectedAccount() apply for the exact same reason. */
+    FS3EApp_ResetPerAccountState();
+
+    FS3EApp_RefreshLoginAccountsList();
+    FS3ELoginView_ClearFields(&app->loginView);
+    FS3ELoginView_Close(&app->loginView);
+
+    /* Home would just show "No account." forever under an anonymous
+     * token -- Local is the channel that actually works with one. */
+    fs3e_setViewMode(VIEWMODE_Local);
+}
+
 /* GID_LOGIN_SUBMIT_CODE_BUTTON -- exchange the pasted OOB code for an access
  * token, completing the OAuth flow FS3EApp_LoginStart() began. */
 void FS3EApp_LoginSubmitCode(void)
@@ -910,7 +976,8 @@ static void FS3EApp_MapStatusToPostSetup(TTLPostSetup *post, const FS3ENetStatus
     post->quoteTimestamp  = st->fmas_QuoteCreatedAt;
 
     for (mi = 0; mi < st->fmas_MediaCount && mi < TTL_POST_MAX_MEDIA; mi++) {
-        post->mediaUrls[mi] = st->fmas_MediaUrls[mi];
+        post->mediaUrls[mi]      = st->fmas_MediaUrls[mi];
+        post->mediaAudioUrls[mi] = st->fmas_MediaAudioUrls[mi];
         post->mediaIds[mi]  = st->fmas_MediaIds[mi];
         switch (st->fmas_MediaKind[mi]) {
             case FS3ENET_MEDIAKIND_IMAGE: post->mediaKinds[mi] = TTL_MEDIA_KIND_IMAGE; break;
@@ -981,11 +1048,20 @@ static void FS3EApp_TriggerMediaFetchesForStatus(const FS3ENetStatus *st)
         for (mi = 0; mi < st->fmas_MediaCount && mi < TTL_POST_MAX_MEDIA; mi++) {
             const char *url = st->fmas_MediaUrls[mi];
             if (!url || !url[0]) continue;
-            /* Audio has no thumbnail to fetch -- TootTimeline draws a play
-             * button for it instead (see TTL_HOT_PLAY_AUDIO); its
-             * (fallback, no-preview) URL here is the actual media file,
-             * not a picture. */
-            if (st->fmas_MediaKind[mi] == FS3ENET_MEDIAKIND_AUDIO) continue;
+            /* Audio has no thumbnail to fetch UNLESS it has separate cover
+             * art -- TootTimeline draws a play button for it instead (see
+             * TTL_HOT_PLAY_AUDIO), and without a distinct preview_url, url
+             * here is the (fallback) actual media file, not a picture (see
+             * fmas_MediaAudioUrls' doc comment in fs3enet.h). But when a
+             * cover WAS set, url is that cover image and IS worth fetching
+             * as a normal thumbnail -- detected by comparing against
+             * fmas_MediaAudioUrls[mi] (the real file, always): equal means
+             * no distinct cover (skip), different means real cover art. */
+            if (st->fmas_MediaKind[mi] == FS3ENET_MEDIAKIND_AUDIO) {
+                const char *audioUrl = st->fmas_MediaAudioUrls[mi];
+                if (!audioUrl || !audioUrl[0] || strcmp(url, audioUrl) == 0)
+                    continue;
+            }
             if (AvatarImages_IsMediaRequested(app->avatarImages, url)) continue;
             {
                 ULONG reqSize = sizeof(FS3ENetFetchImageReq)
@@ -1143,11 +1219,14 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
         break;
 
     case FS3ENETQ_VERIFY_ACCOUNT:
-        /* Backfill for an account.dat saved before accountId existed (see
-         * FS3EApp_BackfillAccountId()). Re-runs the same "resync from
-         * server" FS3EApp_SetAccount() does at login, just without a fresh
-         * access token -- apiBaseUrl/accessToken are unchanged, only the
-         * account fields (chiefly fma_Id) are new. */
+        /* FS3EApp_VerifyStoredAccount()'s reply -- fired once at startup
+         * (right after FS3EApp_LoadAccount()) and again on every
+         * FS3EApp_SwitchAccount(), proactively re-confirming a locally-
+         * trusted saved token against the server. On success this also
+         * backfills accountId for an account.dat saved before it existed
+         * (resyncing display name/acct/avatar too, same as a fresh login --
+         * apiBaseUrl/accessToken are unchanged, only the account fields
+         * are new). */
         if (msg->fs3em_Result == FS3ENETR_OK) {
             FS3ENetVerifyAccountReply *reply = (FS3ENetVerifyAccountReply *)msg->fs3em_Data;
             FS3EApp_SetAccount(app->accountApiBaseUrl,
@@ -1161,10 +1240,22 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
             /* In case the user is already sitting on a channel that
              * couldn't fetch without an id (VIEWMODE_User). */
             FS3EApp_FetchTimeline(app->viewMode);
-        } else
-	{
-		/*TODO: tell account failed to wait screen message */
-	}
+        } else if (msg->fs3em_Result == FS3ENETR_AUTH_ERROR) {
+            /* A real response came back rejecting this exact token (see
+             * FS3EMastodon_VerifyCredentials' outRejected) -- not just
+             * "couldn't reach the server". Tell the user plainly instead
+             * of silently leaving "Account connected." showing forever;
+             * FS3EApp_CheckConnectionState() picks this up from every
+             * channel until a fresh login clears it (FS3EApp_SetAccount). */
+            app->accountTokenRejected = TRUE;
+            FS3EApp_CheckConnectionState();
+        } else {
+            /* Inconclusive (offline right now, DNS hiccup, ...) -- don't
+             * claim the token is dead over that; just leave whatever
+             * accountTokenRejected already was. A later channel switch's
+             * own timeline fetch will show the ordinary connection-error
+             * text if it's genuinely offline. */
+        }
         break;
 
     case FS3ENETQ_INSTANCE_INFO:
@@ -1491,7 +1582,8 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                     {
                         ULONG mi;
                         for (mi = 0; mi < st->fmas_MediaCount && mi < TTL_POST_MAX_MEDIA; mi++) {
-                            post.mediaUrls[mi] = st->fmas_MediaUrls[mi];
+                            post.mediaUrls[mi]      = st->fmas_MediaUrls[mi];
+                            post.mediaAudioUrls[mi] = st->fmas_MediaAudioUrls[mi];
                             post.mediaIds[mi]  = st->fmas_MediaIds[mi];
                             switch (st->fmas_MediaKind[mi]) {
                                 case FS3ENET_MEDIAKIND_IMAGE: post.mediaKinds[mi] = TTL_MEDIA_KIND_IMAGE; break;
@@ -1522,7 +1614,14 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                         for (mi = 0; mi < st->fmas_MediaCount && mi < TTL_POST_MAX_MEDIA; mi++) {
                             const char *url = st->fmas_MediaUrls[mi];
                             if (!url || !url[0]) continue;
-                            if (st->fmas_MediaKind[mi] == FS3ENET_MEDIAKIND_AUDIO) continue;
+                            /* See the matching block in
+                             * FS3EApp_TriggerMediaFetchesForStatus() above
+                             * for why this checks fmas_MediaAudioUrls too. */
+                            if (st->fmas_MediaKind[mi] == FS3ENET_MEDIAKIND_AUDIO) {
+                                const char *audioUrl = st->fmas_MediaAudioUrls[mi];
+                                if (!audioUrl || !audioUrl[0] || strcmp(url, audioUrl) == 0)
+                                    continue;
+                            }
                             if (AvatarImages_IsMediaRequested(app->avatarImages, url)) continue;
                             {
                                 ULONG reqSize = sizeof(FS3ENetFetchImageReq)

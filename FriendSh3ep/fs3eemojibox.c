@@ -955,7 +955,7 @@ BOOL FS3EEmojiBoxWindow_HandleInput(FS3EEmojiBoxWindow *ebw)
                  * dispatch (friendsh3ep.c) via the BoopsiDelay queue,
                  * same as every other gadget in this app. */
                 BoopsiDelay_BeginMessage(DelayQueue, gadId);
-                BoopsiDelay_AddTag(DelayQueue, WMHI_GADGETUP, 1);
+                BoopsiDelay_AddTag(DelayQueue, GA_Selected, 0);
                 BoopsiDelay_EndMessage(DelayQueue);
                 break;
             }

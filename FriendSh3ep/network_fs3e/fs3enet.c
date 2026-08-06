@@ -916,7 +916,12 @@ static void FS3ENet_HandleLoginFinish(FS3ENetMessage *fs3em)
     }
 
 
-    if (!FS3EMastodon_VerifyCredentials(req->fs3enl_ApiBaseUrl, accessToken, &tmpAcc))
+    /* NULL: LOGIN_FINISH shows the same "couldn't log in" EasyRequest
+     * either way (see its FS3ENETQ_LOGIN_FINISH case in fs3erequests.c) --
+     * telling a fresh-login rejection apart from a network hiccup here
+     * isn't worth threading through, unlike FS3ENET_HandleVerifyAccount
+     * below. */
+    if (!FS3EMastodon_VerifyCredentials(req->fs3enl_ApiBaseUrl, accessToken, &tmpAcc, NULL))
     {
         FS3EMastodonAccount_Free(&tmpAcc);
         fs3em->fs3em_Result = FS3ENETR_AUTH_ERROR;
@@ -957,12 +962,17 @@ static void FS3ENet_HandleLoginFinish(FS3ENetMessage *fs3em)
 
 /* FS3ENETQ_VERIFY_ACCOUNT — same verify_credentials call LOGIN_FINISH ends
  * with, but starting from an access token the GUI already has instead of
- * an OAuth code exchange. */
+ * an OAuth code exchange. Also FS3EApp_VerifyStoredAccount()'s proactive
+ * startup check (fs3eaccounts.c) -- the GUI side tells a confirmed
+ * rejection (FS3ENETR_AUTH_ERROR here) apart from an inconclusive network
+ * failure (FS3ENETR_NETWORK_ERROR) to drive app->accountTokenRejected, see
+ * that field's doc comment in friendsh3ep.h. */
 static void FS3ENet_HandleVerifyAccount(FS3ENetMessage *fs3em)
 {
     FS3ENetVerifyAccountReq   *req = (FS3ENetVerifyAccountReq *)fs3em->fs3em_Data;
     FS3ENetVerifyAccountReply *reply;
     FS3EMastodonAccount        tmpAcc = {0};
+    BOOL                       rejected = FALSE;
     ULONG total;
     char *p;
 
@@ -973,10 +983,10 @@ static void FS3ENet_HandleVerifyAccount(FS3ENetMessage *fs3em)
     }
 
 
-    if (!FS3EMastodon_VerifyCredentials(req->fs3eva_ApiBaseUrl, req->fs3eva_AccessToken, &tmpAcc))
+    if (!FS3EMastodon_VerifyCredentials(req->fs3eva_ApiBaseUrl, req->fs3eva_AccessToken, &tmpAcc, &rejected))
     {
         FS3EMastodonAccount_Free(&tmpAcc);
-        fs3em->fs3em_Result = FS3ENETR_AUTH_ERROR;
+        fs3em->fs3em_Result = rejected ? FS3ENETR_AUTH_ERROR : FS3ENETR_NETWORK_ERROR;
         return;
     }
 
@@ -1953,12 +1963,18 @@ static ULONG FS3ENet_SizeStatusFields(const cJSON *item, const cJSON *src)
             const cJSON *att  = cJSON_GetArrayItem(v, mi);
             const cJSON *purl = att ? cJSON_GetObjectItemCaseSensitive(att, "preview_url") : NULL;
             const cJSON *aid  = att ? cJSON_GetObjectItemCaseSensitive(att, "id") : NULL;
+            /* Unconditional, real "url" -- independent of purl's own
+             * preview_url-with-url-fallback below (see fmas_MediaAudioUrls'
+             * doc comment in fs3enet.h). */
+            const cJSON *rurl = att ? cJSON_GetObjectItemCaseSensitive(att, "url") : NULL;
             if (!purl || !cJSON_IsString(purl) || !purl->valuestring)
                 purl = att ? cJSON_GetObjectItemCaseSensitive(att, "url") : NULL;
             total += (purl && cJSON_IsString(purl) && purl->valuestring)
                    ? strlen(purl->valuestring) + 1 : 1;
             total += (aid && cJSON_IsString(aid) && aid->valuestring)
                    ? strlen(aid->valuestring) + 1 : 1;
+            total += (rurl && cJSON_IsString(rurl) && rurl->valuestring)
+                   ? strlen(rurl->valuestring) + 1 : 1;
         }
     }
 
@@ -2109,12 +2125,22 @@ static void FS3ENet_FillStatusFields(const cJSON *item, const cJSON *src,
             const cJSON *att  = cJSON_GetArrayItem(v, mi);
             const cJSON *purl = att ? cJSON_GetObjectItemCaseSensitive(att, "preview_url") : NULL;
             const cJSON *aid  = att ? cJSON_GetObjectItemCaseSensitive(att, "id") : NULL;
+            /* Unconditional, real "url" -- see fmas_MediaAudioUrls' doc
+             * comment in fs3enet.h. Independent of purl's own preview_url-
+             * with-url-fallback below: for an audio attachment with cover
+             * art, purl ends up being that cover IMAGE, and rurl is the
+             * only place the actual playable file survives into
+             * FS3ENetStatus at all. */
+            const cJSON *rurl = att ? cJSON_GetObjectItemCaseSensitive(att, "url") : NULL;
             const cJSON *typeV;
             const char  *typeStr;
             if (!purl || !cJSON_IsString(purl) || !purl->valuestring)
                 purl = att ? cJSON_GetObjectItemCaseSensitive(att, "url") : NULL;
             str = (purl && cJSON_IsString(purl)) ? purl->valuestring : "";
             FS3ENet_PackStr(&dst->fmas_MediaUrls[mi], p, str);
+
+            str = (rurl && cJSON_IsString(rurl)) ? rurl->valuestring : "";
+            FS3ENet_PackStr(&dst->fmas_MediaAudioUrls[mi], p, str);
 
             /* Needed to resend as media_ids[] on a PUT edit so existing
              * attachments survive a text-only edit -- see
@@ -2140,20 +2166,27 @@ static void FS3ENet_FillStatusFields(const cJSON *item, const cJSON *src,
                  * responses this app already works around) -- fall back to
                  * the URL's own extension so a still-processing audio
                  * attachment doesn't slip through as MEDIAKIND_UNKNOWN and
-                 * get routed into the image thumbnail decoder anyway. */
-                const char *u = (purl && cJSON_IsString(purl)) ? purl->valuestring : NULL;
-                if (u && (FS3ENet_UrlHasExt(u, ".mp3")  || FS3ENet_UrlHasExt(u, ".ogg") ||
-                          FS3ENet_UrlHasExt(u, ".oga")  || FS3ENet_UrlHasExt(u, ".wav") ||
-                          FS3ENet_UrlHasExt(u, ".flac")))
+                 * get routed into the image thumbnail decoder anyway. Checks
+                 * rurl (the real file) first, not just purl (which is the
+                 * cover image, not audio, for an attachment that has one). */
+                const char *ru = (rurl && cJSON_IsString(rurl)) ? rurl->valuestring : NULL;
+                const char *pu = (purl && cJSON_IsString(purl)) ? purl->valuestring : NULL;
+                if ((ru && (FS3ENet_UrlHasExt(ru, ".mp3")  || FS3ENet_UrlHasExt(ru, ".ogg") ||
+                            FS3ENet_UrlHasExt(ru, ".oga")  || FS3ENet_UrlHasExt(ru, ".wav") ||
+                            FS3ENet_UrlHasExt(ru, ".flac"))) ||
+                    (pu && (FS3ENet_UrlHasExt(pu, ".mp3")  || FS3ENet_UrlHasExt(pu, ".ogg") ||
+                            FS3ENet_UrlHasExt(pu, ".oga")  || FS3ENet_UrlHasExt(pu, ".wav") ||
+                            FS3ENet_UrlHasExt(pu, ".flac"))))
                     dst->fmas_MediaKind[mi] = FS3ENET_MEDIAKIND_AUDIO;
                 else
                     dst->fmas_MediaKind[mi] = FS3ENET_MEDIAKIND_UNKNOWN;
             }
         }
         for (; mi < FS3ENET_MAX_MEDIA; mi++) {
-            dst->fmas_MediaUrls[mi] = NULL;
-            dst->fmas_MediaIds[mi]  = NULL;
-            dst->fmas_MediaKind[mi] = FS3ENET_MEDIAKIND_UNKNOWN;
+            dst->fmas_MediaUrls[mi]      = NULL;
+            dst->fmas_MediaAudioUrls[mi] = NULL;
+            dst->fmas_MediaIds[mi]       = NULL;
+            dst->fmas_MediaKind[mi]      = FS3ENET_MEDIAKIND_UNKNOWN;
         }
         dst->fmas_MediaCount = (ULONG)mCount;
     }
@@ -2407,6 +2440,7 @@ static void FS3ENet_HandleTimeline(FS3ENetMessage *fs3em)
         char timelineWithQuery[700];
         const char *timeline = req->fs3et_Timeline ? req->fs3et_Timeline : "";
         const char *finalTimeline;
+        BOOL authRequired = FALSE;
 
         if (req->fs3et_MaxId && req->fs3et_MaxId[0])
             snprintf(timelineWithPage, sizeof(timelineWithPage), "%s&max_id=%s",
@@ -2437,8 +2471,8 @@ static void FS3ENet_HandleTimeline(FS3ENetMessage *fs3em)
 
         if (!FS3EMastodon_GetTimeline(req->fs3et_ApiBaseUrl,
                 req->fs3et_AccessToken,
-                finalTimeline, req->fs3et_ResponseShape, &json)) {
-            fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
+                finalTimeline, req->fs3et_ResponseShape, &json, &authRequired)) {
+            fs3em->fs3em_Result = authRequired ? FS3ENETR_AUTH_REQUIRED : FS3ENETR_HTTP_ERROR;
             return;
         }
     }
@@ -2566,6 +2600,7 @@ static void FS3ENet_HandleNotifications(FS3ENetMessage *fs3em)
 
     {
         char pathWithPage[300];
+        BOOL authRequired = FALSE;
 
         if (req->fs3en_MaxId && req->fs3en_MaxId[0])
             snprintf(pathWithPage, sizeof(pathWithPage), "notifications?max_id=%s", req->fs3en_MaxId);
@@ -2575,8 +2610,8 @@ static void FS3ENet_HandleNotifications(FS3ENetMessage *fs3em)
             snprintf(pathWithPage, sizeof(pathWithPage), "notifications");
 
         if (!FS3EMastodon_GetTimeline(req->fs3en_ApiBaseUrl, req->fs3en_AccessToken,
-                pathWithPage, FS3ENET_TLSHAPE_ARRAY, &json)) {
-            fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
+                pathWithPage, FS3ENET_TLSHAPE_ARRAY, &json, &authRequired)) {
+            fs3em->fs3em_Result = authRequired ? FS3ENETR_AUTH_REQUIRED : FS3ENETR_HTTP_ERROR;
             return;
         }
     }
@@ -2703,6 +2738,7 @@ static void FS3ENet_HandleAccountsList(FS3ENetMessage *fs3em)
     {
         char path[400];
         ULONG shape = FS3ENET_TLSHAPE_ARRAY;
+        BOOL  authRequired = FALSE;
 
         if (req->fs3eal_Kind == FS3ENET_ACCLIST_FOLLOWERS)
             snprintf(path, sizeof(path), "accounts/%s/followers?limit=40", req->fs3eal_AccountId);
@@ -2717,8 +2753,8 @@ static void FS3ENet_HandleAccountsList(FS3ENetMessage *fs3em)
         }
 
         if (!FS3EMastodon_GetTimeline(req->fs3eal_ApiBaseUrl, req->fs3eal_AccessToken,
-                path, shape, &json)) {
-            fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
+                path, shape, &json, &authRequired)) {
+            fs3em->fs3em_Result = authRequired ? FS3ENETR_AUTH_REQUIRED : FS3ENETR_HTTP_ERROR;
             return;
         }
     }

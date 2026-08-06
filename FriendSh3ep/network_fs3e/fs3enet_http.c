@@ -33,7 +33,7 @@
 # include <SDI_compiler.h>
 #endif
 
-#define FS3EHTTP_USER_AGENT  "AmigaOS3 FriendSh3ep Beta/0.1"
+#define FS3EHTTP_USER_AGENT  "Amiga FriendSh3ep"
 #define FS3EHTTP_INITIAL_BUF 4096
 #define FS3EHTTP_MAX_PATH    2048
 
@@ -95,12 +95,44 @@ struct Library *AmiSSLBase=NULL, *AmiSSLExtBase=NULL;
 
 static SSL_CTX *g_SSLCtx=NULL;
 
-/* Required callback to enable HTTPS connections via OSSL_HTTP_transfer(). */
+/* FS3EHttp_TLSCallback's arg -- OSSL_HTTP_transfer()'s bio_update_fn only
+ * ever receives back whatever single `arg` pointer the caller handed it
+ * (see FS3EHttp_DoRequest() below), so ctx and host are bundled into one
+ * struct rather than needing two separate arg slots that don't exist. */
+typedef struct {
+    SSL_CTX    *ctx;
+    const char *host; /* for SNI -- see FS3EHttp_TLSCallback's own comment */
+} FS3EHttpTLSCallbackArg;
+
+/* Required callback to enable HTTPS connections via OSSL_HTTP_transfer().
+ *
+ * Also sets SNI (SSL_set_tlsext_host_name) on the SSL object it creates --
+ * NOT redundant with what OSSL_HTTP_transfer()/OSSL_HTTP_open() might do on
+ * their own: this AmiSSL build's port of that code path doesn't reliably
+ * set it (confirmed by FS3EHttp_GetRange()/FS3EHttp_DoRawRequest() below,
+ * which build their OWN raw BIO chain instead of going through
+ * OSSL_HTTP_transfer() and already had to set SNI explicitly themselves --
+ * this callback is the equivalent fix for the OSSL_HTTP_transfer() path
+ * FS3EHttp_Get()/FS3EHttp_Post() use). Without it, any TLS-terminating
+ * frontend that picks a certificate/vhost by SNI (Cloudflare and similar,
+ * common in front of smaller self-hosted Mastodon instances) can't tell
+ * which site is being asked for and fails the handshake outright -- seen
+ * in practice as "ssl/tls alert handshake failure" against mas.to while
+ * mastodon.social (evidently not SNI-strict) connected fine. */
 static SAVEDS STDARGS BIO *FS3EHttp_TLSCallback(BIO *bio, void *arg, int connect, int detail)
 {
+    FS3EHttpTLSCallbackArg *cbArg = (FS3EHttpTLSCallbackArg *)arg;
+
     if (connect && detail)
     {
-        BIO *sbio = BIO_new_ssl((SSL_CTX *)arg, 1);
+        BIO *sbio = BIO_new_ssl(cbArg->ctx, 1);
+        if (sbio && cbArg->host)
+        {
+            SSL *ssl = NULL;
+            BIO_get_ssl(sbio, &ssl);
+            if (ssl)
+                SSL_set_tlsext_host_name(ssl, cbArg->host);
+        }
         bio = (sbio != NULL) ? BIO_push(sbio, bio) : NULL;
     }
 
@@ -194,13 +226,11 @@ void FS3EHttp_PrintErrors(void)
     while ((errCode = ERR_get_error()) != 0) {
         char errBuf[256];
         ERR_error_string_n(errCode, errBuf, sizeof(errBuf));
-     //   bdbprintf_now("FS3EHttp: %s\n", errBuf);
+        bdbprintf_now("FS3EHttp: %s\n", errBuf);
         any = TRUE;
     }
-    /*
     if (!any)
         bdbprintf_now("FS3EHttp: (no OpenSSL error queue entries)\n");
-    */
 }
 
 /* Reads all of bio into an AllocVec()'d, NUL-terminated buffer. */
@@ -316,14 +346,20 @@ static BOOL FS3EHttp_DoRequest(const char *url, const FS3EHttpHeader *extraHeade
             X509V3_add_value(h->fhh_Name, h->fhh_Value, &headers);
     }
 
-    resp = OSSL_HTTP_transfer(&rctx, host, port, pathBuf, useSSL,
-                               NULL, NULL,
-                               NULL, NULL,
-                               FS3EHttp_TLSCallback, g_SSLCtx,
-                               0, headers,
-                               contentType, reqBody,
-                               NULL, 0,
-                               FS3EHTTP_MAX_RESP_LEN, FS3EHTTP_TIMEOUT_SECS, 0);
+    {
+        FS3EHttpTLSCallbackArg cbArg;
+        cbArg.ctx  = g_SSLCtx;
+        cbArg.host = host; /* SNI -- see FS3EHttp_TLSCallback's doc comment */
+
+        resp = OSSL_HTTP_transfer(&rctx, host, port, pathBuf, useSSL,
+                                   NULL, NULL,
+                                   NULL, NULL,
+                                   FS3EHttp_TLSCallback, &cbArg,
+                                   0, headers,
+                                   contentType, reqBody,
+                                   NULL, 0,
+                                   FS3EHTTP_MAX_RESP_LEN, FS3EHTTP_TIMEOUT_SECS, 0);
+    }
 
     if (resp)
     {

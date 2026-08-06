@@ -885,7 +885,7 @@ int main(int argc, char **argv)
                         ULONG senderId = result & WMHI_GADGETMASK;
 
                         BoopsiDelay_BeginMessage(DelayQueue, senderId);
-                        BoopsiDelay_AddTag(DelayQueue, WMHI_GADGETUP, 1);
+                        BoopsiDelay_AddTag(DelayQueue, GA_Selected, 0);
                         BoopsiDelay_EndMessage(DelayQueue);
                         break;
                     }

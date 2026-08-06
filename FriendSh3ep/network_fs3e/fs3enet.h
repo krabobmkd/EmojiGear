@@ -67,7 +67,18 @@ enum FS3ENetResult
     FS3ENETR_NETWORK_ERROR,
     FS3ENETR_HTTP_ERROR,
     FS3ENETR_AUTH_ERROR,
-    FS3ENETR_PARSE_ERROR
+    FS3ENETR_PARSE_ERROR,
+    FS3ENETR_AUTH_REQUIRED /* Server answered but refused an anonymous request
+                             * outright ({"error":"This method requires an
+                             * authenticated user"} -- Mastodon's "timeline
+                             * preview" admin setting turned off, seen on some
+                             * instances even for nominally-public endpoints
+                             * like timelines/public). Distinct from
+                             * FS3ENETR_AUTH_ERROR (a REJECTED, previously-
+                             * valid token) -- this is a server policy that
+                             * blocks anonymous access outright, not a bad
+                             * token; see FS3EMastodon_GetTimeline's
+                             * outAuthRequired param. */
 };
 
 /*
@@ -543,8 +554,21 @@ typedef struct FS3ENetStatus {
 
     /* media_attachments[].preview_url (falling back to .url if no
      * preview_url) for up to FS3ENET_MAX_MEDIA attachments; entries
-     * [fmas_MediaCount..FS3ENET_MAX_MEDIA) are NULL. */
+     * [fmas_MediaCount..FS3ENET_MAX_MEDIA) are NULL. For an audio
+     * attachment that has separate cover art, preview_url is that cover
+     * IMAGE, not the audio -- see fmas_MediaAudioUrls below for the
+     * attachment's actual playable file in that case. */
     char  *fmas_MediaUrls[FS3ENET_MAX_MEDIA];
+    /* media_attachments[].url, unconditionally (never the preview_url
+     * fallback fmas_MediaUrls above uses) -- the attachment's real,
+     * original file. Only meaningfully different from fmas_MediaUrls[i]
+     * when that slot had a distinct preview_url (cover art on an audio
+     * attachment is the case that matters today: fmas_MediaUrls[i] is
+     * then the cover image and this is the actual mp3/ogg/wav to play).
+     * For every other kind (image/video/gifv, or audio with no cover),
+     * this is equal to (or the same value fmas_MediaUrls[i] already
+     * fell back to). Same NULL-past-fmas_MediaCount convention. */
+    char  *fmas_MediaAudioUrls[FS3ENET_MAX_MEDIA];
     /* media_attachments[].type for the same slots -- enum FS3ENetMediaKind. */
     ULONG  fmas_MediaKind[FS3ENET_MAX_MEDIA];
     /* media_attachments[].id for the same slots -- needed to resend as

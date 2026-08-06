@@ -70,13 +70,50 @@ void FS3EApp_SetAccount(const char *apiBaseUrl, const char *accessToken,
                         !strcmp(app->accountApiBaseUrl, apiBaseUrl) &&
                         !strcmp(app->accountAcct, acct);
 
+    char *newApiBaseUrl, *newAccessToken, *newDisplayName, *newAcct, *newAvatarURL, *newAccountId;
+
+    /* Duplicate every incoming value BEFORE freeing the current fields --
+     * a caller is allowed to pass app->accountXXX straight back in as one
+     * or more of these parameters (the comment above literally names this
+     * case: FS3ENETQ_VERIFY_ACCOUNT's reply handler passes app->
+     * accountApiBaseUrl/accountAccessToken back in unchanged, just to
+     * refresh the profile fields from a fresh server reply). Freeing
+     * app->accountXXX first (the old order) and only THEN calling
+     * NetStrDup() on a parameter that pointed at that same memory is a
+     * genuine use-after-free: FreeVec()'s free-list bookkeeping writes
+     * into the start of the freed block, so the "copy" can read back
+     * corrupted/empty bytes instead of the original string. Confirmed as
+     * the root cause of a real-account "connects fine, then silently
+     * reverts to No account a moment later" regression -- it was always
+     * possible, but FS3EApp_VerifyStoredAccount() used to only fire for
+     * the rare accountId-backfill case; it now fires on every startup
+     * with a real token, so this was hit every single time instead of
+     * almost never. */
+    newApiBaseUrl  = NetStrDup(apiBaseUrl);
+    newAccessToken = NetStrDup(accessToken);
+    newDisplayName = NetStrDup(displayName);
+    newAcct        = NetStrDup(acct);
+    newAvatarURL   = NetStrDup(avatarURL);
+    newAccountId   = NetStrDup(accountId);
+
     FS3EApp_FreeAccount();
-    app->accountApiBaseUrl  = NetStrDup(apiBaseUrl);
-    app->accountAccessToken = NetStrDup(accessToken);
-    app->accountDisplayName = NetStrDup(displayName);
-    app->accountAcct        = NetStrDup(acct);
-    app->accountAvatarURL   = NetStrDup(avatarURL);
-    app->accountId          = NetStrDup(accountId);
+    app->accountApiBaseUrl  = newApiBaseUrl;
+    app->accountAccessToken = newAccessToken;
+    app->accountDisplayName = newDisplayName;
+    app->accountAcct        = newAcct;
+    app->accountAvatarURL   = newAvatarURL;
+    app->accountId          = newAccountId;
+
+    /* Optimistic reset, not a confirmation -- FS3EApp_LoadAccount() and
+     * FS3EApp_SwitchAccount() both call this with a locally-stored token
+     * that hasn't talked to the server yet, same as the fresh-
+     * LOGIN_FINISH/VERIFY_ACCOUNT-reply callers that HAVE just confirmed
+     * it. Either way this is a different token/account than whatever
+     * accountTokenRejected was last set for, so any earlier rejection no
+     * longer applies -- FS3EApp_VerifyStoredAccount() (called right after
+     * both LoadAccount and SwitchAccount) will set it again if this one
+     * turns out to be dead too. */
+    app->accountTokenRejected = FALSE;
 
     /* Toot button has nothing to post to without a connected account --
      * safe to call before the toot window exists yet (checked inside). */
@@ -164,6 +201,35 @@ void FS3EApp_SetAccount(const char *apiBaseUrl, const char *accessToken,
             */
         }
     }
+}
+
+/* TRUE if the active account can actually post right now -- a real,
+ * logged-in account (accountAccessToken non-NULL; NULL is the anonymous-
+ * or-no-account convention, see FS3EACCOUNT_ANON_ACCT's doc comment) whose
+ * token hasn't been confirmed rejected by the server (accountTokenRejected,
+ * see its own doc comment in friendsh3ep.h). Anonymous browsing already
+ * blocks Home/Notifications/Search implicitly (FS3EApp_FetchTimeline's
+ * Local/Fed carve-out), but composing a toot has no per-channel fetch gate
+ * the way those do -- this is that gate for the toot-compose window
+ * instead. Shows an EasyRequestArgs error and returns FALSE otherwise.
+ * Not static: friendsh3ep.c and fs3eaction.c both call this, right before
+ * every FS3ETootView_Open() -- new toot (GID_TITLEBAR_NEWTOOT,
+ * Action_NewToot) and every TTL_HOT_REPLY/MODIFY/QUOTE/MESSAGE hotspot --
+ * see the extern declaration in fs3eaccounts.h. */
+BOOL FS3EApp_RequireRealAccount(void)
+{
+    struct EasyStruct es;
+
+    if (app->accountAccessToken && !app->accountTokenRejected)
+        return TRUE;
+
+    es.es_StructSize   = sizeof(es);
+    es.es_Flags        = 0;
+    es.es_Title        = (UBYTE *)"FriendSh3ep";
+    es.es_TextFormat   = (UBYTE *)"Connect to a real account to toot.";
+    es.es_GadgetFormat = (UBYTE *)"OK";
+    EasyRequestArgs(CurrentMainWindow, &es, NULL, NULL);
+    return FALSE;
 }
 
 /* -------------------------------------------------------------------------
@@ -415,7 +481,13 @@ void FS3EApp_SaveAccount(void)
     LONG activeIdx;
     ULONG i;
 
-    if (!app->accountApiBaseUrl || !app->accountAccessToken) return;
+    /* accountAccessToken may legitimately be NULL here -- an anonymous
+     * account (see FS3EACCOUNT_ANON_ACCT in fs3eaccounts.h) still has a
+     * real apiBaseUrl and must still be saved, same as any other account;
+     * FS3EApp_UpsertAccountsList()/the write loop below both already treat
+     * a NULL accessToken as an empty token line via NetStrDup/the "a->
+     * accessToken ? ... : \"\"" guards a few lines down. */
+    if (!app->accountApiBaseUrl) return;
 
     /* Keep app->accounts[] current before writing it out. */
     FS3EApp_UpsertAccountsList(app->accountApiBaseUrl, app->accountAccessToken,
@@ -500,6 +572,7 @@ BOOL FS3EApp_LoadAccount(void)
         char  numLine[16];
         ULONG count, i;
         LONG  activeIdx;
+        BOOL  gotBase, gotTok;
 
         if (!RLINE(numLine)) { Close(f); return FALSE; }
         count = (ULONG)atol(numLine);
@@ -509,7 +582,17 @@ BOOL FS3EApp_LoadAccount(void)
         activeIdx = (LONG)atol(numLine);
 
         for (i = 0; i < count; i++) {
-            if (!RLINE(apiBaseUrl) || !RLINE(tokLine) || !apiBaseUrl[0] || !tokLine[0])
+            /* tokLine legitimately empty (an anonymous account, see
+             * FS3EACCOUNT_ANON_ACCT) still means RLINE() itself succeeded
+             * -- only !gotBase/!gotTok (FGets hit real EOF/read failure)
+             * or an empty apiBaseUrl (always required, anonymous or not)
+             * signal a truncated/corrupt file worth stopping on. An
+             * earlier version of this loop also broke on `!tokLine[0]`,
+             * which silently discarded an anonymous entry AND every
+             * account listed after it in the file. */
+            gotBase = RLINE(apiBaseUrl);
+            gotTok  = RLINE(tokLine);
+            if (!gotBase || !gotTok || !apiBaseUrl[0])
                 break;
             FS3EApp_DecodeToken(tokLine, accessToken, sizeof(accessToken));
             if (!RLINE(displayName)) displayName[0] = '\0';
@@ -523,7 +606,6 @@ BOOL FS3EApp_LoadAccount(void)
         Close(f);
 #undef RLINE
 
-
         if (activeIdx < 0 || (ULONG)activeIdx >= app->accountCount) return FALSE;
         {
             FS3EAccount *a = &app->accounts[activeIdx];
@@ -535,19 +617,33 @@ BOOL FS3EApp_LoadAccount(void)
     }
 }
 
-/* account.dat files saved before accountId existed load with an empty id,
- * which silently disables VIEWMODE_User's fetch (ViewModeTimeline returns
- * FALSE without it). Re-verify the existing access token to backfill it
- * instead of requiring the user to log out and back in -- see
- * FS3ENETQ_VERIFY_ACCOUNT's reply case in FS3EApp_HandleNetReply().
+/* Re-verifies the active account's token every launch (not just when
+ * accountId is missing, which used to be this function's only job -- see
+ * account.dat files saved before accountId existed, which load with an
+ * empty id and silently disable VIEWMODE_User's fetch, ViewModeTimeline
+ * returning FALSE without it). FS3EApp_LoadAccount() only decrypts and
+ * trusts account.dat locally -- it never talks to the server -- so without
+ * this, a token revoked/expired server-side after that file was written
+ * would sit there looking "Account connected." indefinitely (the
+ * accountId-missing case is genuinely rare -- an upgrade from an old
+ * account.dat format -- so re-verifying unconditionally instead is one
+ * extra request at startup, not per-launch overhead worth gating on it).
+ * See FS3ENETQ_VERIFY_ACCOUNT's reply case in FS3EApp_HandleNetReply() for
+ * what happens to app->accountTokenRejected on a confirmed rejection.
  * Not static: friendsh3ep.c's main() calls this too -- see the extern
  * declaration there. */
-void FS3EApp_BackfillAccountId(void)
+void FS3EApp_VerifyStoredAccount(void)
 {
     FS3ENetVerifyAccountReq *req;
 
-    if (!app->accountApiBaseUrl || !app->accountAccessToken) return;
-    if (app->accountId && app->accountId[0]) return;
+    /* A NULL accessToken here is a deliberately anonymous account (see
+     * FS3EACCOUNT_ANON_ACCT in fs3eaccounts.h) -- there is no token to
+     * verify, and firing this anyway would send verify_credentials an
+     * empty Bearer header, which the server rejects just like a dead
+     * token would, wrongly flipping app->accountTokenRejected TRUE for
+     * an account that was never logged in to begin with. */
+    if (!app->accountApiBaseUrl || !app->accountAccessToken)
+        return;
 
     req = FS3ENetVerifyAccountReq_Alloc(app->accountApiBaseUrl, app->accountAccessToken);
     if (!req) return;
@@ -556,14 +652,142 @@ void FS3EApp_BackfillAccountId(void)
         sizeof(FS3ENetVerifyAccountReq) /* net process only reads char* fields */);
 }
 
+/* Instances confirmed by hand (2026-08-06) to allow anonymous timeline
+ * preview -- see FS3ENETR_AUTH_REQUIRED's doc comment in fs3enet.h for why
+ * that isn't true of every public Mastodon instance (mastodon.social
+ * notably does not, despite otherwise being TLS-reachable). First entry
+ * becomes the initially-connected account (see this function's doc
+ * comment in fs3eaccounts.h); the rest are just pre-populated into the
+ * accounts list so a first-time user has a pick of already-known-good
+ * servers to switch to (GID_LOGIN_ACCOUNTS_LIST) instead of having to
+ * discover which random instance allows this by trial and error. */
+static const char *const s_defaultAnonServers[] = {
+    "https://mas.to",
+    "https://mastodon.world",
+    "https://mstdn.social",
+    "https://masto.nu",
+    "https://wehavecookies.social",
+    "https://piaille.fr",
+    "https://mastoot.fr",
+    "https://mastodon.uno",
+    "https://infosec.exchange",
+};
+#define FS3E_DEFAULT_ANON_SERVER_COUNT \
+    (sizeof(s_defaultAnonServers) / sizeof(s_defaultAnonServers[0]))
+
+void FS3EApp_SeedDefaultAnonymousAccount(void)
+{
+    ULONG i;
+
+    /* Upsert every candidate into app->accounts[] first (all sharing the
+     * FS3EACCOUNT_ANON_ACCT sentinel, told apart by apiBaseUrl -- see its
+     * own doc comment) without going through FS3EApp_SetAccount() for each
+     * one, which would otherwise fire a FS3ENETQ_INSTANCE_INFO request and
+     * bump accountGeneration per server for 8 servers nobody has looked at
+     * yet. That happens naturally, once, whenever the user actually
+     * switches to one of them (FS3EApp_SetAccount()'s own "!sameAccount"
+     * branch). */
+    for (i = 0; i < FS3E_DEFAULT_ANON_SERVER_COUNT; i++)
+        FS3EApp_UpsertAccountsList(s_defaultAnonServers[i], "", "",
+                                    FS3EACCOUNT_ANON_ACCT, "", "");
+
+    FS3EApp_SetAccount(s_defaultAnonServers[0], "", "",
+                        FS3EACCOUNT_ANON_ACCT, "", "");
+    FS3EApp_SaveAccount();
+}
+
+/* One row of FS3EApp_RefreshLoginAccountsList()'s own before/after
+ * comparison -- server/user copied (AllocVec'd) rather than borrowed,
+ * since app->accounts[]'s own strings can be freed/reallocated in place
+ * (FS3EApp_UpsertAccountsList) between calls, so a stale borrowed pointer
+ * from a previous call can't be trusted to still point at the same bytes,
+ * let alone compared by address. */
+typedef struct {
+    char *server;
+    char *user;
+    BOOL  current;
+} FS3ELoginListSnapshotRow;
+
+static FS3ELoginListSnapshotRow s_lastAccountRows[FS3E_MAX_ACCOUNTS];
+static ULONG s_lastAccountRowCount = 0;
+static BOOL  s_haveAccountRowSnapshot = FALSE;
+
+/* TRUE if rows[0..count-1] differs from the snapshot left by the last
+ * call that actually rebuilt the list (fs3eaccounts_snapshot_rows below)
+ * -- count itself, or any row's server/user/current. NULL and "" compare
+ * equal (both normalized to "" below) since FS3EAccount fields are
+ * NetStrDup'd, which already collapses "" to NULL (see FS3EACCOUNT_ANON_
+ * ACCT's doc comment in fs3eaccounts.h) -- without this, an anonymous
+ * account's row would spuriously compare "changed" against itself. */
+static BOOL fs3eaccounts_rows_changed(const FS3ELoginAccountRow *rows, ULONG count)
+{
+    ULONG i;
+
+    if (!s_haveAccountRowSnapshot || count != s_lastAccountRowCount) return TRUE;
+
+    for (i = 0; i < count; i++) {
+        const char *prevServer = s_lastAccountRows[i].server ? s_lastAccountRows[i].server : "";
+        const char *prevUser   = s_lastAccountRows[i].user   ? s_lastAccountRows[i].user   : "";
+        const char *newServer  = rows[i].server ? rows[i].server : "";
+        const char *newUser    = rows[i].user   ? rows[i].user   : "";
+
+        if (s_lastAccountRows[i].current != rows[i].current) return TRUE;
+        if (strcmp(prevServer, newServer) != 0) return TRUE;
+        if (strcmp(prevUser, newUser) != 0) return TRUE;
+    }
+    return FALSE;
+}
+
+/* Replaces s_lastAccountRows[] with a fresh AllocVec'd copy of rows[0..
+ * count-1] -- called only once FS3ELoginView_SetAccountsList() has
+ * actually been told about this exact state, so the snapshot always
+ * reflects what the gadget was last asked to show. */
+static void fs3eaccounts_snapshot_rows(const FS3ELoginAccountRow *rows, ULONG count)
+{
+    ULONG i;
+
+    for (i = 0; i < s_lastAccountRowCount; i++) {
+        if (s_lastAccountRows[i].server) { FreeVec(s_lastAccountRows[i].server); s_lastAccountRows[i].server = NULL; }
+        if (s_lastAccountRows[i].user)   { FreeVec(s_lastAccountRows[i].user);   s_lastAccountRows[i].user   = NULL; }
+    }
+
+    for (i = 0; i < count && i < FS3E_MAX_ACCOUNTS; i++) {
+        s_lastAccountRows[i].server  = NetStrDup(rows[i].server);
+        s_lastAccountRows[i].user    = NetStrDup(rows[i].user);
+        s_lastAccountRows[i].current = rows[i].current;
+    }
+    s_lastAccountRowCount    = count;
+    s_haveAccountRowSnapshot = TRUE;
+}
+
 /* Rebuild the login window's accounts list from app->accounts[], marking
  * whichever entry matches the currently active account as "current" (see
- * FS3ELoginAccountRow.current). Safe to call any time -- before the
- * window has ever been created it's a no-op (FS3ELoginView_SetAccountsList
- * bails on a NULL acclistBrowser). Call this any time app->accounts[] or
- * the active account changes: after loading accounts.dat at startup,
- * after a successful login/switch, and right before opening the login
- * window (GID_TITLEBAR_ACCOUNTS) so it's never stale.
+ * FS3ELoginAccountRow.current -- TRUE as soon as a switch/login has been
+ * ASKED for, not once it's confirmed working: FS3EApp_SetAccount() sets
+ * accountApiBaseUrl/accountAcct synchronously, before any network round-
+ * trip, so this is already "optimistic" with no extra state needed).
+ *
+ * Skips touching the listbrowser at all -- no LISTBROWSER_Labels detach/
+ * reattach -- if the computed rows (content AND which one is current)
+ * are byte-for-byte identical to what the gadget was last actually told
+ * to show (see fs3eaccounts_rows_changed() above). This matters beyond
+ * just avoiding needless work: a detach/reattach the gadget didn't need
+ * is exactly what provokes its own self-triggered LISTBROWSER_Selected
+ * notify (see FS3ELoginView_SetAccountsList()'s own comment in
+ * fs3eloginview.c) -- callers that call this defensively/repeatedly
+ * (e.g. right before opening the login window, "just in case it's stale")
+ * no longer risk kicking that off for nothing.
+ *
+ * Safe to call any time -- before the window has ever been created it's
+ * still a no-op past this guard (FS3ELoginView_SetAccountsList itself
+ * bails on a NULL acclistBrowser; this function deliberately does NOT
+ * snapshot in that case, so the first call after the gadget really exists
+ * always goes through instead of comparing against a pre-gadget snapshot
+ * and wrongly deciding nothing changed). Call this any time
+ * app->accounts[] or the active account changes: after loading
+ * accounts.dat at startup, after a successful login/switch, and right
+ * before opening the login window (GID_TITLEBAR_ACCOUNTS) so it's never
+ * stale.
  * Not static: fs3erequests.c's FS3EApp_HandleNetReply calls this too --
  * see the extern declaration there. */
 void FS3EApp_RefreshLoginAccountsList(void)
@@ -579,7 +803,48 @@ void FS3EApp_RefreshLoginAccountsList(void)
                            !strcmp(app->accounts[i].apiBaseUrl, app->accountApiBaseUrl) &&
                            !strcmp(app->accounts[i].acct, app->accountAcct));
     }
+
+    if (app->loginView.acclistBrowser && !fs3eaccounts_rows_changed(rows, app->accountCount))
+        return;
+
+    if (app->loginView.acclistBrowser)
+        fs3eaccounts_snapshot_rows(rows, app->accountCount);
+
     FS3ELoginView_SetAccountsList(&app->loginView, rows, app->accountCount);
+}
+
+/* Wipes every bit of state that belonged to whichever account was just
+ * left (toot timeline channels, search-channel profile/discussion state,
+ * every fetch-tracking bitmask) and fetches the current view mode's
+ * channel fresh under whatever account is active now (possibly none) --
+ * shared by FS3EApp_SwitchAccount(), FS3EApp_DeleteSelectedAccount() and
+ * FS3EApp_ConnectAnonymously() (fs3erequests.c), all of which change the
+ * active account (or clear it entirely) and need the exact same "nothing
+ * from the old account should linger on screen" reset. Not static: see
+ * the extern declaration in fs3eaccounts.h. */
+void FS3EApp_ResetPerAccountState(void)
+{
+    if (app->tootTimeline) {
+        SetAttrs(app->tootTimeline, TTIMELINE_ClearAllChannels, TRUE, TAG_DONE);
+        if (CurrentMainWindow)
+            RefreshGList((struct Gadget *)app->tootTimeline, CurrentMainWindow, NULL, 1);
+    }
+
+    /* Search-channel profile/discussion state belonged to the outgoing account too. */
+    if (app->searchProfileAcct)       { FreeVec(app->searchProfileAcct);       app->searchProfileAcct       = NULL; }
+    if (app->searchProfileAccountId)  { FreeVec(app->searchProfileAccountId);  app->searchProfileAccountId  = NULL; }
+    if (app->searchDiscussionStatusId){ FreeVec(app->searchDiscussionStatusId);app->searchDiscussionStatusId= NULL; }
+    if (app->searchLastQueryText)     { FreeVec(app->searchLastQueryText);     app->searchLastQueryText     = NULL; }
+    app->searchMode = FS3ESEARCH_NONE;
+    FS3EApp_SearchStackClear(); /* back-navigation history is account-scoped too */
+
+    app->timelineFetchedMask   = 0;
+    app->channelPopulatedMask  = 0;
+    app->timelineErrorMask     = 0;
+    app->channelEmptyMask      = 0;
+    app->olderPageInFlightMask = 0;
+    app->newerPageInFlightMask = 0;
+    FS3EApp_FetchTimeline(app->viewMode);
 }
 
 /* Switch the connected account to app->accounts[index] (a row click in
@@ -614,10 +879,16 @@ void FS3EApp_SwitchAccount(LONG index)
     a = &app->accounts[index];
     if (!a->apiBaseUrl || !a->acct) return;
 
+    if(app->accountCurrentlyConnecting == index) return;
+    app->accountCurrentlyConnecting = index;
+
     if (app->accountApiBaseUrl && app->accountAcct &&
         !strcmp(a->apiBaseUrl, app->accountApiBaseUrl) &&
         !strcmp(a->acct, app->accountAcct))
+        {
+    //    printf("FS3EApp_SwitchAccount quit because already connected\n");
         return; /* already connected -- see the caller's "not connected yet" gate */
+        }
 
     s_switching = TRUE;
 
@@ -632,31 +903,80 @@ void FS3EApp_SwitchAccount(LONG index)
     FS3EApp_SaveAccount(); /* account.dat now points at this account too */
     app->loginPhase = FS3ELOGIN_DONE;
 
-    /* Every channel's posts belong to the account being left. */
-    if (app->tootTimeline) {
-        SetAttrs(app->tootTimeline, TTIMELINE_ClearAllChannels, TRUE, TAG_DONE);
-        if (CurrentMainWindow)
-            RefreshGList((struct Gadget *)app->tootTimeline, CurrentMainWindow, NULL, 1);
+    /* This entry's token came straight from account.dat too, same
+     * unverified state a saved account is in at startup -- see
+     * FS3EApp_VerifyStoredAccount()'s own doc comment. */
+    FS3EApp_VerifyStoredAccount();
+
+    FS3EApp_ResetPerAccountState(); /* every channel's posts belong to the account being left */
+
+ /*just need to select the correct, not recreate the list
+    FS3EApp_RefreshLoginAccountsList();
+  */
+    FS3EApp_SelectListIndex(&app->loginView,index);
+
+    s_switching = FALSE;
+}
+
+/* GID_LOGIN_DELETE_SERVER_BUTTON -- forgets the currently active account
+ * outright (removed from app->accounts[]/account.dat, not just switched
+ * away from like FS3EApp_SwitchAccount()), then connects to whichever
+ * account is now first in the list -- same "nothing left on screen from
+ * the old account" reset FS3EApp_SwitchAccount() applies. No-op if there's
+ * no active account to delete.
+ * Not static: friendsh3ep.c's main() calls this too -- see the extern
+ * declaration there. */
+void FS3EApp_DeleteSelectedAccount(void)
+{
+    LONG  idx;
+    ULONG i;
+
+    if (!app->accountApiBaseUrl || !app->accountAcct) return;
+
+    idx = FS3EApp_FindAccountIndex(app->accountApiBaseUrl, app->accountAcct);
+    if (idx < 0) return; /* shouldn't happen -- the active account is always mirrored into accounts[] */
+
+    /* Same "the user changed their mind" reasoning as FS3EApp_SwitchAccount(). */
+    FS3EApp_FreeLoginState();
+
+    FS3EApp_FreeAccountEntry(&app->accounts[idx]);
+    for (i = (ULONG)idx; i + 1 < app->accountCount; i++)
+        app->accounts[i] = app->accounts[i + 1]; /* shallow copy -- shifts pointer ownership down one slot */
+    app->accountCount--;
+    memset(&app->accounts[app->accountCount], 0, sizeof(FS3EAccount)); /* the now-unused tail slot */
+
+    FS3EApp_FreeAccount(); /* the active-account mirror -- it's gone */
+    app->accountTokenRejected = FALSE;
+    app->loginPhase = FS3ELOGIN_IDLE;
+
+    if (app->accountCount > 0) {
+        FS3EAccount *a = &app->accounts[0];
+        FS3EApp_SetAccount(a->apiBaseUrl, a->accessToken, a->displayName,
+                            a->acct, a->avatarURL, a->accountId);
+        app->loginPhase = FS3ELOGIN_DONE;
+        /* This entry's token came straight from account.dat too, same
+         * unverified state a saved account is in at startup -- see
+         * FS3EApp_VerifyStoredAccount()'s own doc comment. */
+        FS3EApp_VerifyStoredAccount();
+        FS3EApp_SaveAccount();
+    } else {
+        /* Nothing left -- clear account.dat outright rather than leave a
+         * stale file still naming the just-deleted account behind:
+         * FS3EApp_SaveAccount() itself won't write anything here anyway
+         * (it requires an active account), and next launch's
+         * FS3EApp_LoadAccount() finding no file at all is exactly what
+         * re-triggers FS3EApp_SeedDefaultAnonymousAccount() in main(),
+         * same as a genuine first launch. */
+        char path[300];
+        if (FS3EApp_AccountDatPath(path, sizeof(path)))
+            DeleteFile((STRPTR)path);
     }
 
-    /* Search-channel profile/discussion state belonged to the outgoing account too. */
-    if (app->searchProfileAcct)       { FreeVec(app->searchProfileAcct);       app->searchProfileAcct       = NULL; }
-    if (app->searchProfileAccountId)  { FreeVec(app->searchProfileAccountId);  app->searchProfileAccountId  = NULL; }
-    if (app->searchDiscussionStatusId){ FreeVec(app->searchDiscussionStatusId);app->searchDiscussionStatusId= NULL; }
-    if (app->searchLastQueryText)     { FreeVec(app->searchLastQueryText);     app->searchLastQueryText     = NULL; }
-    app->searchMode = FS3ESEARCH_NONE;
-    FS3EApp_SearchStackClear(); /* back-navigation history is account-scoped too */
+    FS3EApp_ResetPerAccountState();
 
-    app->timelineFetchedMask   = 0;
-    app->channelPopulatedMask  = 0;
-    app->timelineErrorMask     = 0;
-    app->channelEmptyMask      = 0;
-    app->olderPageInFlightMask = 0;
-    app->newerPageInFlightMask = 0;
-    FS3EApp_FetchTimeline(app->viewMode);
 
     FS3EApp_RefreshLoginAccountsList();
 
-    s_switching = FALSE;
+    app->accountCurrentlyConnecting = -1;
 }
 

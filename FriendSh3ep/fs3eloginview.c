@@ -114,12 +114,23 @@ BOOL FS3ELoginView_Create(FS3ELoginView *lv, struct URPDrawContext *textDC)
 
     lv->loginBtn = (Object *)NewObject(BUTTON_GetClass(), NULL,
         GA_ID,        (ULONG)GID_LOGIN_LOGIN_BUTTON,
-        GA_RelVerify, TRUE,
-        ICA_TARGET,   (ULONG)TargetInstance,
+        GA_RelVerify, TRUE,      
         GA_Text,      (ULONG)LOC(MSG_LOGIN_LOGIN),
         GA_TabCycle,  TRUE,
         TAG_END);
     if (!lv->loginBtn) return FALSE;
+
+    /* No OAuth round-trip -- just connects to whatever's in serverEditor
+     * read-only, browsing Local/Federated only (see FS3EApp_ConnectAnonymously
+     * in fs3erequests.c). userEditor is ignored for this button, same as it
+     * always has been informational-only for loginBtn too. */
+    lv->anonBtn = (Object *)NewObject(BUTTON_GetClass(), NULL,
+        GA_ID,        (ULONG)GID_LOGIN_ANON_BUTTON,
+        GA_RelVerify, TRUE,
+        GA_Text,      (ULONG)"Anonymous",
+        GA_TabCycle,  TRUE,
+        TAG_END);
+    if (!lv->anonBtn) return FALSE;
 
     serverLabel = (Object *)NewObject(LABEL_GetClass(), NULL,
         LABEL_Text, (ULONG)LOC(MSG_LOGIN_SERVER), TAG_END);
@@ -146,7 +157,6 @@ BOOL FS3ELoginView_Create(FS3ELoginView *lv, struct URPDrawContext *textDC)
     lv->submitCodeBtn = (Object *)NewObject(BUTTON_GetClass(), NULL,
         GA_ID,        (ULONG)GID_LOGIN_SUBMIT_CODE_BUTTON,
         GA_RelVerify, TRUE,
-        ICA_TARGET,   (ULONG)TargetInstance,
         GA_Text,      (ULONG)"Submit Code",
         GA_Disabled,  TRUE,
         GA_TabCycle,  TRUE,
@@ -189,6 +199,8 @@ BOOL FS3ELoginView_Create(FS3ELoginView *lv, struct URPDrawContext *textDC)
         LAYOUT_AddChild,      (ULONG)vg,
             CHILD_WeightedWidth,1,
         LAYOUT_AddChild,      (ULONG)lv->loginBtn,
+            CHILD_WeightedWidth, 0,
+        LAYOUT_AddChild,      (ULONG)lv->anonBtn,
             CHILD_WeightedWidth, 0,
 
         TAG_END
@@ -296,6 +308,14 @@ BOOL FS3ELoginView_Create(FS3ELoginView *lv, struct URPDrawContext *textDC)
         TAG_END);
     if (!lv->acclistBrowser) return FALSE;
 
+    lv->deleteServerBtn = (Object *)NewObject(BUTTON_GetClass(), NULL,
+        GA_ID,        (ULONG)GID_LOGIN_DELETE_SERVER_BUTTON,
+        GA_RelVerify, TRUE,
+        GA_Text,      (ULONG)LOC(MSG_LOGIN_DELETE_SERVER),
+        GA_TabCycle,  TRUE,
+        TAG_END);
+    if (!lv->deleteServerBtn) return FALSE;
+
     acclistGroup = (Object *)NewObject(LAYOUT_GetClass(), NULL,
         LAYOUT_Orientation, LAYOUT_ORIENT_VERT,
         LAYOUT_BevelStyle,  BVS_GROUP,
@@ -306,6 +326,8 @@ BOOL FS3ELoginView_Create(FS3ELoginView *lv, struct URPDrawContext *textDC)
 
         LAYOUT_AddChild,    (ULONG)lv->acclistBrowser,
             CHILD_WeightedHeight, 1,
+        LAYOUT_AddChild,    (ULONG)lv->deleteServerBtn,
+            CHILD_WeightedHeight, 0,
         TAG_END);
 
 
@@ -427,25 +449,11 @@ BOOL FS3ELoginView_HandleInput(FS3ELoginView *lv)
                 FS3ELoginView_Close(lv);
                 return TRUE;
 
-            case WMHI_NEWSIZE:
-                /* Refresh string gadgets after resize (layout handles buttons). */
-                if (lv->serverEditor)
-                    RefreshGList((struct Gadget *)lv->serverEditor, lv->window, NULL, 1);
-                if (lv->userEditor)
-                    RefreshGList((struct Gadget *)lv->userEditor,   lv->window, NULL, 1);
-                if (lv->urlEditor)
-                    RefreshGList((struct Gadget *)lv->urlEditor,    lv->window, NULL, 1);
-                if (lv->codeEditor)
-                    RefreshGList((struct Gadget *)lv->codeEditor,   lv->window, NULL, 1);
-                if (lv->acclistBrowser)
-                    RefreshGList((struct Gadget *)lv->acclistBrowser, lv->window, NULL, 1);
-                break;
-
             case WMHI_GADGETUP:
             {
                 ULONG gadId = result & WMHI_GADGETMASK;
                 BoopsiDelay_BeginMessage(DelayQueue, gadId);
-                BoopsiDelay_AddTag(DelayQueue, WMHI_GADGETUP, 1);
+                BoopsiDelay_AddTag(DelayQueue, GA_Selected, 0);
                 BoopsiDelay_EndMessage(DelayQueue);
                 break;
             }
@@ -598,26 +606,17 @@ const char *FS3ELoginView_GetANSICode(FS3ELoginView *lv)
  * -> build new ones -> reattach, per the listbrowser.gadget autodoc's rule
  * that a list already attached must be detached (LISTBROWSER_Labels, ~0)
  * before its nodes are touched.
- *
- * Deliberately does NOT also SetGadgetAttrs(LISTBROWSER_Selected, idx) on
- * reattach -- that attribute is OM_NOTIFY-applicable, and this function
- * runs from inside friendsh3ep.c's FS3EApp_SwitchAccount(), itself called
- * FROM a GID_LOGIN_ACCOUNTS_LIST notify. Setting it here fired a fresh
- * notify back through ICA_TARGET, re-entering FS3EApp_SwitchAccount()
- * before the first call had even returned -- confirmed in the wild as an
- * infinite switch-to-account-A / switch-to-account-B loop (two known
- * accounts is enough for it to alternate forever) that flooded the network
- * process with alternating requests. The node's own LBNA_Selected (set at
- * allocation below) is honored by AllocListBrowserNode when the node is
- * first added, and is enough to render the right row highlighted without
- * ever touching the notify-applicable top-level attribute. */
+ */
 void FS3ELoginView_SetAccountsList(FS3ELoginView *lv,
                                     const FS3ELoginAccountRow *rows,
                                     ULONG count)
 {
     ULONG i;
-
+    LONG  currentIdx = -1;
     if (!lv || !lv->acclistBrowser) return;
+
+    /* deactivate receiving boopsi messages from the list when updating it */
+    SetAttrs(lv->acclistBrowser,ICA_TARGET,NULL,TAG_END);
 
     if (lv->window) {
         SetGadgetAttrs((struct Gadget *)lv->acclistBrowser, lv->window, NULL,
@@ -647,16 +646,41 @@ void FS3ELoginView_SetAccountsList(FS3ELoginView *lv,
             TAG_DONE);
         if (!node) continue;
         AddTail(&lv->accList, node);
+        if (rows[i].current) currentIdx = (LONG)i;
     }
 
     if (lv->window) {
         SetGadgetAttrs((struct Gadget *)lv->acclistBrowser, lv->window, NULL,
             LISTBROWSER_Labels,     (ULONG)&lv->accList,
+            LISTBROWSER_Selected,   (ULONG)currentIdx,
             TAG_DONE);
         RefreshGList((struct Gadget *)lv->acclistBrowser, lv->window, NULL, 1);
     } else {
         SetAttrs(lv->acclistBrowser,
             LISTBROWSER_Labels,     (ULONG)&lv->accList,
+            LISTBROWSER_Selected,   (ULONG)currentIdx,
             TAG_END);
     }
+
+    /* re-enable receiving boopsi messages from the list when updating it */
+    SetAttrs(lv->acclistBrowser,ICA_TARGET,(ULONG)TargetInstance,TAG_END);
 }
+void FS3EApp_SelectListIndex(FS3ELoginView *lv,int index)
+{
+    /* deactivate receiving boopsi messages from the list when updating it */
+    SetAttrs(lv->acclistBrowser,ICA_TARGET,NULL,TAG_END);
+
+    if (lv->window) {
+        SetGadgetAttrs((struct Gadget *)lv->acclistBrowser, lv->window, NULL,
+            LISTBROWSER_Selected,   (ULONG)index,
+            TAG_DONE);
+    } else {
+        SetAttrs(lv->acclistBrowser,
+            LISTBROWSER_Selected,   (ULONG)index,
+            TAG_END);
+    }
+
+    /* re-enable receiving boopsi messages from the list when updating it */
+    SetAttrs(lv->acclistBrowser,ICA_TARGET,(ULONG)TargetInstance,TAG_END);
+}
+

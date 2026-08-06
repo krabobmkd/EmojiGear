@@ -29,6 +29,8 @@ typedef struct FS3ELoginView {
     Object *serverEditor;      /* string.gadget: instance/server URL */
     Object *userEditor;        /* string.gadget: user/account (informational) */
     Object *loginBtn;          /* "Connect" button — sends LOGIN_START */
+    Object *anonBtn;           /* "Anonymous" button — sends GID_LOGIN_ANON_BUTTON, no
+                                 * OAuth at all, see FS3EApp_ConnectAnonymously() */
 
     /* Phase 2: disabled until server returns the authorize URL */
     Object *urlInstructLabel;  /* read-only no-bevel button — instruction text */
@@ -42,6 +44,11 @@ typedef struct FS3ELoginView {
      * rebuilt wholesale on every FS3ELoginView_SetAccountsList() call). */
     Object     *acclistBrowser;    /* listbrowser.gadget: server/user columns */
     struct List accList;
+    Object     *deleteServerBtn;   /* below acclistBrowser -- sends GID_LOGIN_
+                                     * DELETE_SERVER_BUTTON, see
+                                     * FS3EApp_DeleteSelectedAccount() */
+
+
 } FS3ELoginView;
 
 /* One row of the accounts list -- server/user are copied into the
@@ -92,5 +99,7 @@ void FS3ELoginView_ClearFields(FS3ELoginView *lv);
 void FS3ELoginView_SetAccountsList(FS3ELoginView *lv,
                                     const FS3ELoginAccountRow *rows,
                                     ULONG count);
+
+void FS3EApp_SelectListIndex(FS3ELoginView *lv,int index);
 
 #endif /* FS3ELOGINVIEW_H */

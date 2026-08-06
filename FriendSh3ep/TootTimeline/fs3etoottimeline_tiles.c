@@ -1264,10 +1264,11 @@ void ttl_notify_hotspot(Class *cl, Object *o, struct GadgetInfo *gi,
                          UBYTE type, const char *data, ULONG dataLen,
                          const char *postId, BOOL favourited, BOOL following,
                          BOOL reblogged, BOOL quotable,
-                         const char *mediaIds, const char *acct)
+                         const char *mediaIds, const char *acct,
+                         const char *audioUrl)
 {
     TTLData         *inst = TTL_DATA(cl, o);
-    struct TagItem  tags[11];
+    struct TagItem  tags[12];
     struct opUpdate nmsg;
 
     /* Copy into the gadget-owned buffers first -- see the TTLData comment
@@ -1318,6 +1319,22 @@ void ttl_notify_hotspot(Class *cl, Object *o, struct GadgetInfo *gi,
         inst->lastHotSpotAcct[0] = '\0';
     }
 
+    /* AllocVec'd, not a fixed buffer -- same "a URL has no useful fixed
+     * cap" reasoning as lastHotSpotStr above. */
+    if (audioUrl && audioUrl[0]) {
+        ULONG n = (ULONG)strlen(audioUrl);
+        char *copy = (char *)AllocVec(n + 1, MEMF_ANY);
+        if (copy) {
+            CopyMem((APTR)audioUrl, copy, n);
+            copy[n] = '\0';
+            FreeVec(inst->lastHotSpotAudioUrl);
+            inst->lastHotSpotAudioUrl = copy;
+        }
+    } else {
+        FreeVec(inst->lastHotSpotAudioUrl);
+        inst->lastHotSpotAudioUrl = NULL;
+    }
+
     if (!inst->target) return;
 
     tags[0].ti_Tag  = GA_ID;
@@ -1340,7 +1357,9 @@ void ttl_notify_hotspot(Class *cl, Object *o, struct GadgetInfo *gi,
     tags[8].ti_Data = (ULONG)reblogged;
     tags[9].ti_Tag  = TTIMELINE_LastHotSpotQuotable;
     tags[9].ti_Data = (ULONG)quotable;
-    tags[10].ti_Tag = TAG_DONE;
+    tags[10].ti_Tag  = TTIMELINE_LastHotSpotAudioUrl;
+    tags[10].ti_Data = inst->lastHotSpotAudioUrl ? (ULONG)inst->lastHotSpotAudioUrl : 0;
+    tags[11].ti_Tag = TAG_DONE;
 
     nmsg.MethodID     = OM_UPDATE;
     nmsg.opu_AttrList = (struct TagItem *)tags;

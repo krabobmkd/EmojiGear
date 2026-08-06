@@ -24,6 +24,7 @@
 #include "fs3esettingsview.h"
 #include "fs3esettings.h"
 #include "fs3erequests.h"
+#include "fs3eaccounts.h"
 #include "clipboard.h"
 #include "fs3etimer.h"
 #include "TootTimeline/fs3etoottimeline.h"
@@ -126,6 +127,7 @@ BOOL Action_Accounts(struct App *ctx)
 BOOL Action_NewToot(struct App *ctx)
 {
     if (!ctx) return FALSE;
+    if (!FS3EApp_RequireRealAccount()) return TRUE; /* error shown, nothing else to do */
     /* Resets any leftover MODIFY/REPLY compose state from a previous open
      * (postId, title) -- doesn't touch bodyEditor's text itself, so an
      * in-progress draft still survives a close/reopen the way it always

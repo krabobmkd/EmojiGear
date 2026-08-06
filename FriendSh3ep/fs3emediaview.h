@@ -40,14 +40,25 @@
  * open reuses it (brought to front, picture replaced) instead of opening a
  * new one each time.
  *
- * A "Close" / "Save Media..." menu is attached the first time the window
- * opens (classic GadTools menu strip, same pattern as fs3etootview.c's
- * window-local "Toot" menu). "Save Media..." copies the already-downloaded
- * cache file straight to disk (no re-fetch) under an ASL file requester
- * defaulting to RAM: and a meaningful name: the poster's @user@instance if
- * FS3EMediaView_ShowUrl() was given one, else the cache's hash-id
- * filename, with the correct extension always appended from the file's
- * own magic bytes (BmImage_SniffFormat) rather than trusted from the URL.
+ * Two independent channels, image and audio (see FS3EMediaView's own
+ * comment below for the full picture): loading one never clears the
+ * other, so an image and an audio attachment from two different toots can
+ * both be open in this same window at once, the image showing while the
+ * audio plays underneath.
+ *
+ * A "Close" / "Save Image..." / "Save Audio..." menu is attached the
+ * first time the window opens (classic GadTools menu strip, same pattern
+ * as fs3etootview.c's window-local "Toot" menu). Each Save entry copies
+ * its own channel's already-downloaded cache file straight to disk (no
+ * re-fetch) under an ASL file requester defaulting to RAM: and a
+ * meaningful name: that channel's poster @user@instance if
+ * FS3EMediaView_ShowUrl()/ShowAudioUrl() was given one, else the cache's
+ * hash-id filename, with the correct extension always appended -- from
+ * the file's own magic bytes (BmImage_SniffFormat) for the image, from
+ * the source URL for audio (cache files are hash-named either way, never
+ * trusted from the URL for the image case since it may have no extension
+ * at all). Each Save entry silently does nothing if its own channel isn't
+ * currently loaded.
  */
 
 #include <exec/types.h>
@@ -96,54 +107,76 @@ typedef struct FS3EMediaView {
     Object *tapeDeckGadget;
     Object *sliderGadget;
 
+    /* Two independent channels, image and audio -- either, both, or
+     * neither can be loaded/active at once. Setting one (ShowUrl/
+     * ShowAudioUrl) never clears the other; picGadget shows the image
+     * whenever one is loaded (mediaview_push_picture() already prefers the
+     * bitmap over any status message), with tapeDeckGadget/sliderGadget
+     * driving audio underneath regardless of whether an image is also
+     * showing. Each channel gets its own pending-fetch tracking
+     * (pendingImageUrl/pendingAudioUrl) since both can have a download in
+     * flight at the same time -- a single shared pendingUrl (this struct's
+     * earlier, single-channel design) couldn't tell two simultaneous
+     * replies apart. */
+
     /* Currently decoded/remapped picture, if any (see bmimage.h).
      * picGadget's MEDIAPIC_* attributes are pushed from this struct's
      * bitmap/mask/width/height fields every time it (re)loads or is
      * unloaded -- see fs3emediaview.c's mediaview_push_picture(). */
     BmImage image;
 
-    char *pendingUrl; /* AllocVec'd; NULL when nothing in flight */
-    BOOL  loading;
+    char *pendingImageUrl; /* AllocVec'd; NULL when no image fetch in flight */
+    BOOL  imageLoading;
 
-    /* Updated by FS3EMediaView_OnFetchProgress() while pendingUrl's chunked
-     * download is in flight (see FS3ENETQ_FETCH_PROGRESS in fs3enet.h).
-     * progressTotalBytes is 0 until/unless the server tells us the real
-     * size. Not yet drawn anywhere -- plumbing only, a progress indicator
-     * in the window is a follow-up. */
+    /* Updated by FS3EMediaView_OnFetchProgress() while pendingImageUrl's
+     * chunked download is in flight (see FS3ENETQ_FETCH_PROGRESS in
+     * fs3enet.h) -- image channel only, ShowAudioUrl's own fetch never
+     * requests progress pings. progressTotalBytes is 0 until/unless the
+     * server tells us the real size. Not yet drawn anywhere -- plumbing
+     * only, a progress indicator in the window is a follow-up. */
     ULONG progressBytesSoFar;
     ULONG progressTotalBytes;
 
-    /* "Close"/"Save Media..." menu -- built once, the first time the
-     * window opens (mediaview_create_menu), torn down in
+    /* "Close"/"Save Image..."/"Save Audio..." menu -- built once, the
+     * first time the window opens (mediaview_create_menu), torn down in
      * FS3EMediaView_Close (menu strips don't survive WM_CLOSE). */
     struct Menu *menu;
     APTR         menuVisualInfo;
 
     /* Poster's @user@instance for the currently shown attachment, as
-     * passed to FS3EMediaView_ShowUrl(); "" if the caller didn't have one.
-     * Used by "Save Media..." to build a meaningful default filename --
-     * see fs3emediaview.c's mediaview_build_default_name(). */
-    char poster[128];
+     * passed to FS3EMediaView_ShowUrl()/ShowAudioUrl(); "" if the caller
+     * didn't have one. One per channel -- imagePoster/audioPoster can
+     * legitimately differ (an image from one post, audio from another,
+     * both open in this same window at once) -- each one used only by its
+     * own channel's "Save Image.../Save Audio..." to build a meaningful
+     * default filename -- see fs3emediaview.c's
+     * mediaview_build_image_default_name()/
+     * mediaview_build_audio_default_name(). */
+    char imagePoster[128];
+    char audioPoster[128];
 
     /* Audio playback (mp3/wav/ogg attachments) -- counterpart to the
      * picture/BmImage fields above, driven by FS3EMediaView_ShowAudioUrl()
-     * instead of ShowUrl(). isAudio TRUE means picGadget shows
-     * MEDIAPIC_Message text only (mv->image stays unloaded/irrelevant) and
-     * tapeDeckGadget/sliderGadget are live; FALSE means they're inert
-     * leftovers from a previous audio attachment (GID_MEDIAVIEW_TAPEDECK
-     * clicks are ignored while isAudio is FALSE -- see
-     * FS3EMediaView_TapeDeckPressed). audioRequestPort/audioReplyPort are
-     * cached from ShowAudioUrl's caller (app->audioRequestPort/
-     * audioReplyPort, see friendsh3ep.h) so later calls -- the fetch reply
-     * starting playback, TapeDeckPressed sending Play/Pause/Stop -- don't
-     * need them threaded through every function signature; NULL/harmless
-     * once isAudio is FALSE again. audioKey doubles as the FS3EAudioMessage
-     * key (see fs3eaudio.h) so FS3EMediaView_OnAudioReply can tell a reply/
-     * notify is about the attachment currently shown. */
-    BOOL   isAudio;
+     * instead of ShowUrl(). hasAudio TRUE means tapeDeckGadget/sliderGadget
+     * are live and there's a loaded/loading audio attachment (independent
+     * of whether mv->image is ALSO loaded -- see this struct's own "two
+     * channels" note above); FALSE means they're inert leftovers from a
+     * previous audio attachment (GID_MEDIAVIEW_TAPEDECK clicks are ignored
+     * while hasAudio is FALSE -- see FS3EMediaView_TapeDeckPressed).
+     * audioRequestPort/audioReplyPort are cached from ShowAudioUrl's
+     * caller (app->audioRequestPort/audioReplyPort, see friendsh3ep.h) so
+     * later calls -- the fetch reply starting playback, TapeDeckPressed
+     * sending Play/Pause/Stop -- don't need them threaded through every
+     * function signature; NULL/harmless once hasAudio is FALSE again.
+     * audioKey doubles as the FS3EAudioMessage key (see fs3eaudio.h) so
+     * FS3EMediaView_OnAudioReply can tell a reply/notify is about the
+     * attachment currently shown. */
+    BOOL   hasAudio;
     ULONG  audioBackend;                        /* FS3EMVAudioBackend */
     char   audioLocalPath[FS3EAUDIO_PATH_SIZE]; /* filled once the fetch completes */
     char   audioKey[FS3EAUDIO_KEY_SIZE];
+    char  *pendingAudioUrl; /* AllocVec'd; NULL when no audio fetch in flight */
+    BOOL   audioLoading;
     BOOL   audioPlaying;
     BOOL   audioPaused;
     struct MsgPort *audioRequestPort;
@@ -161,9 +194,13 @@ typedef struct FS3EMediaView {
      * the user actually moved the handle. audioTotalMs is the last known
      * track duration (from PROGRESS's fs3eam_TotalMs), needed to convert
      * the slider's 0..100 level back into an absolute ms position to seek
-     * to. Both meaningless (left at 0) while !isAudio. */
+     * to. Both meaningless (left at 0) while !hasAudio. */
     ULONG  audioSliderProgLevel;
     ULONG  audioTotalMs;
+
+    /* trick to avoid double WM_RETHINK calls */
+    WORD last_w,last_h;
+
 } FS3EMediaView;
 
 /* Zeroes mv. Nothing to allocate up front -- the window/layout/picClass
@@ -182,9 +219,11 @@ void FS3EMediaView_Dispose(FS3EMediaView *mv);
  * No-op if url is NULL/empty.
  *
  * posterAcct is the attachment's poster @user@instance if the caller has
- * one (see TTIMELINE_LastHotSpotAcct), copied into mv->poster for "Save
- * Media..." to use as the default filename -- NULL/"" is fine, Save falls
- * back to the cache's hash-id filename in that case.
+ * one (see TTIMELINE_LastHotSpotAcct), copied into mv->imagePoster for
+ * "Save Image..." to use as the default filename -- NULL/"" is fine, Save
+ * falls back to the cache's hash-id filename in that case. Never touches
+ * the audio channel (mv->audioXXX) -- see FS3EMediaView's own "two
+ * channels" comment.
  */
 void FS3EMediaView_ShowUrl(FS3EMediaView *mv, const char *url, const char *posterAcct);
 
@@ -192,8 +231,9 @@ void FS3EMediaView_ShowUrl(FS3EMediaView *mv, const char *url, const char *poste
  * Feed every FS3ENETQ_FETCH_IMAGE reply through here from friendsh3ep.c's
  * central reply switch (alongside the existing avatar/thumbnail-pipeline
  * handling, not instead of it -- the same download is useful to both).
- * Ignored unless reply->fs3enf_Key matches the URL FS3EMediaView_ShowUrl()
- * is currently waiting for.
+ * Checked against both channels' own pending fetch (mv->pendingImageUrl,
+ * mv->pendingAudioUrl) since either or both can have one in flight at
+ * once; ignored if it matches neither.
  */
 void FS3EMediaView_OnFetchReply(FS3EMediaView *mv, ULONG result,
                                  const FS3ENetFetchImageReply *reply);
@@ -202,9 +242,10 @@ void FS3EMediaView_OnFetchReply(FS3EMediaView *mv, ULONG result,
  * Feed every FS3ENETQ_FETCH_PROGRESS ping through here (see
  * FS3ENetFetchProgress in fs3enet.h) -- only ever sent for a request that
  * set fs3enf_WantProgress, which today is just FS3EMediaView_ShowUrl()'s own
- * fetch. Ignored unless key matches the URL currently pending, same rule
- * OnFetchReply() already applies. Just records the numbers on mv for now;
- * no progress indicator is drawn yet.
+ * fetch (the image channel only -- ShowAudioUrl()'s own fetch never
+ * requests progress pings). Ignored unless key matches
+ * mv->pendingImageUrl, same rule OnFetchReply() already applies. Just
+ * records the numbers on mv for now; no progress indicator is drawn yet.
  */
 void FS3EMediaView_OnFetchProgress(FS3EMediaView *mv, const char *key,
                                     ULONG bytesSoFar, ULONG totalBytes);
@@ -212,17 +253,21 @@ void FS3EMediaView_OnFetchProgress(FS3EMediaView *mv, const char *key,
 /*
  * Opens (or brings to front) the "FriendSh3ep Media" window for an audio
  * attachment (mp3/wav/ogg) -- counterpart to FS3EMediaView_ShowUrl() for
- * pictures. Fetches url the same way (FS3ENETQ_FETCH_IMAGE, keepOriginal=
+ * pictures, and independent of it: the image channel (mv->image), if any,
+ * is left exactly as it was -- see FS3EMediaView's own "two channels"
+ * comment. Fetches url the same way (FS3ENETQ_FETCH_IMAGE, keepOriginal=
  * TRUE, its own cache subdir -- see FS3E_CACHE_SUBDIR_AUDIO in fs3enet.h),
  * then once downloaded starts playback via audioRequestPort/audioReplyPort
  * (app->audioRequestPort/audioReplyPort, see friendsh3ep.h) -- but only for
  * a .mp3 URL (FS3EMV_AUDIO_MPEGA); .wav/.ogg are detected and shown as
  * "not supported yet" in the window instead of silently doing nothing (see
  * FS3EMVAudioBackend's doc comment). Stops whatever audio attachment was
- * previously playing in this same window first. Returns immediately, same
- * as ShowUrl(). No-op if url is NULL/empty.
+ * previously playing in this same window first (the audio channel only
+ * ever holds one track at a time, unlike image-vs-audio which coexist).
+ * Returns immediately, same as ShowUrl(). No-op if url is NULL/empty.
  *
- * posterAcct: see FS3EMediaView_ShowUrl()'s doc comment.
+ * posterAcct: see FS3EMediaView_ShowUrl()'s doc comment, but copied into
+ * mv->audioPoster (this channel's own poster field) instead.
  */
 void FS3EMediaView_ShowAudioUrl(FS3EMediaView *mv, const char *url,
                                  const char *posterAcct,
@@ -233,9 +278,11 @@ void FS3EMediaView_ShowAudioUrl(FS3EMediaView *mv, const char *url,
  * Feed every FS3EAudioMessage reply/notify (PLAY/PAUSE/STOP acks, the
  * eventual FINISHED, and periodic PROGRESS pings -- see fs3eaudio.h)
  * through here from friendsh3ep.c's audio reply drain. Updates mv's
- * playing/paused state, picGadget's status text, and sliderGadget's
- * position from PROGRESS. Ignored unless mv->isAudio and msg's key matches
- * the attachment FS3EMediaView_ShowAudioUrl() is currently showing.
+ * playing/paused state, picGadget's status text (shown only while no
+ * image is loaded -- see mediaview_push_picture()'s own comment), and
+ * sliderGadget's position from PROGRESS. Ignored unless mv->hasAudio and
+ * msg's key matches the attachment FS3EMediaView_ShowAudioUrl() is
+ * currently showing.
  */
 void FS3EMediaView_OnAudioReply(FS3EMediaView *mv, const FS3EAudioMessage *msg);
 
@@ -243,7 +290,7 @@ void FS3EMediaView_OnAudioReply(FS3EMediaView *mv, const FS3EAudioMessage *msg);
  * GID_MEDIAVIEW_TAPEDECK's WMHI_GADGETUP handler -- reads TDECK_Mode off
  * tapeDeckGadget (whichever button was just pressed) and sends the
  * matching FS3EAUDIOQ_PLAY(restart)/PAUSE(toggle)/STOP command via the
- * cached audioRequestPort/audioReplyPort. No-op if mv->isAudio is FALSE or
+ * cached audioRequestPort/audioReplyPort. No-op if mv->hasAudio is FALSE or
  * mv->audioBackend isn't FS3EMV_AUDIO_MPEGA (nothing playable loaded).
  * Call from FS3EMediaView_HandleInput() when result's WMHI_GADGETMASK is
  * GID_MEDIAVIEW_TAPEDECK.
@@ -255,7 +302,7 @@ void FS3EMediaView_TapeDeckPressed(FS3EMediaView *mv);
  * current SLIDER_Level (0..100) at the time of the notify. No-op if it
  * matches audioSliderProgLevel (our own last PROGRESS/FINISHED update,
  * echoed back rather than a real user move -- see mv's own field comment),
- * or if mv->isAudio is FALSE, mv->audioBackend isn't FS3EMV_AUDIO_MPEGA, or
+ * or if mv->hasAudio is FALSE, mv->audioBackend isn't FS3EMV_AUDIO_MPEGA, or
  * audioTotalMs is still 0 (nothing seekable known yet). Otherwise treats it
  * as the user dragging the handle: converts newLevel back to an absolute
  * ms position against audioTotalMs and sends FS3EAUDIOQ_SEEK via the

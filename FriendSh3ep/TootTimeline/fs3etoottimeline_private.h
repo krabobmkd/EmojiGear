@@ -328,6 +328,15 @@ typedef struct TTLPost {
      * TTL_HOT_PLAY_AUDIO hot-spot instead of a fetched thumbnail, see
      * ttl_toot_build_hotspots/ttl_toot_render. */
     char  *mediaUrls[TTL_POST_MAX_MEDIA];
+    /* Real, playable file URL per slot (AllocVec'd copies), same indexing
+     * as mediaUrls -- see TTLPostSetup.mediaAudioUrls for why this is a
+     * separate array (a TTL_MEDIA_KIND_AUDIO slot with cover art has
+     * mediaUrls[i] pointing at that cover IMAGE, not the audio; this is
+     * always the actual file). ttl_activate_hotspot() reads
+     * mediaAudioUrls[mediaCurrentIndex] instead of mediaUrls[...] for
+     * TTL_HOT_PLAY_AUDIO specifically. NULL past mediaCount, same as
+     * mediaUrls. */
+    char  *mediaAudioUrls[TTL_POST_MAX_MEDIA];
     ULONG  mediaKinds[TTL_POST_MAX_MEDIA];
     ULONG  mediaCount;
     ULONG  mediaCurrentIndex;
@@ -624,6 +633,11 @@ typedef struct TTLData {
                                       * ids at Mastodon's usual ~20-digit snowflake length */
     char   lastHotSpotAcct[128];    /* @user@instance, see TTIMELINE_LastHotSpotAcct --
                                       * same size as AVATAR_ACCT_SIZE (avatarimages.h) */
+    char  *lastHotSpotAudioUrl;     /* see TTIMELINE_LastHotSpotAudioUrl -- AllocVec'd,
+                                      * not a fixed buffer, same "a URL has no useful
+                                      * fixed cap" reasoning as lastHotSpotStr above.
+                                      * NULL = no click yet, or that attachment has no
+                                      * separately-known real file URL. */
 
     /* ---- "Selected" toot for TTIMELINE_CopySelectedText (see its own
      * doc comment in fs3etoottimeline.h) ---- AllocVec'd owned copy of
@@ -954,12 +968,18 @@ void     ttl_notify       (Class *cl, Object *o, struct GadgetInfo *gi,
  * way -- the owning post's original author @user@instance (TTLPost.acct),
  * or NULL/"" if unknown; currently only meaningful for TTL_HOT_IMAGE (see
  * fs3emediaview.c's "Save Media..." filename), but populated for every
- * item kind that has a post since it costs nothing extra. */
+ * item kind that has a post since it costs nothing extra. audioUrl is
+ * copied into lastHotSpotAudioUrl and carried as
+ * TTIMELINE_LastHotSpotAudioUrl the same way -- the owning post's
+ * mediaAudioUrls[mediaCurrentIndex] (TTLPost.mediaAudioUrls), or NULL/""
+ * if unknown; only meaningful for TTL_HOT_PLAY_AUDIO on a slot that also
+ * has cover art (see TTLPostSetup.mediaAudioUrls' own doc comment). */
 void     ttl_notify_hotspot(Class *cl, Object *o, struct GadgetInfo *gi,
                              UBYTE type, const char *data, ULONG dataLen,
                              const char *postId, BOOL favourited, BOOL following,
                              BOOL reblogged, BOOL quotable,
-                             const char *mediaIds, const char *acct);
+                             const char *mediaIds, const char *acct,
+                             const char *audioUrl);
 /* only process have right to send render, ask with notify ProcessREfresh
  * void     ttl_render_self  (Class *cl, Object *o, struct GadgetInfo *gi);
 */
