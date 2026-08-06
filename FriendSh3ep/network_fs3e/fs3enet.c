@@ -2125,33 +2125,30 @@ static void FS3ENet_FillStatusFields(const cJSON *item, const cJSON *src,
             const cJSON *att  = cJSON_GetArrayItem(v, mi);
             const cJSON *purl = att ? cJSON_GetObjectItemCaseSensitive(att, "preview_url") : NULL;
             const cJSON *aid  = att ? cJSON_GetObjectItemCaseSensitive(att, "id") : NULL;
-            /* Unconditional, real "url" -- see fmas_MediaAudioUrls' doc
-             * comment in fs3enet.h. Independent of purl's own preview_url-
-             * with-url-fallback below: for an audio attachment with cover
-             * art, purl ends up being that cover IMAGE, and rurl is the
-             * only place the actual playable file survives into
-             * FS3ENetStatus at all. */
+            /* Real "url" -- for an audio attachment with cover art, purl
+             * (below) ends up being that cover IMAGE, and rurl is the only
+             * place the actual playable file survives into FS3ENetStatus
+             * at all. Only ever copied into fmas_MediaAudioUrls once this
+             * attachment's kind is confirmed to actually be audio, below --
+             * see fmas_MediaAudioUrls' doc comment in fs3enet.h. */
             const cJSON *rurl = att ? cJSON_GetObjectItemCaseSensitive(att, "url") : NULL;
             const cJSON *typeV;
             const char  *typeStr;
+            const char  *ru = (rurl && cJSON_IsString(rurl)) ? rurl->valuestring : NULL;
+            const char  *pu;
+            BOOL isAudio;
+
             if (!purl || !cJSON_IsString(purl) || !purl->valuestring)
                 purl = att ? cJSON_GetObjectItemCaseSensitive(att, "url") : NULL;
-            str = (purl && cJSON_IsString(purl)) ? purl->valuestring : "";
-            FS3ENet_PackStr(&dst->fmas_MediaUrls[mi], p, str);
+            pu = (purl && cJSON_IsString(purl)) ? purl->valuestring : NULL;
 
-            str = (rurl && cJSON_IsString(rurl)) ? rurl->valuestring : "";
-            FS3ENet_PackStr(&dst->fmas_MediaAudioUrls[mi], p, str);
-
-            /* Needed to resend as media_ids[] on a PUT edit so existing
-             * attachments survive a text-only edit -- see
-             * FS3ENetStatus.fmas_MediaIds. */
-            str = (aid && cJSON_IsString(aid)) ? aid->valuestring : "";
-            FS3ENet_PackStr(&dst->fmas_MediaIds[mi], p, str);
-
-            /* "image"/"video"/"gifv"/"audio"/"unknown" -- lets the GUI
-             * skip fetching a thumbnail for audio entirely instead of
-             * routing its (fallback, no-preview) full file URL into the
-             * image decoder. */
+            /* "image"/"video"/"gifv"/"audio"/"unknown" -- must be decided
+             * BEFORE the URLs below are routed, so an image/video
+             * attachment's own "url" never gets duplicated into the audio
+             * channel (that used to happen unconditionally here, which is
+             * why a toot with a plain image attachment played it back as
+             * "audio format isn't supported yet" -- the image channel and
+             * the audio channel held the exact same URL). */
             typeV   = att ? cJSON_GetObjectItemCaseSensitive(att, "type") : NULL;
             typeStr = (typeV && cJSON_IsString(typeV)) ? typeV->valuestring : "";
             if      (strcmp(typeStr, "image") == 0) dst->fmas_MediaKind[mi] = FS3ENET_MEDIAKIND_IMAGE;
@@ -2164,23 +2161,52 @@ static void FS3ENet_FillStatusFields(const cJSON *item, const cJSON *src,
                  * attachment that's still processing server-side (same
                  * class of async-processing quirk as the 202/422 upload
                  * responses this app already works around) -- fall back to
-                 * the URL's own extension so a still-processing audio
-                 * attachment doesn't slip through as MEDIAKIND_UNKNOWN and
-                 * get routed into the image thumbnail decoder anyway. Checks
-                 * rurl (the real file) first, not just purl (which is the
-                 * cover image, not audio, for an attachment that has one). */
-                const char *ru = (rurl && cJSON_IsString(rurl)) ? rurl->valuestring : NULL;
-                const char *pu = (purl && cJSON_IsString(purl)) ? purl->valuestring : NULL;
-                if ((ru && (FS3ENet_UrlHasExt(ru, ".mp3")  || FS3ENet_UrlHasExt(ru, ".ogg") ||
-                            FS3ENet_UrlHasExt(ru, ".oga")  || FS3ENet_UrlHasExt(ru, ".wav") ||
+                 * the URL's own extension so a still-processing attachment
+                 * doesn't slip through as MEDIAKIND_UNKNOWN and get routed
+                 * into the wrong channel. Checks rurl (the real file) first,
+                 * not just purl (which is the cover image, not audio, for
+                 * an audio attachment that has one). */
+                if ((ru && (FS3ENet_UrlHasExt(ru, ".mp3")  || FS3ENet_UrlHasExt(ru, ".mpeg3") ||
+                            FS3ENet_UrlHasExt(ru, ".ogg")  || FS3ENet_UrlHasExt(ru, ".oga")   ||
+                            FS3ENet_UrlHasExt(ru, ".wav")  || FS3ENet_UrlHasExt(ru, ".wave")  ||
                             FS3ENet_UrlHasExt(ru, ".flac"))) ||
-                    (pu && (FS3ENet_UrlHasExt(pu, ".mp3")  || FS3ENet_UrlHasExt(pu, ".ogg") ||
-                            FS3ENet_UrlHasExt(pu, ".oga")  || FS3ENet_UrlHasExt(pu, ".wav") ||
+                    (pu && (FS3ENet_UrlHasExt(pu, ".mp3")  || FS3ENet_UrlHasExt(pu, ".mpeg3") ||
+                            FS3ENet_UrlHasExt(pu, ".ogg")  || FS3ENet_UrlHasExt(pu, ".oga")   ||
+                            FS3ENet_UrlHasExt(pu, ".wav")  || FS3ENet_UrlHasExt(pu, ".wave")  ||
                             FS3ENet_UrlHasExt(pu, ".flac"))))
                     dst->fmas_MediaKind[mi] = FS3ENET_MEDIAKIND_AUDIO;
+                else if ((ru && (FS3ENet_UrlHasExt(ru, ".png") || FS3ENet_UrlHasExt(ru, ".gif")  ||
+                                  FS3ENet_UrlHasExt(ru, ".webp") || FS3ENet_UrlHasExt(ru, ".jpeg") ||
+                                  FS3ENet_UrlHasExt(ru, ".jpg"))) ||
+                         (pu && (FS3ENet_UrlHasExt(pu, ".png") || FS3ENet_UrlHasExt(pu, ".gif")  ||
+                                  FS3ENet_UrlHasExt(pu, ".webp") || FS3ENet_UrlHasExt(pu, ".jpeg") ||
+                                  FS3ENet_UrlHasExt(pu, ".jpg"))))
+                    dst->fmas_MediaKind[mi] = FS3ENET_MEDIAKIND_IMAGE;
                 else
                     dst->fmas_MediaKind[mi] = FS3ENET_MEDIAKIND_UNKNOWN;
             }
+
+            isAudio = (dst->fmas_MediaKind[mi] == FS3ENET_MEDIAKIND_AUDIO);
+
+            /* Image/cover channel: for audio, only a genuine, distinct
+             * cover url (preview_url actually different from the audio
+             * file's own url) counts -- otherwise there is no cover and
+             * this channel must stay empty, not fall back to the audio
+             * file's own url. */
+            str = isAudio ? ((pu && ru && strcmp(pu, ru) != 0) ? pu : "")
+                           : (pu ? pu : "");
+            FS3ENet_PackStr(&dst->fmas_MediaUrls[mi], p, str);
+
+            /* Audio channel: only ever the real file url, and only when
+             * this attachment's kind is actually audio. */
+            str = isAudio ? (ru ? ru : "") : "";
+            FS3ENet_PackStr(&dst->fmas_MediaAudioUrls[mi], p, str);
+
+            /* Needed to resend as media_ids[] on a PUT edit so existing
+             * attachments survive a text-only edit -- see
+             * FS3ENetStatus.fmas_MediaIds. */
+            str = (aid && cJSON_IsString(aid)) ? aid->valuestring : "";
+            FS3ENet_PackStr(&dst->fmas_MediaIds[mi], p, str);
         }
         for (; mi < FS3ENET_MAX_MEDIA; mi++) {
             dst->fmas_MediaUrls[mi]      = NULL;

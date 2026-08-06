@@ -136,6 +136,13 @@ static ULONG delayedAttribs[] = {
      * TTIMELINE_LastHotSpotReblogged above (see fs3eboopsimessage.c's file
      * comment). */
     TTIMELINE_LastHotSpotAcct,
+    /* Same silent-drop trap -- friendsh3ep.c's TTL_HOT_PLAY_AUDIO case reads
+     * this tag for the real playable file URL, but without allowlisting it
+     * here it never arrived, so hotSpotAudioUrl was always NULL and the
+     * code always fell back to hotSpotString (the cover image) instead --
+     * this is why an audio+cover toot always played the cover as if it
+     * were the audio. */
+    TTIMELINE_LastHotSpotAudioUrl,
     TTIMELINE_ScrollStarted,
 
     TDECK_Mode,

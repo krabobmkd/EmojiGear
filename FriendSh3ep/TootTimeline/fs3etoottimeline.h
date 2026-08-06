@@ -140,7 +140,7 @@
  * (TTIMELINE_LastHotSpotString is then the cover IMAGE, this is the
  * actual audio file to play). Same buffer/pointer as the accompanying
  * TTIMELINE_HotSpotNotify notification's tag of the same name. */
-#define TTIMELINE_LastHotSpotAudioUrl (TTIMELINE_Base + 41)
+#define TTIMELINE_LastHotSpotAudioUrl (TTIMELINE_Base + 42)
 /* [G] STRPTR: Mastodon status id (see TTLPostSetup.postId) of the active
  * channel's newest real post -- skips any non-toot pinned boundary row
  * (e.g. a "look for something new" item, which has no postId; see
