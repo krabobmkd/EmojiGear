@@ -33,6 +33,7 @@
 #include <proto/graphics.h>
 #include <proto/intuition.h>
 #include <proto/layers.h>
+#include <proto/dos.h>
 #include <intuition/gadgetclass.h>
 #include <devices/inputevent.h>
 #include <graphics/gfx.h>
@@ -46,6 +47,49 @@
 #include <proto/bevel.h>
 #include <images/bevel.h>
 
+#include <dos/dosextens.h>
+
+
+BPTR fh=NULL;
+
+// int bdbprintf_now(const char *format,int a, ...)
+// {
+//     char    buf[512];
+//   //  va_list args;
+//     int     written;
+// //    struct Process *myTask = FindTask(NULL);
+
+//     if(fh==NULL)
+//     {
+//         fh = Open("EmojiGear:utedlog.txt",MODE_NEWFILE);
+//     }
+//     if(fh == NULL) return;
+
+//   //  va_start(args, format);
+//     written = vsnprintf(buf, sizeof(buf), format, /*args*/ &a);
+//   //  va_end(args);
+// FPuts(fh, buf);
+// Flush(fh);
+
+//     // if (myTask) {
+//     //     BPTR fh = myTask->pr_COS;
+//     //     if(!fh) return 0;
+//     //     FPuts(fh, buf);
+//     //     Flush(fh); /* FPuts only queues into the filehandle's own DOS-level
+//     //                  * buffer -- without this, output written right before a
+//     //                  * crash can still be lost, same problem one level down. */
+//     // }
+
+//     return written;
+// }
+
+// void bdbclose()
+// {
+//     if(fh) Close(fh);
+//     fh=NULL;
+// }
+
+void exit(int a) {}
 
 
 #define G(o) ((struct Gadget *)(o))
@@ -123,12 +167,17 @@ static void uted_do_layout( Class *cl, Object *o,
                     uted_pool_free_layer(&inst->bmPool);
 
                         uted_pool_free_bitmapcache(&inst->bmPool);
-                        uted_pool_alloc(&inst->bmPool, neededSize,
-                                    (UWORD)inst->lineHeightBase, useScreen);
+                        if (uted_pool_alloc(&inst->bmPool, neededSize,
+                                    (UWORD)inst->lineHeightBase, useScreen)) {
 
-                    /* clipping layer must be re-ecreated so it points new bitmaps with new size */
-                    uted_pool_create_layer(&inst->bmPool,LINE_CHUNK_WIDTH,inst->lineHeightBase,
-                                    inst->bmPool.bitmaps[0]);
+                            /* clipping layer must be re-ecreated so it points new bitmaps with new size */
+                            uted_pool_create_layer(&inst->bmPool,LINE_CHUNK_WIDTH,inst->lineHeightBase,
+                                  (inst->bmPool.isChip)?inst->bmPool.loneBm:inst->bmPool.bitmaps[0]);
+                        }
+                        /* else: pool alloc failed (RAM exhausted) — bitmaps/loneBm are NULL,
+                         * bmPool.size is 0; render loop below already no-ops when a chunk
+                         * can't be borrowed (pool_take returns NULL), so it's safe to just
+                         * skip the layer (re)creation for this pass. */
 
                 } else {
                     /* Same line height, window grew: reuse existing bitmaps,
@@ -393,6 +442,9 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
         return 0;
     }
 
+    /* isChip: OK HERE */
+
+
     /* ------------------------------------------------------------------
      * Replay deferred mouse input from the input.device context.
      *
@@ -552,7 +604,6 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
         inst->isCLUT = (depth <= 8);
     }
 
-
     /* allow final blits on the rastport to be really clipped
       to the gadget frame rectangle. oldClipRegion can be NULL
      but must be restored in all case after draw */
@@ -642,8 +693,8 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
             blitW_ = (WORD)(oEnd_ - oStart_ + 1); \
             if (!(line_)->chunks || c_ >= (line_)->chunkAlloc || !(line_)->chunks[c_]) \
                 uted_line_render_chunk(inst, (line_), c_); \
-            if ((line_)->chunks && c_ < (line_)->chunkAlloc && (line_)->chunks[c_]) { \
-                BltBitMapRastPort((line_)->chunks[c_], \
+            if ((line_)->chunks && c_ < (line_)->chunkAlloc && (line_)->chunks[c_]) { \           
+                BltBitMapRastPort(uted_pool_blit_source(&inst->bmPool, (line_)->chunks[c_]), \
                                   (LONG)srcX_, 0, rp, \
                                   (LONG)dstX_, (LONG)absY, \
                                   (LONG)blitW_, (LONG)inst->lineHeightBase, 0xC0); \
@@ -906,12 +957,14 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
                     uted_line_render_chunk(inst, line, c);
 
                 if (line->chunks && c < line->chunkAlloc && line->chunks[c]) {
-                    BltBitMapRastPort(line->chunks[c],
+
+                    BltBitMapRastPort(uted_pool_blit_source(&inst->bmPool, line->chunks[c]),
                                       (LONG)srcX, 0,
                                       rp,
                                       (LONG)dstX, (LONG)absY,
                                       (LONG)blitW, (LONG)inst->lineHeightBase,
                                       0xC0);
+
                 } else {
                     SetAPen(rp, (LONG)inst->bgPen);
                     RectFill(rp, (LONG)dstX, (LONG)absY,

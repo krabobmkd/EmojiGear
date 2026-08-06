@@ -777,6 +777,7 @@ void ttl_toot_render(TTLData *inst, struct RastPort *rp, TTLPost *post, LONG til
                     WORD rowY;
                     WORD cardRight  = (WORD)(rx + post->cardW - 1);
                     WORD cardBottom = (WORD)(ry + post->cardH - 1);
+                    LONG cardBgPen  = (LONG)FS3E_PEN(inst->style, FS3E_COLOR_CARD_BG);
 
                     /* Opaque background -- without this, an unbroken long
                      * line in the body text above (typically a URL
@@ -825,7 +826,7 @@ void ttl_toot_render(TTLData *inst, struct RastPort *rp, TTLPost *post, LONG til
                     rowY = (WORD)(ry + post->cardImgH + cardPad);
 
                     if (post->cardProviderName && post->cardProviderName[0]) {
-                        URPDC_SetDrawColorFromPen(dcMini, inst->screen, dimPen, bgPen);
+                        URPDC_SetDrawColorFromPen(dcMini, inst->screen, dimPen, cardBgPen);
                         tile_draw_text(inst, rp, (WORD)(rx + cardPad),
                                        (WORD)(rowY + inst->miniLineAscent),
                                        post->cardProviderName, dcMini);
@@ -834,7 +835,7 @@ void ttl_toot_render(TTLData *inst, struct RastPort *rp, TTLPost *post, LONG til
 
                     {
                         ULONG li;
-                        URPDC_SetDrawColorFromPen(dcMini, inst->screen, txtPen, bgPen);
+                        URPDC_SetDrawColorFromPen(dcMini, inst->screen, txtPen, cardBgPen);
                         for (li = 0; li < post->cardTitleLineCount; li++) {
                             tile_draw_text(inst, rp, (WORD)(rx + cardPad),
                                            (WORD)(rowY + inst->miniLineAscent),
@@ -845,7 +846,7 @@ void ttl_toot_render(TTLData *inst, struct RastPort *rp, TTLPost *post, LONG til
 
                     {
                         ULONG li;
-                        URPDC_SetDrawColorFromPen(dcMini, inst->screen, dimPen, bgPen);
+                        URPDC_SetDrawColorFromPen(dcMini, inst->screen, dimPen, cardBgPen);
                         for (li = 0; li < post->cardDescLineCount; li++) {
                             tile_draw_text(inst, rp, (WORD)(rx + cardPad),
                                            (WORD)(rowY + inst->miniLineAscent),
@@ -1041,8 +1042,9 @@ void ttl_toot_render(TTLData *inst, struct RastPort *rp, TTLPost *post, LONG til
                     WORD qAvY = (WORD)(qTop + qPad);
                     WORD qTextX = (WORD)(qAvX + qAvatarSize + avatarGap);
                     WORD qY;
+                    LONG quoteBgPen = (LONG)FS3E_PEN(inst->style, FS3E_COLOR_CARD_BG);
 
-                    SetAPen(rp, (LONG)FS3E_PEN(inst->style, FS3E_COLOR_CARD_BG));
+                    SetAPen(rp, quoteBgPen);
                     RectFill(rp, qLeft, qTop, qRight, qBottom);
 
                     {
@@ -1065,14 +1067,14 @@ void ttl_toot_render(TTLData *inst, struct RastPort *rp, TTLPost *post, LONG til
                             by = (WORD)(qAvY + (qAvatarSize - (WORD)dh) / 2);
                             RgbImage_DrawScaled(qAvImg, rp, inst->screen, dcBody, bx, by, (UWORD)dw, (UWORD)dh);
                         } else {
-                            ttl_draw_avatar_placeholder(rp, qAvX, qAvY, qAvatarSize, accentPen, bgPen);
+                            ttl_draw_avatar_placeholder(rp, qAvX, qAvY, qAvatarSize, accentPen, quoteBgPen);
                         }
                     }
 
                     qY = (WORD)(qTop + qPad);
 
                     if (post->quoteAuthorName && post->quoteAuthorName[0]) {
-                        URPDC_SetDrawColorFromPen(dcMini, inst->screen, txtPen, bgPen);
+                        URPDC_SetDrawColorFromPen(dcMini, inst->screen, txtPen, quoteBgPen);
                         tile_draw_text(inst, rp, qTextX, (WORD)(qY + inst->miniLineAscent),
                                        post->quoteAuthorName, dcMini);
                     }
@@ -1085,7 +1087,7 @@ void ttl_toot_render(TTLData *inst, struct RastPort *rp, TTLPost *post, LONG til
                                  (post->quoteTimestamp && post->quoteTimestamp[0]) ? " \xC2\xB7 " : "",
                                  (post->quoteTimestamp && post->quoteTimestamp[0]) ? post->quoteTimestamp : "");
                         if (line[0]) {
-                            URPDC_SetDrawColorFromPen(dcMini, inst->screen, dimPen, bgPen);
+                            URPDC_SetDrawColorFromPen(dcMini, inst->screen, dimPen, quoteBgPen);
                             tile_draw_text(inst, rp, qTextX, (WORD)(qY + inst->miniLineAscent), line, dcMini);
                         }
                     }
@@ -1094,7 +1096,7 @@ void ttl_toot_render(TTLData *inst, struct RastPort *rp, TTLPost *post, LONG til
                     if (post->quoteBodyLineCount > 0) {
                         ULONG bi;
                         qY = (WORD)(qY + 2);
-                        URPDC_SetDrawColorFromPen(dcMini, inst->screen, txtPen, bgPen);
+                        URPDC_SetDrawColorFromPen(dcMini, inst->screen, txtPen, quoteBgPen);
                         for (bi = 0; bi < post->quoteBodyLineCount; bi++) {
                             if (post->quoteBodyLines[bi])
                                 tile_draw_text(inst, rp, qTextX, (WORD)(qY + inst->miniLineAscent),

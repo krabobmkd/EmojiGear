@@ -30,7 +30,7 @@
 #include <graphics/rastport.h>
 #include "unitexteditor_private.h"
 
-
+//int bdbprintf_now(const char *format, ...);
 
 /* =========================================================================
  * Pool helpers (file-scope)
@@ -71,6 +71,142 @@ BOOL uted_pool_create_layer(UTEDBitMapPool *pool,int w,int h , struct BitMap *bi
     return TRUE;
 }
 
+static struct BitMap *poolAllocBitMap(UTEDBitMapPool *pool,  ULONG sizex, ULONG sizey, ULONG depth,
+                                     ULONG flags,
+                                     struct BitMap *friend_bitmap)
+ {
+    if(pool->isChip)
+    {   /* let's trick our bitmap in fast */
+        int d;
+        struct BitMap *bm = AllocVec(
+                sizeof(struct BitMap) + ((sizex>>3)*sizey*depth)
+                ,MEMF_CLEAR );
+        UBYTE *bmf = (UBYTE *)(&bm[1]);
+        if(!bm) return NULL;
+        bm->BytesPerRow = sizex>>3;
+        bm->Rows = sizey;
+        bm->Depth = depth;
+        //bm->Flags = 0;
+       // InitBitMap(bm,depth,sizex,sizey);
+        /* shouldnt be even needed since it'j just copy and no direct draw ? */
+        for( d=0 ; d<depth ; d++ )
+        {
+            bm->Planes[d] = (PLANEPTR)bmf;
+            bmf += ((sizex>>3)*sizey);
+        }
+        return bm;
+    }
+
+    return AllocBitMap(sizex,sizey,depth, flags,friend_bitmap);
+
+ }
+
+
+ static void poolFreeBitMap(UTEDBitMapPool *pool,struct BitMap *bm)
+ {
+    if(!bm) return;
+    if(pool->isChip)
+    {
+        FreeVec(bm);
+        return;
+    }
+    FreeBitMap(bm);
+ }
+
+/* =========================================================================
+ * Chip-RAM tile sync
+ *
+ * When pool->isChip, tile bitmaps (line->chunks[]) live in FAST ram and
+ * graphics.library can't render or blit them directly (the blitter only
+ * reaches chip mem on stock hardware). pool->loneBm is the single real
+ * chip bitmap used as a go-between: CPU-copy the tile's planes into it
+ * before blitting from it (uted_pool_blit_source), and CPU-copy loneBm's
+ * planes back into the tile after rendering into it (uted_line_render_chunk).
+ * =========================================================================
+ */
+static void poolSyncPlanesToFast(struct BitMap *dst, struct BitMap *src, int srcIsInterlace)
+{
+// bdbprintf_now("poolSyncPlanes: dst:%08x src:%08x\n",(int)dst,(int)src);
+
+// bdbprintf_now("src depth:%d bpr:%d rows:%d flags:%02x\n",(int)src->Depth,(int)src->BytesPerRow,(int)src->Rows,(int)src->Flags);
+// bdbprintf_now("dst depth:%d bpr:%d rows:%d flags:%02x\n",(int)dst->Depth,(int)dst->BytesPerRow,(int)dst->Rows,(int)dst->Flags);
+
+    // src is chip
+    //dst is our fast fake
+    // src->BytesPerRow is not width when interlace.
+    if(srcIsInterlace)
+    {
+        ULONG planeSize = (LINE_CHUNK_WIDTH/8)*src->Depth*src->Rows;
+        CopyMem(src->Planes[0], dst->Planes[0], planeSize);
+    } else
+    {
+        UBYTE d;
+        UBYTE depth = src->Depth;
+        ULONG planeSize = (ULONG)src->BytesPerRow * (ULONG)src->Rows;
+        ULONG dplaneSize = (ULONG)dst->BytesPerRow * (ULONG)dst->Rows;
+
+        if(dst->Depth<depth) depth = dst->Depth;
+        if(depth>8) depth=8;
+        if(dplaneSize<planeSize) planeSize = dplaneSize;
+
+        for (d = 0; d < depth; d++)
+            CopyMem(src->Planes[d], dst->Planes[d], planeSize);
+    }
+}
+static void poolSyncPlanesToChip(struct BitMap *dst, struct BitMap *src, int destIsInterlace)
+{
+    if(destIsInterlace)
+    {
+        ULONG planeSize = (LINE_CHUNK_WIDTH/8)*src->Depth*src->Rows;
+        CopyMem(src->Planes[0], dst->Planes[0], planeSize);
+    } else
+    {
+        UBYTE d;
+        UBYTE depth = src->Depth;
+        ULONG planeSize = (ULONG)src->BytesPerRow * (ULONG)src->Rows;
+        ULONG dplaneSize = (ULONG)dst->BytesPerRow * (ULONG)dst->Rows;
+
+        if(dst->Depth<depth) depth = dst->Depth;
+        if(depth>8) depth=8;
+        if(dplaneSize<planeSize) planeSize = dplaneSize;
+
+        for (d = 0; d < depth; d++)
+            CopyMem(src->Planes[d], dst->Planes[d], planeSize);
+    }
+
+ // bdbprintf_now("poolSyncPlanes: dst:%08x src:%08x\n",(int)dst,(int)src);
+ //    if(!dst || !src) return;
+
+ // bdbprintf_now("src depth:%d bpr:%d rows:%d flags:%02x\n",(int)src->Depth,(int)src->BytesPerRow,(int)src->Rows,(int)src->Flags);
+ // bdbprintf_now("dst depth:%d bpr:%d rows:%d flags:%02x\n",(int)dst->Depth,(int)dst->BytesPerRow,(int)dst->Rows,(int)dst->Flags);
+
+ //    {
+ //        UBYTE d;
+ //        UBYTE depth = src->Depth;
+ //        ULONG planeSize = (ULONG)src->BytesPerRow * (ULONG)src->Rows;
+ //        ULONG dplaneSize = (ULONG)dst->BytesPerRow * (ULONG)dst->Rows;
+
+ //        if(dst->Depth<depth) depth = dst->Depth;
+ //        if(depth>8) depth=8;
+ //        if(dplaneSize<planeSize) planeSize = dplaneSize;
+
+ //        for (d = 0; d < depth; d++)
+ //            CopyMem(src->Planes[d], dst->Planes[d], planeSize);
+ //    }
+}
+
+
+/* Returns the bitmap to hand to a blit as the *source*: bm itself when the
+ * pool isn't chip-optimized, otherwise pool->loneBm after copying bm's
+ * (fast) planes into it. */
+struct BitMap *uted_pool_blit_source(UTEDBitMapPool *pool, struct BitMap *bm )
+{
+    if (!pool->isChip || !bm) return bm;
+    WaitBlit();                        /* loneBm may still be in use by a previous blit */
+    poolSyncPlanesToChip(pool->loneBm, bm,pool->loneBmIsInterlace);  /* fast tile -> real chip bitmap */
+    return pool->loneBm;
+}
+
 /* =========================================================================
  * uted_pool_alloc
  *
@@ -82,9 +218,10 @@ BOOL uted_pool_create_layer(UTEDBitMapPool *pool,int w,int h , struct BitMap *bi
 BOOL uted_pool_alloc(UTEDBitMapPool *pool, ULONG size,
                      UWORD lineHeight, struct Screen *screen)
 {
-    ULONG i;
+    int i;
     struct BitMap *friendBM = screen ? screen->RastPort.BitMap : NULL;
     ULONG         depth = 4;
+    ULONG       isChip = (ULONG)(( GetBitMapAttr(friendBM,BMA_FLAGS) & BMF_STANDARD) !=0);
     if(friendBM) depth = GetBitMapAttr(friendBM,BMA_DEPTH);
 
     pool->bitmaps   = (struct BitMap **)AllocVec(size * sizeof(struct BitMap *),
@@ -97,6 +234,7 @@ BOOL uted_pool_alloc(UTEDBitMapPool *pool, ULONG size,
         return FALSE;
     }
 
+//bdbprintf_now("uted_pool_alloc w:%d h:%d\n",LINE_CHUNK_WIDTH, (ULONG)lineHeight);
     pool->size      = 0;
     pool->freeCount = 0;
     pool->height    = lineHeight;
@@ -104,43 +242,63 @@ BOOL uted_pool_alloc(UTEDBitMapPool *pool, ULONG size,
     pool->layer     = NULL;
     pool->rp        = NULL;
 
-    // if(GfxBase->LibNode.lib_Version>=47)
-    // {
-    //     ULONG abmtags[]= {
-    //        // BMATags_Friend,(ULONG)friendBM,
-    //         BMATags_Depth, depth,
-    //         BMATags_BitmapInvisible,TRUE,
-    //         TAG_END
-    //     };
-    //     /* New AllocBitMap, may alloc in fast */
-    //     for (i = 0; i < size; i++) {
-    //         pool->bitmaps[i] = AllocBitMap(LINE_CHUNK_WIDTH, (ULONG)lineHeight,
-    //                                 depth, BMF_CLEAR
-    //                                 /* want tags*/
-    //                                 | BMF_RTGTAGS|BMF_RTGCHECK|BMF_FRIENDISTAG
-    //                                 , (struct BitMap *)&abmtags[0]
-    //                                 );
-    //         if (!pool->bitmaps[i]) break;   /* chip RAM exhausted */
-    //         pool->freeStack[pool->freeCount++] = pool->bitmaps[i];
-    //         pool->size++;
-    //     }
-    // } else
+    pool->isChip = isChip;
+
+    if(isChip)
     {
-        /* antique AllocBitMap, surely in chipram if native mode */
-        for (i = 0; i < size; i++) {
-            pool->bitmaps[i] = AllocBitMap(LINE_CHUNK_WIDTH, (ULONG)lineHeight,
-                                            depth, BMF_CLEAR, friendBM);
-            if (!pool->bitmaps[i]) break;   /* chip RAM exhausted */
-            pool->freeStack[pool->freeCount++] = pool->bitmaps[i];
-            pool->size++;
+        pool->loneBm = AllocBitMap(LINE_CHUNK_WIDTH, (ULONG)lineHeight,
+                                        depth, BMF_CLEAR, friendBM);
+        if(!pool->loneBm)
+        {
+            FreeVec(pool->bitmaps);   pool->bitmaps   = NULL;
+            FreeVec(pool->freeStack); pool->freeStack = NULL;
+            pool->isChip = FALSE;   /* pool is unusable: never leave isChip set without a loneBm */
+            return FALSE;
         }
+
+        pool->loneBmIsInterlace = ((GetBitMapAttr(pool->loneBm,BMA_FLAGS) & BMF_INTERLEAVED) != 0);
+//bdbprintf_now("pool->loneBm:%08x depth:%d I:%d\n",(int)pool->loneBm,(int)depth,pool->loneBmIsInterlace);
+    } else
+    {
+        pool->loneBm = NULL;
     }
+
+    /* Not in chip, Alloc tons of bitmaps is OK */
+    /* antique AllocBitMap, surely in chipram if native mode */
+    for (i = 0; i < size; i++) {
+
+        pool->bitmaps[i] = poolAllocBitMap(pool,LINE_CHUNK_WIDTH, (ULONG)lineHeight,
+                                            depth, BMF_CLEAR, friendBM);
+
+        if (!pool->bitmaps[i])
+        {
+            i--;
+            while(i>=0)
+            {
+                if(pool->bitmaps[i]) {
+                    poolFreeBitMap(pool,pool->bitmaps[i]);
+                    pool->bitmaps[i]=NULL;
+                    pool->freeStack[i] = NULL;
+                }
+                i--;
+            }
+            pool->size = 0;
+            break;   /* chip RAM exhausted */
+        }
+        pool->freeStack[i] = pool->bitmaps[i];
+        pool->size++;
+    }
+
+    pool->freeCount = pool->size;
 
     if (pool->size == 0) {
         FreeVec(pool->bitmaps);   pool->bitmaps   = NULL;
         FreeVec(pool->freeStack); pool->freeStack = NULL;
+        if (pool->loneBm) { FreeBitMap(pool->loneBm); pool->loneBm = NULL; }
+        pool->isChip = FALSE;   /* pool is unusable: never leave isChip set without tiles */
         return FALSE;
     }
+
 
     /* Create the single shared Layer+RastPort IF NOT DONE used when rendering tiles.
      * The layer is initialised with bitmaps[0] but rp->BitMap is swapped
@@ -148,7 +306,9 @@ BOOL uted_pool_alloc(UTEDBitMapPool *pool, ULONG size,
 
     if(pool->layerInfo == NULL)
     {
-        if( !uted_pool_create_layer( pool,LINE_CHUNK_WIDTH,lineHeight, pool->bitmaps[0] ) )
+        struct BitMap *bmtouse =  pool->bitmaps[0];
+        if(isChip) bmtouse = pool->loneBm;
+        if( !uted_pool_create_layer( pool,LINE_CHUNK_WIDTH,lineHeight, bmtouse ) )
         {
             uted_pool_free_bitmapcache(pool);  return FALSE;
         }
@@ -158,7 +318,7 @@ BOOL uted_pool_alloc(UTEDBitMapPool *pool, ULONG size,
         /* clipping layer already created, but may have to be resized (if font size change) */
         if((lineHeight - 1) != pool->layer->bounds.MaxY)
         {
-            LONG dx = 0;
+         //  LONG dx = 0;
             LONG dy = (lineHeight - 1) - pool->layer->bounds.MaxY;
             SizeLayer(0,pool->layer,0,dy);
         }
@@ -236,15 +396,15 @@ BOOL uted_pool_growalloc(UTEDBitMapPool *pool, ULONG newSize, struct Screen *scr
     //         allocCount++;
     //     }
     // } else
-    {
 
-        for (i = oldSize; i < newSize; i++) {
-            newBitmaps[i] = AllocBitMap(LINE_CHUNK_WIDTH, (ULONG)pool->height,
-                                         depth, BMF_CLEAR, friendBM);
-            if (!newBitmaps[i]) break;
-            allocCount++;
-        }
+
+    for (i = oldSize; i < newSize; i++) {
+        newBitmaps[i] = poolAllocBitMap(pool,LINE_CHUNK_WIDTH, (ULONG)pool->height,
+                                     depth, BMF_CLEAR, friendBM);
+        if (!newBitmaps[i]) break;
+        allocCount++;
     }
+
 
     /* All entries are free (precondition: caller evicted everything first) */
     pool->freeCount = 0;
@@ -278,17 +438,26 @@ void uted_pool_free_bitmapcache(UTEDBitMapPool *pool)
         WaitBlit();
 
         for (i = 0; i < pool->size; i++)
-            if (pool->bitmaps[i]) FreeBitMap(pool->bitmaps[i]);
+            if (pool->bitmaps[i]) poolFreeBitMap(pool,pool->bitmaps[i]);
         FreeVec(pool->bitmaps);
         pool->bitmaps = NULL;
     }
     if (pool->freeStack) { FreeVec(pool->freeStack); pool->freeStack = NULL; }
+    if(pool->loneBm) { FreeBitMap(pool->loneBm); pool->loneBm = NULL; }
+
     pool->size      = 0;
     pool->freeCount = 0;
     pool->height    = 0;
+    pool->isChip    = FALSE;   /* pool is empty: never leave isChip set without a loneBm */
 }
 void uted_pool_free_layer(UTEDBitMapPool *pool)
 {
+    /* Repoint the shared RastPort at the real chip bitmap before the layer
+     * (and any restore/backfill blit DeleteLayer may issue) touches it —
+     * but only if a layer was actually created (pool->rp set) and the pool
+     * is still chip-optimized with a live loneBm (both may be absent here,
+     * e.g. when called from uted_pool_create_layer's own failure cleanup). */
+    if(pool->isChip && pool->rp && pool->loneBm) pool->rp->BitMap = pool->loneBm;
     if (pool->layer)     { DeleteLayer(0, pool->layer);       pool->layer     = NULL; }
     if (pool->layerInfo) {
         DisposeLayerInfo(pool->layerInfo); pool->layerInfo = NULL;
@@ -804,9 +973,12 @@ void uted_line_render_chunk(UniTextEditorData *inst,
         line->chunkHeight = lineHeight;
     }
 
-    /* Point the shared RastPort at this tile's bitmap before drawing. */
+    /* Point the shared RastPort at this tile's bitmap before drawing.
+     * When chip-optimized, tiles live in fast mem and can't be rendered
+     * into directly: draw into the real chip bitmap (loneBm) instead, and
+     * copy the result down into the tile's fast storage at the end. */
     rp = inst->bmPool.rp;
-    rp->BitMap = line->chunks[chunkIdx];
+    rp->BitMap = inst->bmPool.isChip ? inst->bmPool.loneBm : line->chunks[chunkIdx];
 
     /* Fill background */
     SetAPen(rp, (LONG)inst->bgPen);
@@ -941,6 +1113,12 @@ void uted_line_render_chunk(UniTextEditorData *inst,
                             line->utf8 + startByte, (ULONG)(-1));
         }
     }
+// bdbprintf_now("end of uted_line_render_chunk()\n");
+    if (inst->bmPool.isChip) {
+        WaitBlit();
+        poolSyncPlanesToFast(line->chunks[chunkIdx], inst->bmPool.loneBm,inst->bmPool.loneBmIsInterlace);
+    }
+
 }
 
 /* =========================================================================

@@ -83,6 +83,13 @@ typedef struct {
     ULONG              size;       /* total bitmaps allocated */
     ULONG              freeCount;  /* bitmaps currently available */
     UWORD              height;     /* lineHeight the bitmaps were allocated for */
+    UWORD               isChip; /* we have different plans to save ChipMem allocs */
+    /* -- bitmap to fast strategy, to save Chip mem in native mode ---*/
+    struct BitMap    *loneBm;   /* AllocBitMap(friend) regular in chip */
+    int             loneBmIsInterlace;
+    //ULONG       fastPlanarSize;
+
+
 } UTEDBitMapPool;
 
 /* =========================================================================
@@ -607,6 +614,7 @@ BOOL  uted_pool_growalloc      (UTEDBitMapPool *pool, ULONG newSize,
 void  uted_pool_free_bitmapcache           (UTEDBitMapPool *pool);
 void  uted_pool_free_layer           (UTEDBitMapPool *pool);
 BOOL uted_pool_create_layer(UTEDBitMapPool *pool,int w,int h , struct BitMap *bitmap);
+struct BitMap *uted_pool_blit_source(UTEDBitMapPool *pool, struct BitMap *bm);
 
 int uted_manage_vanilla_keycode(Class *cl, Object *o,ULONG codedata, struct GadgetInfo *gi);
 int uted_manage_rawkey_keycode(Class *cl, Object *o,ULONG codedata, struct GadgetInfo *gi);

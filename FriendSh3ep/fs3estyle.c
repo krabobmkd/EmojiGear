@@ -604,6 +604,14 @@ static void fs3estyle_load_patch9_slot(FS3EStyle *st, const StyleFile *sf, int s
     }
 }
 
+void FS3EStyle_UpdateAllDCColorMap(FS3EStyle *st, struct Screen *scr)
+{
+    if(st->dcMini) URPDC_UpdateColorMap(st->dcMini,scr);
+    if(st->dcNormal) URPDC_UpdateColorMap(st->dcNormal,scr);
+    if(st->dcUsername) URPDC_UpdateColorMap(st->dcUsername,scr);
+    if(app->buttonDC)  URPDC_UpdateColorMap(app->buttonDC,scr);
+}
+
 BOOL FS3EStyle_LoadThemeImages(FS3EStyle *st, struct Screen *scr)
 {
     char path[256];
@@ -816,11 +824,8 @@ BOOL FS3EStyle_LoadThemeImages(FS3EStyle *st, struct Screen *scr)
              StyleFile_GetString(&sf, "media.soundplay", "soundplay.png"));
     RgbImage_LoadViaDatatype(&st->soundPlayImage, path);
 
-    /* Loading screen bitmap datatypes allocs/free colors to screen palette */
-    if(st->dcMini) URPDC_UpdateColorMap(st->dcMini,scr);
-    if(st->dcNormal) URPDC_UpdateColorMap(st->dcNormal,scr);
-    if(st->dcUsername) URPDC_UpdateColorMap(st->dcUsername,scr);
-    if(app->buttonDC)  URPDC_UpdateColorMap(app->buttonDC,scr);
+
+
 
 
     return TRUE;

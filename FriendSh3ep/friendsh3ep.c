@@ -774,6 +774,10 @@ static void FS3EApp_LoadTheme_Delayed(void)
 
     FS3EStyle_ApplyColors(&app->style, CurrentMainScreen);
 
+    /* Loading screen bitmap datatypes allocs/free colors to screen palette */
+    FS3EStyle_UpdateAllDCColorMap(&app->style,CurrentMainScreen);
+
+
     /* Propagates the (re)loaded/reset style onto every widget that caches
      * its own rendering from it -- title bar buttons, patch9-skinned
      * buttons, the toot timeline's colors, nav bar buttons. Same function

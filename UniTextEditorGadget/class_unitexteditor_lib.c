@@ -129,8 +129,11 @@ failinit:
     return 1;
 }
 
+//void bdbclose();
+
 void UniTextEditor_Exit(void)
 {
+//bdbclose();
     if (UniTextEditorClass) {
 #ifndef UNITEXTEDITOR_STATIC
         RemoveClass(UniTextEditorClass);

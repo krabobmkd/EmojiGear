@@ -131,6 +131,7 @@ static void GenericOpenWindow(FS3EMainWindow *mw, Object *window_obj)
     } else {
         FS3EStyle_ResetColors(&app->style);
         FS3EStyle_ResetPatch9Colors(&app->style);
+
     }
 
     /* Synchronize screen palette colors.
@@ -147,6 +148,9 @@ static void GenericOpenWindow(FS3EMainWindow *mw, Object *window_obj)
      * why button.gadget doesn't tolerate that once an image has been
      * attached at least once. */
     FS3EStyle_CreateDefaultButtonImages(&app->style, CurrentMainScreen);
+
+    /* Loading screen bitmap datatypes allocs/free colors to screen palette */
+    FS3EStyle_UpdateAllDCColorMap(&app->style,CurrentMainScreen);
 
     /* Button cell size may have changed (theme-dependent), so this is
      * followed by a full relayout (WM_RETHINK below). */
