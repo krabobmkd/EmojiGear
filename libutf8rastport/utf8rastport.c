@@ -2774,36 +2774,43 @@ static void urp_draw_text_clut_forcedmono(struct RastPort      *rp,
 
                 if(targetIsChipRam)
                 {
-                    //TODO
-                    // if(!ge->pixelsIsInChip && ge->pixels)
-                    // {
-                    //     ULONG maskSize = ge->rows * ge->pitch;
-                    //     UBYTE *f = ge->pixels;
-                    //     ge->pixels = AllocVec(maskSize,MEMF_CHIP);
-                    //     if(ge->pixels) CopyMem(f,ge->pixels,maskSize);
-                    //     FreeVec(f);
-                    //     ge->pixelsIsInChip = TRUE;
-                    // }
-                    // if(ge->pixels)
-                    // {
-                    //     WORD bx1, by1, bx2, by2, srcx, srcy;
-                    //     WORD cx1 = 0, cy1 = 0;
-                    //     WORD cx2 = rp->Layer ? (WORD)(rp->Layer->bounds.MaxX - rp->Layer->bounds.MinX + 1) : 0x7FFF;
-                    //     WORD cy2 = rp->Layer ? (WORD)(rp->Layer->bounds.MaxY - rp->Layer->bounds.MinY + 1) : 0x7FFF;
-                    //     bx1 = gx > cx1 ? gx : cx1;
-                    //     by1 = gy > cy1 ? gy : cy1;
-                    //     bx2 = (gx + (WORD)ge->width) < cx2 ? (gx + (WORD)ge->width) : cx2;
-                    //     by2 = (gy + (WORD)ge->rows)  < cy2 ? (gy + (WORD)ge->rows)  : cy2;
-                    //     if (bx1 < bx2 && by1 < by2) {
-                    //         srcx = bx1 - gx; srcy = by1 - gy;
-                    //         BltTemplate(
-                    //             (PLANEPTR)((UBYTE *)ge->pixels + (ULONG)srcy * ge->pitch),
-                    //             (LONG)srcx, (LONG)ge->pitch,
-                    //             rp, (LONG)bx1, (LONG)by1,
-                    //             (LONG)(bx2 - bx1), (LONG)(by2 - by1));
-                    //     }
-                    // }
+                    if(ge->pixels)
+                    {
+                        WORD bx1, by1, bx2, by2, srcx, srcy;
+                        WORD cx1 = 0, cy1 = 0;
+                        WORD cx2 = rp->Layer ? (WORD)((rp->Layer->bounds.MaxX - rp->Layer->bounds.MinX) + 1) : (WORD) GetBitMapAttr( rp->BitMap,BMA_WIDTH);
+                        WORD cy2 = rp->Layer ? (WORD)((rp->Layer->bounds.MaxY - rp->Layer->bounds.MinY) + 1) : (WORD) GetBitMapAttr( rp->BitMap,BMA_HEIGHT);
+                        bx1 = gx > cx1 ? gx : cx1;
+                        by1 = gy > cy1 ? gy : cy1;
+                        bx2 = (gx + (WORD)ge->width) < cx2 ? (gx + (WORD)ge->width) : cx2;
+                        by2 = (gy + (WORD)ge->rows)  < cy2 ? (gy + (WORD)ge->rows)  : cy2;
+                        if (bx1 < bx2 && by1 < by2 && dc->tempChipRamAlloc) {
+                            /* swap because previous buffer may be still in use ,
+                             *  and we're not going to WaitBlit(). */
+                            UWORD *swp = dc->tempChipRamB;
+                            ULONG byteOfsx=0;
+                            dc->tempChipRamB = dc->tempChipRamA;
+                            dc->tempChipRamA = swp;
 
+                            srcx = bx1 - gx; srcy = by1 - gy;
+                            if(srcx>15)
+                            {
+                                byteOfsx = (srcx>>4)*2;
+                                srcx &= 15;
+                            }
+
+                            CopyMem(ge->pixels + ((ULONG)srcy * ge->pitch),
+                                dc->tempChipRamA,(by2 - by1) * ge->pitch);
+
+                            /*note we keep external code draw mode */
+                            BltTemplate(
+                                (PLANEPTR)(dc->tempChipRamA+byteOfsx),
+                                (LONG)srcx, (LONG)ge->pitch,
+                                rp, (LONG)bx1, (LONG)by1,
+                                (LONG)(bx2 - bx1), (LONG)(by2 - by1));
+
+                        }
+                    } // end if ->pixels ok
 
                 } else
                 {

@@ -263,8 +263,8 @@ static const char *defaultStrings[MSG_COUNT] = {
     "Toot Timeline Playback",
     /* MSG_SETTINGSV_PLAY_TOOT_TIME */
     "Play toot time (seconds)",
-    /* MSG_SETTINGSV_ALLOW_NEXT_TOOT_SCROLL */
-    "Allow next toot scroll",
+    /* MSG_SETTINGSV_SMOOTH_AUTO_SCROLL */
+    "Smooth auto scroll",
     /* MSG_SETTINGSV_URLLINK_GROUP */
     "URL Link",
     /* MSG_SETTINGSV_URLLINK_ACTION */

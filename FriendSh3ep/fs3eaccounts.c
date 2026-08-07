@@ -845,6 +845,20 @@ void FS3EApp_ResetPerAccountState(void)
     app->olderPageInFlightMask = 0;
     app->newerPageInFlightMask = 0;
     FS3EApp_FetchTimeline(app->viewMode);
+
+    /* VIEWMODE_User is excluded from FS3EApp_FetchTimeline's generic
+     * mechanism (see that function's own comment) -- it's normally
+     * (re)populated by fs3e_setViewMode() calling
+     * FS3EApp_ShowOwnProfileHeader() whenever the User tab is switched
+     * TO. But an account switch while ALREADY sitting on VIEWMODE_User
+     * never goes through fs3e_setViewMode() (the view mode itself isn't
+     * changing), so that call site is missed; accountProfileFetched was
+     * just reset to FALSE above (via FS3EApp_SetAccount) with nothing
+     * left to act on it. Mirror that call here so the profile actually
+     * reloads under the new account instead of only catching up the next
+     * time the user leaves and re-enters VIEWMODE_User. */
+    if (app->viewMode == VIEWMODE_User)
+        FS3EApp_ShowOwnProfileHeader();
 }
 
 /* Switch the connected account to app->accounts[index] (a row click in

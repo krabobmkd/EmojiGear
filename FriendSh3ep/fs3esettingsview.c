@@ -138,7 +138,7 @@ BOOL FS3ESettingsView_Create(FS3ESettingsView *sv, const char *title)
     Object *scalingQualityLabel;
     Object *rgbDrawFunctionLabel;
     Object *playTootTimeLabel;
-    Object *allowNextTootScrollLabel;
+    Object *smoothAutoScrollLabel;
     Object *urlLinkActionLabel;
     Object *directDownloadArchivesLabel;
     Object *downloadPathLabel;
@@ -457,15 +457,15 @@ BOOL FS3ESettingsView_Create(FS3ESettingsView *sv, const char *title)
     playTootTimeLabel = NewObject(LABEL_GetClass(), NULL,
         LABEL_Text, (ULONG)LOC(MSG_SETTINGSV_PLAY_TOOT_TIME), TAG_END);
 
-    sv->allowNextTootScrollCheck = NewObject(CHECKBOX_GetClass(), NULL,
-        GA_ID,        GID_SETTINGSV_ALLOW_NEXT_TOOT_SCROLL,
+    sv->smoothAutoScrollCheck = NewObject(CHECKBOX_GetClass(), NULL,
+        GA_ID,        GID_SETTINGSV_SMOOTH_AUTO_SCROLL,
         GA_RelVerify, TRUE,
-        GA_Selected,  (ULONG)app->settings.allowNextTootScroll,
+        GA_Selected,  (ULONG)app->settings.smoothAutoScroll,
         TAG_END);
-    if (!sv->allowNextTootScrollCheck) return FALSE;
+    if (!sv->smoothAutoScrollCheck) return FALSE;
 
-    allowNextTootScrollLabel = NewObject(LABEL_GetClass(), NULL,
-        LABEL_Text, (ULONG)LOC(MSG_SETTINGSV_ALLOW_NEXT_TOOT_SCROLL), TAG_END);
+    smoothAutoScrollLabel = NewObject(LABEL_GetClass(), NULL,
+        LABEL_Text, (ULONG)LOC(MSG_SETTINGSV_SMOOTH_AUTO_SCROLL), TAG_END);
 
     playbackGroup = NewObject(LAYOUT_GetClass(), NULL,
         LAYOUT_Orientation,   LAYOUT_ORIENT_VERT,
@@ -477,10 +477,10 @@ BOOL FS3ESettingsView_Create(FS3ESettingsView *sv, const char *title)
         LAYOUT_AddChild,      (ULONG)sv->playTootTimeInt,
         CHILD_WeightedHeight, 0,
         CHILD_Label,          (ULONG)playTootTimeLabel,
-        LAYOUT_AddChild,      (ULONG)sv->allowNextTootScrollCheck,
+        LAYOUT_AddChild,      (ULONG)sv->smoothAutoScrollCheck,
         CHILD_WeightedWidth,  1,
         CHILD_WeightedHeight, 0,
-        CHILD_Label,          (ULONG)allowNextTootScrollLabel,
+        CHILD_Label,          (ULONG)smoothAutoScrollLabel,
         TAG_END);
     if (!playbackGroup) return FALSE;
 
@@ -743,10 +743,10 @@ BOOL FS3ESettingsView_HandleInput(FS3ESettingsView *sv)
                     if ((LONG)val > 60) val = 60;
                     app->settings.playTootTimeSec = (int)val;
 
-                } else if (gadId == GID_SETTINGSV_ALLOW_NEXT_TOOT_SCROLL) {
+                } else if (gadId == GID_SETTINGSV_SMOOTH_AUTO_SCROLL) {
                     ULONG checked = 0;
-                    GetAttr(GA_Selected, sv->allowNextTootScrollCheck, &checked);
-                    app->settings.allowNextTootScroll = checked ? TRUE : FALSE;
+                    GetAttr(GA_Selected, sv->smoothAutoScrollCheck, &checked);
+                    app->settings.smoothAutoScroll = checked ? TRUE : FALSE;
 
                 } else if (gadId == GID_SETTINGSV_KEEP_BIG_USERICONS) {
                     ULONG checked = 0;

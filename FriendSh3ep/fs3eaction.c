@@ -374,7 +374,6 @@ static BOOL FS3ETimelineNextToot_Internal(struct App *ctx)
     LONG scrollNow = 0, delta = 0;
 
     if (!ctx || !ctx->tootTimeline) return FALSE;
-    if (!ctx->settings.allowNextTootScroll) return TRUE; /* feature turned off in Settings */
 
     /* Metrics noted up front, at the scroll position the animation
      * starts from -- see this function's own description in the task
@@ -384,6 +383,16 @@ static BOOL FS3ETimelineNextToot_Internal(struct App *ctx)
     GetAttr(TTIMELINE_ScrollY, ctx->tootTimeline, (ULONG *)&scrollNow);
     GetAttr(TTIMELINE_NextTootScrollDelta, ctx->tootTimeline, (ULONG *)&delta);
     if (delta == 0) return TRUE; /* already at the end of content -- nothing to reveal */
+
+    if (!ctx->settings.smoothAutoScroll) {
+        /* Smooth auto scroll off: skip the 25Hz eased-animation timer
+         * entirely and land directly on the next toot in a single
+         * SetAttrs -- same target FS3ENextTootAnim_Hook's last frame
+         * would have reached, just without the vblanks in between. */
+        FS3ETimer_Stop(&s_nextTootAnim.timer);
+        SetGdAttrs(ctx->tootTimeline, TTIMELINE_ScrollY, (ULONG)(scrollNow + delta), TAG_DONE);
+        return TRUE;
+    }
 
     s_nextTootAnim.scrollStart = scrollNow;
     s_nextTootAnim.scrollDelta = delta;

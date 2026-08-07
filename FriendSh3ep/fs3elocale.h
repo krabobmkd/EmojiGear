@@ -188,7 +188,7 @@ enum {
     MSG_SETTINGSV_RGBDRAW_INTERNAL_BILINEAR,
     MSG_SETTINGSV_TOOTPLAYBACK_GROUP, /* was "Playback", now "Toot Timeline Playback" */
     MSG_SETTINGSV_PLAY_TOOT_TIME,
-    MSG_SETTINGSV_ALLOW_NEXT_TOOT_SCROLL,
+    MSG_SETTINGSV_SMOOTH_AUTO_SCROLL,
     MSG_SETTINGSV_URLLINK_GROUP, /* "URL Link" group label */
     MSG_SETTINGSV_URLLINK_ACTION,       /* "URL Link Action" chooser label */
     MSG_SETTINGSV_URLLINK_ASK,          /* chooser entry: "Ask" */

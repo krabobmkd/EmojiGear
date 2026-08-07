@@ -74,6 +74,11 @@ extern struct Library *AslBase;
 #define FS3EMV_TITLE          "FriendSh3ep Media"
 #define FS3EMV_PLACEHOLDER_W  260
 #define FS3EMV_PLACEHOLDER_H  80
+#define FS3EMV_MSG_LOADING_AUDIO "Loading audio..." /* shared between
+                                                       * FS3EMediaView_ShowAudioUrl
+                                                       * and the image-channel's
+                                                       * own reply handler, see
+                                                       * FS3EMediaView_OnFetchReply */
 
 /* -------------------------------------------------------------------------
  * FS3EMediaPic -- private gadgetclass that just blits whatever BitMap it's
@@ -139,28 +144,30 @@ static ULONG FS3EMediaPic_OnRender(Class *cl, Object *o, struct gpRender *msg)
        oldClipRegion = InstallClipRegion( rp->Layer, inst->clipRegion);
     }
 
-
-
-
     SetAPen(rp, 1);
     SetDrMd(rp, JAM1);
     if (inst->bitmap && inst->width > 0 && inst->height > 0) {
-        // if (inst->mask) {
-        //     BltMaskBitMapRastPort(inst->bitmap, 0, 0, rp, gx, gy,
-        //                           (LONG)inst->width, (LONG)inst->height,
-        //                           FS3EMV_MASK_MINTERM, inst->mask);
-        // } else {
+        /* no need for transparency in that case
+        if (inst->mask) {
+            BltMaskBitMapRastPort(inst->bitmap, 0, 0, rp, gx, gy,
+                                  (LONG)inst->width, (LONG)inst->height,
+                                  FS3EMV_MASK_MINTERM, inst->mask);
+        } else {
+        */
             BltBitMapRastPort(inst->bitmap, 0, 0, rp, gx, gy,
                               (LONG)inst->width, (LONG)inst->height, 0xC0);
-//        }
-    } else if (inst->message) {
-
+       /* }*/
+    } else
+    {
         RectFill(rp, (LONG)gx, (LONG)gy, (LONG)(gx + gw - 1), (LONG)(gy + gh - 1));
+    }
+    if (inst->message) {
 
+      //
 
-        SetAPen(rp, 1);
-        SetBPen(rp, 0);
-        SetDrMd(rp, JAM2);
+        SetAPen(rp, 2);
+        SetBPen(rp, 1);
+        SetDrMd(rp, JAM1);
         Move(rp, (LONG)(gx + 8), (LONG)(gy + 20));
         Text(rp, (STRPTR)inst->message, (ULONG)strlen(inst->message));
     }
@@ -985,7 +992,7 @@ void FS3EMediaView_ShowAudioUrl(FS3EMediaView *mv, const char *url,
     mv->audioKey[sizeof(mv->audioKey) - 1] = '\0';
 
     mv->audioLoading = TRUE;
-    mediaview_push_picture(mv, "Loading audio...");
+    mediaview_push_picture(mv, FS3EMV_MSG_LOADING_AUDIO);
     mediaview_sync_tapedeck(mv);
 
     /* Own subdir, always kept -- see FS3E_CACHE_SUBDIR_AUDIO's doc comment
@@ -1030,7 +1037,18 @@ void FS3EMediaView_OnFetchReply(FS3EMediaView *mv, ULONG result,
             ok = BmImage_Init(&mv->image, reply->fs3enf_LocalPath) &&
                  BmImage_LoadFitScreen(&mv->image, CurrentMainScreen, maxW, maxH);
             if (ok) {
-                mediaview_push_picture(mv, NULL);
+                /* The image is only one of up to two channels this window
+                 * can be showing at once (see fs3emediaview.h's "two
+                 * channels" note) -- if the audio channel is still
+                 * in-flight, its "Loading audio..." message (set by
+                 * FS3EMediaView_ShowAudioUrl) must stay up until THAT
+                 * reply lands too (FS3EMediaView_OnFetchReply's audio
+                 * branch below, or FS3EMediaView_OnAudioReply once
+                 * playback actually starts) instead of being clobbered
+                 * back to NULL just because the image happened to finish
+                 * first. */
+                mediaview_push_picture(mv,
+                    (mv->hasAudio && mv->audioLoading) ? FS3EMV_MSG_LOADING_AUDIO : NULL);
             } else {
                 mediaview_push_picture(mv, "Couldn't display this image.");
             }

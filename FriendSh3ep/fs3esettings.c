@@ -39,7 +39,7 @@
 #define TT_MAXCACHESIZE   "MAXCACHESIZEMB" /* max cache size, megabytes           */
 #define TT_CHECKINTERVAL  "CHECKINTERVALSEC" /* server poll interval, seconds     */
 #define TT_PLAYTOOTTIME   "PLAYTOOTTIMESEC" /* autoscroll play: seconds per toot  */
-#define TT_ALLOWNEXTTOOTSCROLL "ALLOWNEXTTOOTSCROLL" /* "1" or "0"                */
+#define TT_SMOOTHAUTOSCROLL "SMOOTHAUTOSCROLL" /* "1" or "0"                */
 #define TT_KEEPBIGUSERICONS   "KEEPBIGUSERICONS"   /* "1" or "0"                  */
 #define TT_KEEPBIGTHUMBNAILS  "KEEPBIGTHUMBNAILS"  /* "1" or "0"                  */
 #define TT_BIGGERTHUMBNAILS   "BIGGERTHUMBNAILS"   /* "1" or "0"                  */
@@ -116,7 +116,7 @@ void FS3ESettings_Load(FS3ESettings *s)
     }
 
     /* Font rendering flags */
-    s->antialias = TRUE;
+    s->antialias = FALSE; /* new default to false, for aga users */
     val = ToolTypePrefs_Get(TT_ANTIALIAS);
     if (val) s->antialias = (val[0] != '0');
 
@@ -170,10 +170,10 @@ void FS3ESettings_Load(FS3ESettings *s)
         if (secs >= 3 && secs <= 60) s->playTootTimeSec = secs;
     }
 
-    /* "Next toot" animated scroll enabled (default on) */
-    s->allowNextTootScroll = TRUE;
-    val = ToolTypePrefs_Get(TT_ALLOWNEXTTOOTSCROLL);
-    if (val) s->allowNextTootScroll = (val[0] != '0');
+    /* "Next toot" eased animated scroll enabled (default on) */
+    s->smoothAutoScroll = TRUE;
+    val = ToolTypePrefs_Get(TT_SMOOTHAUTOSCROLL);
+    if (val) s->smoothAutoScroll = (val[0] != '0');
 
     /* Keep big originals on disk (default off -- see fs3esettings.h) */
     s->keepBigUserIcons = FALSE;
@@ -364,7 +364,7 @@ void FS3ESettings_Save(FS3ESettings *s)
     snprintf(buf, sizeof(buf), "%d", s->playTootTimeSec);
     ToolTypePrefs_Set(TT_PLAYTOOTTIME, buf);
 
-    ToolTypePrefs_Set(TT_ALLOWNEXTTOOTSCROLL, s->allowNextTootScroll ? "1" : "0");
+    ToolTypePrefs_Set(TT_SMOOTHAUTOSCROLL, s->smoothAutoScroll ? "1" : "0");
 
     ToolTypePrefs_Set(TT_KEEPBIGUSERICONS,  s->keepBigUserIcons  ? "1" : "0");
     ToolTypePrefs_Set(TT_KEEPBIGTHUMBNAILS, s->keepBigThumbnails ? "1" : "0");

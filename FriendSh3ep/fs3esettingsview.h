@@ -19,7 +19,7 @@
  *   Tab "User experience":
  *     Toot Timeline Playback group (was just "Playback"):
  *       Play toot time (seconds): [integer, 3..60]
- *       [x] Allow next toot scroll
+ *       [x] Smooth auto scroll
  *     URL Link group:
  *       URL Link Action: [combo: Ask / Use OpenURL / Copy to Clipboard]
  *       [x] Direct download .zip,.lha
@@ -111,7 +111,7 @@ typedef struct FS3ESettingsView {
 
     /* Playback group */
     Object *playTootTimeInt;
-    Object *allowNextTootScrollCheck;
+    Object *smoothAutoScrollCheck;
 
     /* URL Link group */
     Object *urlLinkActionChooser;

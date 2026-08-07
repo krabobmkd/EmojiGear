@@ -68,11 +68,13 @@ typedef struct FS3ESettings {
      * Minimum 3, default 10, maximum 60. */
     int   playTootTimeSec;
 
-    /* TRUE (default) = "Next toot" (Space key/menu, see
-     * Action_TimelineNextToot) is allowed to animate-scroll at all.
-     * FALSE disables the feature entirely -- Space then does nothing
-     * while autoscroll is idle instead of starting the scroll. */
-    short allowNextTootScroll;
+    /* TRUE (default) = "Next toot" (Space key/menu, and each interval of
+     * Autoscroll Play, which just calls the same move -- see
+     * FS3ETimelineNextToot_Internal, fs3eaction.c) eases into the next
+     * toot over the ~1s, 25Hz animated scroll. FALSE = skip that timer
+     * and jump the scroll position straight to the next toot in a
+     * single frame. */
+    short smoothAutoScroll;
 
     /* FALSE (default) = discard the full-size original after generating
      * its small thumbnail (downloaded to RAM:T and deleted right after

@@ -400,7 +400,10 @@ typedef struct TTLPostSetup {
     const char *username;    /* original author display name (UTF-8) */
     const char *acct;        /* original author @user@instance (UTF-8) */
     const char *body;        /* post body text (UTF-8) */
-    const char *timestamp;   /* short age string, e.g. "3h" (UTF-8) */
+    const char *timestamp;   /* raw ISO 8601 "YYYY-MM-DDTHH:MM:SS.sssZ" (UTC) --
+                               * split for display into date/time corner
+                               * lines by ttl_format_timestamp_lines
+                               * (fs3etoottimeline_tiles.c) */
     const char *boostBy;     /* booster display name, NULL/"" for originals */
     const char *boostByAcct; /* booster @user@instance, NULL/"" for originals -- what
                                * clicking the "X boosted" line actually opens (see

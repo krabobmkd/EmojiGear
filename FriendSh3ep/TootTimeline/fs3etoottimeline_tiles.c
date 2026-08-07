@@ -335,6 +335,35 @@ static void tile_draw_text_n(struct RastPort *rp, WORD x, WORD y,
                      (ULONG)utf8_codepoints_range(utf8, utf8 + byteLen));
 }
 
+/* post->timestamp is the raw "YYYY-MM-DDTHH:MM:SS.sssZ" string Mastodon's
+ * API returns (see fmas_CreatedAt, network_fs3e/fs3enet.h) -- always UTC.
+ * Split for display into the two stacked corner lines ttl_toot_render
+ * draws below: the date unchanged, and "HH:MM:SS UTC" with the
+ * milliseconds and trailing "Z" dropped in favour of a spelled-out unit
+ * (there's no horizontal room in that corner, next to the name/acct
+ * block, for the raw string on one line). Falls back to the whole raw
+ * string on the date line (empty time line) if it doesn't look like that
+ * shape, rather than guessing at a partial split. */
+static void ttl_format_timestamp_lines(const char *raw,
+                                        char *dateLine, ULONG dateLineSize,
+                                        char *timeLine, ULONG timeLineSize)
+{
+    const char *t;
+
+    dateLine[0] = '\0';
+    timeLine[0] = '\0';
+    if (!raw || !raw[0]) return;
+
+    t = strchr(raw, 'T');
+    if (!t || (ULONG)(t - raw) >= dateLineSize || strlen(t + 1) < 8) {
+        snprintf(dateLine, dateLineSize, "%s", raw);
+        return;
+    }
+
+    snprintf(dateLine, dateLineSize, "%.*s", (int)(t - raw), raw);
+    snprintf(timeLine, timeLineSize, "%.8s UTC", t + 1);
+}
+
 /* ------------------------------------------------------------------ */
 /* ttl_draw_avatar_placeholder                                          */
 /*                                                                      */
@@ -526,14 +555,42 @@ void ttl_toot_render(TTLData *inst, struct RastPort *rp, TTLPost *post, LONG til
             tile_draw_text(inst, rp, textX, baselineY, post->acct, dcMini);
             curY += inst->miniLineHeight;
 
-            /* Timestamp – right-aligned on the username row, dcMini */
+            /* Timestamp -- top-right corner, dcMini, stacked as two lines
+             * (date, then "HH:MM:SS UTC") since the raw single-line string
+             * is too wide to fit that corner alongside the name/acct block
+             * -- see ttl_format_timestamp_lines. Both lines share ONE X
+             * (the wider line's right-aligned X, i.e. the smaller/more
+             * leftward of the two): the date is always a bit narrower
+             * than "HH:MM:SS UTC", and right-aligning each line
+             * independently would stagger their left edges into a ragged,
+             * harder-to-read block instead of a flush-left one. */
             if (post->timestamp && post->timestamp[0]) {
+                char dateLine[16], timeLine[16];
                 struct URPTextMetric tsm;
-                URPDC_TextSizeUTF8(dcMini, post->timestamp, -1, &tsm);
-                WORD tsX = (WORD)(inst->gadWidth - TTL_POST_PAD_RIGHT - tsm.width);
-                WORD tsY = (WORD)(drawY + TTL_POST_PAD_TOP + inst->nameLineAscent);
+                WORD tsX = inst->gadWidth, tsY1;
+
+                ttl_format_timestamp_lines(post->timestamp, dateLine, sizeof(dateLine),
+                                            timeLine, sizeof(timeLine));
                 URPDC_SetDrawColorFromPen(dcMini, inst->screen, dimPen, bgPen);
-                tile_draw_text(inst, rp, tsX, tsY, post->timestamp, dcMini);
+                tsY1 = (WORD)(drawY + TTL_POST_PAD_TOP + inst->nameLineAscent);
+
+                if (dateLine[0]) {
+                    URPDC_TextSizeUTF8(dcMini, dateLine, -1, &tsm);
+                    tsX = (WORD)(inst->gadWidth - TTL_POST_PAD_RIGHT - tsm.width);
+                }
+                if (timeLine[0]) {
+                    WORD x;
+                    URPDC_TextSizeUTF8(dcMini, timeLine, -1, &tsm);
+                    x = (WORD)(inst->gadWidth - TTL_POST_PAD_RIGHT - tsm.width);
+                    if (x < tsX) tsX = x;
+                }
+
+                if (dateLine[0])
+                    tile_draw_text(inst, rp, tsX, tsY1, dateLine, dcMini);
+                if (timeLine[0]) {
+                    WORD tsY2 = (WORD)(tsY1 + inst->miniLineHeight);
+                    tile_draw_text(inst, rp, tsX, tsY2, timeLine, dcMini);
+                }
             }
 
             /* Ensure text Y is below avatar */
