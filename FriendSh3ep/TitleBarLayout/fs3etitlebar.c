@@ -352,7 +352,7 @@ static ULONG TitleBarLayout_OnLayout(Class *cl, Object *o, struct gpLayout *msg)
      * (see tbl_row2_height for the matching bottom margin). Not a child
      * gadget -- just remember where TitleBarLayout_OnRender should draw
      * it (see the file header comment). */
-    inst->avatarX    = left + avGap;
+    inst->avatarX    = left + avGap*2;
     inst->avatarY    = y2   + avGap;
     inst->avatarSize = iconSz;
 
@@ -466,14 +466,6 @@ static ULONG TitleBarLayout_OnRender(Class *cl, Object *o, struct gpRender *msg)
     UWORD i;
 
     SetDrMd(rp, JAM1);
-    // test, doesnt work
-    // if(inst->allowedTask != FindTask(NULL) || msg->gpr_Redraw == 0)
-    // {
-    //     /* ask correct draw from correct process */
-    //     refreshTitleBarLayout = 1;
-    //     if (myTask) Signal(myTask, SIGBREAKF_CTRL_F);
-    //     return 1;
-    // }
 
     if (rp && rp->Layer && rp->Layer->BackFill == NULL &&
         (inst->style->tbBg.bitmap || inst->style->titlebarLeft.bitmap ||
@@ -490,6 +482,9 @@ static ULONG TitleBarLayout_OnRender(Class *cl, Object *o, struct gpRender *msg)
 
     if (rp && w > 0 && h > 0)
         EraseRect(rp, left, top, left + w - 1, top + h - 1);
+
+
+
 
     /* Title bar border images (titlebar.left/titlebar.right in style.txt)
      * are drawn from FS3EStyle_TitleBarBackFillFunc (fs3estyle.c) instead
@@ -614,7 +609,8 @@ static ULONG TitleBarLayout_OnRender(Class *cl, Object *o, struct gpRender *msg)
         struct Gadget *cg = G(inst->children[i]);
         DoMethodA(inst->children[i], (Msg)&childMsg);
     }
-
+    /* uninstall, or it will propagate  */
+    InstallLayerHook(rp->Layer, NULL);
     return 0;
 }
 

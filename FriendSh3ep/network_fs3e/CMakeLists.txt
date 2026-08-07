@@ -53,7 +53,7 @@ target_include_directories(fs3enet PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 # CMakeLists.txt) so bdbprintf_now() calls here compile to the real
 # implementation, not the no-op stub -- otherwise this library would
 # silently produce no trace output despite calling the function.
-target_compile_definitions(fs3enet PRIVATE USE_DEBUG_BDBPRINT=1)
+#target_compile_definitions(fs3enet PRIVATE USE_DEBUG_BDBPRINT=1)
 
 # Manual AmiSSL init path (see EmojiGear/testsocket/CMakeLists.txt): libnix'
 # `errno` is `(*__errno)`, incompatible with libamisslauto.a's expectations,

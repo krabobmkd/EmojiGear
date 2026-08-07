@@ -1385,7 +1385,7 @@ int main(int argc, char **argv)
                  TTIMELINE_AvatarImages, (ULONG)app->avatarImages,
                  TAG_DONE);
 
- flushbdbprint();
+
 
     /* (fake test posts removed — real data comes from FS3ENETQ_TIMELINE replies) */
  flushbdbprint();
@@ -1505,7 +1505,7 @@ int main(int argc, char **argv)
         WA_Flags,
             WFLG_BORDERLESS |
             WFLG_ACTIVATE   |
-            WFLG_SMART_REFRESH,
+           /* WFLG_SMART_REFRESH*/WFLG_SIMPLE_REFRESH,
         WA_ReportMouse,TRUE, //test
         WA_Title,            NULL,
         WINDOW_ParentGroup,  (ULONG)app->mainlayout,

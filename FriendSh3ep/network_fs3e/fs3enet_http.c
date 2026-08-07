@@ -210,27 +210,27 @@ void FS3EHttp_Cleanup(void)
 
 void FS3EHttp_PrintErrors(void)
 {
-    unsigned long errCode;
-    BOOL any = FALSE;
+    // unsigned long errCode;
+    // BOOL any = FALSE;
 
-    /* Defensive: never touch AmiSSL if FS3EHttp_Init() never succeeded
-     * (or already ran FS3EHttp_Cleanup()) -- AmiSSLExtBase is only ever
-     * non-NULL between a successful OpenAmiSSLTags() and the matching
-     * CloseAmiSSL(). */
-    if (!AmiSSLExtBase)
-        return;
+    // /* Defensive: never touch AmiSSL if FS3EHttp_Init() never succeeded
+    //  * (or already ran FS3EHttp_Cleanup()) -- AmiSSLExtBase is only ever
+    //  * non-NULL between a successful OpenAmiSSLTags() and the matching
+    //  * CloseAmiSSL(). */
+    // if (!AmiSSLExtBase)
+    //     return;
 
-    /* bdbprintf_now(), not ERR_print_errors()+Output() -- FS3ENet_ProcEntry's
-     * process (fs3enet.c) is a plain CreateNewProcTags() child with no
-     * controlling window, so Output() goes to a console nobody sees. */
-    while ((errCode = ERR_get_error()) != 0) {
-        char errBuf[256];
-        ERR_error_string_n(errCode, errBuf, sizeof(errBuf));
-        bdbprintf_now("FS3EHttp: %s\n", errBuf);
-        any = TRUE;
-    }
-    if (!any)
-        bdbprintf_now("FS3EHttp: (no OpenSSL error queue entries)\n");
+    // /* bdbprintf_now(), not ERR_print_errors()+Output() -- FS3ENet_ProcEntry's
+    //  * process (fs3enet.c) is a plain CreateNewProcTags() child with no
+    //  * controlling window, so Output() goes to a console nobody sees. */
+    // while ((errCode = ERR_get_error()) != 0) {
+    //     char errBuf[256];
+    //     ERR_error_string_n(errCode, errBuf, sizeof(errBuf));
+    //     bdbprintf_now("FS3EHttp: %s\n", errBuf);
+    //     any = TRUE;
+    // }
+    // if (!any)
+    //     bdbprintf_now("FS3EHttp: (no OpenSSL error queue entries)\n");
 }
 
 /* Reads all of bio into an AllocVec()'d, NUL-terminated buffer. */

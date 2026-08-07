@@ -401,7 +401,7 @@ static LONG           tbRightHeight = 0;
  * reference (amigapetmate's BackFillHook_Pattern): BltBitMap operates on
  * the raw RastPort BitMap directly and is unaffected by Layer clipping, so
  * (unlike a RastPort-drawing-function hook) there is no need to copy rp and
- * null out its Layer field here. */
+ * null out itsimgX Layer field here. */
 static void ASM SAVEDS FS3EStyle_TitleBarBackFillFunc(
     REG(a2, struct RastPort *rp),
     REG(a1, struct FS3EBackFillMsg *bfm))
@@ -418,6 +418,15 @@ static void ASM SAVEDS FS3EStyle_TitleBarBackFillFunc(
     dstH = (LONG)bfm->bf_Bounds.MaxY - dstY + 1;
     if (dstW <= 0 || dstH <= 0) return;
 
+// bdbprintf("bfhook l:%d t:%d r:%d b:%d ofsx:% ofsy:%d\n",(LONG)bfm->bf_Bounds.MinX,
+// (LONG)bfm->bf_Bounds.MinY,(LONG)bfm->bf_Bounds.MaxX,
+// bfm->bf_Bounds.MaxY,bfm->bf_OffsetX,bfm->bf_OffsetY);
+
+// if(rp->Layer)
+// {
+// bdbprintf("layer:%08x bm:%08x layerflag:%04x\n",rp->Layer, rp->BitMap,rp->Layer->Flags);
+
+// }
     if (tbBgBitmap && tbBgWidth > 0 && tbBgHeight > 0) {
         /* Phase of the pattern at the top-left of the damage rect, anchored
          * to the layer's own origin so tiles stay aligned across separate
