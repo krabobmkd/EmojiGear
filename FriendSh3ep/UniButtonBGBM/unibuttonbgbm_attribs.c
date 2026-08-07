@@ -63,12 +63,8 @@ static void ubgbm_blit_bg(struct BitMap *srcBm, WORD srcW, WORD srcH,
 /* FS3E_COLOR_BTBGBM_TEXT_* role for a given UBGBM_STATE_*. */
 static ULONG ubgbm_style_text_pen(UniButtonBGBMData *inst, int state)
 {
-    FS3EColorRole role;
-    switch (state) {
-    case UBGBM_STATE_SELECTED: role = FS3E_COLOR_BTBGBM_TEXT_SELECTED; break;
-    case UBGBM_STATE_DISABLED: role = FS3E_COLOR_BTBGBM_TEXT_DISABLED; break;
-    default:                   role = FS3E_COLOR_BTBGBM_TEXT_ENABLED;  break;
-    }
+    FS3EColorRole role = (state == UBGBM_STATE_SELECTED)
+        ? FS3E_COLOR_BTBGBM_TEXT_SELECTED : FS3E_COLOR_BTBGBM_TEXT_ENABLED;
     return (ULONG)FS3E_PEN(inst->style, role);
 }
 

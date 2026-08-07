@@ -73,8 +73,6 @@ static const ULONG defaultColors[FS3E_COLOR_COUNT] = {
 
     0x00000000,   /* FS3E_COLOR_BTBGBM_TEXT_ENABLED */
     0x00FFFFFF,   /* FS3E_COLOR_BTBGBM_TEXT_SELECTED */
-    0x00EEBB33,   /* FS3E_COLOR_BTBGBM_TEXT_HOVER */
-    0x00999999,   /* FS3E_COLOR_BTBGBM_TEXT_DISABLED */
 };
 
 /* style.txt key for each FS3EColorRole, in the same order as the enum --
@@ -96,8 +94,6 @@ static const char *colorStyleKeys[FS3E_COLOR_COUNT] = {
 
     "btbgbm.textcolor.enabled",
     "btbgbm.textcolor.selected",
-    "btbgbm.textcolor.hover",
-    "btbgbm.textcolor.disabled",
 };
 
 /* ------------------------------------------------------------------ */
@@ -531,8 +527,8 @@ void FS3EStyle_SetThemePath(FS3EStyle *st, const char *path)
 /* One style.txt-driven Patch9 skin slot: "<prefix>.image" / "<prefix>.cornersize",
  * plus per-state bg/text colour defaults for "<prefix>.bgcolor.<suffix>" /
  * "<prefix>.textcolor.<suffix>" (see patch9StateSuffix[] below). Arrays are
- * indexed by PATCH9_NORMAL/SELECTED/DISABLED/HOVER, same as Patch9.bgcolors/
- * textcolors themselves. */
+ * indexed by PATCH9_NORMAL/SELECTED, same as Patch9.bgcolors/textcolors
+ * themselves. */
 typedef struct {
     const char *prefix;
     const char *defaultFile;
@@ -543,23 +539,21 @@ typedef struct {
 
 static const FS3EPatch9SlotDef patch9Slots[FS3ESTYLE_PATCH9_COUNT] = {
     { "bt1Patch9", "bt1patch9.iff", 8,
-      { 0x007B7BE3, 0x00BCBCFF, 0x00777777, 0x007B7BE3 },
-      { 0x00000000, 0x00000000, 0x00000000, 0x00000000 } },
+      { 0x007B7BE3, 0x00BCBCFF },
+      { 0x00000000, 0x00000000 } },
     { "bt2Patch9", "bt2patch9.iff", 8,
-      { 0x0083ED60, 0x00B2FFC8, 0x00777777, 0x0083ED60 },
-      { 0x00000000, 0x00000000, 0x00000000, 0x00000000 } },
+      { 0x0083ED60, 0x00B2FFC8 },
+      { 0x00000000, 0x00000000 } },
     { "btbgbmPatch9", "btbgbmpatch9.iff", 8,
-      { 0x00888888, 0x00BCBCFF, 0x00777777, 0x00888888 },
-      { 0x00CCCCCC, 0x00FFFFFF, 0x00999999, 0x00EEEE44 } },
+      { 0x00888888, 0x00BCBCFF },
+      { 0x00CCCCCC, 0x00FFFFFF } },
 };
 
-/* style.txt suffix for each PATCH9_* state, e.g. "bt1Patch9.bgcolor.hover" --
+/* style.txt suffix for each PATCH9_* state, e.g. "bt1Patch9.bgcolor.selected" --
  * see themes/mouton/style.txt. */
 static const char *patch9StateSuffix[PATCH9_NUM_STATES] = {
     "enabled",   /* PATCH9_NORMAL */
     "selected",  /* PATCH9_SELECTED */
-    "disabled",  /* PATCH9_DISABLED */
-    "hover",     /* PATCH9_HOVER */
 };
 
 void FS3EStyle_ResetPatch9Colors(FS3EStyle *st)
@@ -777,9 +771,9 @@ BOOL FS3EStyle_LoadThemeImages(FS3EStyle *st, struct Screen *scr)
     }
 
     /* UniButtonP9 patch9 background skins: one Patch9 per
-     * FS3ESTYLE_PATCH9_* slot (see patch9Slots[] above), each a 4
-     * equal-size sub-image strip (PATCH9_NORMAL/SELECTED/DISABLED/HOVER)
-     * arranged horizontally. */
+     * FS3ESTYLE_PATCH9_* slot (see patch9Slots[] above), each a 2
+     * equal-size sub-image strip (PATCH9_NORMAL/SELECTED) arranged
+     * horizontally. */
     for (i = 0; i < FS3ESTYLE_PATCH9_COUNT; i++)
         fs3estyle_load_patch9_slot(st, &sf, i, scr);
 
@@ -791,12 +785,10 @@ BOOL FS3EStyle_LoadThemeImages(FS3EStyle *st, struct Screen *scr)
         static const char *btbgbmKeys[FS3ESTYLE_BTBGBM_COUNT] = {
             "btbgbm.bitmap.enabled",
             "btbgbm.bitmap.selected",
-            "btbgbm.bitmap.disabled",
         };
         static const char *btbgbmDefaults[FS3ESTYLE_BTBGBM_COUNT] = {
             "tbbgenabled.jpg",
             "tbbgselected.jpg",
-            "tbbgdisabled.jpg",
         };
 
         for (i = 0; i < FS3ESTYLE_BTBGBM_COUNT; i++) {

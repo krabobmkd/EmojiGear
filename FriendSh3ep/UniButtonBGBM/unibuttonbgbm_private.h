@@ -24,11 +24,13 @@
 
 #include "../compilers.h"
 
-/* Cached bitmap states */
+/* Cached bitmap states. Only NORMAL/SELECTED are tracked -- GA_Disabled
+ * still blocks input (GFLG_DISABLED, see GM_HITTEST in
+ * unibuttonbgbm_dispatch.c) but no longer gets its own cached bitmap/
+ * colour: that cache slot was pure chip RAM nobody actually looked at. */
 #define UBGBM_STATE_NORMAL    0
 #define UBGBM_STATE_SELECTED  1
-#define UBGBM_STATE_DISABLED  2
-#define UBGBM_NUM_STATES      3
+#define UBGBM_NUM_STATES      2
 
 typedef struct UniButtonBGBMData {
 

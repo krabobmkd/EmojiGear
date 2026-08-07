@@ -40,11 +40,13 @@ typedef struct {
     WORD  allocated;  /* 1 = obtained via ObtainBestPenA; 0 = FindColor result */
 } FS3EManagedColor;
 
+/* Only NORMAL/SELECTED are tracked -- GA_Disabled no longer gets a distinct
+ * look (see UniButtonP9's UBTP9_STATE_* and UniButtonBGBM's UBGBM_STATE_*
+ * comments for why: freeing the disabled state's cached bitmap/colours was
+ * worth more chip RAM than keeping a dimmed appearance nobody needed). */
 #define PATCH9_NORMAL     0
 #define PATCH9_SELECTED   1
-#define PATCH9_DISABLED   2
-#define PATCH9_HOVER      3
-#define PATCH9_NUM_STATES 4
+#define PATCH9_NUM_STATES 2
 
 typedef struct Patch9 {
     BmImage img;
@@ -52,8 +54,8 @@ typedef struct Patch9 {
     WORD    patchWidth;   /* one sub-image's pixel width  (img.width / PATCH9_NUM_STATES) */
     WORD    patchHeight;  /* one sub-image's pixel height (== img.height) */
 
-    FS3EManagedColor bgcolors[PATCH9_NUM_STATES]; /* fallback background pens for the 4 states */
-    FS3EManagedColor textcolors[PATCH9_NUM_STATES]; /* background pens for the 4 states */
+    FS3EManagedColor bgcolors[PATCH9_NUM_STATES]; /* fallback background pens per state */
+    FS3EManagedColor textcolors[PATCH9_NUM_STATES]; /* background pens per state */
 } Patch9;
 
 
@@ -90,11 +92,11 @@ typedef enum {
     FS3E_COLOR_CARD_BORDER,         /* link preview card's 1px border */
 
     /* UniButtonBGBM image-backed nav buttons (btbgbm.* in style.txt) --
-     * not wired to any gadget yet, see FS3EStyle_LoadThemeImages(). */
+     * not wired to any gadget yet, see FS3EStyle_LoadThemeImages(). Only
+     * ENABLED/SELECTED -- GA_Disabled no longer gets its own look, see
+     * UBGBM_STATE_*'s own comment (unibuttonbgbm_private.h). */
     FS3E_COLOR_BTBGBM_TEXT_ENABLED,
     FS3E_COLOR_BTBGBM_TEXT_SELECTED,
-    FS3E_COLOR_BTBGBM_TEXT_HOVER,
-    FS3E_COLOR_BTBGBM_TEXT_DISABLED,
 
     FS3E_COLOR_COUNT                /* must be last */
 } FS3EColorRole;
@@ -125,14 +127,12 @@ typedef enum {
 #define FS3ESTYLE_PATCH9_COUNT   3
 
 /* UniButtonBGBM image-backed nav button states (btbgbm.bitmap.* in
- * style.txt) -- same order as UBGBM_STATE_NORMAL/SELECTED/DISABLED in
+ * style.txt) -- same order as UBGBM_STATE_NORMAL/SELECTED in
  * UniButtonBGBM/unibuttonbgbm_private.h, so a gadget's state index can be
- * used directly as st->btbgbmBitmap[state]. No hover slot -- no
- * hover-tracking input handling exists for UniButtonBGBM either. */
+ * used directly as st->btbgbmBitmap[state]. */
 #define FS3ESTYLE_BTBGBM_ENABLED  0
 #define FS3ESTYLE_BTBGBM_SELECTED 1
-#define FS3ESTYLE_BTBGBM_DISABLED 2
-#define FS3ESTYLE_BTBGBM_COUNT    3
+#define FS3ESTYLE_BTBGBM_COUNT    2
 
 /* ------------------------------------------------------------------ */
 /* FS3EStyle — the complete runtime color theme                        */
@@ -224,17 +224,17 @@ typedef struct {
     BmImage titlebarRight;
 
     /* UniButtonP9 patch9 background skins, one per FS3ESTYLE_PATCH9_* slot
-     * (bt1Patch9.x / bt2Patch9.x in style.txt) -- each a 4-sub-image strip
-     * (PATCH9_NORMAL/SELECTED/DISABLED/HOVER, left to right). Loaded from
-     * st->themePath like the other theme images. Optional per slot -- if a
-     * slot's file is missing, buttons that reference &st->patch9[slot] via
+     * (bt1Patch9.x / bt2Patch9.x in style.txt) -- each a 2-sub-image strip
+     * (PATCH9_NORMAL/SELECTED, left to right). Loaded from st->themePath
+     * like the other theme images. Optional per slot -- if a slot's file
+     * is missing, buttons that reference &st->patch9[slot] via
      * UBTP9_Patch9 just fall back to their flat colour fill (see
      * Patch9_IsLoaded in patch9.h). */
     Patch9 patch9[FS3ESTYLE_PATCH9_COUNT];
 
     /* UniButtonBGBM image-backed nav button skins (btbgbm.bitmap.* in
      * style.txt), one full-opaque (no transparency/masking) background
-     * image per state -- FS3ESTYLE_BTBGBM_ENABLED/SELECTED/DISABLED.
+     * image per state -- FS3ESTYLE_BTBGBM_ENABLED/SELECTED.
      * Optional per state -- a gadget referencing &st->btbgbmBitmap[state]
      * via UBGBM_Style just falls back to its flat colour fill for any
      * state whose image failed to load (see BmImage_IsLoaded). */

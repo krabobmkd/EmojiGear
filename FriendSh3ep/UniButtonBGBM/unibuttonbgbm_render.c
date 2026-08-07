@@ -2,11 +2,13 @@
  * UniButtonBGBM – GM_LAYOUT, GM_RENDER, GM_DOMAIN.
  *
  * Flat-colour mode (default, or UBGBM_Style unset/that state's image not
- * loaded): three OffscreenBitMaps cache the normal, selected, and disabled
- * states' TEXT (sized to the text bounding box), rebuilt in GM_RENDER
- * (application-task context – FreeType calls safe). The background is a
- * flat colour, drawn live with a plain RectFill, then the cached text is
- * blitted on top -- see ubgbm_blit_state in unibuttonbgbm_attribs.c.
+ * loaded): two OffscreenBitMaps cache the normal and selected states' TEXT
+ * (sized to the text bounding box), rebuilt in GM_RENDER (application-task
+ * context – FreeType calls safe). GA_Disabled no longer gets its own cached
+ * state -- see UBGBM_STATE_*'s own comment (unibuttonbgbm_private.h). The
+ * background is a flat colour, drawn live with a plain RectFill, then the
+ * cached text is blitted on top -- see ubgbm_blit_state in
+ * unibuttonbgbm_attribs.c.
  * GM_GOACTIVE / GM_HANDLEINPUT / GM_GOINACTIVE only blit the cached bitmap
  * (safe in input device context; they must never trigger a rebuild).
  *
@@ -65,34 +67,19 @@ static void ubgbm_build_one_state(UniButtonBGBMData *inst, WORD gadW, WORD gadH,
     UWORD            imageState;
     int w, h;
 
-    if (state == UBGBM_STATE_DISABLED && scr && scr->ViewPort.ColorMap) {
-        struct ColorMap *cm = scr->ViewPort.ColorMap;
-        ULONG txtRGB[3];
-        ULONG dimR, dimG, dimB;
-
-        bgPen = (ULONG)FindColor(cm,
-                    0x88888888UL, 0x88888888UL, 0x88888888UL, (ULONG)-1);
-
-        GetRGB32(cm, inst->txtPen, 1UL, txtRGB);
-        dimR = (txtRGB[0] >> 1) + 0x44444444UL;
-        dimG = (txtRGB[1] >> 1) + 0x44444444UL;
-        dimB = (txtRGB[2] >> 1) + 0x44444444UL;
-        txtPen = (ULONG)FindColor(cm, dimR, dimG, dimB, (ULONG)-1);
-
+    /* GA_Disabled no longer has its own computed-dimming state -- see
+     * UBGBM_STATE_*'s own comment (unibuttonbgbm_private.h). */
+    switch (state) {
+    case UBGBM_STATE_SELECTED:
+        bgPen      = inst->selBgPen;
+        txtPen     = inst->txtPen;
+        imageState = IDS_SELECTED;
+        break;
+    default:
+        bgPen      = inst->bgPen;
+        txtPen     = inst->txtPen;
         imageState = IDS_NORMAL;
-    } else {
-        switch (state) {
-        case UBGBM_STATE_SELECTED:
-            bgPen      = inst->selBgPen;
-            txtPen     = inst->txtPen;
-            imageState = IDS_SELECTED;
-            break;
-        default:
-            bgPen      = inst->bgPen;
-            txtPen     = inst->txtPen;
-            imageState = IDS_NORMAL;
-            break;
-        }
+        break;
     }
 
     obm->_imageState = imageState;
@@ -293,9 +280,10 @@ ULONG UniButtonBGBM_OnRender(Class *cl, Object *o, struct gpRender *msg)
         ubgbm_rebuild_cache(cl, o, gadW, gadH, dri, scr);
     }
 
-    if (g->Flags & GFLG_DISABLED)
-        state = UBGBM_STATE_DISABLED;
-    else if (g->Flags & GFLG_SELECTED)
+    /* GFLG_DISABLED no longer changes the rendered state -- see
+     * UBGBM_STATE_*'s own comment (unibuttonbgbm_private.h); GM_HITTEST
+     * still blocks input on a disabled gadget regardless. */
+    if (g->Flags & GFLG_SELECTED)
         state = UBGBM_STATE_SELECTED;
     else
         state = UBGBM_STATE_NORMAL;

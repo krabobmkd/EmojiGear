@@ -81,9 +81,10 @@
  * UniButtonP9 always draws its background and text live against this skin
  * (see unibuttonp9_render.c); a gadget with no Patch9 set draws nothing.
  * Borrowed pointer: caller owns/loads/frees it and must keep it alive at
- * least as long as the gadget; not copied. Only the
- * PATCH9_NORMAL/SELECTED/DISABLED sub-images are currently used -- there is
- * no hover-tracking input handling yet, so PATCH9_HOVER is stored but unused. */
+ * least as long as the gadget; not copied. Only PATCH9_NORMAL/SELECTED are
+ * tracked -- GA_Disabled no longer gets its own look (see UBTP9_STATE_*'s
+ * own comment, unibuttonp9_private.h), so the source image is just the two
+ * sub-images side by side. */
 #define UBTP9_Patch9           (UBTP9_Dummy + 18)
 
 /* UBTP9_Dummy + 19 reserved for UBTP9_Background (flat-image background,

@@ -57,7 +57,6 @@ int ubtp9_patch9_state(int state)
 {
     switch (state) {
     case UBTP9_STATE_SELECTED: return PATCH9_SELECTED;
-    case UBTP9_STATE_DISABLED: return PATCH9_DISABLED;
     default:                   return PATCH9_NORMAL;
     }
 }
@@ -73,10 +72,9 @@ int ubtp9_patch9_state(int state)
  *
  * inst->patch9's bgcolors[]/textcolors[] are the theme's authored colours
  * per PATCH9_* state (see fs3estyle.c's patch9Slots[] / style.txt), already
- * resolved to screen pens by FS3EStyle_ApplyColors -- so disabled buttons
- * just get the theme's own disabled colour instead of a computed dimming.
- * Falls back to the gadget's own flat UBTP9_BgPen/SelBgPen/TextPen only if
- * no Patch9 is attached yet (inst->patch9 NULL, e.g. before OM_SET applies
+ * resolved to screen pens by FS3EStyle_ApplyColors. Falls back to the
+ * gadget's own flat UBTP9_BgPen/SelBgPen/TextPen only if no Patch9 is
+ * attached yet (inst->patch9 NULL, e.g. before OM_SET applies
  * UBTP9_Patch9).
  */
 void ubtp9_state_pens(UniButtonP9Data *inst, int state,
@@ -132,9 +130,10 @@ ULONG UniButtonP9_OnRender(Class *cl, Object *o, struct gpRender *msg)
     if (inst->selBgPen == 3 && dri)
         inst->selBgPen = (ULONG)dri->dri_Pens[FILLPEN];
 
-    if (g->Flags & GFLG_DISABLED)
-        state = UBTP9_STATE_DISABLED;
-    else if (g->Flags & GFLG_SELECTED)
+    /* GFLG_DISABLED no longer changes the rendered state -- see
+     * UBTP9_STATE_*'s own comment (unibuttonp9_private.h); GM_HITTEST
+     * still blocks input on a disabled gadget regardless. */
+    if (g->Flags & GFLG_SELECTED)
         state = UBTP9_STATE_SELECTED;
     else
         state = UBTP9_STATE_NORMAL;

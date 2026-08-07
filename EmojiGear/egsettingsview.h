@@ -29,8 +29,10 @@ typedef struct EgSettingsView
     Object         *mainLayout;          /* top-level layout                   */
 
     Object         *editorLayout;        /* "Editor display" group              */
-    Object         *bgColorPalette;      /* palette gadget: background color    */
-    Object         *penColorPalette;     /* palette gadget: pen/text color      */
+    Object         *bgColorPalette;      /* palette.gadget:  background color   */
+    Object         *bgColorGetColor;     /* getcolor.gadget: background color   */
+    Object         *penColorPalette;     /* palette.gadget:  pen/text color     */
+    Object         *penColorGetColor;    /* getcolor.gadget: pen/text color     */
     Object         *tabSpacesInteger;    /* integer gadget: tab width (2..12)   */
     Object         *visualizeTabsCheck;  /* checkbox: draw tab markers          */
     Object         *tabsAreSpacesCheck;  /* checkbox: Tab key inserts spaces    */
@@ -43,11 +45,13 @@ typedef struct EgSettingsView
 #define GAD_SETTINGS_USEONECLORBG   102
 #define GAD_SETTINGS_CHOOSEBGIMAGE  103
 #define GAD_SETTINGS_REMOVEBGIMAGE  104
-#define GAD_SETTINGS_EDITORBGCOLOR  105
-#define GAD_SETTINGS_EDITORPENCOLOR 106
+#define GAD_SETTINGS_EDITORBGCOLOR  105  /* getcolor.gadget: background color  */
+#define GAD_SETTINGS_EDITORPENCOLOR 106  /* getcolor.gadget: pen/text color    */
 #define GAD_SETTINGS_TABSPACES      107
 #define GAD_SETTINGS_VISUALIZETABS  108
 #define GAD_SETTINGS_TABSARESPACES  109
+#define GAD_SETTINGS_EDITORBGCOLOR_PALETTE  110  /* palette.gadget: background color */
+#define GAD_SETTINGS_EDITORPENCOLOR_PALETTE 111  /* palette.gadget: pen/text color   */
 
 /*
  * Initialize the Settings window.

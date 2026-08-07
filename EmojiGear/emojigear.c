@@ -123,6 +123,7 @@ struct Library *LabelBase    = NULL;
 struct Library *CheckBoxBase = NULL;
 struct Library *GetFileBase  = NULL;
 struct Library *RequesterBase= NULL;
+struct Library *GetColorBase = NULL;
 struct Library *PaletteBase  = NULL;
 struct Library *IntegerBase  = NULL;
 struct Library *ClickTabBase = NULL;
@@ -173,6 +174,7 @@ static LibraryEntry libraryTable[] = {
     {"gadgets/checkbox.gadget",  42, &CheckBoxBase},
     {"gadgets/getfile.gadget", 42, &GetFileBase},
     {"requester.class", 42, &RequesterBase},
+    {"gadgets/getcolor.gadget", 47, &GetColorBase},
     {"gadgets/palette.gadget",  44, &PaletteBase},
     {"gadgets/integer.gadget", 44, &IntegerBase},
 

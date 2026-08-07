@@ -23,11 +23,14 @@
 
 #include "../compilers.h"
 
-/* Render states (bevel IDS_* selection, disabled-state dimming) */
+/* Render states (bevel IDS_* selection). Only NORMAL/SELECTED are tracked:
+ * GA_Disabled still blocks input (GFLG_DISABLED, see GM_HITTEST in
+ * unibuttonp9_dispatch.c) but no longer gets a distinct rendered look or
+ * its own Patch9 skin slice -- one fewer state to cache/skin frees chip
+ * RAM we weren't actually using this for. */
 #define UBTP9_STATE_NORMAL    0
 #define UBTP9_STATE_SELECTED  1
-#define UBTP9_STATE_DISABLED  2
-#define UBTP9_NUM_STATES      3
+#define UBTP9_NUM_STATES      2
 
 typedef struct UniButtonP9Data {
 

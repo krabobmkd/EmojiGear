@@ -44,6 +44,9 @@
 #include <proto/label.h>
 #include <images/label.h>
 
+#include <proto/getcolor.h>
+#include <gadgets/getcolor.h>
+
 #include <proto/palette.h>
 #include <gadgets/palette.h>
 
@@ -61,6 +64,7 @@
 #include <stdio.h>
 extern struct Screen *CurrentMainScreen;
 extern struct Library *AslBase;
+extern struct Library *GetColorBase;
 extern struct Library *PaletteBase;
 extern struct Library *IntegerBase;
 
@@ -68,18 +72,10 @@ extern struct Library *IntegerBase;
 /* Internal helpers                                                    */
 /* ------------------------------------------------------------------ */
 
-static ULONG penIndexToRRGGBB(struct Screen *scr, UWORD penIndex)
-{
-    ULONG rgb[3];
-    ULONG r, g, b;
-    GetRGB32(scr->ViewPort.ColorMap, (ULONG)penIndex, 1, rgb);
-    r = rgb[0] >> 24;
-    g = rgb[1] >> 24;
-    b = rgb[2] >> 24;
-    return (r << 16) | (g << 8) | b;
-}
-
-/* shared */
+/* shared -- also used by boopsimainwindow.c to resolve editorBgColor/
+ * editorPenColor (0x00RRGGBB, straight from GETCOLOR_Color below) to an
+ * actual screen pen for UTED_BgPen/UTED_TextPen, which only take pen
+ * indices. */
 UWORD rrggbbToPenIndex(struct Screen *scr, ULONG rrggbb)
 {
     ULONG r = (rrggbb >> 16) & 0xFF;
@@ -98,7 +94,29 @@ UWORD rrggbbToPenIndex(struct Screen *scr, ULONG rrggbb)
     return (found >= 0) ? (UWORD)found : 0;
 }
 
-static void syncPaletteToState(EgSettingsView *psv)
+/* Inverse of rrggbbToPenIndex -- reads back whatever screen pen a
+ * palette.gadget selection landed on as a 0x00RRGGBB value, so it can be
+ * stored in appSettings and mirrored into the paired getcolor.gadget. */
+static ULONG penIndexToRRGGBB(struct Screen *scr, UWORD penIndex)
+{
+    ULONG rgb[3];
+    ULONG r, g, b;
+    GetRGB32(scr->ViewPort.ColorMap, (ULONG)penIndex, 1, rgb);
+    r = rgb[0] >> 24;
+    g = rgb[1] >> 24;
+    b = rgb[2] >> 24;
+    return (r << 16) | (g << 8) | b;
+}
+
+/* Each of editorBgColor/editorPenColor is now shown through TWO paired
+ * gadgets (see EgSettingsView_Init's comment for why: getcolor.gadget's
+ * wheel/sliders are the nicer picker on truecolor screens, but next to
+ * useless for choosing among 2/4/8 low-palette pens, where the plain
+ * swatch grid still wins). Both re-synced here from the one settings
+ * value on every open: CurrentMainScreen isn't necessarily valid yet at
+ * EgSettingsView_Init() time, so neither PALETTE_NumColours nor
+ * GETCOLOR_Screen can be trusted to already be right. */
+static void syncColorGadgetsToState(EgSettingsView *psv)
 {
     ULONG numColors = 8;
     UWORD bgPen  = 0;
@@ -134,6 +152,65 @@ static void syncPaletteToState(EgSettingsView *psv)
                 PALETTE_Colour, (ULONG)penPen,
                 TAG_END);
     }
+
+    if (psv->bgColorGetColor) {
+        if (psv->window)
+            SetGadgetAttrs((struct Gadget *)psv->bgColorGetColor, psv->window, NULL,
+                GETCOLOR_Screen, (ULONG)CurrentMainScreen,
+                GETCOLOR_Color,  app->appSettings.editorBgColor,
+                TAG_END);
+        else
+            SetAttrs(psv->bgColorGetColor,
+                GETCOLOR_Screen, (ULONG)CurrentMainScreen,
+                GETCOLOR_Color,  app->appSettings.editorBgColor,
+                TAG_END);
+    }
+    if (psv->penColorGetColor) {
+        if (psv->window)
+            SetGadgetAttrs((struct Gadget *)psv->penColorGetColor, psv->window, NULL,
+                GETCOLOR_Screen, (ULONG)CurrentMainScreen,
+                GETCOLOR_Color,  app->appSettings.editorPenColor,
+                TAG_END);
+        else
+            SetAttrs(psv->penColorGetColor,
+                GETCOLOR_Screen, (ULONG)CurrentMainScreen,
+                GETCOLOR_Color,  app->appSettings.editorPenColor,
+                TAG_END);
+    }
+}
+
+/* Applies a freshly picked 0x00RRGGBB color live (UTED_BgPen/TextPen -- see
+ * rrggbbToPenIndex's own comment) and mirrors it into whichever of this
+ * row's two gadgets did NOT just fire GADGETUP, so palette and getcolor
+ * never drift apart. Pass NULL for the gadget that changed (it already
+ * shows the new color); the other one gets pushed. */
+static void mirrorColorChange(EgSettingsView *psv, ULONG rrggbb, ULONG utedAttr,
+                               Object *paletteToSync, Object *getcolorToSync)
+{
+    UWORD pen = 0;
+
+    if (CurrentMainScreen) {
+        pen = rrggbbToPenIndex(CurrentMainScreen, rrggbb);
+        SetGdAttrs(app->textEditorObj, utedAttr, (ULONG)pen, TAG_END);
+    }
+
+    if (paletteToSync) {
+        if (psv->window)
+            SetGadgetAttrs((struct Gadget *)paletteToSync, psv->window, NULL,
+                PALETTE_Colour, (ULONG)pen, TAG_END);
+        else
+            SetAttrs(paletteToSync, PALETTE_Colour, (ULONG)pen, TAG_END);
+    }
+    if (getcolorToSync) {    
+        if (psv->window)
+        {
+            SetGadgetAttrs((struct Gadget *)getcolorToSync, psv->window, NULL,
+                GETCOLOR_Color, rrggbb, TAG_END);
+            RefreshGList(getcolorToSync,psv->window,NULL,1);
+        }
+        else
+            SetAttrs(getcolorToSync, GETCOLOR_Color, rrggbb, TAG_END);
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -144,6 +221,8 @@ BOOL EgSettingsView_Init(EgSettingsView *psv, const char *title)
 {
     Object *bgColorLabel;
     Object *penColorLabel;
+    Object *bgColorRow;
+    Object *penColorRow;
     Object *tabSpacesLabel;
     Object *visualizeTabsLabel;
     Object *tabsAreSpacesLabel;
@@ -159,22 +238,67 @@ BOOL EgSettingsView_Init(EgSettingsView *psv, const char *title)
 
     /* --- Editor display group --- */
     {
-        ULONG numcolors = 16; // CurrentMainScreen
+        /* Each color is shown through BOTH a palette.gadget (the plain
+         * swatch grid -- the only sane picker on a 2/4/8-color screen,
+         * where getcolor.gadget's wheel/sliders just degenerate to
+         * FindColor() nearest-match anyway) and a getcolor.gadget (nicer
+         * on truecolor screens). PALETTE_NumColours/GETCOLOR_Screen are
+         * both re-set in syncColorGadgetsToState() on every Open --
+         * CurrentMainScreen may not be valid yet here, see that
+         * function's own comment. */
         psv->bgColorPalette = NewObject(PALETTE_GetClass(), NULL,
-                                  GA_ID,           GAD_SETTINGS_EDITORBGCOLOR,
+                                  GA_ID,           GAD_SETTINGS_EDITORBGCOLOR_PALETTE,
                                   GA_RelVerify,    TRUE,
-                                  PALETTE_NumColours, numcolors,
-                                  GA_TabCycle,  TRUE,
+                                  GA_TabCycle,     TRUE,
+                                  PALETTE_NumColours, 16,
                                   TAG_END);
         if (!psv->bgColorPalette) return FALSE;
 
+        psv->bgColorGetColor = (Object *)NewObject(GETCOLOR_GetClass(), NULL,
+                                  GA_ID,            GAD_SETTINGS_EDITORBGCOLOR,
+                                  GA_RelVerify,      TRUE,
+                                  GA_TabCycle,       TRUE,
+                                  GETCOLOR_Screen,   (ULONG)CurrentMainScreen,
+                                  GETCOLOR_Color,    app->appSettings.editorBgColor,
+                                  GETCOLOR_TitleText,(ULONG)LOC(MSG_SETTINGS_EDITORBGCOLOR),
+                                  TAG_END);
+        if (!psv->bgColorGetColor) return FALSE;
+
+        bgColorRow = NewObject(LAYOUT_GetClass(), NULL,
+                          LAYOUT_Orientation,  LAYOUT_ORIENT_HORIZ,
+                          LAYOUT_AddChild,     (ULONG)psv->bgColorPalette,
+                          CHILD_WeightedWidth, 1,
+                          LAYOUT_AddChild,     (ULONG)psv->bgColorGetColor,
+                          CHILD_WeightedWidth, 0,
+                          TAG_END);
+        if (!bgColorRow) return FALSE;
+
         psv->penColorPalette = NewObject(PALETTE_GetClass(), NULL,
-                                   GA_ID,           GAD_SETTINGS_EDITORPENCOLOR,
+                                   GA_ID,           GAD_SETTINGS_EDITORPENCOLOR_PALETTE,
                                    GA_RelVerify,    TRUE,
-                                   PALETTE_NumColours, numcolors,
-                                   GA_TabCycle,  TRUE,
+                                   GA_TabCycle,     TRUE,
+                                   PALETTE_NumColours, 16,
                                    TAG_END);
         if (!psv->penColorPalette) return FALSE;
+
+        psv->penColorGetColor = (Object *)NewObject(GETCOLOR_GetClass(), NULL,
+                                   GA_ID,            GAD_SETTINGS_EDITORPENCOLOR,
+                                   GA_RelVerify,      TRUE,
+                                   GA_TabCycle,       TRUE,
+                                   GETCOLOR_Screen,   (ULONG)CurrentMainScreen,
+                                   GETCOLOR_Color,    app->appSettings.editorPenColor,
+                                   GETCOLOR_TitleText,(ULONG)LOC(MSG_SETTINGS_EDITORPENCOLOR),
+                                   TAG_END);
+        if (!psv->penColorGetColor) return FALSE;
+
+        penColorRow = NewObject(LAYOUT_GetClass(), NULL,
+                          LAYOUT_Orientation,  LAYOUT_ORIENT_HORIZ,
+                          LAYOUT_AddChild,     (ULONG)psv->penColorPalette,
+                          CHILD_WeightedWidth, 1,
+                          LAYOUT_AddChild,     (ULONG)psv->penColorGetColor,
+                          CHILD_WeightedWidth, 0,
+                          TAG_END);
+        if (!penColorRow) return FALSE;
     }
 
     bgColorLabel = NewObject(LABEL_GetClass(), NULL,
@@ -232,17 +356,17 @@ BOOL EgSettingsView_Init(EgSettingsView *psv, const char *title)
                             LAYOUT_SpaceOuter,  TRUE,
                             LAYOUT_SpaceInner,  TRUE,
 
-                            LAYOUT_AddChild,     (ULONG)psv->bgColorPalette,
+                            LAYOUT_AddChild,      (ULONG)bgColorRow,
                             CHILD_WeightedHeight, 1,
                             CHILD_Label,          (ULONG)bgColorLabel,
-                            CHILD_MinWidth, 256,
-                            CHILD_MinHeight,48,
-                            CHILD_MaxHeight,128,
-                            LAYOUT_AddChild,     (ULONG)psv->penColorPalette,
+                            CHILD_MinHeight,      48,
+                            CHILD_MaxHeight,      128,
+
+                            LAYOUT_AddChild,      (ULONG)penColorRow,
                             CHILD_WeightedHeight, 1,
                             CHILD_Label,          (ULONG)penColorLabel,
-                            CHILD_MinHeight,48,
-                            CHILD_MaxHeight,128,
+                            CHILD_MinHeight,      48,
+                            CHILD_MaxHeight,      128,
 
                             LAYOUT_AddChild,      (ULONG)psv->tabSpacesInteger,
                             CHILD_WeightedHeight, 0,
@@ -303,7 +427,9 @@ BOOL EgSettingsView_Init(EgSettingsView *psv, const char *title)
         DisposeObject(psv->editorLayout);
         psv->editorLayout      = NULL;
         psv->bgColorPalette    = NULL;
+        psv->bgColorGetColor   = NULL;
         psv->penColorPalette   = NULL;
+        psv->penColorGetColor  = NULL;
         psv->tabSpacesInteger  = NULL;
 
         return FALSE;
@@ -349,7 +475,7 @@ void EgSettingsView_Open(EgSettingsView *psv)
                  TAG_END);
     }
 
-    syncPaletteToState(psv);
+    syncColorGadgetsToState(psv);
 
     psv->window = (struct Window *)DoMethod(psv->windowObj, WM_OPEN, NULL);
 }
@@ -393,21 +519,44 @@ BOOL EgSettingsView_HandleInput(EgSettingsView *psv)
             {
                 ULONG gadId = result & WMHI_GADGETMASK;
                 if (gadId == GAD_SETTINGS_EDITORBGCOLOR) {
+                    /* The GADGETUP click is just on the swatch button --
+                     * GCOLOR_REQUEST is what actually opens the color
+                     * wheel/sliders requester; it returns 0 if the user
+                     * cancelled, in which case GETCOLOR_Color (and thus
+                     * the setting) is left untouched. */
+                    if (DoMethod(psv->bgColorGetColor, GCOLOR_REQUEST, (ULONG)psv->window)) {
+                        ULONG color = 0;
+                        GetAttr(GETCOLOR_Color, psv->bgColorGetColor, &color);
+                        app->appSettings.editorBgColor = color;
+                        mirrorColorChange(psv, color, UTED_BgPen, psv->bgColorPalette, NULL);
+                    }
+
+                } else if (gadId == GAD_SETTINGS_EDITORBGCOLOR_PALETTE) {
                     ULONG colorIdx = 0;
                     GetAttr(PALETTE_Colour, psv->bgColorPalette, &colorIdx);
-                    if (CurrentMainScreen)
-                        app->appSettings.editorBgColor =
-                            penIndexToRRGGBB(CurrentMainScreen, (UWORD)colorIdx);
-
-                    SetGdAttrs(app->textEditorObj,UTED_BgPen,colorIdx,TAG_END);
+                    if (CurrentMainScreen) {
+                        ULONG color = penIndexToRRGGBB(CurrentMainScreen, (UWORD)colorIdx);
+                        app->appSettings.editorBgColor = color;
+                        mirrorColorChange(psv, color, UTED_BgPen, NULL, psv->bgColorGetColor);
+                    }
 
                 } else if (gadId == GAD_SETTINGS_EDITORPENCOLOR) {
+                    if (DoMethod(psv->penColorGetColor, GCOLOR_REQUEST, (ULONG)psv->window)) {
+                        ULONG color = 0;
+                        GetAttr(GETCOLOR_Color, psv->penColorGetColor, &color);
+                        app->appSettings.editorPenColor = color;
+                        mirrorColorChange(psv, color, UTED_TextPen, psv->penColorPalette, NULL);
+                    }
+
+                } else if (gadId == GAD_SETTINGS_EDITORPENCOLOR_PALETTE) {
                     ULONG colorIdx = 0;
                     GetAttr(PALETTE_Colour, psv->penColorPalette, &colorIdx);
-                    if (CurrentMainScreen)
-                        app->appSettings.editorPenColor =
-                            penIndexToRRGGBB(CurrentMainScreen, (UWORD)colorIdx);
-                    SetGdAttrs(app->textEditorObj,UTED_TextPen,colorIdx,TAG_END);
+                    if (CurrentMainScreen) {
+                        ULONG color = penIndexToRRGGBB(CurrentMainScreen, (UWORD)colorIdx);
+                        app->appSettings.editorPenColor = color;
+                        mirrorColorChange(psv, color, UTED_TextPen, NULL, psv->penColorGetColor);
+                    }
+
                 } else if (gadId == GAD_SETTINGS_TABSPACES) {
                     ULONG val = 0;
                     GetAttr(INTEGER_Number, psv->tabSpacesInteger, &val);
@@ -461,8 +610,10 @@ void EgSettingsView_Dispose(EgSettingsView *psv)
 
         psv->editorLayout    = NULL;
 
-        psv->bgColorPalette    = NULL;
-        psv->penColorPalette   = NULL;
+        psv->bgColorPalette     = NULL;
+        psv->bgColorGetColor    = NULL;
+        psv->penColorPalette    = NULL;
+        psv->penColorGetColor   = NULL;
         psv->tabSpacesInteger   = NULL;
         psv->visualizeTabsCheck = NULL;
         psv->tabsAreSpacesCheck = NULL;
