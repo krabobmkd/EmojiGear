@@ -1,11 +1,11 @@
 @DATABASE EmojiGear.guide
-@$VER: EmojiGear.guide 4.3 (22.06.2026)
+@$VER: EmojiGear.guide 5.1 (07.08.2026)
 @AUTHOR krabobmkd
 @(C) 2026 krabobmkd
 @MASTER PROGDIR:EmojiGear.guide
 @NODE MAIN "EmojiGear - Unicode Text Editor"
 
-@{b}EmojiGear v4.3@{ub}
+@{b}EmojiGear v5.1@{ub}
 Unicode Text Editor for AmigaOS 3.2.x (68k)
 
 @{i}A UTF-8 text editor with full Emoji and Unicode support,@{ui}
@@ -37,10 +37,6 @@ Unicode Text Editor for AmigaOS 3.2.x (68k)
 @TOC MAIN
 
 @{b}What is EmojiGear?@{ub}
-
-@{b}Version 3:@{ub} three memory corruption bugs present in version 2 have been
-corrected.  Applications, gadgets and the library are significantly
-safer as a result.
 
 EmojiGear is a Unicode-aware plain-text editor for AmigaOS 3.2.x (68k).
 It can open, edit, and save text files encoded as UTF-8, ISO Latin-1,

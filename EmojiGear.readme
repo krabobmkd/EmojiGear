@@ -2,97 +2,131 @@ Short:        UTF-8/Unicode text editor+Emoji+gadgets
 Author:       krabobmkd
 Uploader:     victorien.ferry@free.fr
 Type:         text/edit
-Version:      4.3
+Version:      5.1
 Architecture: m68k-amigaos >= 3.0
 Requires:     68020, better with OS 3.2.x, 8 MB Fast RAM
-Replaces:     text/edit/EmojiGear4.2.lha
+Replaces:     text/edit/EmojiGear4.3.lha
+
+
+------------------------- Version 5.1
+
+ Brings improvements in the field of user experience and comfort.
+
+  - If you open or save a file, and that file is then modified by another process,
+    EmojiGear will ask whether to reload it. Open two instances of EmojiGear on
+    the same file: if the first modifies the file, the second will be updated.
+  - Added a "Save" action with no requester if the text is already attached to a disk file.
+     Also "Save All", which saves all modified files. It keeps each file's encoding.
+  - An asterisk '*' appears on file names in the tab bar when the text has been modified.
+  - Workbench text file icons can be drag-and-dropped onto the main window;
+    multiple text files can be loaded in a single drag-and-drop. Isn't it great?
+  - If a modified file is closed, EmojiGear asks whether to save it first.
+  - You can choose background color and text color with both the palette and the
+    almighty "GetColor" gadget.
+  - EmojiBox now has a "Diacritics" section for European-specific characters,
+    including the French "median point" for inclusive writing.
+
+  Then, some corrections:
+
+  - Behaviour bug fixed: block indent used to create an undo/redo action per line.
+     Now, as expected, there is a single undo/redo action per block indent/unindent.
+
+     And perhaps the most important thing in this release:
+
+  - On native AGA screens, the active part of the editor, UniTextEditor.gadget,
+    and utf8rastport.library (the glyph renderer), were consuming way too much
+    Chip RAM in v4. This has now been reduced to very little Chip RAM usage,
+    so native-screen users may find this app more reliable.
+
+    The improvements in utf8rastport.library and unitexteditor.gadget are also
+    key for the forthcoming Mastodon client "FriendSh3ep", coming next.
 
 ------------------------- Version 4.3
 
- Just a little update because r4.2  had
- problems with OS3.9 Installer, and some binaries were
+ Just a small update, because r4.2 had
+ problems with the OS3.9 Installer, and some binaries were
  not 100% Amiga compliant. Now they are.
- From now on the installer will no more check previous
- binaries versions, everything will be updated
+ From now on, the installer will no longer check previous
+ binary versions; everything will be updated
  to the version of the current package.
- 
- + fear face + dancer in "Popular Emojis" set.
- + font selector actually test format before loading font,
-   prevent crash from bad font files. 
+
+ + Fear face and dancer added to the "Popular Emojis" set.
+ + Font selector now checks the format before loading a font,
+   preventing crashes from bad font files.
   
 ------------------------- Version 4
 
- Again mostly a correction release ! 
- Thanks to the testers, 3 critical bugs were corrected this week.
-  Hopefully, a few new features also:
-  
+ Again, mostly a bugfix release!
+ Thanks to the testers, three critical bugs were fixed this week.
+  Hopefully, a few new features too:
+
   - EmojiGear (OS3.2)
-    - NEW FEATURE: has tabs closing buttons ! 
-    - less problems when iconizing+changing screen mode+uniconizing.
+    - NEW FEATURE: tabs now have closing buttons!
+    - Fewer problems when iconifying, changing screen mode, and uniconifying.
 
   - unitexteditor.gadget (all OSes)
-    - 4 memory correction issues, mostly on offscreen bitmap management.
-    - "scroll dancing" when editing a bottom cropped line: corrected.
-    - NEW FEATURE: right alt + left and right arrows jump words to word.
-    
+    - Four memory bugs fixed, mostly around offscreen bitmap management.
+    - "Scroll dancing" when editing a bottom-cropped line: fixed.
+    - NEW FEATURE: Right Alt + Left/Right arrows jump from word to word.
+
   - EmojiGear & MUImojiGear
-    - no more crash if pipe-fed with ansi like: echo "â" | EmojiGear.
-      (you can input-pipe UTF8 or ANSI texts, it's disanbiguated. )
-    - NEW FEATURE: optionaly displays the unicode "code point" of the 
-       character under cursor, and its "unicode block name":  
-       This helps greatly finding out what character set is missing 
-       in your font configuration. Funny when used with examples texts
+    - No more crash when pipe-fed ANSI text, e.g.: echo "â" | EmojiGear.
+      (You can pipe in UTF-8 or ANSI text; it is disambiguated automatically.)
+    - NEW FEATURE: optionally displays the Unicode "code point" of the
+       character under the cursor, and its "Unicode block name".
+       This is a great help in finding out which character set is missing
+       from your font configuration. Fun to try with the example texts
        test_utf8_3_multilingual.txt and test_utf8_2_symbols.txt.
 
-  - MUImojiGear (the one that works on OS3.9 and maybe lower os versions )
-     - Ctrl key behaviour repaired when editor focused. 
-       You can "page up" and "page down" with ctrl+arrows.
-     - Double click select whole word, triple click select whole line,
-       so now keyboard management of MUI version is closer to EmojiGear.
-       This also correct behaviour for any future MUI app using
-       unitexteditor.gadget
-       
-  - Font NotoColorEmoji32.ttf which contains 32x32 pixels colored emojis, 
-      is made up from official 128x128 pixels NotoColorEmoji.ttf.
-      It had wrong metrics that made them appear slightly shifted before. 
-      This is corrected in this version.
-   
+  - MUImojiGear (the one that works on OS3.9 and possibly lower OS versions)
+     - Ctrl key behaviour fixed when the editor is focused.
+       You can "page up" and "page down" with Ctrl+Arrows.
+     - Double-click selects a whole word, triple-click selects a whole line,
+       so keyboard handling in the MUI version is now closer to EmojiGear's.
+       This also corrects the behaviour for any future MUI application using
+       unitexteditor.gadget.
+
+  - The font NotoColorEmoji32.ttf, which contains 32x32-pixel colour emojis,
+      is derived from the official 128x128-pixel NotoColorEmoji.ttf.
+      It had incorrect metrics that made them appear slightly shifted;
+      this has been corrected in this version.
+
 
 ------------------------- Version 3 
 
- Corrects three causes of memory corruption present in version 2.x:
+ Fixes three causes of memory corruption present in version 2.x.
  Applications, gadgets and the library are all significantly more stable as a result.
- Also native screen 2 color mode is corrected.
- the text render library should be even OS3.0 compatible, but then
- a bug in the old layers.library, and missing boopsi components,
- prevent the use of EmojiGear under OS3.9. This is almost resolved by
- the presence of another version called MUImojiGear, that works
- with MUI3.8 or MUI5.0, under older OSes. 
- Yet the layers.library OS3.9 bug is still here so watch out. 
- Participate to the project if you think you can help about this.
- (Or upgrade your OS3.9 to OS3.2 which is supported and brings lots of corrections.)
+ Native 2-colour screen mode has also been fixed.
+ The text-rendering library should even be OS3.0 compatible, but
+ a bug in the old layers.library, and missing BOOPSI components,
+ prevent EmojiGear from running under OS3.9. This is almost worked around by
+ another version called MUImojiGear, which works
+ with MUI 3.8 or MUI 5.0 on older OS versions.
+ Yet the layers.library bug on OS3.9 is still present, so watch out.
+ Contribute to the project if you think you can help with this.
+ (Or upgrade from OS3.9 to OS3.2, which is supported and brings many fixes.)
 
 --------------------------
 
 EmojiGear is a UTF-8 Unicode text editor for AmigaOS 3.2.x (68020+).
-It renders TrueType/OpenType fonts and displays full-colour Emoji,
-on any Amiga Video mode, native or RTG, indexed or true color.
-Fonts settings allow to manage a list of cascading fonts so you
-can have both a font for text and one for Emojis, 
- and display and convert any modern text correctly.
+It renders TrueType/OpenType fonts and displays full-colour Emoji
+on any Amiga video mode, native or RTG, indexed or true colour.
+Font settings allow you to manage a list of cascading fonts, so you
+can have one font for text and another for Emoji,
+and display and convert any modern text correctly.
 
-  - Antialias, preference for background and pen colours, 
-  - Multiple documents open in a tab bar.  
-  - Load and save UTF-8, ISO Latin-1, ISO Latin-2; auto-detect UTF-16.
-  - Find & Replace, Undo/Redo, 
-  - optional word wrap
-  - optional ANSI escape rendering for unix shell compatible display
-  - configurable font size with ctrl+- keys. 
-  - Emoji Box allowing to choose 8 sets of 40 emojis mapped to F keys. 
-  - You can "pipe" the output of another command into the editor.
+  - Antialiasing, with a choice of background and pen colours
+  - Multiple documents open in a tab bar
+  - Load and save UTF-8, ISO Latin-1, ISO Latin-2; auto-detect UTF-16
+  - Find & Replace, Undo/Redo
+  - Optional word wrap
+  - Optional ANSI escape rendering for Unix-shell-compatible display
+  - Configurable font size with Ctrl+- keys
+  - Emoji Box, letting you choose from 8 sets of 40 emojis mapped to the F keys
+  - You can "pipe" the output of another command into the editor
   - Settings saved in icon tooltypes
   - Many corrections and improvements since the first release
-  
+
 Beyond the editor, the package installs three reusable Amiga components
 that any developer can open from their own application:
   utf8rastport.library  -- FreeType 2 Unicode rendering on any RastPort,
@@ -101,11 +135,11 @@ that any developer can open from their own application:
                           embeddable in any application window.
   unibutton.gadget      -- a push-button gadget with Unicode/Emoji labels.
 
-  SDK, developer docs and examples are optionaly installed,
-  there are example for a MUI integration, lib and gadget use.
+  SDK, developer docs and examples are optionally installed,
+  with examples for MUI integration, and for library and gadget use.
 
 
- License is GPL for the lib and LGPL for the gadgets.
+ License is GPL for the library and LGPL for the gadgets.
  
 ---------------------------------------------------------------------------
 

@@ -303,7 +303,7 @@ int main(int argc, char *argv[])
     MUIMasterBase = OpenLibrary("muimaster.library", 19L);
     if (!MUIMasterBase) { puts("ERROR: muimaster.library v19+ (MUI 3.8+)"); exitCode=1; goto cleanup; }
 
-    UniTextEditorBase = OpenLibrary("gadgets/unitexteditor.gadget", 4L);
+    UniTextEditorBase = OpenLibrary("gadgets/unitexteditor.gadget", 5L);
     if (!UniTextEditorBase) { puts("ERROR: unitexteditor.gadget v4+"); exitCode=1; goto cleanup; }
 
     UniButtonBase = OpenLibrary("gadgets/unibutton.gadget", 4L);
