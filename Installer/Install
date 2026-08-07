@@ -15,13 +15,13 @@
 ;
 
 (set #app-name    "EmojiGear")
-(set #app-version "v4.3")
+(set #app-version "v5.1")
 (set #app-default "Work:")
 
 ; Library/gadget versions we are shipping
-(set #urp-ver   (+ (* 4 65536) 3))   ; utf8rastport.library  v4.3
-(set #uted-ver  (+ (* 4 65536) 3))   ; unitexteditor.gadget  v4.3
-(set #ubtn-ver  (+ (* 4 65536) 3))   ; unibutton.gadget      v4.3
+(set #urp-ver   (+ (* 4 65536) 3))   ; utf8rastport.library  v5.1
+(set #uted-ver  (+ (* 4 65536) 3))   ; unitexteditor.gadget  v5.1
+(set #ubtn-ver  (+ (* 4 65536) 3))   ; unibutton.gadget      v5.1
 
 ; ---------------------------------------------------------------------------
 ; Welcome
@@ -103,7 +103,7 @@
 ; ---------------------------------------------------------------------------
 (set #urp-installed (getversion "Libs:utf8rastport.library"))
 
-; -- VERSION GATE (disabled for v4.3: always install) -------------------------
+; -- VERSION GATE (disabled for v5.1: always install) -------------------------
 ; To re-enable version checking, remove the unconditional block below and
 ; uncomment the if block:
 ;(if (>= #urp-installed #urp-ver)
@@ -140,7 +140,7 @@
 (set #uted-dest "SYS:Classes/Gadgets/")
 (set #uted-installed (getversion (tackon #uted-dest "unitexteditor.gadget")))
 
-; -- VERSION GATE (disabled for v4.3: always install) -------------------------
+; -- VERSION GATE (disabled for v5.1: always install) -------------------------
 ; To re-enable version checking, remove the unconditional block below and
 ; uncomment the if block:
 ;(if (>= #uted-installed #uted-ver)
@@ -178,7 +178,7 @@
 ; ---------------------------------------------------------------------------
 (set #ubtn-installed (getversion (tackon #uted-dest "unibutton.gadget")))
 
-; -- VERSION GATE (disabled for v4.3: always install) -------------------------
+; -- VERSION GATE (disabled for v5.1: always install) -------------------------
 ; To re-enable version checking, remove the unconditional block below and
 ; uncomment the if block:
 ;(if (>= #ubtn-installed #ubtn-ver)
