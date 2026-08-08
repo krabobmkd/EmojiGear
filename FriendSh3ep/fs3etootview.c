@@ -407,9 +407,7 @@ BOOL FS3ETootView_Create(FS3ETootView *tv, struct URPDrawContext *textDC)
     choosersCol = (Object *)NewObject(LAYOUT_GetClass(), NULL,
         LAYOUT_Orientation,  LAYOUT_ORIENT_VERT,
         LAYOUT_AddChild,     (ULONG)tv->visibilityChooser,
-            CHILD_WeightedHeight, 0,
         LAYOUT_AddChild,     (ULONG)tv->quotePolicyChooser,
-            CHILD_WeightedHeight, 0,
         TAG_END);
     if (!choosersCol) return FALSE;
 
@@ -417,17 +415,14 @@ BOOL FS3ETootView_Create(FS3ETootView *tv, struct URPDrawContext *textDC)
         LAYOUT_Orientation,  LAYOUT_ORIENT_HORIZ,
         LAYOUT_AddChild,     (ULONG)choosersCol,
             CHILD_WeightedWidth, 0,
-            CHILD_MinWidth,      130,
         LAYOUT_AddChild,     (ULONG)tv->charCountLabel,
             CHILD_WeightedWidth, 0,
-            CHILD_MinWidth,      130,
         LAYOUT_AddChild,     (ULONG)tv->emojiBtn,
             CHILD_WeightedWidth, 0,
         LAYOUT_AddChild,     (ULONG)Spacer(),
             CHILD_WeightedWidth, 1,
         LAYOUT_AddChild,     (ULONG)tv->tootBtn,
             CHILD_WeightedWidth, 0,
-            CHILD_MinWidth,      80,
         TAG_END);
 
     /* ------------------------------------------------------------------ */
@@ -564,7 +559,7 @@ void FS3ETootView_Open(FS3ETootView *tv)
     }
     if(tv->emojiBtn)
     {
-        /* need to be font updated*/
+        /* need to be font updated */
         SetAttrs(tv->emojiBtn, GA_Text,(ULONG) "\xF0\x9F\x98\x8A",TAG_END);
     }
 

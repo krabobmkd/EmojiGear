@@ -30,34 +30,49 @@ void ubgbm_free_cache(UniButtonBGBMData *inst)
 
 /* Blit a dstW x dstH crop of srcBm (srcW x srcH) starting at (shiftX,shiftY),
  * to (dstX,dstY) -- no mask (style-image backgrounds are always fully
- * opaque). The background image is expected to be deliberately larger than
- * any button that crops it (see UBGBM_BgShiftX/Y), so shiftX/shiftY are
- * clamped down just enough that the crop still fits inside the source
- * bitmap; if the source is smaller than the requested crop even at offset
- * 0, the blit itself is shrunk to the source's actual size instead of
- * reading out of bounds. */
+ * opaque). Vertically the source is expected to be at least dstH tall, so
+ * shiftY is just clamped down enough that the crop still fits (or the blit
+ * itself is shrunk if even srcH < dstH). Horizontally the source is treated
+ * as cyclic/tileable instead: shiftX is normalized modulo srcW, then the
+ * source is blitted left-to-right in as many chunks as needed to cover the
+ * whole dstW span, wrapping back to source x=0 each time a chunk runs off
+ * the source's right edge -- this is what lets one narrow tileable pattern
+ * cover every nav bar button's shiftX (see ubgbm_blit_state), including
+ * buttons whose shiftX or dstW exceeds srcW. */
 static void ubgbm_blit_bg(struct BitMap *srcBm, WORD srcW, WORD srcH,
                           WORD shiftX, WORD shiftY,
                           struct RastPort *rp,
                           WORD dstX, WORD dstY, WORD dstW, WORD dstH)
 {
-    WORD blitW, blitH;
+    WORD blitH;
+    WORD srcX;
+    WORD remaining;
+    WORD curDstX;
 
     if (srcW <= 0 || srcH <= 0 || dstW <= 0 || dstH <= 0) return;
 
-    if (shiftX < 0) shiftX = 0;
     if (shiftY < 0) shiftY = 0;
 
-    blitW = dstW;
     blitH = dstH;
-    if (blitW > srcW) blitW = srcW;
     if (blitH > srcH) blitH = srcH;
-
-    if (shiftX + blitW > srcW) shiftX = srcW - blitW;
     if (shiftY + blitH > srcH) shiftY = srcH - blitH;
 
-    BltBitMapRastPort(srcBm, (LONG)shiftX, (LONG)shiftY, rp,
-                      (LONG)dstX, (LONG)dstY, (LONG)blitW, (LONG)blitH, 0xC0);
+    if (shiftX < 0) shiftX = 0;
+    srcX = shiftX % srcW;
+
+    remaining = dstW;
+    curDstX   = dstX;
+    while (remaining > 0) {
+        WORD chunk = srcW - srcX;
+        if (chunk > remaining) chunk = remaining;
+
+        BltBitMapRastPort(srcBm, (LONG)srcX, (LONG)shiftY, rp,
+                          (LONG)curDstX, (LONG)dstY, (LONG)chunk, (LONG)blitH, 0xC0);
+
+        curDstX   += chunk;
+        remaining -= chunk;
+        srcX = 0;
+    }
 }
 
 /* FS3E_COLOR_BTBGBM_TEXT_* role for a given UBGBM_STATE_*. */
@@ -89,16 +104,30 @@ void ubgbm_blit_state(UniButtonBGBMData *inst, struct Gadget *g,
 
     if (inst->style && BmImage_IsLoaded(&inst->style->btbgbmBitmap[state])) {
         BmImage *img = &inst->style->btbgbmBitmap[state];
+        WORD shiftX = 0, shiftY = 0;
+
+        /* The background image is shared across all 8 nav bar buttons and
+         * deliberately oversized so each button crops its own region out of
+         * it -- the crop offset is just this gadget's position relative to
+         * navBarLayout (the layout all 8 live in), computed here from real
+         * post-layout coordinates rather than a hand-maintained shift value
+         * per button (see UBGBM_Style's doc comment). navBarLayout is a
+         * layout.gadget subclass (NavBarLayoutClass), so its LeftEdge/
+         * TopEdge are valid struct Gadget fields once laid out. */
+        if (app && app->navBarLayout) {
+            struct Gadget *navGad = (struct Gadget *)app->navBarLayout;
+            shiftX = g->LeftEdge - navGad->LeftEdge;
+            shiftY = g->TopEdge  - navGad->TopEdge;
+        }
 
         /* Background: a cropped, fully opaque (no transparency/masking)
          * window into the (deliberately oversized) source image at
-         * (bgShiftX,bgShiftY), directly on the real destination --
-         * blitter-only, safe from any context. Drawn live (never cached)
-         * because the image isn't flat -- see the file header comment for
-         * why that rules out pre-baking text against it in an offscreen
-         * cache. */
+         * (shiftX,shiftY), directly on the real destination -- blitter-
+         * only, safe from any context. Drawn live (never cached) because
+         * the image isn't flat -- see the file header comment for why that
+         * rules out pre-baking text against it in an offscreen cache. */
         ubgbm_blit_bg(img->bitmap, (WORD)img->width, (WORD)img->height,
-                     inst->bgShiftX, inst->bgShiftY, rp,
+                     shiftX, shiftY, rp,
                      g->LeftEdge, g->TopEdge, g->Width, g->Height);
 
         /* Text: also drawn live, directly on top of the image just drawn,
@@ -460,18 +489,6 @@ ULONG UniButtonBGBM_OnSet(Class *cl, Object *o, struct opSet *msg)
             result = 1;
             break;
 
-        case UBGBM_BgShiftX:
-            inst->bgShiftX = (WORD)(ULONG)tag->ti_Data;
-            justBlit = TRUE;
-            result = 1;
-            break;
-
-        case UBGBM_BgShiftY:
-            inst->bgShiftY = (WORD)(ULONG)tag->ti_Data;
-            justBlit = TRUE;
-            result = 1;
-            break;
-
         case UBGBM_Patch9Mode:
             inst->patch9Mode = tag->ti_Data ? TRUE : FALSE;
             ubgbm_free_cache(inst);
@@ -637,12 +654,6 @@ ULONG UniButtonBGBM_OnGet(Class *cl, Object *o, struct opGet *msg)
         return TRUE;
     case UBGBM_Style:
         *msg->opg_Storage = (ULONG)inst->style;
-        return TRUE;
-    case UBGBM_BgShiftX:
-        *msg->opg_Storage = (ULONG)(LONG)inst->bgShiftX;
-        return TRUE;
-    case UBGBM_BgShiftY:
-        *msg->opg_Storage = (ULONG)(LONG)inst->bgShiftY;
         return TRUE;
     case UBGBM_Patch9Mode:
         *msg->opg_Storage = (ULONG)inst->patch9Mode;

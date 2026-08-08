@@ -113,18 +113,6 @@
  * cached flat-colour fill. Borrowed pointer: caller owns it; not copied. */
 #define UBGBM_Style            (UBGBM_Dummy + 18)
 
-/* [ISG] (WORD) X offset into the style-image background (UBGBM_Style)
- * source bitmap, e.g. for a background image made deliberately larger
- * than any button size, so different buttons/states can crop a different
- * region of the same shared source. Default: 0. Clamped at draw time so
- * bgShiftX + gadget width never exceeds the source bitmap's width (see
- * ubgbm_blit_state() in unibuttonbgbm_attribs.c) -- no effect in
- * flat-colour mode (no UBGBM_Style, or that state's image not loaded). */
-#define UBGBM_BgShiftX         (UBGBM_Dummy + 19)
-
-/* [ISG] (WORD) Same as UBGBM_BgShiftX, for the Y offset / gadget height. */
-#define UBGBM_BgShiftY         (UBGBM_Dummy + 20)
-
 /* [ISG] (BOOL) Selects the Patch9 background render mode: when set (and
  * UBGBM_Style is also set), each state's background is drawn from
  * style->patch9[FS3ESTYLE_PATCH9_BTBGBM] (see fs3estyle.h) instead of

@@ -849,8 +849,11 @@ static void FS3EApp_LoadTheme_Delayed(void)
 
 /* Create one UniButtonBGBM (flat-colour, cached-by-state), click arrives
  * via WMHI_GADGETUP. dpiH is reserved for future use; font size is
- * controlled by app->buttonDC. */
-static Object *makeBtn(ULONG gadID, const char *label, UWORD dpiH, int shiftx, int shifty, int pushbutton)
+ * controlled by app->buttonDC. Style-image background crop offset (nav
+ * bar buttons only) is computed live from the gadget's own post-layout
+ * position relative to app->navBarLayout -- see ubgbm_blit_state() in
+ * UniButtonBGBM/unibuttonbgbm_attribs.c. */
+static Object *makeBtn(ULONG gadID, const char *label, UWORD dpiH, int pushbutton)
 {
     (void)dpiH;
     return (Object *)NewObject(UniButtonBGBMClass, NULL,
@@ -860,8 +863,6 @@ static Object *makeBtn(ULONG gadID, const char *label, UWORD dpiH, int shiftx, i
         UBGBM_PushButton,       pushbutton,
         UBGBM_URPDrawContext,   (ULONG)app->buttonDC,
         UBGBM_BevelStyle,       BVS_BUTTON, //BVS_NONE,
-        UBGBM_BgShiftX,         shiftx,
-        UBGBM_BgShiftY,         shifty,
         TAG_END);
 }
 static Object *makeBtnGadgetUpOnly(ULONG gadID, const char *label, UWORD dpiH, int shiftx, int shifty, int pushbutton)
@@ -1324,21 +1325,20 @@ int main(int argc, char **argv)
     /* ================================================================== */
 // \xf0\x9f\x8f\xa0
 {
-    const int basew=96;
 // single silhouette 	%F0%9F%91%A4
-    app->nav_btns[0] = makeBtn(GID_NAV_USER,          "\xF0\x9F\x97\xA3 User",      dpiH,0,0,TRUE);
-    app->nav_btns[1] = makeBtn(GID_NAV_HOME,          "\xE2\x8C\x82 Home",      dpiH,basew,0,TRUE);
-    app->nav_btns[2] = makeBtn(GID_NAV_LOCAL,         "\xF0\x9F\x91\xA5 Local",     dpiH,basew*2,0,TRUE);
-    app->nav_btns[3] = makeBtn(GID_NAV_FEDERATED,     "\xF0\x9F\x8C\x8E Fed.",      dpiH,basew*3,0,TRUE);
+    app->nav_btns[0] = makeBtn(GID_NAV_USER,          "\xF0\x9F\x97\xA3 User",      dpiH,TRUE);
+    app->nav_btns[1] = makeBtn(GID_NAV_HOME,          "\xE2\x8C\x82 Home",      dpiH,TRUE);
+    app->nav_btns[2] = makeBtn(GID_NAV_LOCAL,         "\xF0\x9F\x91\xA5 Local",     dpiH,TRUE);
+    app->nav_btns[3] = makeBtn(GID_NAV_FEDERATED,     "\xF0\x9F\x8C\x8E Fed.",      dpiH,TRUE);
 
-    app->nav_btns[4] = makeBtn(GID_NAV_SEARCH,        "\xF0\x9F\x94\x8D Search",    dpiH,0,32,TRUE);
-    app->nav_btns[5] = makeBtn(GID_NAV_NOTIFICATIONS, "\xF0\x9F\x9A\x80 Notif.",    dpiH,basew,32,TRUE);
+    app->nav_btns[4] = makeBtn(GID_NAV_SEARCH,        "\xF0\x9F\x94\x8D Search",    dpiH,TRUE);
+    app->nav_btns[5] = makeBtn(GID_NAV_NOTIFICATIONS, "\xF0\x9F\x9A\x80 Notif.",    dpiH,TRUE);
 /* correct, when enabled for next version
-    app->nav_btns[6] = makeBtn(GID_NAV_BOOKMARKS, "\xF0\x9F\x94\x96 Bookmark",    dpiH,basew*2,32,TRUE);
-    app->nav_btns[7] = makeBtn(GID_NAV_NEWS, "\xF0\x9F\x93\xB0 News",    dpiH,basew*3,32,TRUE);
+    app->nav_btns[6] = makeBtn(GID_NAV_BOOKMARKS, "\xF0\x9F\x94\x96 Bookmark",    dpiH,TRUE);
+    app->nav_btns[7] = makeBtn(GID_NAV_NEWS, "\xF0\x9F\x93\xB0 News",    dpiH,TRUE);
 */
-    app->nav_btns[6] = makeBtn(GID_NAV_BOOKMARKS, "-",    dpiH,basew*2,32,TRUE);
-    app->nav_btns[7] = makeBtn(GID_NAV_NEWS, "-",    dpiH,basew*3,32,TRUE);
+    app->nav_btns[6] = makeBtn(GID_NAV_BOOKMARKS, "-",    dpiH,TRUE);
+    app->nav_btns[7] = makeBtn(GID_NAV_NEWS, "-",    dpiH,TRUE);
 
 }
 

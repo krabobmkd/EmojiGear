@@ -2,7 +2,7 @@
 ; file format supported are those of the datatypes.
 
 ; bg of whole titlebar, can be truecolor or not.
-titlebar.bg = tbbg.png
+titlebar.bg = tbbg.jpg
 ; titlebar title/logo image, color 0 transparent, blitted at
 ; (titlebar.title.x, titlebar.title.y) offset from the title bar's top-left.
 ;titlebar.title = titlebig.iff
@@ -66,7 +66,7 @@ bt2Patch9.textcolor.disabled = #666666
 
 btbgbm.bitmap.enabled = tbbgenabled.jpg
 btbgbm.bitmap.selected = tbbgselected.jpg
-btbgbm.bitmap.disabled = tbbgdisabled.jpg
+
 
 ; text color for btbgbm NavBar Buttons
 btbgbm.textcolor.enabled = #000000
@@ -97,16 +97,22 @@ btbgbmPatch9.textcolor.hover = #eebb33
 btbgbmPatch9.textcolor.disabled = #999999
 
 ; ---- TootTimeline colors (FS3EColorRole in fs3estyle.h) ----
+; Clear grey + blue, close to the classic 4-color Amiga Workbench
+; palette (light grey desktop, black text, blue accent/selected) --
+; background is a slightly blue-tinted light grey rather than flat
+; white or neutral grey, in the same spirit as the muted grey-with-
+; blue-accent look of the old "Magic Workbench" icon set.
 
-timeline.color.buttonbg = #303034
-timeline.color.button_selectedbg = #563acc
-timeline.color.timelinebg = #191b22
-timeline.color.username = #ffffff
-timeline.color.hashtag = #78bfff
-timeline.color.accent = #444466
-timeline.color.text = #dadde4
-timeline.color.text_dim = #707580
-timeline.color.action_text = #5599ee
-timeline.color.cardbg = #232840
-timeline.color.cardborder = #444466
+timeline.color.buttonbg = #c0c6d2
+timeline.color.button_selectedbg = #6c93c7
+timeline.color.timelinebg = #d6dae2
+timeline.color.profileheaderbg = #c6ccdc
+timeline.color.username = #000000
+timeline.color.hashtag = #1c51b0
+timeline.color.accent = #7a87a6
+timeline.color.text = #000000
+timeline.color.text_dim = #5a5f6b
+timeline.color.action_text = #2a5fc4
+timeline.color.cardbg = #c6ccdc
+timeline.color.cardborder = #7a87a6
 
