@@ -19,7 +19,8 @@ titlebar.title.y = 2
 ; will consider color 0 transparent:
 titlebar.buttons = tbbuttons.iff
 
-timeline.waitimage = mastodon64x64black.png
+timeline.waitimage = waitclear.iff
+
 
 ; ------ Patch9 style using bt1Patch9, used by buttons Settnigs and account 
 

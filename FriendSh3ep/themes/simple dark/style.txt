@@ -1,0 +1,67 @@
+; style file for FriendSh3ep theme
+; file format supported are those of the datatypes.
+
+; bg of whole titlebar, can be truecolor or not.
+;titlebar.bg = tbbg.png
+; titlebar title/logo image, color 0 transparent, blitted at
+; (titlebar.title.x, titlebar.title.y) offset from the title bar's top-left.
+;titlebar.title = titlebig.iff
+;titlebar.title = titlebigsheep.png
+;titlebar.title.x = 50
+;titlebar.title.y = 2
+
+timeline.waitimage = waitdark.iff
+
+; titlebar border images, color 0 transparent, drawn at native size with
+; no configurable offset: titlebar.left pinned to the title bar's top-left
+; corner, titlebar.right pinned to its top-right corner.
+;titlebar.left = tbleft.png
+;titlebar.right = tbright.png
+
+titlebar.buttons = elquatroicons18.iff
+
+titlebar.bg = bg4.iff
+;titlebar.title = titlebig.iff
+
+btbgbm.usepatch9 = 1
+btbgbmPatch9.image = btnavp9.iff
+btbgbmPatch9.cornersize = 8
+btbgbmPatch9.textcolor.enabled = #000000
+
+
+; this is a size of a corner in image bt1Patch9.image
+bt1Patch9.bgcolor.enabled = #ddccbb
+bt1Patch9.bgcolor.selected = #ffffff
+bt1Patch9.bgcolor.hover = #cccccc
+bt1Patch9.bgcolor.disabled = #aaaaaa
+
+bt1Patch9.textcolor.enabled = #222222
+bt1Patch9.textcolor.selected = #000000
+bt1Patch9.textcolor.hover = #444444
+bt1Patch9.textcolor.disabled = #666666
+
+bt2Patch9.bgcolor.enabled = #aaeedd
+bt2Patch9.bgcolor.selected = #ffffff
+bt2Patch9.bgcolor.hover = #cccccc
+bt2Patch9.bgcolor.disabled = #aaaaaa
+
+bt2Patch9.textcolor.enabled = #222222
+bt2Patch9.textcolor.selected = #000000
+bt2Patch9.textcolor.hover = #444444
+bt2Patch9.textcolor.disabled = #666666
+
+; ---- TootTimeline colors (FS3EColorRole in fs3estyle.h) ----
+
+timeline.color.buttonbg = #303034
+timeline.color.button_selectedbg = #563acc
+timeline.color.timelinebg = #191b22
+timeline.color.username = #ffffff
+timeline.color.hashtag = #78bfff
+timeline.color.accent = #444466
+timeline.color.text = #dadde4
+timeline.color.text_dim = #707580
+timeline.color.action_text = #5599ee
+timeline.color.cardbg = #232840
+timeline.color.cardborder = #444466
+
+
