@@ -309,15 +309,24 @@
 #define TTIMELINE_ScrollStarted         (TTIMELINE_Base + 37)
 
 /* [S] (any -- setting it at all is the trigger, like
- * TTIMELINE_ScrollToNewest) Copy the "selected" toot's plain UTF-8 body
- * text to the Amiga clipboard (via Clipboard_WriteText(), see
- * clipboard.h). There's no persistent multi-toot selection concept here:
- * "selected" is just whichever post the user's last mouse-down landed on
- * (see TTL_OnGoActive in fs3etoottimeline_input.c -- recorded on button
- * DOWN, even if that press then turns into a drag-scroll, not just on a
- * clean click), or, before any click has happened yet, the topmost
- * currently visible post/header. No-op if there is nothing to copy (e.g.
- * an empty timeline). See Action_TimelineCopyText in fs3eaction.c. */
+ * TTIMELINE_ScrollToNewest) Copy the "selected" toot to the Amiga
+ * clipboard (via Clipboard_WriteText(), see clipboard.h) as plain UTF-8
+ * text shaped like:
+ *   <author display name>
+ *   @user@instance
+ *
+ *   <toot body>
+ * (display name, then the @user@instance address on the next line, then a
+ * blank line, then the body -- either author line is left blank rather
+ * than omitted if that post has no author, e.g. a pseudo post/header row,
+ * so the body always lands on the same line number). There's no
+ * persistent multi-toot selection concept here: "selected" is just
+ * whichever post the user's last mouse-down landed on (see TTL_OnGoActive
+ * in fs3etoottimeline_input.c -- recorded on button DOWN, even if that
+ * press then turns into a drag-scroll, not just on a clean click), or,
+ * before any click has happened yet, the topmost currently visible
+ * post/header. No-op if there is nothing to copy (e.g. an empty
+ * timeline). See Action_TimelineCopyText in fs3eaction.c. */
 #define TTIMELINE_CopySelectedText      (TTIMELINE_Base + 38)
 
 /* [G,S] BOOL: TRUE = a hot-spot's action (link click, avatar, image,

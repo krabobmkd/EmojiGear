@@ -1460,6 +1460,33 @@ static void FS3ENet_StepActiveDownloads(void)
         dl->fs3ead_RetryCount = 0;
         gotLen = resp.fhr_BodyLen;
 
+#ifdef BDBTRACEMULTIPART
+        /* On the very first chunk, print a printable-only preview of what
+         * came back -- a server that doesn't honor Range (status != 206)
+         * or a redirect-following-less raw request landing on an HTML
+         * interstitial/error page instead of the archive still looks like
+         * a "successful" small chunk to the finished-check below (status
+         * 200 or gotLen < FS3ENET_CHUNK_SIZE); this makes that visible in
+         * the log instead of silently writing garbage to disk as if it
+         * were the whole file. */
+        if (dl->fs3ead_BytesSoFar == 0)
+        {
+            char        preview[81];
+            const UBYTE *body = (const UBYTE *)resp.fhr_Body;
+            ULONG n = gotLen < 80 ? gotLen : 80;
+            ULONG i;
+            for (i = 0; i < n; i++)
+            {
+                UBYTE c = body[i];
+                preview[i] = (c >= 32 && c < 127) ? (char)c : '.';
+            }
+            preview[n] = '\0';
+            bdbprintf_now("StepDL: first chunk url=%s status=%lu totalLen=%lu gotLen=%lu preview=\"%s\"\n",
+                           dl->fs3ead_Req->fs3enf_Url, (unsigned long)status,
+                           (unsigned long)totalLen, (unsigned long)gotLen, preview);
+        }
+#endif
+
         if (gotLen > 0 &&
             Write(dl->fs3ead_FH, resp.fhr_Body, (LONG)gotLen) != (LONG)gotLen)
         {

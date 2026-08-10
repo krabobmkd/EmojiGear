@@ -90,6 +90,14 @@
 #define FS3EHTTP_RAW_TIMEOUT_SECS   30
 #define FS3EHTTP_CONNECT_NAP_MS     200 /* BIO_do_connect_retry()'s poll interval */
 
+/* FS3EHttp_DoRawRequest()'s cap on 3xx hops it will follow for one logical
+ * request -- see that function's redirect handling. Bounded the same way a
+ * browser/curl bounds it, purely to avoid ever looping forever on a
+ * misconfigured server; every real redirect chain seen so far (GitHub
+ * Releases: github.com -> release-assets.githubusercontent.com) is a single
+ * hop. */
+#define FS3EHTTP_MAX_REDIRECTS 5
+
 struct Library *AmiSSLMasterBase=NULL, *SocketBase=NULL;
 struct Library *AmiSSLBase=NULL, *AmiSSLExtBase=NULL;
 
@@ -414,7 +422,17 @@ static BOOL FS3EHttp_DoRequest(const char *url, const FS3EHttpHeader *extraHeade
  * (left at 0 if absent/unparseable, or if useRange is FALSE).
  * connectTimeoutSecs bounds BIO_do_connect_retry()'s connect phase -- see
  * FS3EHTTP_CHUNK_TIMEOUT_SECS/FS3EHTTP_RAW_TIMEOUT_SECS above for what each
- * caller passes. */
+ * caller passes.
+ *
+ * Follows up to FS3EHTTP_MAX_REDIRECTS 3xx responses itself (see the
+ * redirectUrl handling below) -- this path talks to a plain BIO it opens by
+ * hand, unlike FS3EHttp_Get/Post's OSSL_HTTP_transfer(), which already
+ * follows redirects internally (see fs3enet_http.h's status doc comment).
+ * Without this, FS3EHttp_GetRange() (the only caller that matters here for
+ * archive downloads) would take a 3xx's near-empty body as "the whole file"
+ * and hand a truncated/empty download to the caller as a success -- exactly
+ * what was seen against GitHub Releases, which 302s the real asset off to
+ * release-assets.githubusercontent.com. */
 static BOOL FS3EHttp_DoRawRequest(const char *method, const char *url,
                                    const FS3EHttpHeader *extraHeaders,
                                    const char *contentType,
@@ -423,15 +441,9 @@ static BOOL FS3EHttp_DoRawRequest(const char *method, const char *url,
                                    int connectTimeoutSecs, ULONG *outTotalLen,
                                    FS3EHttpResponse *out)
 {
-    int    useSSL, portNum;
-    char  *user = NULL, *host = NULL, *port = NULL;
-    char  *path = NULL, *query = NULL, *frag = NULL;
-    char   pathBuf[FS3EHTTP_MAX_PATH];
-    char   portBuf[16];
-    char   hostPort[300];
-    BIO   *bio = NULL;
-    SSL   *ssl = NULL;
-    BOOL   ok = FALSE;
+    const char *curUrl = url;
+    char        redirectUrl[FS3EHTTP_MAX_PATH];
+    int         redirectsLeft = FS3EHTTP_MAX_REDIRECTS;
 
     out->fhr_Body       = NULL;
     out->fhr_BodyLen    = 0;
@@ -444,7 +456,20 @@ static BOOL FS3EHttp_DoRawRequest(const char *method, const char *url,
     if (!AmiSSLExtBase)
         return FALSE;
 
-    if (!OSSL_HTTP_parse_url(url, &useSSL, &user, &host, &port, &portNum,
+    for (;;)
+    {
+    int    useSSL, portNum;
+    char  *user = NULL, *host = NULL, *port = NULL;
+    char  *path = NULL, *query = NULL, *frag = NULL;
+    char   pathBuf[FS3EHTTP_MAX_PATH];
+    char   portBuf[16];
+    char   hostPort[300];
+    BIO   *bio = NULL;
+    SSL   *ssl = NULL;
+    BOOL   ok = FALSE;
+    BOOL   isRedirect = FALSE;
+
+    if (!OSSL_HTTP_parse_url(curUrl, &useSSL, &user, &host, &port, &portNum,
                              &path, &query, &frag))
         return FALSE;
 
@@ -568,6 +593,68 @@ static BOOL FS3EHttp_DoRawRequest(const char *method, const char *url,
                 sscanf(text, "HTTP/%*d.%*d %d", &code);
                 out->fhr_StatusCode = (ULONG)code;
 
+#ifdef BDBTRACEMULTIPART
+                bdbprintf_now("HttpRaw: %s %s -> status=%d bodyLen=%lu\n",
+                               method, curUrl, code, (unsigned long)raw.fhr_BodyLen);
+#endif
+
+                /* 3xx -- follow it ourselves (see this function's doc
+                 * comment) instead of handing a redirect's near-empty body
+                 * back as if it were real content. Location's value is
+                 * copied out into redirectUrl (persists past this
+                 * iteration's cleanup below) before anything here is
+                 * freed. A relative Location (no scheme) is resolved
+                 * against the CURRENT request's scheme+host -- rare in
+                 * practice (every host seen so far, GitHub included, sends
+                 * an absolute URL) but cheap to handle. */
+                if (code >= 300 && code < 400 && redirectsLeft > 0)
+                {
+                    char *loc = strstr(text, "Location:");
+                    if (loc && loc < headerEnd)
+                    {
+                        char  *valStart = loc + 9; /* strlen("Location:") */
+                        char  *lineEnd  = strstr(loc, "\r\n");
+                        ULONG  llen;
+
+                        while (*valStart == ' ') valStart++;
+                        llen = (lineEnd && lineEnd < headerEnd)
+                               ? (ULONG)(lineEnd - valStart) : 0;
+
+                        if (llen > 0 && llen < sizeof(redirectUrl))
+                        {
+                            CopyMem(valStart, redirectUrl, llen);
+                            redirectUrl[llen] = '\0';
+
+                            if (strncmp(redirectUrl, "http://", 7) != 0 &&
+                                strncmp(redirectUrl, "https://", 8) != 0)
+                            {
+                                char resolved[FS3EHTTP_MAX_PATH];
+                                snprintf(resolved, sizeof(resolved), "%s://%s%s%s",
+                                         useSSL ? "https" : "http", host,
+                                         redirectUrl[0] == '/' ? "" : "/", redirectUrl);
+                                snprintf(redirectUrl, sizeof(redirectUrl), "%s", resolved);
+                            }
+
+                            isRedirect = TRUE;
+#ifdef BDBTRACEMULTIPART
+                            bdbprintf_now("HttpRaw: following redirect to %s\n", redirectUrl);
+#endif
+                        }
+#ifdef BDBTRACEMULTIPART
+                        else
+                        {
+                            bdbprintf_now("HttpRaw: %d with unparseable/oversized Location\n", code);
+                        }
+#endif
+                    }
+#ifdef BDBTRACEMULTIPART
+                    else
+                    {
+                        bdbprintf_now("HttpRaw: %d with no Location header\n", code);
+                    }
+#endif
+                }
+
                 /* "Content-Range: bytes X-Y/TOTAL" -- pull TOTAL from after
                  * the '/'. Plain strstr, not a case-insensitive header
                  * parser: every server we've seen (S3/nginx-backed Mastodon
@@ -588,6 +675,10 @@ static BOOL FS3EHttp_DoRawRequest(const char *method, const char *url,
                     }
                 }
 
+                /* Redirect bodies (if any -- 3xx responses are often
+                 * empty) are never handed to the caller; the next loop
+                 * iteration's response is what out_free_bio needs. */
+                if (!isRedirect)
                 {
                     char  *bodyStart = headerEnd + 4;
                     ULONG  bodyLen   = raw.fhr_BodyLen - (ULONG)(bodyStart - text);
@@ -624,7 +715,15 @@ out_free_bio:
     if (frag)
         OPENSSL_free(frag);
 
+    if (isRedirect)
+    {
+        redirectsLeft--;
+        curUrl = redirectUrl;
+        continue;
+    }
+
     return ok;
+    } /* for (;;) */
 }
 
 BOOL FS3EHttp_Put(const char *url, const FS3EHttpHeader *headers,

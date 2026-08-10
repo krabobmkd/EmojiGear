@@ -209,6 +209,22 @@ void FS3ENetworkView_OnFinished(FS3ENetworkView *nv, const char *key, BOOL ok)
     networkview_rebuild_list(nv);
 }
 
+void FS3ENetworkView_SetName(FS3ENetworkView *nv, const char *key, const char *name)
+{
+    FS3ENetworkRow *row;
+
+    if (!nv || !key || !key[0] || !name) return;
+
+    row = networkview_find_row(nv, key);
+    if (!row) row = networkview_new_row(nv, key);
+    if (!row) return;
+
+    strncpy(row->name, name, sizeof(row->name) - 1);
+    row->name[sizeof(row->name) - 1] = '\0';
+
+    networkview_rebuild_list(nv);
+}
+
 void FS3ENetworkView_SetStatus(FS3ENetworkView *nv, const char *message, int level)
 {
     (void)level;

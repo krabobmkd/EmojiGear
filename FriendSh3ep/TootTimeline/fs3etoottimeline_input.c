@@ -380,6 +380,16 @@ ULONG TTL_OnGoActive(Class *cl, Object *o, struct gpInput *msg)
             if (copy) {
                 if (inst->selectedText) FreeVec(inst->selectedText);
                 inst->selectedText = copy;
+
+                /* Author name/acct travel with the body -- see the
+                 * selectedAuthorName/Acct doc comment in
+                 * fs3etoottimeline_private.h. Captured only when the body
+                 * copy itself succeeded, so the two stay in sync (never an
+                 * updated selectedText paired with a stale author). */
+                if (inst->selectedAuthorName) FreeVec(inst->selectedAuthorName);
+                inst->selectedAuthorName = dup_str(hitPost->username);
+                if (inst->selectedAuthorAcct) FreeVec(inst->selectedAuthorAcct);
+                inst->selectedAuthorAcct = dup_str(hitPost->acct);
             }
         }
         ReleaseSemaphore(&inst->listSem);

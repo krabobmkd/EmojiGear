@@ -649,8 +649,19 @@ typedef struct TTLData {
      * then falls back to the topmost visible post). Set in
      * TTL_OnGoActive (fs3etoottimeline_input.c), read in
      * ttl_apply_tags (fs3etoottimeline_attribs.c), freed in
-     * TTL_OnDispose. */
+     * TTL_OnDispose.
+     *
+     * selectedAuthorName/selectedAuthorAcct are the same clicked post's
+     * username/acct, captured as owned copies alongside selectedText at
+     * the same button-down (same reasoning: the TTLPost itself can scroll
+     * away and be freed before TTIMELINE_CopySelectedText is set) --
+     * TTIMELINE_CopySelectedText prepends "<name>\n<acct>\n\n" to the body
+     * using these. Either can be NULL (a pseudo post/header row has no
+     * author) -- the caller substitutes "" rather than skipping the
+     * line, so the body always lands on a predictable line. */
     char  *selectedText;
+    char  *selectedAuthorName;
+    char  *selectedAuthorAcct;
 
     /* ---- TTIMELINE_OldestPostId/NewestPostId (see TTL_OnGet) ----
      * Same "owned copy, not a borrowed pointer" reasoning as

@@ -330,9 +330,9 @@ static const char *defaultStrings[MSG_COUNT] = {
     " a qualified repair technician to service your machine.\n"
     "\n"
     " You may also configure the cache directory on a\n"
-    " non-sensitive drive. About 80MB is needed.\n"
+    " non-sensitive drive. 80Mb is minimum. If you have more than 128Mb,\n"
+    " RAM:T/cache will let your disk safe and speed up FriendSh3ep.\n\n"
     " You may delete the whole .cache dir at any moment.\n"
-    "\n"
     "\n"
     "\n",
     /* MSG_FIRSTUSE_GADGETS */

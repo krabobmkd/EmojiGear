@@ -49,11 +49,15 @@ enum {
 
 /* key is the download's URL (matches FS3ENetFetchProgress's fs3efp_Key /
  * FS3ENetFetchImageReq's fs3enf_Key -- both are the URL itself for the
- * wantProgress requests this window tracks). name is the URL's final path
- * segment, computed once when the row is created. */
+ * wantProgress requests this window tracks). name defaults to the URL's
+ * final path segment, computed when the row is created -- fine for an
+ * on-demand media fetch (no user-visible destination), but for an archive
+ * download the user picked a specific disk location via the file-save
+ * requester, so fs3emanageurl.c overrides it to the full local path via
+ * FS3ENetworkView_SetName() before the request is even sent, see there. */
 typedef struct FS3ENetworkRow {
     char  key[384];
-    char  name[64];
+    char  name[256];
     ULONG bytesSoFar;
     ULONG totalBytes;  /* 0 = unknown */
     UBYTE status;      /* FS3ENETV_ROWSTATUS_* */
@@ -98,6 +102,17 @@ void FS3ENetworkView_OnProgress(FS3ENetworkView *nv, const char *key,
 /* Marks the row for key (if any -- a no-op if that download never sent a
  * progress ping, see this header's top comment) OK or ERROR. */
 void FS3ENetworkView_OnFinished(FS3ENetworkView *nv, const char *key, BOOL ok);
+
+/* Overrides the display name for key's row (creating it -- ACTIVE, zero
+ * progress -- if it doesn't exist yet) with a caller-supplied string
+ * instead of the URL-derived default -- see fs3emanageurl.c's archive
+ * download, the intended caller, which has a real disk destination to show
+ * instead of the server's own file name. Safe to call before the download's
+ * first FS3ENETQ_FETCH_PROGRESS ping (the common case: called right after
+ * the request is dispatched) -- FS3ENetworkView_OnProgress() finds the row
+ * this created by key and only ever touches bytesSoFar/totalBytes on an
+ * existing row, never name. */
+void FS3ENetworkView_SetName(FS3ENetworkView *nv, const char *key, const char *name);
 
 /* Drives the status-bar button's text -- see notifyMessage() in
  * friendsh3ep.h/.c, the intended sole caller. level is one of the

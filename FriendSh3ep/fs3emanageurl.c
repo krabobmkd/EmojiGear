@@ -24,6 +24,7 @@
 #include "fs3emanageurl.h"
 #include "fs3erequests.h"
 #include "network_fs3e/fs3enet.h"
+#include "bdbprintf.h"
 
 extern struct Library *OpenURLBase;
 extern struct Library *AslBase;
@@ -164,6 +165,15 @@ static void manageurl_download_archive(const char *url)
 
         dlreq = FS3ENetFetchImageReq_AllocDownload(url, destPath);
         if (dlreq) {
+            bdbprintf("ManageUrl: archive download url=%s dest=%s\n", url, destPath);
+            /* Row is keyed by url (see FS3ENetFetchImageReq_AllocDownload's
+             * doc comment), but the Network window should show where the
+             * file is actually landing on disk, not the server's own file
+             * name -- see FS3ENetworkView_SetName's doc comment. Called
+             * before the request is even sent so the row (and its real
+             * name) appears immediately, not just once the first progress
+             * ping arrives. */
+            FS3ENetworkView_SetName(&app->networkView, url, destPath);
             FS3EApp_NetSend(FS3ENETQ_FETCH_IMAGE, dlreq, sizeof(*dlreq));
             /* Let the user watch it happen instead of having to know the
              * Network menu entry exists -- see fs3enetworkview.h. */
