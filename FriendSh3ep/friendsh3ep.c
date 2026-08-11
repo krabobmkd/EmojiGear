@@ -119,6 +119,7 @@
 #include "fs3erequests.h"
 #include "fs3eaccounts.h"
 #include "fs3enetworkhelper.h"
+#include "fs3eprogressview.h"
 
 #include "UniButtonP9/unibuttonp9.h"
 #include "UniButtonBGBM/unibuttonbgbm.h"
@@ -234,9 +235,6 @@ typedef struct {
 } LibraryEntry;
 
 static LibraryEntry libraryTable[] = {
-    {"graphics.library",            40, (struct Library **)&GfxBase},
-    {"intuition.library",           40, (struct Library **)&IntuitionBase},
-    {"utility.library",             40, &UtilityBase},
     {"layers.library",    39, &LayersBase},
     {"icon.library",      39, &IconBase},
     {"asl.library",       39, &AslBase},
@@ -248,6 +246,8 @@ static LibraryEntry libraryTable[] = {
     {"gadgets/texteditor.gadget",   15, &TextFieldBase}, /* os3.9 is 15 */
     {"images/label.image",          42, &LabelBase},
     {"images/penmap.image",          42, &PenMapBase},
+    {"images/bevel.image",          32, &BevelBase},
+    {"images/bitmap.image",          42, &BitMapBase},
     {"gadgets/checkbox.gadget",      42, &CheckboxBase},
     {"gadgets/chooser.gadget",       44, &ChooserBase},
     {"gadgets/getfile.gadget",       42, &GetFileBase},
@@ -265,6 +265,16 @@ static LibraryEntry libraryTable[] = {
 };
 
 struct App *app = NULL;
+
+/* Startup progress bar (see fs3eprogressview.h) -- file-scope, not a local
+ * in main(), so exitclose() can close it too: a cleanexit()/exit() called
+ * mid-init (any of main()'s many `cleanexit("...")` early-outs) would
+ * otherwise leave this borderless window stuck on screen forever, since
+ * main() itself never returns to reach its own FS3EProgressView_Close()
+ * call in that case. Zero-initialized by BSS, same as every other global
+ * here -- FS3EProgressView_Close() is always safe to call on an
+ * unopened/already-closed view. */
+static FS3EProgressView progressView={0};
 
 //extern int refreshTitleBarLayout;
 
@@ -1062,6 +1072,18 @@ void StartSearchFromLine()
 int main(int argc, char **argv)
 {
     UWORD dpiH = DEFAULT_DPI_HEIGHT;
+    /* Startup progress bar -- a plain, non-BOOPSI window (see
+     * fs3eprogressview.h and the file-scope progressView declaration
+     * above), open for the whole of this function's init work and closed
+     * again right before FS3EMain_Show() opens the real window (or by
+     * exitclose() if some early-init cleanexit() cuts that short).
+     * 0..255 == 0..100%: opening libraryTable's libraries below is the
+     * first 25% (value 0..64, one increment per library); the remaining
+     * 75% (64..255) is fs3eInitProgressSteps[], one entry per init stage
+     * further down, ending at 255 right after the window object itself is
+     * built -- see each FS3EProgressView_SetValue() call below for which
+     * stage it marks done. */
+    static const UBYTE fs3eInitProgressSteps[8] = { 87, 111, 135, 159, 183, 207, 231, 255 };
 
     if (SysBase->LibNode.lib_Version < 40) {
         printf("FriendSh3ep needs OS3.9 (v40) or OS3.2, you may upgrade.\n");
@@ -1070,14 +1092,34 @@ int main(int argc, char **argv)
     myTask = FindTask(NULL);
     atexit(&exitclose);
 
+
+    /* exec and dos opened at this level */
+
     /* Only one FriendSh3ep may run at a time (shared, non-concurrency-safe
      * disk cache -- see fs3enet_cache.h). Check/register before opening any
      * library or touching the cache. */
     if (!FS3E_CheckSingleInstance())
         return 0;
 
+
+    /* system mandatory basic libs, first */
+    GfxBase         =  OpenLibrary("graphics.library", 40);
+    IntuitionBase   =  OpenLibrary("intuition.library", 40);
+    UtilityBase     =  OpenLibrary("utility.library", 40);
+    if(!GfxBase || !IntuitionBase || !UtilityBase)
+    {
+        printf("need roms >=40\n");
+        return 1;
+    }
+
+    FS3EProgressView_Open(&progressView); /* failure tolerated -- see fs3eprogressview.h, every
+                                            * SetValue() below is a no-op on a closed/never-opened view */
+
     {
         LibraryEntry *entry;
+        ULONG totalLibs = (sizeof(libraryTable) / sizeof(libraryTable[0])) - 1; /* -1: NULL sentinel */
+        ULONG doneLibs  = 0;
+
         for (entry = libraryTable; entry->name != NULL; entry++) {
        // printf("go open %s %d\n",entry->name, entry->version);
             *(entry->base) = OpenLibrary(entry->name, entry->version);
@@ -1085,6 +1127,12 @@ int main(int argc, char **argv)
                 printf("Can't open %s v%u\n",
                        entry->name, (unsigned int)entry->version);
                 return 1;
+            }
+
+            doneLibs++;
+            if(doneLibs & 1) /* not too often */
+            {
+                FS3EProgressView_SetValue(&progressView, (UBYTE)((64UL * doneLibs) / totalLibs));
             }
         }
     }
@@ -1096,9 +1144,6 @@ int main(int argc, char **argv)
 
     /* OpenURLBase NULL accepted */
     OpenURLBase = OpenLibrary("openurl.library", 1);
-
-    BevelBase  = OpenLibrary("images/bevel.image",  32); /* optional, no check */
-    BitMapBase = OpenLibrary("images/bitmap.image", 44); /* optional, no check */
 
     LocaleBase = (struct LocaleBase *)OpenLibrary("locale.library", 38);
     FS3ELocale_Init("FriendSh3ep.catalog", 0);
@@ -1124,6 +1169,8 @@ int main(int argc, char **argv)
      * VBlank interrupt Signal()s) -- see fs3etimer.h. */
     if (!FS3ETimer_Init()) cleanexit("Can't install VBlank timer service");
 
+    FS3EProgressView_SetValue(&progressView, fs3eInitProgressSteps[0]); /* core app/runtime init done */
+
     /* --- Private BOOPSI classes ---------------------------------------- */
     if (!UniButtonP9_Init())    cleanexit("Can't init UniButtonP9 class");
     if (!UniButtonBGBM_Init())  cleanexit("Can't init UniButtonBGBM class");
@@ -1131,6 +1178,8 @@ int main(int argc, char **argv)
     if (!NavBarLayout_Init())   cleanexit("Can't init NavBarLayout class");
     if (!SearchBarLayout_Init()) cleanexit("Can't init SearchBarLayout class");
     if (!TootTimeline_Init())   cleanexit("Can't init TootTimeline class");
+
+    FS3EProgressView_SetValue(&progressView, fs3eInitProgressSteps[1]); /* BOOPSI classes registered */
 
     /* --- Shared button draw context (utf8rastport, fonts, emoji) -------- */
     app->buttonDC = URPDC_Create(NULL);
@@ -1151,12 +1200,15 @@ int main(int argc, char **argv)
 // printf("FS3EStyle_InitDefaults done\n");
 
     app->avatarImages = AvatarImages_Create();
-    /* --- Network process ------------------------------------------------ */
+    /* --- Network process --------------------------------------------------
+     * Just the reply port here -- FS3ENet_Start() itself is deferred until
+     * after the first-use cache-path requester, right before FS3EMain_Show
+     * further down, so the network process launches straight away with
+     * whatever cache directory the user just picked instead of starting
+     * once against a default and needing a live FS3ENet_SetCacheDir()
+     * reconfigure a moment later. */
     app->netReplyPort = CreateMsgPort();
     if (!app->netReplyPort) cleanexit("Can't create network reply port");
-
-    app->netRequestPort = FS3ENet_Start(app->settings.cachePath,
-                                         (ULONG)app->settings.maxCacheSizeMB);
 
 // printf("FS3EThumb_Start\n");
 
@@ -1172,6 +1224,8 @@ int main(int argc, char **argv)
     if (!app->audioReplyPort) cleanexit("Can't create audio reply port");
 
     app->audioRequestPort = FS3EAudio_Start();
+
+    FS3EProgressView_SetValue(&progressView, fs3eInitProgressSteps[2]); /* draw context & background processes started */
 
 // printf("FS3EApp_MachineKey\n");
     /* Debug: print the derived machine key unconditionally, even before any
@@ -1190,7 +1244,13 @@ int main(int argc, char **argv)
          * instead of leaving the user staring at "No account.". */
         FS3EApp_SeedDefaultAnonymousAccount();
     }
-    FS3EApp_VerifyStoredAccount(); /* no-op for the anonymous account just seeded above (empty token) */
+
+    FS3EProgressView_SetValue(&progressView, fs3eInitProgressSteps[3]); /* account data loaded */
+
+    /* FS3EApp_VerifyStoredAccount() moved to right after FS3ENet_Start()
+     * further down (no netRequestPort yet at this point -- see that
+     * block's comment); it only fires an async request either way, so
+     * nothing between here and there depends on its reply having landed. */
 
 // printf("FS3ELoginView_Create\n");
     /* --- Classic BOOPSI sub-windows ------------------------------------- */
@@ -1224,6 +1284,8 @@ int main(int argc, char **argv)
         cleanexit("Can't create network view");
 
     FS3EMediaView_Init(&app->mediaView);
+
+    FS3EProgressView_SetValue(&progressView, fs3eInitProgressSteps[4]); /* sub-windows created */
 
 // printf(" ext window created\n");
     /* ================================================================== */
@@ -1367,6 +1429,8 @@ int main(int argc, char **argv)
         TAG_END);
     if (!app->navBarLayout) cleanexit("Can't create nav bar layout");
 
+    FS3EProgressView_SetValue(&progressView, fs3eInitProgressSteps[5]); /* title bar & nav bar built */
+
     /* ================================================================== */
     /* Part C: toot timeline                                               */
     /* ================================================================== */
@@ -1465,6 +1529,8 @@ int main(int argc, char **argv)
         TAG_END);
     if (!app->searchBarLayout) cleanexit("Can't create search bar layout");
 
+    FS3EProgressView_SetValue(&progressView, fs3eInitProgressSteps[6]); /* toot timeline & search bar built */
+
     /* ================================================================== */
     /* Root layout (A + B + C, vertical, borderless, no gaps)             */
     /* ================================================================== */
@@ -1521,6 +1587,63 @@ int main(int argc, char **argv)
 // printf("FS3EApp_ApplyFontSettings_Delayed\n");
     /* synchronize fonts against settings before first layout */
     FS3EApp_ApplyFontSettings_Delayed();
+
+    FS3EProgressView_SetValue(&progressView, fs3eInitProgressSteps[7]); /* main layout & window object ready -- 100% */
+
+// printf("first-use requester\n");
+    /* First-use disk-cache-usage warning -- shown once, before the network
+     * process starts and before the main window ever opens (no
+     * CurrentMainWindow yet, so NULL -- a screen-wide requester). Doubles
+     * as the cache directory picker: the two non-Quit gadgets are
+     * directory paths, written into app->settings.cachePath right here so
+     * FS3ENet_Start() below launches straight into the chosen directory --
+     * no live FS3ENet_SetCacheDir() reconfigure needed.
+     * "PROGDIR:.cache|Ram:T/FriendSh3ep|Quit": left-to-right numbering is
+     * 1,...,N-1,0 (intuition.doc's EasyRequestArgs RESULT section), so
+     * PROGDIR:.cache=1, Ram:T/FriendSh3ep=2, Quit=0 (rightmost). Quit uses
+     * cleanexit(), same as every other early-init exit point in this
+     * function above (window_obj isn't open yet either way -- nothing
+     * more to tear down here than any of those). */
+    if (!app->settings.warningDone) {
+        struct EasyStruct es = {
+            sizeof(struct EasyStruct), 0,
+            (UBYTE *)LOC(MSG_FIRSTUSE_TITLE),
+            (UBYTE *)LOC(MSG_FIRSTUSE_TEXT),
+            (UBYTE *)LOC(MSG_FIRSTUSE_GADGETS)
+        };
+        LONG choice = EasyRequestArgs(NULL, &es, NULL, NULL);
+
+        if (choice == 0) cleanexit(NULL); /* Quit */
+
+        {
+            const char *dir = (choice == 2) ? "Ram:T/FriendSh3ep" : "PROGDIR:.cache";
+            FreeVec(app->settings.cachePath);
+            app->settings.cachePath = NetStrDup(dir);
+        }
+
+        /* FS3ESettingsView_Create() already ran (much earlier in this
+         * function) and built cachePathGF from whatever cachePath was on
+         * disk at load time -- refresh it now or General Settings would
+         * keep showing that stale value even though app->settings.cachePath
+         * (and the network process about to start below) use the new one. */
+        FS3ESettingsView_RefreshCachePath(&app->settingsView);
+
+        app->settings.warningDone = TRUE;
+        FS3ESettings_Save(&app->settings);
+    }
+
+    /* --- Network process --------------------------------------------------
+     * Deliberately started only now, after the requester above has settled
+     * app->settings.cachePath -- see that block's comment and this
+     * function's netReplyPort comment further up. */
+    app->netRequestPort = FS3ENet_Start(app->settings.cachePath,
+                                         (ULONG)app->settings.maxCacheSizeMB);
+
+    /* Moved here from right after FS3EApp_LoadAccount()/
+     * FS3EApp_SeedDefaultAnonymousAccount() above -- needs a live
+     * netRequestPort, which didn't exist yet back there. */
+    FS3EApp_VerifyStoredAccount(); /* no-op for the anonymous account seeded above (empty token) */
+
 // printf("fs3e_setViewMode\n");
     /* Home by default for a real login -- it needs a token and would just
      * show "No account."/an empty channel under an anonymous one (see
@@ -1530,35 +1653,9 @@ int main(int argc, char **argv)
 
     flushbdbprint();
 
-
-/*---*/
-
+    FS3EProgressView_Close(&progressView);
 
 // printf("FS3EMain_Show\n");
-
-    /* First-use disk-cache-usage warning -- shown once, before the main
-     * window ever opens (no CurrentMainWindow yet, so NULL -- a screen-
-     * wide requester). "Go|Quit": left-to-right numbering is 1,...,N,0
-     * (intuition.doc's EasyRequestArgs RESULT section), so for 2 gadgets
-     * Go=1 (truthy), Quit=0 (rightmost, falsy). Quit uses cleanexit(),
-     * same as every other early-init exit point in this function above
-     * (window_obj isn't open yet either way -- nothing more to tear down
-     * here than any of those). */
-    if (!app->settings.warningDone) {
-        struct EasyStruct es = {
-            sizeof(struct EasyStruct), 0,
-            (UBYTE *)LOC(MSG_FIRSTUSE_TITLE),
-            (UBYTE *)LOC(MSG_FIRSTUSE_TEXT),
-            (UBYTE *)LOC(MSG_FIRSTUSE_GADGETS)
-        };
-        if (EasyRequestArgs(NULL, &es, NULL, NULL)) {
-            app->settings.warningDone = TRUE;
-            FS3ESettings_Save(&app->settings);
-        } else {
-            cleanexit(NULL);
-        }
-    }
-
     FS3EMain_Show(&app->mainwindow, app->window_obj);
     if (!CurrentMainWindow) cleanexit("Can't open window");
 
@@ -2840,6 +2937,14 @@ int main(int argc, char **argv)
 
 void exitclose(void)
 {
+    /* Belt-and-braces against every early cleanexit()/exit() call in main()
+     * that fires before FS3EProgressView_Close() at the very end of the
+     * init sequence -- otherwise this borderless window would be stuck on
+     * screen with no way to dismiss it. No-op if it was already closed, or
+     * never opened at all (e.g. FS3E_CheckSingleInstance() bailing before
+     * FS3EProgressView_Open() even ran). */
+    FS3EProgressView_Close(&progressView);
+
     if (SIPCPort)
     {
         RemPort(SIPCPort);

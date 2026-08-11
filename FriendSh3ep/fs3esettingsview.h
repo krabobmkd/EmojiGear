@@ -28,7 +28,7 @@
  *       Check interval (seconds): [integer]
  *   Tab "Paths & Cache":
  *     Paths group (vertical):
- *       Cache directory:     [drawer path........]
+ *       Cache directory:     [drawer path........] [Apply]
  *       User data directory: [drawer path........]
  *     Cache group (vertical):
  *       Max cache size (MB): [integer]
@@ -51,8 +51,17 @@
  * dependency too.
  *
  * Follows the same live-apply, save-on-close convention as fs3ethemeview.c:
- * no OK/Cancel/Apply buttons, every gadget writes into app->settings as
- * soon as it changes, and FS3ESettings_Save() runs on window close.
+ * no OK/Cancel buttons, every gadget writes into app->settings as soon as
+ * it changes, and FS3ESettings_Save() runs on window close. The one
+ * exception is the cache path's "Apply" button: GETFILE_ReadOnly is FALSE
+ * on that gadget (the user can type a path directly, not just pick one via
+ * the requester), and unlike every other gadget here GADGETUP alone
+ * doesn't mean "the value changed" for a text-entry gadget -- it also
+ * fires on losing focus, opening the requester, etc. -- so there is no
+ * live-apply-on-every-GADGETUP for it; Apply is what actually reads
+ * GETFILE_Drawer and pushes it to app->settings.cachePath + the network
+ * process. Picking a directory via the requester (GID_SETTINGSV_CACHE_PATH)
+ * still applies immediately, same as before.
  */
 
 #include <exec/types.h>
@@ -88,6 +97,9 @@ typedef struct FS3ESettingsView {
 
     /* Paths group */
     Object *cachePathGF;
+    Object *cachePathApplyBtn; /* "Apply" next to cachePathGF -- applies a typed-in-place
+                                * path (no requester) the same way picking one via the
+                                * requester already does, see GID_SETTINGSV_CACHE_PATH_APPLY */
     Object *userDataPathGF;
 
     /* Cache group */
@@ -124,6 +136,15 @@ typedef struct FS3ESettingsView {
 } FS3ESettingsView;
 
 BOOL  FS3ESettingsView_Create(FS3ESettingsView *sv, const char *title);
+
+/* Re-reads app->settings.cachePath into cachePathGF's GETFILE_Drawer --
+ * needed whenever cachePath changes from outside this view (e.g. the
+ * first-use requester in friendsh3ep.c's main(), which runs after this
+ * view is already created and would otherwise leave the gadget showing
+ * the stale default it was built with). No-op if the gadget doesn't
+ * exist yet. Safe to call whether or not the window is currently open. */
+void  FS3ESettingsView_RefreshCachePath(FS3ESettingsView *sv);
+
 void  FS3ESettingsView_Dispose(FS3ESettingsView *sv);
 void  FS3ESettingsView_Open(FS3ESettingsView *sv);
 void  FS3ESettingsView_Close(FS3ESettingsView *sv);

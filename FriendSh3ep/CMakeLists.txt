@@ -47,6 +47,7 @@ set(FRIENDSH3EP_SOURCES
     fs3eemojibox.c
     fs3ethemeview.c
     fs3esettingsview.c
+    fs3eprogressview.c
     fs3enetworkview.c
     fs3emediaview.c
     fs3elocale.c
@@ -103,6 +104,7 @@ set(FRIENDSH3EP_HEADERS
     fs3eemojibox.h
     fs3ethemeview.h
     fs3esettingsview.h
+    fs3eprogressview.h
     fs3enetworkview.h
     fs3emediaview.h
     fs3elocale.h

@@ -43,8 +43,13 @@ typedef struct FS3ESettings {
     /* UI theme */
     char *themeName;      /* AllocVec'd theme name, NULL = built-in default */
 
-    /* Media cache directory passed to the network process at startup.
-     * NULL or "" → network process uses FS3ECACHE_DEFAULT_DIR. */
+    /* Media cache directory. Passed to the network process at startup
+     * (FS3ENet_Start()); also live-updated via FS3ENETQ_SET_CACHE_DIR
+     * (FS3ENet_SetCacheDir) the moment the user picks a new one in
+     * SettingsView's cache path gadget -- see the GID_SETTINGSV_CACHE_PATH
+     * case in fs3esettingsview.c. Already-cached files under the old path
+     * are left behind, not moved. NULL or "" → network process uses
+     * FS3ECACHE_DEFAULT_DIR. */
     char *cachePath;
 
     /* User data directory (accounts, drafts, etc.) -- not consumed by any
@@ -56,8 +61,11 @@ typedef struct FS3ESettings {
      * network_fs3e/fs3enet_cache.c -- oldest-first eviction, checked once
      * at startup and after every new download); FS3ECache_Flush (the
      * SettingsView "Flush cache" button) is a separate manual full wipe.
-     * Takes effect on the next launch, same as cachePath above -- both are
-     * only read once at FS3ENet_Start() time. Default 40. */
+     * Piggybacks live onto cachePath above: every FS3ENet_SetCacheDir call
+     * resends the current value of this field too, so editing the path
+     * also re-applies whatever limit is currently set. Editing *only* this
+     * integer gadget (path left alone) still takes effect on the next
+     * launch, same as before. Default 40. */
     int   maxCacheSizeMB;
 
     /* Seconds between polling the server for new toots; default 60. */

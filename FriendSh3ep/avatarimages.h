@@ -39,13 +39,21 @@
  *      the local (possibly large, original-size) file path.
  *   3. GUI marks the acct/URL thumb-requested (AvatarImages_
  *      MarkThumbRequested/MarkMediaThumbRequested) and sends
- *      FS3EThumb_Request(path, key, kind, 64,64 (200,600)) to the
- *      thumbnail process -- the expensive decode+scale happens off the
- *      GUI task.
- *   4. Thumbnail process replies with a small, already-scaled BMP path.
- *      GUI calls AvatarImages_ThumbReady/MediaThumbReady(key, thumbPath):
- *      a cheap direct read of that small file's pixels (RgbImage_
- *      LoadBmp), no datatype decode and no scaling.
+ *      FS3EThumb_Request(path, key, kind, 64,64 (200,600), rawDecode) to
+ *      the thumbnail process -- the expensive decode (+scale, unless
+ *      rawDecode) happens off the GUI task entirely, regardless of the
+ *      minifyThumbnails setting (see step 4).
+ *   4. Thumbnail process replies either a small already-scaled BMP path
+ *      (minifyThumbnails TRUE) or, for media/card when it's FALSE, an
+ *      already-decoded RGB24 pixel buffer straight in the reply message
+ *      (rawDecode TRUE -- see fs3ethumb.h's FS3EThumbMakeReply.
+ *      fs3etmy_RawPixels; capped at FS3ETHUMB_MEDIA_RAW_MAX_W/H via a
+ *      single PDTM_SCALE halving if the source is huge). Either way, the
+ *      GUI side is cheap: AvatarImages_ThumbReady/MediaThumbReady(key,
+ *      thumbPath) does a plain direct read of the small BMP (RgbImage_
+ *      LoadBmp); AvatarImages_MediaThumbReadyRgb/CardThumbReadyRgb(key,
+ *      pixels, w, h) just adopts the already-decoded buffer (RgbImage_
+ *      AdoptBuffer) -- neither ever calls picture.datatype on this task.
  *   5. Tile renderer calls AvatarImages_Get/GetMedia(key) and draws it
  *      with RgbImage_DrawScaled() at whatever size the tile needs.
  */
@@ -142,10 +150,18 @@ BOOL          AvatarImages_IsThumbRequested(AvatarImages *ai, const char *acct);
 void          AvatarImages_MarkThumbRequested(AvatarImages *ai, const char *acct);
 
 /* Called when the thumbnail process replies with a scaled-down thumbnail
- * file (see fs3ethumb.h). Loads its pixels; returns the RgbImage or NULL
- * on failure. */
+ * file (see fs3ethumb.h) and didn't also hand back pre-read pixels (see
+ * AvatarImages_ThumbReadyRgb below -- the common case now, this is the
+ * fallback). Loads its pixels; returns the RgbImage or NULL on failure. */
 RgbImage     *AvatarImages_ThumbReady(AvatarImages *ai, const char *acct,
                                        const char *thumbPath);
+
+/* Called when the thumbnail process's reply already carries pixels (see
+ * FS3EThumbMakeReply.fs3etmy_RawPixels in fs3ethumb.h) -- adopts the
+ * buffer directly via RgbImage_AdoptBuffer(), no file I/O on this task at
+ * all. Caller must not touch pixels again after this call. */
+RgbImage     *AvatarImages_ThumbReadyRgb(AvatarImages *ai, const char *acct,
+                                          UBYTE *pixels, UWORD width, UWORD height);
 
 /* Called when the thumbnail process replies FS3ETHUMBR_ERROR instead --
  * latches failed distinctly from "still pending" (see the AvatarEntry
@@ -172,14 +188,17 @@ BOOL          AvatarImages_IsMediaRequested(AvatarImages *ai, const char *url);
 void          AvatarImages_MarkMediaRequested(AvatarImages *ai, const char *url);
 BOOL          AvatarImages_IsMediaThumbRequested(AvatarImages *ai, const char *url);
 void          AvatarImages_MarkMediaThumbRequested(AvatarImages *ai, const char *url);
-/* rawOriginal FALSE (the usual case): thumbPath is a real minified BMP
- * (RgbImage_LoadBmp, cheap direct read). TRUE: thumbPath actually holds
- * the untouched original image, just saved/renamed under the same
- * deterministic name a minified thumbnail would use (fs3esettings.h's
- * minifyThumbnails FALSE) -- decoded via RgbImage_LoadViaDatatype instead
- * (rgbimage.h), a full datatype decode. */
+/* thumbPath is a real minified BMP (RgbImage_LoadBmp, cheap direct read)
+ * -- the fs3etmr_RawDecode FALSE / minifyThumbnails TRUE case. */
 RgbImage     *AvatarImages_MediaThumbReady(AvatarImages *ai, const char *url,
-                                            const char *thumbPath, BOOL rawOriginal);
+                                            const char *thumbPath);
+/* fs3etmr_RawDecode TRUE / minifyThumbnails FALSE case: pixels is an
+ * already-decoded AllocVec'd RGB24 buffer (the thumbnail process's
+ * FS3EThumbMakeReply.fs3etmy_RawPixels -- see fs3ethumb.h), adopted
+ * directly via RgbImage_AdoptBuffer(), no decode/file I/O on this task at
+ * all. Caller must not touch pixels again after this call. */
+RgbImage     *AvatarImages_MediaThumbReadyRgb(AvatarImages *ai, const char *url,
+                                               UBYTE *pixels, UWORD width, UWORD height);
 void          AvatarImages_MarkMediaFailed(AvatarImages *ai, const char *url,
                                             UBYTE detectedFormat);
 BOOL          AvatarImages_MediaFailed(AvatarImages *ai, const char *url,
@@ -194,9 +213,11 @@ BOOL          AvatarImages_IsCardRequested(AvatarImages *ai, const char *url);
 void          AvatarImages_MarkCardRequested(AvatarImages *ai, const char *url);
 BOOL          AvatarImages_IsCardThumbRequested(AvatarImages *ai, const char *url);
 void          AvatarImages_MarkCardThumbRequested(AvatarImages *ai, const char *url);
-/* rawOriginal: see AvatarImages_MediaThumbReady's doc comment above. */
+/* See AvatarImages_MediaThumbReady/MediaThumbReadyRgb's doc comments above. */
 RgbImage     *AvatarImages_CardThumbReady(AvatarImages *ai, const char *url,
-                                           const char *thumbPath, BOOL rawOriginal);
+                                           const char *thumbPath);
+RgbImage     *AvatarImages_CardThumbReadyRgb(AvatarImages *ai, const char *url,
+                                              UBYTE *pixels, UWORD width, UWORD height);
 void          AvatarImages_MarkCardFailed(AvatarImages *ai, const char *url,
                                            UBYTE detectedFormat);
 BOOL          AvatarImages_CardFailed(AvatarImages *ai, const char *url,

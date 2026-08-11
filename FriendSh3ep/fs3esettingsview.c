@@ -52,6 +52,8 @@
 #include "fs3eboopsimainwindow.h"
 #include "network_fs3e/fs3enet.h"
 #include "TootTimeline/fs3etoottimeline.h"
+#include "fs3eboopsimessage.h"
+#include <intuition/icclass.h>
 
 extern struct Library *GetFileBase;
 extern struct Library *IntegerBase;
@@ -95,8 +97,26 @@ static void updateDirPath(Object *gf, char **dest)
     ULONG strPtr = 0;
     GetAttr(GETFILE_Drawer, gf, &strPtr);
     if (strPtr) {
-        FreeVec(*dest);
+        char *ddest = *dest;
         *dest = SettingsStrDup((const char *)strPtr);
+        if(ddest) FreeVec(*ddest);
+    }
+}
+
+/* Pushes app->settings.cachePath (already updated by the caller) to the
+ * already-running network process, live -- see FS3ENet_SetCacheDir's doc
+ * comment in network_fs3e/fs3enet.h. Shared by both ways of changing the
+ * cache path: picking a directory via the requester (GID_SETTINGSV_CACHE_PATH)
+ * and typing one in place then pressing Apply (GID_SETTINGSV_CACHE_PATH_APPLY). */
+static void applyCachePathLive(void)
+{
+    if (!app->netRequestPort) return;
+
+    struct MsgPort *replyPort = CreateMsgPort();
+    if (replyPort) {
+        FS3ENet_SetCacheDir(app->netRequestPort, replyPort,
+            app->settings.cachePath, (ULONG)app->settings.maxCacheSizeMB);
+        DeleteMsgPort(replyPort);
     }
 }
 
@@ -156,24 +176,51 @@ BOOL FS3ESettingsView_Create(FS3ESettingsView *sv, const char *title)
     sv->userDataPathGF = makeDirGadget(GID_SETTINGSV_USERDATA_PATH, app->settings.userDataPath);
     if (!sv->cachePathGF || !sv->userDataPathGF) return FALSE;
 
+    /* GETFILE_ReadOnly is FALSE on cachePathGF (see makeDirGadget), so the
+     * user can type a path directly instead of always going through the
+     * requester -- this button is what applies a typed value; picking a
+     * directory via the requester (GID_SETTINGSV_CACHE_PATH) still applies
+     * immediately on its own, see the WMHI_GADGETUP handling below. */
+    sv->cachePathApplyBtn = NewObject(BUTTON_GetClass(), NULL,
+        GA_ID,        GID_SETTINGSV_CACHE_PATH_APPLY,
+        GA_RelVerify, TRUE,
+        GA_Text,      (ULONG)LOC(MSG_SETTINGSV_CACHE_PATH_APPLY),
+        TAG_END);
+    if (!sv->cachePathApplyBtn) return FALSE;
+
     cachePathLabel    = NewObject(LABEL_GetClass(), NULL, LABEL_Text, (ULONG)LOC(MSG_SETTINGSV_CACHE_PATH),    TAG_END);
     userDataPathLabel = NewObject(LABEL_GetClass(), NULL, LABEL_Text, (ULONG)LOC(MSG_SETTINGSV_USERDATA_PATH), TAG_END);
 
-    pathsGroup = NewObject(LAYOUT_GetClass(), NULL,
-        LAYOUT_Orientation,   LAYOUT_ORIENT_VERT,
-        LAYOUT_BevelStyle,    BVS_GROUP,
-        LAYOUT_Label,         (ULONG)LOC(MSG_SETTINGSV_PATHS_GROUP),
-        LAYOUT_BackFill,      NULL,
-        LAYOUT_SpaceOuter,    TRUE,
-        LAYOUT_SpaceInner,    TRUE,
-        LAYOUT_AddChild,      (ULONG)sv->cachePathGF,
-        CHILD_WeightedHeight, 0,
-        CHILD_Label,          (ULONG)cachePathLabel,
-        LAYOUT_AddChild,      (ULONG)sv->userDataPathGF,
-        CHILD_WeightedHeight, 0,
-        CHILD_Label,          (ULONG)userDataPathLabel,
-        TAG_END);
-    if (!pathsGroup) return FALSE;
+    {
+        Object *cachePathRow = NewObject(LAYOUT_GetClass(), NULL,
+            LAYOUT_Orientation,   LAYOUT_ORIENT_HORIZ,
+            LAYOUT_BevelStyle,    BVS_NONE,
+            LAYOUT_SpaceInner,    FALSE,
+            LAYOUT_AddChild,      (ULONG)sv->cachePathGF,
+            CHILD_WeightedWidth,  1,
+            CHILD_WeightedHeight, 0,
+            LAYOUT_AddChild,      (ULONG)sv->cachePathApplyBtn,
+            CHILD_WeightedWidth,  0,
+            CHILD_WeightedHeight, 0,
+            TAG_END);
+        if (!cachePathRow) return FALSE;
+
+        pathsGroup = NewObject(LAYOUT_GetClass(), NULL,
+            LAYOUT_Orientation,   LAYOUT_ORIENT_VERT,
+            LAYOUT_BevelStyle,    BVS_GROUP,
+            LAYOUT_Label,         (ULONG)LOC(MSG_SETTINGSV_PATHS_GROUP),
+            LAYOUT_BackFill,      NULL,
+            LAYOUT_SpaceOuter,    TRUE,
+            LAYOUT_SpaceInner,    TRUE,
+            LAYOUT_AddChild,      (ULONG)cachePathRow,
+            CHILD_WeightedHeight, 0,
+            CHILD_Label,          (ULONG)cachePathLabel,
+            LAYOUT_AddChild,      (ULONG)sv->userDataPathGF,
+            CHILD_WeightedHeight, 0,
+            CHILD_Label,          (ULONG)userDataPathLabel,
+            TAG_END);
+        if (!pathsGroup) return FALSE;
+    }
 
     /* --- Cache group --- */
     sv->maxCacheSizeInt = NewObject(INTEGER_GetClass(), NULL,
@@ -597,6 +644,14 @@ BOOL FS3ESettingsView_Create(FS3ESettingsView *sv, const char *title)
     return TRUE;
 }
 
+void FS3ESettingsView_RefreshCachePath(FS3ESettingsView *sv)
+{
+    if (!sv || !sv->cachePathGF) return;
+    SetAttrs(sv->cachePathGF,
+        GETFILE_Drawer, (ULONG)(app->settings.cachePath ? app->settings.cachePath : ""),
+        TAG_END);
+}
+
 void FS3ESettingsView_Dispose(FS3ESettingsView *sv)
 {
     ULONG i;
@@ -715,8 +770,16 @@ BOOL FS3ESettingsView_HandleInput(FS3ESettingsView *sv)
                 ULONG gadId = result & WMHI_GADGETMASK;
 
                 if (gadId == GID_SETTINGSV_CACHE_PATH) {
-                    if (gfRequestDir(sv->cachePathGF, sv->window))
+                    if (gfRequestDir(sv->cachePathGF, sv->window)) {
                         updateDirPath(sv->cachePathGF, &app->settings.cachePath);
+                        applyCachePathLive();
+                    }
+
+                } else if (gadId == GID_SETTINGSV_CACHE_PATH_APPLY) {
+                    /* No requester here -- read back whatever the user typed
+                     * directly into cachePathGF's text entry. */
+                    updateDirPath(sv->cachePathGF, &app->settings.cachePath);
+                    applyCachePathLive();
 
                 } else if (gadId == GID_SETTINGSV_USERDATA_PATH) {
                     if (gfRequestDir(sv->userDataPathGF, sv->window))

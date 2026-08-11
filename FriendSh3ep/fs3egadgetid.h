@@ -99,6 +99,7 @@
 #define GID_SETTINGSV_DIRECT_DL_ARCHIVES       315
 #define GID_SETTINGSV_DOWNLOAD_PATH            316
 #define GID_SETTINGSV_TOOT_ACTIONS_DBLCLICK    317
+#define GID_SETTINGSV_CACHE_PATH_APPLY         318
 
 /* Network downloads window (fs3enetworkview.c) */
 #define GID_NETWORKV_LIST                      318

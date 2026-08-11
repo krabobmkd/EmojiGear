@@ -50,15 +50,16 @@ target_include_directories(fs3enet PUBLIC
 target_include_directories(fs3enet PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 
 # Matches the GUI target's own USE_DEBUG_BDBPRINT (see the root
-# CMakeLists.txt) so bdbprintf_now() calls here compile to the real
-# implementation, not the no-op stub -- otherwise this library would
-# silently produce no trace output despite calling the function.
-# BDBTRACEMULTIPART additionally turns on the chunked-download tracing in
-# fs3enet.c (FS3ENet_StepActiveDownloads/FinishDownload) and the raw-request
-# status/redirect tracing in fs3enet_http.c -- both currently needed to
-# debug archive (.zip/.lha) downloads that fail on some sites but not
-# others. Comment out again once that's diagnosed.
-target_compile_definitions(fs3enet PRIVATE USE_DEBUG_BDBPRINT=1 BDBTRACEMULTIPART=1)
+# CMakeLists.txt) so bdbprintf_now() calls here would compile to the real
+# implementation instead of the no-op stub. BDBTRACEMULTIPART additionally
+# turns on the chunked-download tracing in fs3enet.c
+# (FS3ENet_StepActiveDownloads/FinishDownload) and the raw-request status/
+# redirect tracing in fs3enet_http.c -- both were needed to diagnose
+# archive (.zip/.lha) downloads failing on GitHub-style redirecting hosts
+# (see FS3EHttp_DoRawRequest's redirect-following doc comment), now fixed.
+# Left disabled again; uncomment both defines to re-enable that tracing if
+# a similar issue needs debugging again.
+#target_compile_definitions(fs3enet PRIVATE USE_DEBUG_BDBPRINT=1 BDBTRACEMULTIPART=1)
 
 # Manual AmiSSL init path (see EmojiGear/testsocket/CMakeLists.txt): libnix'
 # `errno` is `(*__errno)`, incompatible with libamisslauto.a's expectations,

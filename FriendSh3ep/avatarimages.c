@@ -119,6 +119,20 @@ RgbImage *AvatarImages_ThumbReady(AvatarImages *ai, const char *acct,
     return &e->img;
 }
 
+RgbImage *AvatarImages_ThumbReadyRgb(AvatarImages *ai, const char *acct,
+                                      UBYTE *pixels, UWORD width, UWORD height)
+{
+    AvatarEntry *e;
+
+    if (!ai || !acct || !acct[0] || !pixels) return NULL;
+
+    e = find_or_create(ai, acct);
+    if (!e) return NULL;
+
+    RgbImage_AdoptBuffer(&e->img, pixels, width, height);
+    return &e->img;
+}
+
 void AvatarImages_MarkFailed(AvatarImages *ai, const char *acct, UBYTE detectedFormat)
 {
     AvatarEntry *e = find_or_create(ai, acct);
@@ -226,7 +240,7 @@ void AvatarImages_MarkMediaThumbRequested(AvatarImages *ai, const char *url)
 }
 
 RgbImage *AvatarImages_MediaThumbReady(AvatarImages *ai, const char *url,
-                                        const char *thumbPath, BOOL rawOriginal)
+                                        const char *thumbPath)
 {
     ThumbnailEntry *e;
 
@@ -235,12 +249,22 @@ RgbImage *AvatarImages_MediaThumbReady(AvatarImages *ai, const char *url,
     e = find_or_create_media(ai, url);
     if (!e) return NULL;
 
-    if (rawOriginal) {
-        if (!RgbImage_LoadViaDatatype(&e->img, thumbPath)) return NULL;
-    } else {
-        if (!RgbImage_LoadBmp(&e->img, thumbPath)) return NULL;
-    }
+    if (!RgbImage_LoadBmp(&e->img, thumbPath)) return NULL;
 
+    return &e->img;
+}
+
+RgbImage *AvatarImages_MediaThumbReadyRgb(AvatarImages *ai, const char *url,
+                                           UBYTE *pixels, UWORD width, UWORD height)
+{
+    ThumbnailEntry *e;
+
+    if (!ai || !url || !url[0] || !pixels) return NULL;
+
+    e = find_or_create_media(ai, url);
+    if (!e) return NULL;
+
+    RgbImage_AdoptBuffer(&e->img, pixels, width, height);
     return &e->img;
 }
 
@@ -336,7 +360,7 @@ void AvatarImages_MarkCardThumbRequested(AvatarImages *ai, const char *url)
 }
 
 RgbImage *AvatarImages_CardThumbReady(AvatarImages *ai, const char *url,
-                                       const char *thumbPath, BOOL rawOriginal)
+                                       const char *thumbPath)
 {
     CardImageEntry *e;
 
@@ -345,12 +369,22 @@ RgbImage *AvatarImages_CardThumbReady(AvatarImages *ai, const char *url,
     e = find_or_create_card(ai, url);
     if (!e) return NULL;
 
-    if (rawOriginal) {
-        if (!RgbImage_LoadViaDatatype(&e->img, thumbPath)) return NULL;
-    } else {
-        if (!RgbImage_LoadBmp(&e->img, thumbPath)) return NULL;
-    }
+    if (!RgbImage_LoadBmp(&e->img, thumbPath)) return NULL;
 
+    return &e->img;
+}
+
+RgbImage *AvatarImages_CardThumbReadyRgb(AvatarImages *ai, const char *url,
+                                          UBYTE *pixels, UWORD width, UWORD height)
+{
+    CardImageEntry *e;
+
+    if (!ai || !url || !url[0] || !pixels) return NULL;
+
+    e = find_or_create_card(ai, url);
+    if (!e) return NULL;
+
+    RgbImage_AdoptBuffer(&e->img, pixels, width, height);
     return &e->img;
 }
 

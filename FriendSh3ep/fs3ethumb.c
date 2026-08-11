@@ -9,6 +9,7 @@
 
 #include "fs3ethumb.h"
 #include "bmimage.h"
+#include "rgbimage.h"
 
 #include <exec/types.h>
 #include <exec/memory.h>
@@ -81,6 +82,9 @@ struct MsgPort *FS3EThumb_Start(void)
         NP_Entry,     (ULONG)FS3EThumb_ProcEntry,
         NP_Name,      (ULONG)FS3ETHUMB_PROC_NAME,
         NP_StackSize, (ULONG)FS3ETHUMB_STACK_SIZE,
+        /* Experimental: same reasoning as network_fs3e/fs3enet.c's own
+         * NP_Priority -- one notch below the GUI task's default (0). */
+        NP_Priority,  (LONG)-1,
         TAG_DONE);
 
     if (!proc)
@@ -144,7 +148,7 @@ static void FS3EThumb_PackStr(char **dst, char **p, const char *s)
 BOOL FS3EThumb_Request(struct MsgPort *requestPort, struct MsgPort *replyPort,
                         const char *srcPath, const char *key, ULONG kind,
                         const char *cacheKeyPath, BOOL deleteSrcAfter,
-                        UWORD targetW, UWORD targetH)
+                        UWORD targetW, UWORD targetH, BOOL rawDecode)
 {
     FS3EThumbMessage *msg;
     FS3EThumbMakeReq *req;
@@ -173,6 +177,7 @@ BOOL FS3EThumb_Request(struct MsgPort *requestPort, struct MsgPort *replyPort,
     req->fs3etmr_TargetW        = targetW;
     req->fs3etmr_TargetH        = targetH;
     req->fs3etmr_DeleteSrcAfter = deleteSrcAfter;
+    req->fs3etmr_RawDecode      = rawDecode;
 
     p = (char *)req + sizeof(*req);
     FS3EThumb_PackStr(&req->fs3etmr_SrcPath,      &p, srcPath);
@@ -192,6 +197,15 @@ BOOL FS3EThumb_Request(struct MsgPort *requestPort, struct MsgPort *replyPort,
 void FS3EThumb_FreeMessage(FS3EThumbMessage *msg)
 {
     if (!msg) return;
+    if (msg->fs3etm_Data) {
+        /* By the time a drained message reaches here, fs3etm_Data is
+         * always an FS3EThumbMakeReply (a request never gets replied to
+         * the GUI as-is) -- see fs3etmy_RawPixels's doc comment for why
+         * this is still non-NULL, and thus still owned, only when nothing
+         * ever adopted it. */
+        FS3EThumbMakeReply *reply = (FS3EThumbMakeReply *)msg->fs3etm_Data;
+        if (reply->fs3etmy_RawPixels) FreeVec(reply->fs3etmy_RawPixels);
+    }
     FreeVec(msg->fs3etm_Data);
     FreeVec(msg);
 }
@@ -220,9 +234,17 @@ static const char *FS3EThumb_FormatName(BmImageFormat fmt)
  * allocation itself fails, msg ends up with fs3etm_Data == NULL and
  * fs3etm_Result forced to FS3ETHUMBR_ERROR -- nothing left to hand back
  * but the error. */
+/* rawPixels/rawW/rawH: see FS3EThumbMakeReply.fs3etmy_RawPixels's doc
+ * comment. Pass NULL/0/0 for every non-raw-decode reply (the common
+ * case); rawPixels is handed straight into the reply, NOT copied (it's
+ * already an AllocVec'd block on its own, unlike key/srcPath/thumbPath
+ * which get packed/copied here) -- ownership transfers to the reply, and
+ * from there to whatever adopts it on the GUI side (or FS3EThumb_
+ * FreeMessage's safety-net free, if nothing does). */
 static void FS3EThumb_BuildReply(FS3EThumbMessage *msg, ULONG kind, const char *key,
                                   const char *srcPath, const char *thumbPath,
-                                  ULONG detectedFormat, ULONG result)
+                                  ULONG detectedFormat, ULONG result,
+                                  UBYTE *rawPixels, UWORD rawW, UWORD rawH)
 {
     FS3EThumbMakeReply *reply;
     ULONG                total;
@@ -239,7 +261,10 @@ static void FS3EThumb_BuildReply(FS3EThumbMessage *msg, ULONG kind, const char *
         /* key/srcPath/thumbPath may point into msg->fs3etm_Data (both call
          * sites pass fields straight out of the FS3EThumbMakeReq this reply
          * replaces) -- free only after every read of them is done, never
-         * before, or PackStr below would copy from already-freed memory. */
+         * before, or PackStr below would copy from already-freed memory.
+         * rawPixels has no home to go to here either -- free it too, or a
+         * failed reply allocation would leak a full decoded image. */
+        if (rawPixels) FreeVec(rawPixels);
         FreeVec(msg->fs3etm_Data);
         msg->fs3etm_Data    = NULL;
         msg->fs3etm_DataLen = 0;
@@ -249,6 +274,9 @@ static void FS3EThumb_BuildReply(FS3EThumbMessage *msg, ULONG kind, const char *
 
     reply->fs3etmy_Kind           = kind;
     reply->fs3etmy_DetectedFormat = detectedFormat;
+    reply->fs3etmy_RawPixels      = rawPixels;
+    reply->fs3etmy_RawWidth       = rawW;
+    reply->fs3etmy_RawHeight      = rawH;
 
     p = (char *)reply + sizeof(*reply);
     FS3EThumb_PackStr(&reply->fs3etmy_Key,       &p, key);
@@ -264,7 +292,44 @@ static void FS3EThumb_BuildReply(FS3EThumbMessage *msg, ULONG kind, const char *
     msg->fs3etm_Result  = result;
 }
 
-/* FS3ETHUMBQ_MAKE - decode + box-fit-scale one image to a BMP thumbnail. */
+/* FS3ETHUMBQ_MAKE, fs3etmr_RawDecode branch -- decode SrcPath at native
+ * size (capped, see FS3ETHUMB_MEDIA_RAW_MAX_W/H) and hand the RGB24
+ * pixels straight back, no disk write. This is the "minifyThumbnails
+ * FALSE" media/card path -- moved here from what used to be a synchronous
+ * RgbImage_LoadViaDatatype() call on the GUI task (avatarimages.c). */
+static void FS3EThumb_HandleMakeRaw(FS3EThumbMessage *msg)
+{
+    FS3EThumbMakeReq *req  = (FS3EThumbMakeReq *)msg->fs3etm_Data;
+    BOOL               deleteSrcAfter = req->fs3etmr_DeleteSrcAfter;
+    BmImageError       err = BMIMAGE_OK;
+    ULONG              detectedFormat = (ULONG)BMFMT_UNKNOWN;
+    UBYTE             *pixels = NULL;
+    ULONG              w = 0, h = 0;
+    BOOL               ok;
+    FS3EThumbMakeReply *reply;
+
+    ok = BmImage_ReadSourceRgbCapped(req->fs3etmr_SrcPath,
+             FS3ETHUMB_MEDIA_RAW_MAX_W, FS3ETHUMB_MEDIA_RAW_MAX_H,
+             &pixels, &w, &h, &err);
+
+    /* Same "sniff on open failure only" rule as the minified path below. */
+    if (!ok && err == BMIMAGE_ERR_OPEN_FAILED)
+        detectedFormat = (ULONG)BmImage_SniffFormat(req->fs3etmr_SrcPath);
+
+    FS3EThumb_BuildReply(msg, req->fs3etmr_Kind, req->fs3etmr_Key, req->fs3etmr_SrcPath,
+                          "", detectedFormat, ok ? FS3ETHUMBR_OK : FS3ETHUMBR_ERROR,
+                          ok ? pixels : NULL, (UWORD)w, (UWORD)h);
+    /* req is dangling from here on -- FS3EThumb_BuildReply just freed the
+     * request block. A failed ok==FALSE decode never allocated pixels, so
+     * there's nothing to free here in that case either. */
+
+    reply = (FS3EThumbMakeReply *)msg->fs3etm_Data;
+    if (deleteSrcAfter && reply && reply->fs3etmy_SrcPath[0])
+        DeleteFile((STRPTR)reply->fs3etmy_SrcPath);
+}
+
+/* FS3ETHUMBQ_MAKE, minify branch (fs3etmr_RawDecode FALSE) -- decode +
+ * box-fit-scale one image to a BMP thumbnail on disk. */
 static void FS3EThumb_HandleMake(FS3EThumbMessage *msg)
 {
     FS3EThumbMakeReq    *req      = (FS3EThumbMakeReq *)msg->fs3etm_Data;
@@ -272,12 +337,23 @@ static void FS3EThumb_HandleMake(FS3EThumbMessage *msg)
                                       ? req->fs3etmr_CacheKeyPath : NULL;
     const char           *namePath = keyPath ? keyPath : req->fs3etmr_SrcPath;
     BOOL                  deleteSrcAfter = req->fs3etmr_DeleteSrcAfter;
+
+    if (req->fs3etmr_RawDecode)
+    {
+        FS3EThumb_HandleMakeRaw(msg);
+        return;
+    }
+
+    {
     BmImageError          err = BMIMAGE_OK;
     ULONG                 detectedFormat = (ULONG)BMFMT_UNKNOWN;
     char                 *thumbPathBuf;
     ULONG                 thumbBufSize;
     BOOL                  ok = FALSE;
+    RgbImage               rgb;
     FS3EThumbMakeReply   *reply;
+
+    memset(&rgb, 0, sizeof(rgb));
 
     /* Sized off namePath rather than a fixed cap: BmImage_GenerateScaledBmp
      * still fills a caller buffer (see bmimage.h) -- this is the boundary
@@ -297,9 +373,26 @@ static void FS3EThumb_HandleMake(FS3EThumbMessage *msg)
     if (!ok && err == BMIMAGE_ERR_OPEN_FAILED)
         detectedFormat = (ULONG)BmImage_SniffFormat(req->fs3etmr_SrcPath);
 
+    /* Read the just-(re)confirmed BMP thumbnail's pixels back here too --
+     * same "the thumbnail process, not the GUI task, does every last bit
+     * of file I/O for this pipeline" rule fs3etmr_RawDecode already
+     * established, just applied to the minified path's own small output
+     * file instead of the original. RgbImage_LoadBmp is a plain hand-
+     * rolled parser (no picture.datatype involved, see rgbimage.h), so
+     * this is cheap and safe to do unconditionally on success. Best-
+     * effort: on the vanishingly unlikely chance this fails right after
+     * BmImage_GenerateScaledBmp just wrote (or found) that exact file,
+     * fs3etmy_ThumbPath is still valid and the GUI falls back to reading
+     * it itself, same as before this existed -- see fs3etmy_RawPixels's
+     * doc comment in fs3ethumb.h. */
+    if (ok) RgbImage_LoadBmp(&rgb, thumbPathBuf);
+
     FS3EThumb_BuildReply(msg, req->fs3etmr_Kind, req->fs3etmr_Key, req->fs3etmr_SrcPath,
                           ok ? thumbPathBuf : "", detectedFormat,
-                          ok ? FS3ETHUMBR_OK : FS3ETHUMBR_ERROR);
+                          ok ? FS3ETHUMBR_OK : FS3ETHUMBR_ERROR,
+                          rgb.pixels, rgb.width, rgb.height);
+    /* rgb.pixels (if any) now belongs to the reply -- not RgbImage_Free()'d
+     * here, same ownership-transfer rule as the raw-decode branch. */
     /* req/keyPath/namePath are dangling from here on -- FS3EThumb_BuildReply
      * just freed the request block. */
 
@@ -311,6 +404,7 @@ static void FS3EThumb_HandleMake(FS3EThumbMessage *msg)
     reply = (FS3EThumbMakeReply *)msg->fs3etm_Data;
     if (deleteSrcAfter && reply && reply->fs3etmy_SrcPath[0])
         DeleteFile((STRPTR)reply->fs3etmy_SrcPath);
+    }
 }
 
 /* Debug: peek how many requests are queued on requestPort without removing
@@ -395,7 +489,7 @@ static void FS3EThumb_ProcEntry(void)
 
                 FS3EThumb_BuildReply(msg, req->fs3etmr_Kind, req->fs3etmr_Key,
                                       req->fs3etmr_SrcPath, "", (ULONG)BMFMT_UNKNOWN,
-                                      FS3ETHUMBR_ERROR);
+                                      FS3ETHUMBR_ERROR, NULL, 0, 0);
             }
             else if (msg->fs3etm_Type == FS3ETHUMBQ_MAKE)
             {

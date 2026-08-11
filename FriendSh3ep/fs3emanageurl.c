@@ -165,7 +165,7 @@ static void manageurl_download_archive(const char *url)
 
         dlreq = FS3ENetFetchImageReq_AllocDownload(url, destPath);
         if (dlreq) {
-            bdbprintf("ManageUrl: archive download url=%s dest=%s\n", url, destPath);
+            /* bdbprintf("ManageUrl: archive download url=%s dest=%s\n", url, destPath); */
             /* Row is keyed by url (see FS3ENetFetchImageReq_AllocDownload's
              * doc comment), but the Network window should show where the
              * file is actually landing on disk, not the server's own file

@@ -51,6 +51,15 @@ BOOL RgbImage_IsLoaded(const RgbImage *img)
     return (BOOL)(img && img->pixels != NULL);
 }
 
+void RgbImage_AdoptBuffer(RgbImage *img, UBYTE *pixels, UWORD width, UWORD height)
+{
+    if (!img) return;
+    RgbImage_Free(img);
+    img->pixels = pixels;
+    img->width  = width;
+    img->height = height;
+}
+
 BOOL RgbImage_LoadBmp(RgbImage *img, const char *path)
 {
     UBYTE header[RGBIMAGE_BMP_HEADER_SIZE];

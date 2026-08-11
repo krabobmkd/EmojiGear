@@ -192,6 +192,28 @@ BOOL BmImage_ReadSourceRgb(const char *srcPath, UBYTE **outBuf,
                             BmImageError *outError);
 
 /*
+ * Same as BmImage_ReadSourceRgb() (no scaling, no disk write), except a
+ * source whose native size exceeds maxWidth x maxHeight in either
+ * dimension gets ONE PDTM_SCALE halving pass applied inside the datatype
+ * object before its pixels are ever read out -- same "single halving, not
+ * a repeated fit-to-bounds loop" rule as BmImage_LoadFitScreen() (see its
+ * doc comment for why), just applied to this screen-less RGB-buffer path
+ * instead of a screen bitmap. outWidth/outHeight reflect the FINAL
+ * (possibly halved) size, not the source's native size. maxWidth/
+ * maxHeight of 0 disables the check entirely (identical to
+ * BmImage_ReadSourceRgb()). Exists as a separate entry point rather than
+ * adding maxWidth/maxHeight to BmImage_ReadSourceRgb() itself so that
+ * function's existing callers (RgbImage_LoadViaDatatype(), used by
+ * fs3estyle.c's theme icons) are unaffected -- same "two entry points
+ * sharing one internal helper" shape as BmImage_Load()/
+ * BmImage_LoadFitScreen().
+ */
+BOOL BmImage_ReadSourceRgbCapped(const char *srcPath,
+                                   UWORD maxWidth, UWORD maxHeight,
+                                   UBYTE **outBuf, ULONG *outWidth, ULONG *outHeight,
+                                   BmImageError *outError);
+
+/*
  * Read up to the first 16 bytes of path and identify its format from
  * magic bytes/signatures alone, independent of what datatypes happen to
  * be installed. Call this ONLY on a freshly downloaded source file that

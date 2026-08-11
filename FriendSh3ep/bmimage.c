@@ -292,10 +292,19 @@ BOOL BmImage_LoadFitScreen(BmImage *img, struct Screen *screen,
  * header comment above. */
 
 /* Opens filePath as a truecolor (non-remapped) picture.datatype object,
- * reads its native-size pixels into a freshly AllocVec'd RGB24 buffer, and
- * disposes the object again -- the source file itself is all that's kept
- * around (its path), no datatype object survives this call. */
-static BOOL bmimage_scale_read_source_rgb(BmImage *img,
+ * reads its (possibly halved -- see maxW/maxH below) pixels into a freshly
+ * AllocVec'd RGB24 buffer, and disposes the object again -- the source
+ * file itself is all that's kept around (its path), no datatype object
+ * survives this call.
+ *
+ * maxW/maxH: 0,0 means "no limit" (the original behaviour, unchanged). A
+ * non-zero pair asks for the same single in-datatype PDTM_SCALE halving
+ * bmimage_open_file_to_screen() applies for BmImage_LoadFitScreen() -- see
+ * that function's doc comment for why it's one halving, not a fit-to-
+ * bounds loop. Applied here (before PDTM_READPIXELARRAY ever runs) rather
+ * than after, so an oversized source is never decoded at native
+ * resolution into memory just to be discarded moments later. */
+static BOOL bmimage_scale_read_source_rgb(BmImage *img, UWORD maxW, UWORD maxH,
                                            UBYTE **outBuf, ULONG *outW, ULONG *outH)
 {
     Object              *dto  = NULL;
@@ -324,6 +333,27 @@ static BOOL bmimage_scale_read_source_rgb(BmImage *img,
         img->error = BMIMAGE_ERR_NO_BITMAP;
         return FALSE;
     }
+
+    /* PDTM_SCALE MUST run before the object's first layout/pixel read
+     * (picture_dtc.doc) -- same rule and same single-halving choice as
+     * bmimage_open_file_to_screen()'s own maxW/maxH handling. Re-read
+     * PDTA_BitMapHeader afterward: the object reports the NEW (halved)
+     * size from here on, and that's what sizes the output buffer and the
+     * PDTM_READPIXELARRAY call below. */
+    if (maxW > 0 && maxH > 0 && (bmhd->bmh_Width > maxW || bmhd->bmh_Height > maxH)) {
+        DoMethod(dto, PDTM_SCALE,
+                 (ULONG)(bmhd->bmh_Width  / 2),
+                 (ULONG)(bmhd->bmh_Height / 2),
+                 (ULONG)0);
+        bmhd = NULL;
+        GetDTAttrs(dto, PDTA_BitMapHeader, (ULONG)&bmhd, TAG_DONE);
+        if (!bmhd || bmhd->bmh_Width < 1 || bmhd->bmh_Height < 1) {
+            DisposeDTObject(dto);
+            img->error = BMIMAGE_ERR_NO_BITMAP;
+            return FALSE;
+        }
+    }
+
     w = bmhd->bmh_Width;
     h = bmhd->bmh_Height;
     rowBytes = w * 3;
@@ -363,6 +393,14 @@ BOOL BmImage_ReadSourceRgb(const char *srcPath, UBYTE **outBuf,
                             ULONG *outWidth, ULONG *outHeight,
                             BmImageError *outError)
 {
+    return BmImage_ReadSourceRgbCapped(srcPath, 0, 0, outBuf, outWidth, outHeight, outError);
+}
+
+BOOL BmImage_ReadSourceRgbCapped(const char *srcPath,
+                                   UWORD maxWidth, UWORD maxHeight,
+                                   UBYTE **outBuf, ULONG *outWidth, ULONG *outHeight,
+                                   BmImageError *outError)
+{
     BmImage tmp;
     BOOL    ok;
 
@@ -381,7 +419,7 @@ BOOL BmImage_ReadSourceRgb(const char *srcPath, UBYTE **outBuf,
     memset(&tmp, 0, sizeof(tmp));
     tmp.filePath = (char *)srcPath; /* read-only use; not owned/freed here */
 
-    ok = bmimage_scale_read_source_rgb(&tmp, outBuf, outWidth, outHeight);
+    ok = bmimage_scale_read_source_rgb(&tmp, maxWidth, maxHeight, outBuf, outWidth, outHeight);
     if (!ok && outError) *outError = tmp.error;
     return ok;
 }
@@ -513,7 +551,7 @@ BOOL BmImage_GenerateScaledBmp(const char *srcPath, const char *cacheKeyPath,
     memset(&tmp, 0, sizeof(tmp));
     tmp.filePath = (char *)srcPath; /* read-only use; not owned/freed here */
 
-    if (!bmimage_scale_read_source_rgb(&tmp, &srcBuf, &origW, &origH)) {
+    if (!bmimage_scale_read_source_rgb(&tmp, 0, 0, &srcBuf, &origW, &origH)) {
         if (outError) *outError = tmp.error;
         return FALSE;
     }

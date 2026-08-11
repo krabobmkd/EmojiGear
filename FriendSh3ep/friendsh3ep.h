@@ -31,7 +31,7 @@
 #include "fs3esettings.h"
 #include "avatarimages.h"
 
-#define FRIENDSH3EP_VERSION "0.8"
+#define FRIENDSH3EP_VERSION "0.8b"
 
 /* Login two-phase OAuth state machine */
 typedef enum {

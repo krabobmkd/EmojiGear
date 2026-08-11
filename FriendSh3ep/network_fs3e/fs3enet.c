@@ -102,6 +102,20 @@ FS3ENetLoginStartReq *FS3ENetLoginStartReq_Alloc(const char *apiBaseUrl)
     return req;
 }
 
+FS3ENetSetCacheDirReq *FS3ENetSetCacheDirReq_Alloc(const char *cacheDir, ULONG maxCacheSizeMB)
+{
+    ULONG total = sizeof(FS3ENetSetCacheDirReq) + FS3ENet_PackLen(cacheDir);
+    FS3ENetSetCacheDirReq *req =
+        (FS3ENetSetCacheDirReq *)AllocVec(total, MEMF_ANY | MEMF_PUBLIC);
+    char *p;
+
+    if (!req) return NULL;
+    p = (char *)req + sizeof(*req);
+    FS3ENet_PackStr(&req->fs3escd_CacheDir, &p, cacheDir);
+    req->fs3escd_MaxCacheSizeMB = maxCacheSizeMB;
+    return req;
+}
+
 FS3ENetLoginFinishReq *FS3ENetLoginFinishReq_Alloc(const char *apiBaseUrl,
     const char *clientId, const char *clientSecret, const char *code)
 {
@@ -612,6 +626,14 @@ struct MsgPort *FS3ENet_Start(const char *cacheDir, ULONG maxCacheSizeMB)
         NP_Entry,     (ULONG)FS3ENet_ProcEntry,
         NP_Name,      (ULONG)FS3ENET_PROC_NAME,
         NP_StackSize, (ULONG)FS3ENET_STACK_SIZE,
+        /* Experimental: one notch below the GUI task's default priority
+         * (0), so a burst of ready network work never wins a tie against
+         * input/render on a real, slower CPU -- see the real-68060
+         * scroll-freeze investigation this followed. Exec is preemptive,
+         * so this only affects who gets the CPU when both are ready to
+         * run at the same instant; it doesn't bound how long any single
+         * synchronous call here (a blocking DOS/socket call) takes. */
+     //   NP_Priority,  (LONG)-1,
         TAG_DONE);
 
     if (!proc)
@@ -678,6 +700,42 @@ BOOL FS3ENet_FlushCache(struct MsgPort *requestPort, struct MsgPort *replyPort)
     GetMsg(replyPort);
 
     return (msg.fs3em_Result == FS3ENETR_OK);
+}
+
+BOOL FS3ENet_SetCacheDir(struct MsgPort *requestPort, struct MsgPort *replyPort,
+    const char *cacheDir, ULONG maxCacheSizeMB)
+{
+    FS3ENetMessage          msg;
+    FS3ENetSetCacheDirReq  *req;
+    BOOL                    ok;
+
+    if (!requestPort)
+        return FALSE;
+
+    req = FS3ENetSetCacheDirReq_Alloc(cacheDir, maxCacheSizeMB);
+    if (!req)
+        return FALSE;
+
+    memset(&msg, 0, sizeof(msg));
+    msg.fs3em_Msg.mn_ReplyPort = replyPort;
+    msg.fs3em_Msg.mn_Length    = sizeof(msg);
+    msg.fs3em_Type             = FS3ENETQ_SET_CACHE_DIR;
+    msg.fs3em_Data             = req;
+    msg.fs3em_DataLen          = sizeof(*req);
+
+    PutMsg(requestPort, (struct Message *)&msg);
+
+    WaitPort(replyPort);
+    GetMsg(replyPort);
+
+    /* On success the handler frees req itself and clears fs3em_Data; on
+     * error it leaves fs3em_Data pointing at req (same convention as every
+     * other handler's error path), so this FreeVec is only live then --
+     * FreeVec(NULL) is a safe no-op. */
+    ok = (msg.fs3em_Result == FS3ENETR_OK);
+    FreeVec(msg.fs3em_Data);
+
+    return ok;
 }
 
 /* Debug: peek how many requests are queued on requestPort without removing
@@ -3357,6 +3415,33 @@ static void FS3ENet_HandleFlushCache(FS3ENetMessage *fs3em)
     fs3em->fs3em_Result = FS3ECache_Flush() ? FS3ENETR_OK : FS3ENETR_NETWORK_ERROR;
 }
 
+/* FS3ENETQ_SET_CACHE_DIR — live-swap the disk cache directory/max size
+ * without restarting the network process. FS3ECache_Init() is already
+ * safe to call again (FreeVec's the old g_CacheDir, mkdir's the new one,
+ * re-clamps g_MaxCacheBytes, and enforces the limit against whatever's
+ * already there) -- see fs3enet_cache.c. Files already cached under the
+ * old directory are simply left behind, same as if the new path had been
+ * set before this launch. */
+static void FS3ENet_HandleSetCacheDir(FS3ENetMessage *fs3em)
+{
+    FS3ENetSetCacheDirReq *req = (FS3ENetSetCacheDirReq *)fs3em->fs3em_Data;
+
+    if (!req || fs3em->fs3em_DataLen < sizeof(*req)) {
+        fs3em->fs3em_Result = FS3ENETR_PARSE_ERROR;
+        return;
+    }
+
+    if (!FS3ECache_Init(req->fs3escd_CacheDir, req->fs3escd_MaxCacheSizeMB)) {
+        fs3em->fs3em_Result = FS3ENETR_NETWORK_ERROR;
+        return;
+    }
+
+    FreeVec(fs3em->fs3em_Data);
+    fs3em->fs3em_Data    = NULL;
+    fs3em->fs3em_DataLen = 0;
+    fs3em->fs3em_Result  = FS3ENETR_OK;
+}
+
 /* Handles one request. FS3ENETQ_TIMELINE and FS3ENETQ_POST_STATUS are
  * stubbed until Phase 2 completes the timeline/post flow.
  *
@@ -3383,6 +3468,10 @@ static BOOL FS3ENet_Dispatch(FS3ENetMessage *fs3em)
 
         case FS3ENETQ_FLUSH_CACHE:
             FS3ENet_HandleFlushCache(fs3em);
+            break;
+
+        case FS3ENETQ_SET_CACHE_DIR:
+            FS3ENet_HandleSetCacheDir(fs3em);
             break;
 
         case FS3ENETQ_TIMELINE:

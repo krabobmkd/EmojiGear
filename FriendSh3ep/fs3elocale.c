@@ -223,6 +223,8 @@ static const char *defaultStrings[MSG_COUNT] = {
     "Paths",
     /* MSG_SETTINGSV_CACHE_PATH */
     "Cache directory",
+    /* MSG_SETTINGSV_CACHE_PATH_APPLY */
+    "Apply",
     /* MSG_SETTINGSV_USERDATA_PATH */
     "User data directory",
     /* MSG_SETTINGSV_CACHE_GROUP */
@@ -323,7 +325,7 @@ static const char *defaultStrings[MSG_COUNT] = {
     " FIRST USE WARNING!\n"
     "\n"
     " This app continuously writes tens of megabytes to a cache.\n"
-    " This is dangerous if your disk configuration is not 100% reliable.\n"
+    " This is dangerous if your disk configuration is not 100%% reliable.\n"
     "\n"
     " If your Amiga has frequent disk validation (slow boot) or\n"
     " recurrent HD troubles, you're strongly advised to contact\n"
@@ -334,9 +336,10 @@ static const char *defaultStrings[MSG_COUNT] = {
     " RAM:T/cache will let your disk safe and speed up FriendSh3ep.\n\n"
     " You may delete the whole .cache dir at any moment.\n"
     "\n"
+    " Configure the cache directory in:\n"
     "\n",
     /* MSG_FIRSTUSE_GADGETS */
-    "Go|Quit",
+    "PROGDIR:.cache|Ram:T/FriendSh3ep|Quit",
 };
 
 /* LocaleBase declared in friendsh3ep.c */

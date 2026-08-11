@@ -168,6 +168,9 @@ enum {
     MSG_SETTINGSV_TITLE,
     MSG_SETTINGSV_PATHS_GROUP,
     MSG_SETTINGSV_CACHE_PATH,
+    MSG_SETTINGSV_CACHE_PATH_APPLY,     /* "Apply" button next to the cache path gadget --
+                                          * applies a typed-in-place path without opening
+                                          * the requester (see GID_SETTINGSV_CACHE_PATH_APPLY) */
     MSG_SETTINGSV_USERDATA_PATH,
     MSG_SETTINGSV_CACHE_GROUP,
     MSG_SETTINGSV_MAX_CACHE_SIZE,
@@ -231,11 +234,17 @@ enum {
     MSG_NETWORKV_IDLE,           /* default status-bar text, no activity yet */
 
     /* First-use disk-cache-usage warning (friendsh3ep.c, main()) -- shown
-     * once via EasyRequestArgs right after the main window first opens,
-     * gated on app->settings.warningDone (fs3esettings.h). */
+     * once via EasyRequestArgs before the network process starts and before
+     * the main window opens (NULL window, screen-wide requester), gated on
+     * app->settings.warningDone (fs3esettings.h). The 3 gadgets double as
+     * the cache directory picker: the two non-Quit choices are directory
+     * paths, written straight into app->settings.cachePath before
+     * FS3ENet_Start() ever runs. */
     MSG_FIRSTUSE_TITLE,          /* window title */
     MSG_FIRSTUSE_TEXT,           /* body text, \n-separated lines */
-    MSG_FIRSTUSE_GADGETS,        /* es_GadgetFormat: "Go|Quit" -- Go=1, Quit(rightmost)=0 */
+    MSG_FIRSTUSE_GADGETS,        /* es_GadgetFormat: "PROGDIR:.cache|Ram:T/FriendSh3ep|Quit" --
+                                   * left-to-right numbering is 1,...,N-1,0: PROGDIR:.cache=1,
+                                   * Ram:T/FriendSh3ep=2, Quit(rightmost)=0 */
 
     /* Must be last */
     MSG_COUNT

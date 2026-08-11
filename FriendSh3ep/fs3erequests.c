@@ -1141,19 +1141,6 @@ static void FS3EApp_TriggerMediaFetchesForStatus(const FS3ENetStatus *st)
     }
 }
 
-/* A thumbnail/card image just became available in the cache via the raw
- * (no-minify) path above -- same one-shot "redraw whatever tile drew a
- * placeholder for this" notification FS3EApp_HandleThumbReply() sends for
- * the normal minified-thumbnail-process path. */
-static void FS3EApp_InvalidateTimelineImages(void)
-{
-    if (app->tootTimeline) {
-        SetAttrs(app->tootTimeline, TTIMELINE_InvalidateImages, TRUE, TAG_DONE);
-        if (CurrentMainWindow)
-            RefreshGList((struct Gadget *)app->tootTimeline, CurrentMainWindow, NULL, 1);
-    }
-}
-
 /* Mirrors fs3enet.c's own private MAX_STATUSES_TIMELINE cap on a single
  * FS3ENETQ_ACCOUNTS_LIST page -- sized so the id array built below to fire
  * a follow-up FS3ENETQ_RELATIONSHIPS batch can never need to truncate
@@ -1891,78 +1878,51 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                  * regardless of whether the original itself was kept.
                  *
                  * Media/card thumbnails additionally honor minifyThumbnails
-                 * (fs3esettings.h): when FALSE, TriggerMediaFetchesForStatus/
-                 * RefreshVisibleToots already forced fs3enf_KeepOriginal so
-                 * fs3enf_LocalPath is the untouched original sitting straight
-                 * in the persistent cache, hash-named exactly like any other
-                 * cached original -- skip the thumbnail process entirely and
-                 * decode it in place from THAT path (AvatarImages_*ThumbReady's
-                 * rawOriginal=TRUE), no rename/copy. Renaming it to the
-                 * "<cachePath>.<W>x<H>.bmp" minified-style name would orphan
-                 * it from FS3ECache_Lookup's hash-name lookup, forcing a
-                 * re-download the next time anything (a timeline refresh, or
-                 * fs3emediaview.c's "click to view full size", which re-fetches
-                 * this exact URL/subdir on-demand) asks for it -- that
-                 * ".<W>x<H>.bmp" naming stays reserved for genuinely minified
-                 * output. Avatars/user icons always minify -- useful there
-                 * since one user's icon is reused across many toots, unlike
-                 * a thumbnail. */
+                 * (fs3esettings.h) -- but ALWAYS via the thumbnail process
+                 * either way now: TRUE asks it to box-fit-scale to a BMP on
+                 * disk (fs3etmr_RawDecode FALSE), FALSE asks it to decode at
+                 * (capped) native size and hand the RGB24 pixels straight
+                 * back in the reply instead (fs3etmr_RawDecode TRUE) -- see
+                 * fs3ethumb.h's FS3EThumbMakeReq.fs3etmr_RawDecode and
+                 * FS3EThumbMakeReply.fs3etmy_RawPixels doc comments. Nothing
+                 * here decodes/reads a picture.datatype object on the GUI
+                 * task any more; FS3EApp_HandleThumbReply() dispatches
+                 * whichever reply shape comes back. Avatars/user icons
+                 * always minify (never RawDecode) -- useful there since one
+                 * user's icon is reused across many toots, unlike a
+                 * thumbnail. */
                 if (isMedia) {
-                    if (!AvatarImages_IsMediaThumbRequested(app->avatarImages, reply->fs3enf_Key)) {
-                        if (!app->settings.minifyThumbnails) {
-                            AvatarImages_MarkMediaThumbRequested(app->avatarImages, reply->fs3enf_Key);
-                            if (AvatarImages_MediaThumbReady(app->avatarImages, reply->fs3enf_Key,
-                                    reply->fs3enf_LocalPath, TRUE))
-                            {
-                                FS3EApp_InvalidateTimelineImages();
-                            } else {
-                                UBYTE fmt = (UBYTE)BmImage_SniffFormat(reply->fs3enf_LocalPath);
-                               /* bdbprintf("FS3EApp: raw media thumbnail decode failed key=%s path=%s fmt=%ld\n",
-                                          reply->fs3enf_Key, reply->fs3enf_LocalPath, (long)fmt);*/
-                                AvatarImages_MarkMediaFailed(app->avatarImages, reply->fs3enf_Key, fmt);
-                            }
-                        } else if (app->thumbRequestPort && app->thumbReplyPort &&
-                                   FS3EThumb_Request(app->thumbRequestPort, app->thumbReplyPort,
-                                       reply->fs3enf_LocalPath, reply->fs3enf_Key, FS3ETHUMB_KIND_MEDIA,
-                                       reply->fs3enf_CachePath, reply->fs3enf_IsTemp,
-                                       FS3ETHUMB_MEDIA_WIDTH, FS3ETHUMB_MEDIA_HEIGHT_CAP))
-                        {
-                            AvatarImages_MarkMediaThumbRequested(app->avatarImages, reply->fs3enf_Key);
-                        }
+                    if (!AvatarImages_IsMediaThumbRequested(app->avatarImages, reply->fs3enf_Key) &&
+                        app->thumbRequestPort && app->thumbReplyPort &&
+                        FS3EThumb_Request(app->thumbRequestPort, app->thumbReplyPort,
+                            reply->fs3enf_LocalPath, reply->fs3enf_Key, FS3ETHUMB_KIND_MEDIA,
+                            reply->fs3enf_CachePath, reply->fs3enf_IsTemp,
+                            FS3ETHUMB_MEDIA_WIDTH, FS3ETHUMB_MEDIA_HEIGHT_CAP,
+                            !app->settings.minifyThumbnails))
+                    {
+                        AvatarImages_MarkMediaThumbRequested(app->avatarImages, reply->fs3enf_Key);
                     }
                 } else if (isCard) {
                     /* Reuses MEDIA's box-fit size cap -- a card image is
                      * the same kind of arbitrary-aspect photo a media
                      * attachment is, just tracked in its own pool (see
                      * FS3ETHUMB_KIND_CARD's doc comment). */
-                    if (!AvatarImages_IsCardThumbRequested(app->avatarImages, reply->fs3enf_Key)) {
-                        if (!app->settings.minifyThumbnails) {
-                            AvatarImages_MarkCardThumbRequested(app->avatarImages, reply->fs3enf_Key);
-                            if (AvatarImages_CardThumbReady(app->avatarImages, reply->fs3enf_Key,
-                                    reply->fs3enf_LocalPath, TRUE))
-                            {
-                                FS3EApp_InvalidateTimelineImages();
-                            } else {
-                                UBYTE fmt = (UBYTE)BmImage_SniffFormat(reply->fs3enf_LocalPath);
-                                /*bdbprintf("FS3EApp: raw card thumbnail decode failed key=%s path=%s fmt=%ld\n",
-                                          reply->fs3enf_Key, reply->fs3enf_LocalPath, (long)fmt);*/
-                                AvatarImages_MarkCardFailed(app->avatarImages, reply->fs3enf_Key, fmt);
-                            }
-                        } else if (app->thumbRequestPort && app->thumbReplyPort &&
-                                   FS3EThumb_Request(app->thumbRequestPort, app->thumbReplyPort,
-                                       reply->fs3enf_LocalPath, reply->fs3enf_Key, FS3ETHUMB_KIND_CARD,
-                                       reply->fs3enf_CachePath, reply->fs3enf_IsTemp,
-                                       FS3ETHUMB_MEDIA_WIDTH, FS3ETHUMB_MEDIA_HEIGHT_CAP))
-                        {
-                            AvatarImages_MarkCardThumbRequested(app->avatarImages, reply->fs3enf_Key);
-                        }
+                    if (!AvatarImages_IsCardThumbRequested(app->avatarImages, reply->fs3enf_Key) &&
+                        app->thumbRequestPort && app->thumbReplyPort &&
+                        FS3EThumb_Request(app->thumbRequestPort, app->thumbReplyPort,
+                            reply->fs3enf_LocalPath, reply->fs3enf_Key, FS3ETHUMB_KIND_CARD,
+                            reply->fs3enf_CachePath, reply->fs3enf_IsTemp,
+                            FS3ETHUMB_MEDIA_WIDTH, FS3ETHUMB_MEDIA_HEIGHT_CAP,
+                            !app->settings.minifyThumbnails))
+                    {
+                        AvatarImages_MarkCardThumbRequested(app->avatarImages, reply->fs3enf_Key);
                     }
                 } else if (app->thumbRequestPort && app->thumbReplyPort) {
                     if (!AvatarImages_IsThumbRequested(app->avatarImages, reply->fs3enf_Key) &&
                         FS3EThumb_Request(app->thumbRequestPort, app->thumbReplyPort,
                             reply->fs3enf_LocalPath, reply->fs3enf_Key, FS3ETHUMB_KIND_AVATAR,
                             reply->fs3enf_CachePath, reply->fs3enf_IsTemp,
-                            FS3ETHUMB_AVATAR_SIZE, FS3ETHUMB_AVATAR_SIZE))
+                            FS3ETHUMB_AVATAR_SIZE, FS3ETHUMB_AVATAR_SIZE, FALSE))
                         AvatarImages_MarkThumbRequested(app->avatarImages, reply->fs3enf_Key);
                 }
             }
@@ -2471,18 +2431,54 @@ void FS3EApp_HandleThumbReply(FS3EThumbMessage *msg)
      * network_fs3e/fs3enet.c's FS3ENet_SendProgress). */
     if (!reply) return;
 
+    /* A raw-decode reply (fs3etmy_RawPixels non-NULL) has an empty
+     * fs3etmy_ThumbPath -- nothing was written to disk (see
+     * fs3ethumb.h's doc comments) -- so the "is there something to use"
+     * check has to accept either shape, not just a non-empty path. */
     if (msg->fs3etm_Result == FS3ETHUMBR_OK && app->avatarImages &&
-        reply->fs3etmy_Key[0] && reply->fs3etmy_ThumbPath[0])
+        reply->fs3etmy_Key[0] &&
+        (reply->fs3etmy_ThumbPath[0] || reply->fs3etmy_RawPixels))
     {
+        /* Pixels already read (either a true fs3etmr_RawDecode reply, or
+         * the thumbnail process reading its own minified BMP back before
+         * replying -- see fs3etmy_RawPixels's doc comment in fs3ethumb.h,
+         * either way this applies regardless of Kind now): adopt the
+         * buffer directly via the *ThumbReadyRgb() calls, no GUI-side
+         * file I/O or datatype call at all. NULL the field out
+         * immediately after adopting -- ownership transfers to
+         * RgbImage_AdoptBuffer(), and FS3EThumb_FreeMessage()'s safety-
+         * net free (see its doc comment) must not double-free it.
+         * Otherwise (that read-back failed -- see fs3etmy_RawPixels's
+         * "best-effort" doc comment) fall back to the *ThumbReady() path
+         * calls that load fs3etmy_ThumbPath themselves, same as before
+         * this all existed. */
         if (reply->fs3etmy_Kind == FS3ETHUMB_KIND_MEDIA) {
-            AvatarImages_MediaThumbReady(app->avatarImages, reply->fs3etmy_Key,
-                                          reply->fs3etmy_ThumbPath, FALSE);
+            if (reply->fs3etmy_RawPixels) {
+                AvatarImages_MediaThumbReadyRgb(app->avatarImages, reply->fs3etmy_Key,
+                    reply->fs3etmy_RawPixels, reply->fs3etmy_RawWidth, reply->fs3etmy_RawHeight);
+                reply->fs3etmy_RawPixels = NULL;
+            } else {
+                AvatarImages_MediaThumbReady(app->avatarImages, reply->fs3etmy_Key,
+                                              reply->fs3etmy_ThumbPath);
+            }
         } else if (reply->fs3etmy_Kind == FS3ETHUMB_KIND_CARD) {
-            AvatarImages_CardThumbReady(app->avatarImages, reply->fs3etmy_Key,
-                                         reply->fs3etmy_ThumbPath, FALSE);
+            if (reply->fs3etmy_RawPixels) {
+                AvatarImages_CardThumbReadyRgb(app->avatarImages, reply->fs3etmy_Key,
+                    reply->fs3etmy_RawPixels, reply->fs3etmy_RawWidth, reply->fs3etmy_RawHeight);
+                reply->fs3etmy_RawPixels = NULL;
+            } else {
+                AvatarImages_CardThumbReady(app->avatarImages, reply->fs3etmy_Key,
+                                             reply->fs3etmy_ThumbPath);
+            }
         } else {
-            AvatarImages_ThumbReady(app->avatarImages, reply->fs3etmy_Key,
-                                     reply->fs3etmy_ThumbPath);
+            if (reply->fs3etmy_RawPixels) {
+                AvatarImages_ThumbReadyRgb(app->avatarImages, reply->fs3etmy_Key,
+                    reply->fs3etmy_RawPixels, reply->fs3etmy_RawWidth, reply->fs3etmy_RawHeight);
+                reply->fs3etmy_RawPixels = NULL;
+            } else {
+                AvatarImages_ThumbReady(app->avatarImages, reply->fs3etmy_Key,
+                                         reply->fs3etmy_ThumbPath);
+            }
             if (app->accountAcct && strcmp(reply->fs3etmy_Key, app->accountAcct) == 0)
                 FS3EApp_UpdateUserIcon();
         }

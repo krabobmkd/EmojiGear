@@ -79,6 +79,16 @@ enum FS3EThumbKind
 #define FS3ETHUMB_MEDIA_WIDTH      200
 #define FS3ETHUMB_MEDIA_HEIGHT_CAP 600
 
+/* Raw-decode (fs3etmr_RawDecode TRUE, see below) size cap: comfortably
+ * above FS3ETHUMB_MEDIA_WIDTH/HEIGHT_CAP so the "don't minify" setting
+ * still visibly wins on quality, well below an arbitrary camera-original
+ * resolution -- see BmImage_ReadSourceRgbCapped's doc comment for the
+ * single-halving rule this enforces. Shared by MEDIA and CARD raw
+ * decodes, same as they already share FS3ETHUMB_MEDIA_WIDTH/HEIGHT_CAP
+ * for the minified path. */
+#define FS3ETHUMB_MEDIA_RAW_MAX_W  1024
+#define FS3ETHUMB_MEDIA_RAW_MAX_H  1024
+
 /*
  * Header-plus-payload message, same shape network_fs3e/fs3enet.h's
  * FS3ENetMessage already uses: fs3etm_Data is a separate AllocVec'd block
@@ -113,6 +123,14 @@ typedef struct FS3EThumbMakeReq
      * than the persistent cache (see FS3ENetFetchImageReply.fs3enf_IsTemp
      * and the "Keep big user icons/thumbnails" settings). */
     BOOL  fs3etmr_DeleteSrcAfter;
+    /* TRUE = decode SrcPath at native size (capped -- see
+     * FS3ETHUMB_MEDIA_RAW_MAX_W/H -- via BmImage_ReadSourceRgbCapped) and
+     * hand the raw RGB24 pixels back in the reply instead of writing a
+     * scaled BMP to disk; fs3etmr_TargetW/H are ignored in this mode. Set
+     * when app->settings.minifyThumbnails is FALSE for MEDIA/CARD kinds
+     * -- see FS3EThumbMakeReply.fs3etmy_RawPixels for the reply side.
+     * Avatars always minify; never set for FS3ETHUMB_KIND_AVATAR. */
+    BOOL  fs3etmr_RawDecode;
 
     char *fs3etmr_SrcPath;      /* packed string -- source image to decode/scale */
     char *fs3etmr_Key;          /* packed string; echoed back, e.g. @acct or a media URL */
@@ -147,8 +165,43 @@ typedef struct FS3EThumbMakeReply
 
     /* Deterministic ("<CacheKeyPath or SrcPath>.<TargetW>x<TargetH>.bmp")
      * so the GUI could derive it itself, but it's handed back anyway to
-     * keep the reply self-contained. Empty on FS3ETHUMBR_ERROR. */
+     * keep the reply self-contained. Empty on FS3ETHUMBR_ERROR, and
+     * always empty on a fs3etmr_RawDecode reply (see fs3etmy_RawPixels
+     * below) -- nothing was ever written to disk in that mode. */
     char *fs3etmy_ThumbPath; /* packed string */
+
+    /* Best-effort AllocVec'd, top-down RGB24 (3 bytes/pixel, tightly
+     * packed rows) buffer at fs3etmy_RawWidth x fs3etmy_RawHeight, so the
+     * GUI task never has to touch a file for this reply at all -- set
+     * whenever the thumbnail process could hand back ready pixels
+     * regardless of Kind or fs3etmr_RawDecode:
+     *   - fs3etmr_RawDecode TRUE (MEDIA/CARD, minifyThumbnails FALSE):
+     *     the decoded-at-native-size (capped) pixels themselves -- see
+     *     FS3EThumb_HandleMakeRaw. fs3etmy_ThumbPath is empty in this
+     *     case, nothing was ever written to disk.
+     *   - fs3etmr_RawDecode FALSE (any Kind, the minified path): the
+     *     thumbnail process reads its own just-(re)confirmed BMP output
+     *     back with RgbImage_LoadBmp() before replying -- see
+     *     FS3EThumb_HandleMake. fs3etmy_ThumbPath is still filled in this
+     *     case too, as a fallback the GUI can load itself the old way if
+     *     this field is ever NULL (that read failing right after this
+     *     process just wrote/confirmed the exact same file would be very
+     *     unusual, but isn't treated as a hard error).
+     * NOT part of this struct's own packed-string allocation (it can be
+     * large, and isn't a string) -- a separate AllocVec block whose
+     * pointer just happens to travel inside this reply. Safe to hand
+     * across the task boundary as a bare pointer because this process
+     * shares the main executable's flat address space (see fs3ethumb.h's
+     * file header comment) -- no copy needed, unlike everything else in
+     * this struct. NULL on error, or on a minified success where the
+     * read-back above failed. Ownership: whoever reads it
+     * (FS3EApp_HandleThumbReply, via RgbImage_AdoptBuffer -- rgbimage.h)
+     * takes it over and must NULL this field out immediately after, so
+     * FS3EThumb_FreeMessage() still frees it as a safety net for a reply
+     * that's dropped without ever being adopted. */
+    UBYTE *fs3etmy_RawPixels;
+    UWORD  fs3etmy_RawWidth;
+    UWORD  fs3etmy_RawHeight;
 } FS3EThumbMakeReply;
 
 /* Start the thumbnail process. Returns the request MsgPort, or NULL on failure. */
@@ -171,7 +224,11 @@ void FS3EThumb_Stop(struct MsgPort *requestPort, struct MsgPort *replyPort);
  * pool that is (see enum FS3EThumbKind). cacheKeyPath/deleteSrcAfter are
  * forwarded straight to fs3etmr_CacheKeyPath/fs3etmr_DeleteSrcAfter (see
  * their doc comments above) -- pass NULL/FALSE for the common case where
- * srcPath is itself the persistent, sibling-naming-worthy location. No
+ * srcPath is itself the persistent, sibling-naming-worthy location.
+ * rawDecode is forwarded straight to fs3etmr_RawDecode -- pass TRUE only
+ * for MEDIA/CARD when app->settings.minifyThumbnails is FALSE; targetW/
+ * targetH are ignored by the thumbnail process in that case (pass 0,0
+ * for clarity), the FS3ETHUMB_MEDIA_RAW_MAX_W/H cap applies instead. No
  * length limit on srcPath/key/cacheKeyPath -- each is packed to its exact
  * size (see FS3EThumbMakeReq). Returns FALSE (nothing queued, no
  * allocation left behind) if requestPort/srcPath are missing or an
@@ -180,15 +237,18 @@ void FS3EThumb_Stop(struct MsgPort *requestPort, struct MsgPort *replyPort);
 BOOL FS3EThumb_Request(struct MsgPort *requestPort, struct MsgPort *replyPort,
                         const char *srcPath, const char *key, ULONG kind,
                         const char *cacheKeyPath, BOOL deleteSrcAfter,
-                        UWORD targetW, UWORD targetH);
+                        UWORD targetW, UWORD targetH, BOOL rawDecode);
 
 /*
  * Frees a drained FS3EThumbMessage completely, including fs3etm_Data (an
  * FS3EThumbMakeReply by the time the GUI sees it -- a separate AllocVec'd
  * block now that fs3etm_Data replaced the old fixed-size fields, unlike
- * before when a bare FreeVec(msg) was enough). Callers that used to
- * FreeVec() a drained message directly must call this instead. msg may be
- * NULL.
+ * before when a bare FreeVec(msg) was enough) AND, if still non-NULL,
+ * that reply's fs3etmy_RawPixels -- a safety net for a raw-decode reply
+ * that never got adopted (see fs3etmy_RawPixels's doc comment); the
+ * normal path already NULLed it out by the time this runs, so this is a
+ * no-op then. Callers that used to FreeVec() a drained message directly
+ * must call this instead. msg may be NULL.
  */
 void FS3EThumb_FreeMessage(FS3EThumbMessage *msg);
 

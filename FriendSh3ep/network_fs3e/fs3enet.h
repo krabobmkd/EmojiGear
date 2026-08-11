@@ -29,6 +29,8 @@ enum FS3ENetRequestType
     FS3ENETQ_POST_STATUS,    /* publish a new status (toot)          (Phase 2) */
     FS3ENETQ_FETCH_IMAGE,    /* fetch/return cached avatar or media   (Phase 2) */
     FS3ENETQ_FLUSH_CACHE,    /* delete every file in the disk cache               */
+    FS3ENETQ_SET_CACHE_DIR,  /* live-swap the disk cache directory + max size, no restart --
+                               * see FS3ENet_SetCacheDir/FS3ENetSetCacheDirReq below */
     FS3ENETQ_VERIFY_ACCOUNT, /* re-verify an existing access token, backfill account fields */
     FS3ENETQ_FAVORITE,       /* toggle favourite/unfavourite on a status */
     FS3ENETQ_REBLOG,         /* toggle reblog/unreblog (boost) on a status */
@@ -371,6 +373,33 @@ void FS3ENet_Stop(struct MsgPort *requestPort, struct MsgPort *replyPort);
  * Returns TRUE on FS3ENETR_OK, FALSE otherwise (including requestPort==NULL).
  */
 BOOL FS3ENet_FlushCache(struct MsgPort *requestPort, struct MsgPort *replyPort);
+
+/*
+ * FS3ENETQ_SET_CACHE_DIR — live-updates the disk cache directory and max
+ * size of an already-running network process (e.g. SettingsView's cache
+ * path GetFile gadget, which used to silently do nothing until next
+ * launch -- FS3ENet_Start()'s cacheDir/maxCacheSizeMB were only ever read
+ * once, at process startup). Re-runs FS3ECache_Init() with the new values;
+ * already-cached files under the old path are left behind, not moved.
+ */
+typedef struct FS3ENetSetCacheDirReq
+{
+    char  *fs3escd_CacheDir;
+    ULONG  fs3escd_MaxCacheSizeMB;
+} FS3ENetSetCacheDirReq;
+
+/* Allocates a flat request block for SET_CACHE_DIR. FreeVec() when done. */
+FS3ENetSetCacheDirReq *FS3ENetSetCacheDirReq_Alloc(const char *cacheDir, ULONG maxCacheSizeMB);
+
+/*
+ * Ask the network process to switch its disk cache to cacheDir/maxCacheSizeMB
+ * and wait for the reply. requestPort/replyPort as FS3ENet_Stop().
+ * Returns TRUE on FS3ENETR_OK (new dir created and now in use), FALSE
+ * otherwise (including requestPort==NULL or the new dir being uncreatable,
+ * in which case the process keeps using whatever cache dir it had before).
+ */
+BOOL FS3ENet_SetCacheDir(struct MsgPort *requestPort, struct MsgPort *replyPort,
+    const char *cacheDir, ULONG maxCacheSizeMB);
 
 /* Which direction a FS3ENETQ_TIMELINE request pages in -- echoed back into
  * FS3ENetTimelineReply so the GUI knows how to splice the results into its

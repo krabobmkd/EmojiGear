@@ -53,6 +53,20 @@ BOOL RgbImage_LoadBmp(RgbImage *img, const char *path);
  */
 BOOL RgbImage_LoadViaDatatype(RgbImage *img, const char *path);
 
+/*
+ * Takes ownership of an already-decoded AllocVec'd RGB24 buffer (top-down,
+ * 3 bytes/pixel, tightly packed rows -- same shape RgbImage_LoadBmp/
+ * LoadViaDatatype leave img in) instead of decoding one itself -- the
+ * fs3ethumb.h thumbnail process's raw-decode reply (FS3EThumbMakeReply.
+ * fs3etmy_RawPixels) hands back exactly this shape, since that process
+ * shares this executable's flat address space and can just transfer the
+ * pointer rather than round-tripping through a file. Frees any previously
+ * loaded buffer first, same lifetime contract as RgbImage_LoadBmp/
+ * LoadViaDatatype. Caller must not touch pixels again after this call --
+ * img owns it now.
+ */
+void RgbImage_AdoptBuffer(RgbImage *img, UBYTE *pixels, UWORD width, UWORD height);
+
 /* Frees img->pixels (if any) and zeroes the struct. */
 void RgbImage_Free(RgbImage *img);
 
