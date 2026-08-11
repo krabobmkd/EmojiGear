@@ -714,6 +714,9 @@ typedef struct FS3ENetPostStatusReq {
     char *fs3ep_AccessToken;
     char *fs3ep_Content;     /* UTF-8 post body */
     char *fs3ep_Visibility;  /* "public", "unlisted", "private", "direct" */
+    ULONG fs3ep_Sensitive;   /* TRUE/FALSE -- Mastodon's `sensitive` flag, applies to
+                               * the whole status incl. every attachment; see
+                               * FS3ETootView's sensitiveCheck in fs3etootview.h */
     char *fs3ep_Spoiler;     /* CW text; "" = no content warning */
     char *fs3ep_InReplyToId; /* status being replied to; "" = standalone toot */
     char *fs3ep_QuoteApprovalPolicy; /* "public", "followers", "nobody" */
@@ -729,7 +732,7 @@ typedef struct FS3ENetPostStatusReq {
 
 FS3ENetPostStatusReq *FS3ENetPostStatusReq_Alloc(
     const char *apiBaseUrl, const char *accessToken,
-    const char *content, const char *visibility, const char *spoiler,
+    const char *content, const char *visibility, BOOL sensitive, const char *spoiler,
     const char *inReplyToId, const char *quoteApprovalPolicy,
     const char *quotedStatusId,
     const char *const *mediaIds, ULONG mediaCount);

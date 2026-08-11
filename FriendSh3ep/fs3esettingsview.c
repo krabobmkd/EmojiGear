@@ -99,7 +99,7 @@ static void updateDirPath(Object *gf, char **dest)
     if (strPtr) {
         char *ddest = *dest;
         *dest = SettingsStrDup((const char *)strPtr);
-        if(ddest) FreeVec(*ddest);
+        if(ddest) FreeVec(ddest);
     }
 }
 
@@ -770,20 +770,25 @@ BOOL FS3ESettingsView_HandleInput(FS3ESettingsView *sv)
                 ULONG gadId = result & WMHI_GADGETMASK;
 
                 if (gadId == GID_SETTINGSV_CACHE_PATH) {
+
                     if (gfRequestDir(sv->cachePathGF, sv->window)) {
-                        updateDirPath(sv->cachePathGF, &app->settings.cachePath);
-                        applyCachePathLive();
+                            updateDirPath(sv->cachePathGF, &app->settings.cachePath);
+                         applyCachePathLive();
                     }
 
                 } else if (gadId == GID_SETTINGSV_CACHE_PATH_APPLY) {
+
                     /* No requester here -- read back whatever the user typed
                      * directly into cachePathGF's text entry. */
                     updateDirPath(sv->cachePathGF, &app->settings.cachePath);
                     applyCachePathLive();
 
                 } else if (gadId == GID_SETTINGSV_USERDATA_PATH) {
+
                     if (gfRequestDir(sv->userDataPathGF, sv->window))
+                    {
                         updateDirPath(sv->userDataPathGF, &app->settings.userDataPath);
+                    }
 
                 } else if (gadId == GID_SETTINGSV_MAX_CACHE_SIZE) {
                     ULONG val = 0;

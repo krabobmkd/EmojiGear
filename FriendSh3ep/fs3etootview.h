@@ -13,9 +13,12 @@
  *     is no "subject" concept in Mastodon toots (see FS3ENetPostStatusReq,
  *     which only ever gets an empty spoiler/CW string from this window).
  *   - main body UniTextEditor (multi-line)
+ *   - two "Attach Media" rows (attachMediaGF/attachMedia2GF), between
+ *     bodyEditor and bottomBar -- most servers accept more than one
+ *     attachment per toot.
  *   - bottom bar: visibility chooser, quote-policy chooser, char-count
- *     label, 2 emoji UniButtons (emojibox access), "Toot" button
- *     bottom-right.
+ *     label, emoji UniButton (emojibox access), "Sensitive content"
+ *     checkbox, "Toot" button bottom-right.
  *   - visibilityMeaning: read-only, no-bevel UniButton below the bottom
  *     bar, one line explaining what the currently selected visibility
  *     choice means -- see FS3ETootView_UpdateVisibilityMeaning.
@@ -139,6 +142,20 @@ typedef struct FS3ETootView {
     Object *attachMediaGF;
     Object *attachMediaClearBtn;
 
+    /* Second attach-media row, identical [getfile][X] pattern, right below
+     * the first -- most servers accept more than one attachment per toot.
+     * Same "read directly at send time, no separate copy kept here" note
+     * as attachMediaGF above applies here too. */
+    Object *attachMedia2GF;
+    Object *attachMedia2ClearBtn;
+
+    /* "Sensitive content" checkbox, bottomBar, right before tootBtn --
+     * Mastodon's `sensitive` flag applies to the whole status (and every
+     * attachment in it), not per-attachment, hence one checkbox here
+     * rather than one per attach-media row. Read directly via GA_Selected
+     * at send time, same as attachMediaGF -- no separate copy kept. */
+    Object *sensitiveCheck;
+
     Object *emojiBtn;
 
     Object *tootBtn;
@@ -216,6 +233,11 @@ LONG FS3ETootView_GetVisibility(FS3ETootView *tv);
 /* 0=public (Everybody), 1=followers (Followers only), 2=nobody (Me only) */
 LONG FS3ETootView_GetQuotePolicy(FS3ETootView *tv);
 
+/* TRUE if the "Sensitive content" checkbox is ticked -- maps straight to
+ * Mastodon's status-level `sensitive` field, see sensitiveCheck's comment
+ * above. */
+BOOL FS3ETootView_GetSensitive(FS3ETootView *tv);
+
 /* FS3ETootView_CheckAttachment()'s result -- see its doc comment. */
 typedef enum FS3ETootAttachStatus {
     FS3ETOOT_ATTACH_NONE = 0, /* attachMediaGF is empty -- not an error, just nothing to upload */
@@ -239,6 +261,11 @@ typedef enum FS3ETootAttachStatus {
  * Called by GID_TOOT_SEND_BUTTON (friendsh3ep.c) before deciding whether to
  * fire FS3ENETQ_UPLOAD_MEDIA first or submit the toot directly. */
 FS3ETootAttachStatus FS3ETootView_CheckAttachment(FS3ETootView *tv,
+    char *outPath, ULONG outPathSize, const char **outMimeType);
+
+/* Same as FS3ETootView_CheckAttachment, but for the second attach-media row
+ * (attachMedia2GF) -- see that field's comment in this header. */
+FS3ETootAttachStatus FS3ETootView_CheckAttachment2(FS3ETootView *tv,
     char *outPath, ULONG outPathSize, const char **outMimeType);
 
 #endif /* FS3ETOOTVIEW_H */

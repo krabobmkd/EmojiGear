@@ -49,6 +49,8 @@ static const char *defaultStrings[MSG_COUNT] = {
     "Messaging %s",
     /* MSG_TOOT_ATTACH_MEDIA */
     "Attach Media",
+    /* MSG_TOOT_SENSITIVE */
+    "Sensitive content",
     /* MSG_TOOT_VISIBILITY_PUBLIC */
     "Public",
     /* MSG_TOOT_VISIBILITY_UNLISTED -- API value "unlisted", shown with the

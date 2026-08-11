@@ -262,7 +262,7 @@ static void prepDomain( struct gpDomain *d, struct GadgetInfo *gi)
 {
     d->MethodID        = GM_DOMAIN;
     d->gpd_GInfo       = gi;
-    d->gpd_RPort       = NULL;
+    d->gpd_RPort       = gi ? gi->gi_RastPort : NULL;
     d->gpd_Which       = GDOMAIN_MINIMUM;
     d->gpd_Domain.Left = 0;
     d->gpd_Domain.Top  = 0;

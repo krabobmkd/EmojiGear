@@ -481,6 +481,7 @@ BOOL FS3EMastodon_GetTimeline(const char *apiBaseUrl, const char *accessToken,
 
 BOOL FS3EMastodon_PostStatus(const char *apiBaseUrl, const char *accessToken,
                             const char *statusText, const char *visibility,
+                            BOOL sensitive,
                             const char *inReplyToId,
                             const char *quoteApprovalPolicy,
                             const char *quotedStatusId,
@@ -501,6 +502,7 @@ BOOL FS3EMastodon_PostStatus(const char *apiBaseUrl, const char *accessToken,
 
     cJSON_AddStringToObject(reqJson, "status", statusText);
     cJSON_AddStringToObject(reqJson, "visibility", visibility ? visibility : "public");
+    cJSON_AddBoolToObject(reqJson, "sensitive", sensitive);
     cJSON_AddStringToObject(reqJson, "quote_approval_policy",
                              quoteApprovalPolicy ? quoteApprovalPolicy : "public");
     if (inReplyToId && inReplyToId[0])

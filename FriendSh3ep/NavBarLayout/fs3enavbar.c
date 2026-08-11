@@ -72,7 +72,7 @@ static void getChildMinSize(NavBarLayoutData *inst,
         struct gpDomain dm;
         dm.MethodID        = GM_DOMAIN;
         dm.gpd_GInfo       = gi;
-        dm.gpd_RPort       = NULL;
+        dm.gpd_RPort       = gi ? gi->gi_RastPort : NULL;
         dm.gpd_Which       = GDOMAIN_MINIMUM;
         dm.gpd_Domain.Left = 0;
         dm.gpd_Domain.Top  = 0;

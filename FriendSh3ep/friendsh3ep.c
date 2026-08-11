@@ -506,20 +506,24 @@ static const char *QuotePolicyString(LONG idx)
 /* Builds and sends the actual PUT/POST status request for the toot
  * currently configured in app->tootView (composeKind/composePostId +
  * whatever the compose window's own gadgets currently hold) -- shared by
- * GID_TOOT_SEND_BUTTON below (newMediaId=NULL, the common no-attachment
- * path) and fs3erequests.c's FS3ENETQ_UPLOAD_MEDIA reply handler
- * (newMediaId = the just-uploaded attachment's id, once an upload
- * finishes -- see app->tootUploadPending in friendsh3ep.h). Takes
- * ownership of body: FreeVec()'d here, the same "caller must free
+ * GID_TOOT_SEND_BUTTON below (newMediaIds=NULL/newMediaCount=0, the common
+ * no-attachment path) and fs3erequests.c's FS3ENETQ_UPLOAD_MEDIA reply
+ * handler (newMediaIds/newMediaCount = whichever attachment(s) finished
+ * uploading -- see app->pendingTootMediaIds/tootUploadPending in
+ * friendsh3ep.h; up to 2, matching FS3ETootView's two attach-media rows).
+ * Takes ownership of body: FreeVec()'d here, the same "caller must free
  * FS3ETootView_GetUTF8Body()'s result" contract GID_TOOT_SEND_BUTTON
  * always had, just centralized now instead of duplicated at both call
  * sites (and a third one, this function itself, for the deferred-upload
- * path via pendingTootBody).
+ * path via pendingTootBody). sensitive maps straight to Mastodon's
+ * `sensitive` flag on the POST path only -- MODIFY doesn't send it, same
+ * as it already doesn't send visibility/spoiler (see below).
  *
  * Not static: fs3erequests.c's FS3ENETQ_UPLOAD_MEDIA reply handler calls
  * this directly too -- see the extern declaration there. */
 void FS3EApp_SubmitToot(const char *body, LONG visibility, LONG quotePolicy,
-                         const char *newMediaId)
+                         BOOL sensitive,
+                         const char *const *newMediaIds, ULONG newMediaCount)
 {
     if (!body || !body[0] || !app->accountAccessToken) {
         if (body) FreeVec((APTR)body);
@@ -531,20 +535,22 @@ void FS3EApp_SubmitToot(const char *body, LONG visibility, LONG quotePolicy,
     {
         /* Editing an existing toot -- PUT, not POST. Resends the media ids
          * captured when Modify was opened (composeMediaIds[]/composeMedia
-         * Count) so the edit doesn't strip attached media, PLUS newMediaId
-         * if this edit also picked a brand new attachment -- media_ids is
+         * Count) so the edit doesn't strip attached media, PLUS newMediaIds
+         * if this edit also picked brand new attachment(s) -- media_ids is
          * a full replace-list server-side (see FS3EMastodon_EditStatus),
          * so appending here is what makes it additive from the user's
          * point of view instead of dropping the old ones. No visibility/
-         * spoiler: Mastodon's edit endpoint doesn't accept either. */
+         * spoiler/sensitive: Mastodon's edit endpoint doesn't accept any
+         * of those. */
         const char *mediaIds[FS3ENET_MAX_MEDIA];
         ULONG mediaCount = 0, i;
         FS3ENetEditStatusReq *req;
 
         for (i = 0; i < app->tootView.composeMediaCount && mediaCount < FS3ENET_MAX_MEDIA; i++)
             mediaIds[mediaCount++] = app->tootView.composeMediaIds[i];
-        if (newMediaId && newMediaId[0] && mediaCount < FS3ENET_MAX_MEDIA)
-            mediaIds[mediaCount++] = newMediaId;
+        for (i = 0; i < newMediaCount && mediaCount < FS3ENET_MAX_MEDIA; i++)
+            if (newMediaIds[i] && newMediaIds[i][0])
+                mediaIds[mediaCount++] = newMediaIds[i];
 
         req = FS3ENetEditStatusReq_Alloc(
                 app->accountApiBaseUrl, app->accountAccessToken,
@@ -566,15 +572,17 @@ void FS3EApp_SubmitToot(const char *body, LONG visibility, LONG quotePolicy,
         const char *quotedStatusId =
             (app->tootView.composeKind == FS3ETOOT_KIND_QUOTE)
             ? app->tootView.composePostId : "";
-        const char *mediaIds[1];
-        ULONG mediaCount = 0;
+        const char *mediaIds[FS3ENET_MAX_MEDIA];
+        ULONG mediaCount = 0, i;
         FS3ENetPostStatusReq *req;
 
-        if (newMediaId && newMediaId[0]) mediaIds[mediaCount++] = newMediaId;
+        for (i = 0; i < newMediaCount && mediaCount < FS3ENET_MAX_MEDIA; i++)
+            if (newMediaIds[i] && newMediaIds[i][0])
+                mediaIds[mediaCount++] = newMediaIds[i];
 
         req = FS3ENetPostStatusReq_Alloc(
                 app->accountApiBaseUrl, app->accountAccessToken,
-                body, VisibilityString(visibility), "",
+                body, VisibilityString(visibility), sensitive, "",
                 inReplyToId, QuotePolicyString(quotePolicy), quotedStatusId,
                 mediaIds, mediaCount);
         FreeVec((APTR)body);
@@ -2224,50 +2232,36 @@ int main(int argc, char **argv)
                                 const char *body    = FS3ETootView_GetUTF8Body(&app->tootView);
                                 LONG visibility     = FS3ETootView_GetVisibility(&app->tootView);
                                 LONG quotePolicy    = FS3ETootView_GetQuotePolicy(&app->tootView);
+                                BOOL sensitive      = FS3ETootView_GetSensitive(&app->tootView);
 
                                 if (body && body[0] && app->accountAccessToken &&
                                     !app->tootUploadPending)
                                 {
-                                    char attachPath[512];
-                                    const char *mimeType = NULL;
-                                    FS3ETootAttachStatus attachStatus =
+                                    /* Both attach-media rows are checked regardless of which
+                                     * one (if either) actually has a file -- see
+                                     * FS3ETootView_CheckAttachment[2]'s doc comment. */
+                                    char attachPath1[512], attachPath2[512];
+                                    const char *mimeType1 = NULL, *mimeType2 = NULL;
+                                    FS3ETootAttachStatus st1 =
                                         FS3ETootView_CheckAttachment(&app->tootView,
-                                            attachPath, sizeof(attachPath), &mimeType);
+                                            attachPath1, sizeof(attachPath1), &mimeType1);
+                                    FS3ETootAttachStatus st2 =
+                                        FS3ETootView_CheckAttachment2(&app->tootView,
+                                            attachPath2, sizeof(attachPath2), &mimeType2);
+                                    const char *errText = NULL;
 
-                                    if (attachStatus == FS3ETOOT_ATTACH_NONE) {
-                                        FS3EApp_SubmitToot(body, visibility, quotePolicy, NULL);
-                                    } else if (attachStatus == FS3ETOOT_ATTACH_OK) {
-                                        /* Defer the actual PUT/POST -- FS3ENETQ_UPLOAD_MEDIA
-                                         * must finish first and hand back a media id (see
-                                         * app->tootUploadPending's comment in friendsh3ep.h
-                                         * and the FS3ENETQ_UPLOAD_MEDIA reply handler in
-                                         * fs3erequests.c, which calls FS3EApp_SubmitToot()
-                                         * once that id is in hand). body's ownership moves
-                                         * into app->pendingTootBody here -- NOT freed below. */
-                                        FS3ENetUploadMediaReq *req =
-                                            FS3ENetUploadMediaReq_Alloc(
-                                                app->accountApiBaseUrl,
-                                                app->accountAccessToken,
-                                                attachPath, mimeType);
+                                    if (st1 == FS3ETOOT_ATTACH_BADEXT || st2 == FS3ETOOT_ATTACH_BADEXT)
+                                        errText = "Unsupported attachment type.";
+                                    else if (st1 == FS3ETOOT_ATTACH_MISSING || st2 == FS3ETOOT_ATTACH_MISSING)
+                                        errText = "Could not find the attached file.";
+                                    else if (st1 == FS3ETOOT_ATTACH_TOOBIG || st2 == FS3ETOOT_ATTACH_TOOBIG)
+                                        errText = "The attached file is too large.";
 
-                                        app->pendingTootBody        = (char *)body;
-                                        app->pendingTootVisibility  = visibility;
-                                        app->pendingTootQuotePolicy = quotePolicy;
-                                        app->tootUploadPending      = TRUE;
-                                        FS3ETootView_UpdateSendEnabled(&app->tootView);
-
-                                        FS3EApp_NetSend(FS3ENETQ_UPLOAD_MEDIA, req, sizeof(*req));
-                                    } else {
-                                        /* Bad extension / file missing / too big -- see
-                                         * FS3ETootAttachStatus's doc comment. Nothing sent;
-                                         * the user can fix or clear the attachment (the "X"
-                                         * button) and try again. */
-                                        const char *errText =
-                                            (attachStatus == FS3ETOOT_ATTACH_BADEXT)  ?
-                                                "Unsupported attachment type." :
-                                            (attachStatus == FS3ETOOT_ATTACH_MISSING) ?
-                                                "Could not find the attached file." :
-                                                "The attached file is too large.";
+                                    if (errText) {
+                                        /* Bad extension / file missing / too big on either row --
+                                         * see FS3ETootAttachStatus's doc comment. Nothing sent;
+                                         * the user can fix or clear the offending attachment (the
+                                         * "X" button) and try again. */
                                         struct EasyStruct es = {
                                             sizeof(struct EasyStruct), 0,
                                             (UBYTE *)"FriendSh3ep - Attachment Error",
@@ -2276,6 +2270,53 @@ int main(int argc, char **argv)
                                         };
                                         EasyRequestArgs(app->tootView.window, &es, NULL, NULL);
                                         FreeVec((APTR)body);
+                                    } else if (st1 != FS3ETOOT_ATTACH_OK && st2 != FS3ETOOT_ATTACH_OK) {
+                                        /* Neither row has a file -- send as-is. */
+                                        FS3EApp_SubmitToot(body, visibility, quotePolicy, sensitive, NULL, 0);
+                                    } else {
+                                        /* At least one attachment ready -- upload it first; queue
+                                         * the second behind it if both are ready (Mastodon's media
+                                         * endpoint takes one file per request -- see
+                                         * pendingTootMedia2Path's comment in friendsh3ep.h). If
+                                         * only the second row has a file, upload that one now and
+                                         * leave the queue empty rather than reshuffling which
+                                         * physical gadget counts as "first". Defer the actual
+                                         * PUT/POST -- FS3ENETQ_UPLOAD_MEDIA must finish first (and
+                                         * a second one too, if queued) before FS3EApp_SubmitToot()
+                                         * fires, from the FS3ENETQ_UPLOAD_MEDIA reply handler in
+                                         * fs3erequests.c. body's ownership moves into
+                                         * app->pendingTootBody here -- NOT freed below. */
+                                        const char *firstPath = (st1 == FS3ETOOT_ATTACH_OK) ? attachPath1 : attachPath2;
+                                        const char *firstMime = (st1 == FS3ETOOT_ATTACH_OK) ? mimeType1  : mimeType2;
+                                        BOOL queueSecond = (st1 == FS3ETOOT_ATTACH_OK && st2 == FS3ETOOT_ATTACH_OK);
+                                        FS3ENetUploadMediaReq *req =
+                                            FS3ENetUploadMediaReq_Alloc(
+                                                app->accountApiBaseUrl,
+                                                app->accountAccessToken,
+                                                firstPath, firstMime);
+
+                                        app->pendingTootBody        = (char *)body;
+                                        app->pendingTootVisibility  = visibility;
+                                        app->pendingTootQuotePolicy = quotePolicy;
+                                        app->pendingTootSensitive   = sensitive;
+                                        app->pendingTootMediaCount  = 0;
+                                        app->pendingTootMediaIds[0] = NULL;
+                                        app->pendingTootMediaIds[1] = NULL;
+
+                                        if (queueSecond) {
+                                            strncpy(app->pendingTootMedia2Path, attachPath2,
+                                                    sizeof(app->pendingTootMedia2Path) - 1);
+                                            app->pendingTootMedia2Path[sizeof(app->pendingTootMedia2Path) - 1] = '\0';
+                                            app->pendingTootMedia2MimeType = mimeType2;
+                                        } else {
+                                            app->pendingTootMedia2Path[0]  = '\0';
+                                            app->pendingTootMedia2MimeType = NULL;
+                                        }
+
+                                        app->tootUploadPending      = TRUE;
+                                        FS3ETootView_UpdateSendEnabled(&app->tootView);
+
+                                        FS3EApp_NetSend(FS3ENETQ_UPLOAD_MEDIA, req, sizeof(*req));
                                     }
                                 } else if (body) {
                                     FreeVec((APTR)body);

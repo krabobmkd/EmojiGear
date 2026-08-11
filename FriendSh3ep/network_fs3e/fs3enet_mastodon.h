@@ -182,6 +182,9 @@ void FS3EMastodon_UrlEncode(const char *src, char *dst, ULONG dstSize);
  * POST /api/v1/statuses - publishes a new status. On success fills
  * outStatusId (the new status' id, NUL-terminated) and returns TRUE.
  * visibility is one of "public", "unlisted", "private", "direct".
+ * sensitive maps straight to Mastodon's `sensitive` flag -- applies to the
+ * whole status (and every attachment in it, if any); always sent, TRUE or
+ * FALSE, not omitted (see FS3ETootView's sensitiveCheck in fs3etootview.h).
  * inReplyToId is the status this is a reply to, or NULL/"" for a
  * standalone toot -- this is what actually threads the reply on the
  * server (Mastodon also auto-notifies/mentions the parent's author from
@@ -206,6 +209,7 @@ void FS3EMastodon_UrlEncode(const char *src, char *dst, ULONG dstSize);
  */
 BOOL FS3EMastodon_PostStatus(const char *apiBaseUrl, const char *accessToken,
                             const char *statusText, const char *visibility,
+                            BOOL sensitive,
                             const char *inReplyToId,
                             const char *quoteApprovalPolicy,
                             const char *quotedStatusId,

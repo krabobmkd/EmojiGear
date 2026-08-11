@@ -44,7 +44,8 @@
 extern void  FS3EApp_CheckConnectionState(void);
 extern void  FS3EApp_UpdateUserIcon(void);
 extern void  FS3EApp_SubmitToot(const char *body, LONG visibility, LONG quotePolicy,
-                                 const char *newMediaId);
+                                 BOOL sensitive,
+                                 const char *const *newMediaIds, ULONG newMediaCount);
 
 /* Send a pre-allocated request block to the network process asynchronously.
  * On failure, frees data and returns FALSE.
@@ -2087,23 +2088,59 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
         break;
 
     case FS3ENETQ_UPLOAD_MEDIA:
-        /* GID_TOOT_SEND_BUTTON deferred the actual PUT/POST until this
-         * reply -- see app->tootUploadPending's doc comment in
-         * friendsh3ep.h. Either way that wait is now over. */
-        app->tootUploadPending = FALSE;
-        FS3ETootView_UpdateSendEnabled(&app->tootView);
-
         if (msg->fs3em_Result == FS3ENETR_OK) {
             FS3ENetUploadMediaReply *reply = (FS3ENetUploadMediaReply *)msg->fs3em_Data;
-            /* Ownership of pendingTootBody moves into FS3EApp_SubmitToot(),
-             * which FreeVec()s it -- clear our own pointer right after so
-             * nothing else could ever double-free it. */
-            char *pendingBody = app->pendingTootBody;
-            app->pendingTootBody = NULL;
-            FS3EApp_SubmitToot(pendingBody, app->pendingTootVisibility,
-                                app->pendingTootQuotePolicy,
-                                (reply && reply->fs3eum_MediaId) ? reply->fs3eum_MediaId : NULL);
+            const char *mediaId = (reply && reply->fs3eum_MediaId) ? reply->fs3eum_MediaId : NULL;
+
+            /* Stash this upload's id into the next free pending slot --
+             * AllocVec'd copy, since reply (and mediaId with it) is freed
+             * right after this handler returns. */
+            if (mediaId && mediaId[0] && app->pendingTootMediaCount < 2)
+                app->pendingTootMediaIds[app->pendingTootMediaCount++] = NetStrDup(mediaId);
+
+            if (app->pendingTootMedia2Path[0]) {
+                /* A second attachment is queued behind this one (see its
+                 * comment in friendsh3ep.h) -- fire its upload now instead
+                 * of submitting yet; tootUploadPending stays TRUE. */
+                FS3ENetUploadMediaReq *req = FS3ENetUploadMediaReq_Alloc(
+                    app->accountApiBaseUrl, app->accountAccessToken,
+                    app->pendingTootMedia2Path, app->pendingTootMedia2MimeType);
+
+                app->pendingTootMedia2Path[0]  = '\0'; /* queue drained -- next reply submits */
+                app->pendingTootMedia2MimeType = NULL;
+
+                FS3EApp_NetSend(FS3ENETQ_UPLOAD_MEDIA, req, sizeof(*req));
+                break;
+            }
+
+            /* No more uploads queued -- GID_TOOT_SEND_BUTTON's deferred
+             * PUT/POST fires now, whether this was the only attachment or
+             * the last of two. See app->tootUploadPending's doc comment in
+             * friendsh3ep.h. */
+            app->tootUploadPending = FALSE;
+            FS3ETootView_UpdateSendEnabled(&app->tootView);
+
+            {
+                /* Ownership of pendingTootBody moves into FS3EApp_SubmitToot(),
+                 * which FreeVec()s it -- clear our own pointer right after so
+                 * nothing else could ever double-free it. */
+                char *pendingBody = app->pendingTootBody;
+                ULONG i;
+
+                app->pendingTootBody = NULL;
+                FS3EApp_SubmitToot(pendingBody, app->pendingTootVisibility,
+                                    app->pendingTootQuotePolicy, app->pendingTootSensitive,
+                                    (const char *const *)app->pendingTootMediaIds,
+                                    app->pendingTootMediaCount);
+
+                for (i = 0; i < app->pendingTootMediaCount; i++) {
+                    FreeVec(app->pendingTootMediaIds[i]);
+                    app->pendingTootMediaIds[i] = NULL;
+                }
+                app->pendingTootMediaCount = 0;
+            }
         } else {
+            ULONG i;
             struct EasyStruct es = {
                 sizeof(struct EasyStruct), 0,
                 (UBYTE *)"FriendSh3ep - Attachment Error",
@@ -2111,11 +2148,25 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                          "or remove the attachment to post without it.",
                 (UBYTE *)"OK"
             };
+
+            /* Whole toot is abandoned on any upload failure (whichever
+             * attachment it was) -- same as before, just also draining
+             * whatever the multi-attachment queue/collection above had. */
+            app->tootUploadPending = FALSE;
+            FS3ETootView_UpdateSendEnabled(&app->tootView);
+
             EasyRequestArgs(app->tootView.window, &es, NULL, NULL);
             if (app->pendingTootBody) {
                 FreeVec(app->pendingTootBody);
                 app->pendingTootBody = NULL;
             }
+            for (i = 0; i < app->pendingTootMediaCount; i++) {
+                FreeVec(app->pendingTootMediaIds[i]);
+                app->pendingTootMediaIds[i] = NULL;
+            }
+            app->pendingTootMediaCount = 0;
+            app->pendingTootMedia2Path[0]  = '\0';
+            app->pendingTootMedia2MimeType = NULL;
         }
         break;
 

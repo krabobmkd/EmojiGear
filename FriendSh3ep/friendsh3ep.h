@@ -215,21 +215,42 @@ struct App {
 
     /* GID_TOOT_SEND_BUTTON's own two-phase state, same shape as login above:
      * TRUE while an FS3ENETQ_UPLOAD_MEDIA is in flight for the compose
-     * window's current attachment, between the click and the follow-up
-     * FS3EApp_SubmitToot() the reply triggers (see fs3erequests.c's
-     * FS3ENETQ_UPLOAD_MEDIA case). pendingToot* save what GID_TOOT_SEND_
-     * BUTTON already read off app->tootView's gadgets at click time, so
-     * FS3EApp_SubmitToot() doesn't have to re-read a window that might have
-     * been edited (or even closed) while the upload was in flight.
-     * pendingTootBody is AllocVec'd (FS3ETootView_GetUTF8Body()'s result,
-     * ownership moved here), freed by whichever of FS3EApp_SubmitToot() or
-     * the UPLOAD_MEDIA failure path ends up handling it. tootUploadPending
-     * also gates FS3ETootView_UpdateSendEnabled() so the Toot button can't
-     * be double-clicked mid-upload. */
+     * window's current attachment(s), between the click and the follow-up
+     * FS3EApp_SubmitToot() the last upload's reply triggers (see
+     * fs3erequests.c's FS3ENETQ_UPLOAD_MEDIA case). pendingToot* save what
+     * GID_TOOT_SEND_BUTTON already read off app->tootView's gadgets at
+     * click time, so FS3EApp_SubmitToot() doesn't have to re-read a window
+     * that might have been edited (or even closed) while the upload was in
+     * flight. pendingTootBody is AllocVec'd (FS3ETootView_GetUTF8Body()'s
+     * result, ownership moved here), freed by whichever of
+     * FS3EApp_SubmitToot() or the UPLOAD_MEDIA failure path ends up
+     * handling it. tootUploadPending also gates
+     * FS3ETootView_UpdateSendEnabled() so the Toot button can't be
+     * double-clicked mid-upload. */
     BOOL   tootUploadPending;
     char  *pendingTootBody;
     LONG   pendingTootVisibility;
     LONG   pendingTootQuotePolicy;
+    BOOL   pendingTootSensitive;
+
+    /* Second attach-media row (FS3ETootView.attachMedia2GF) queued behind
+     * the first -- Mastodon's media endpoint takes one file per request, so
+     * with two attachments picked they're uploaded one at a time. Read off
+     * attachMedia2GF at GID_TOOT_SEND_BUTTON click time, same "don't
+     * re-read a window that might have changed mid-upload" reasoning as
+     * pendingTootBody above; pendingTootMedia2Path[0]=='\0' means nothing
+     * is queued. pendingTootMedia2MimeType always points at one of
+     * FS3ETootView_CheckAttachment[2]'s static string literals (e.g.
+     * "image/jpeg"), safe to keep as a bare pointer across the async gap.
+     * pendingTootMediaIds[]/pendingTootMediaCount accumulate each queued
+     * attachment's resulting media id (AllocVec'd copies) as its upload's
+     * reply comes back, in upload order -- fed straight into
+     * FS3EApp_SubmitToot()'s newMediaIds/newMediaCount once the last one
+     * (whichever attachment that was) finishes. */
+    char        pendingTootMedia2Path[512];
+    const char *pendingTootMedia2MimeType;
+    char       *pendingTootMediaIds[2];
+    ULONG       pendingTootMediaCount;
 
     /* Logged-in account — all NULL when not logged in */
     char  *accountApiBaseUrl;

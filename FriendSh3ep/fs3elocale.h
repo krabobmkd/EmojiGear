@@ -39,7 +39,9 @@ enum {
                                      * renders the embedded \n\n as real line breaks */
     MSG_TOOT_CONTEXT_QUOTE_FORMAT, /* FS3ETOOT_KIND_QUOTE contextMessage format: "Quoting %s's toot" */
     MSG_TOOT_CONTEXT_MESSAGE_FORMAT, /* FS3ETOOT_KIND_MESSAGE contextMessage format: "Messaging %s" */
-    MSG_TOOT_ATTACH_MEDIA, /* "Attach Media" -- label above the attachMediaGF/attachMediaClearBtn row */
+    MSG_TOOT_ATTACH_MEDIA, /* "Attach Media" -- label above the attachMediaGF/attachMediaClearBtn row,
+                             * reused as-is for the attachMedia2GF/attachMedia2ClearBtn row below it */
+    MSG_TOOT_SENSITIVE,    /* "Sensitive content" -- label next to sensitiveCheck in bottomBar */
     MSG_TOOT_VISIBILITY_PUBLIC,
     MSG_TOOT_VISIBILITY_UNLISTED,
     MSG_TOOT_VISIBILITY_PRIVATE,

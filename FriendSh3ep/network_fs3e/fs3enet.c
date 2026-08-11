@@ -200,7 +200,7 @@ FS3ENetTimelineReq *FS3ENetTimelineReq_Alloc(ULONG viewModeBit,
 
 FS3ENetPostStatusReq *FS3ENetPostStatusReq_Alloc(
     const char *apiBaseUrl, const char *accessToken,
-    const char *content, const char *visibility, const char *spoiler,
+    const char *content, const char *visibility, BOOL sensitive, const char *spoiler,
     const char *inReplyToId, const char *quoteApprovalPolicy,
     const char *quotedStatusId,
     const char *const *mediaIds, ULONG mediaCount)
@@ -229,6 +229,7 @@ FS3ENetPostStatusReq *FS3ENetPostStatusReq_Alloc(
     FS3ENet_PackStr(&req->fs3ep_AccessToken,  &p, accessToken);
     FS3ENet_PackStr(&req->fs3ep_Content,      &p, content);
     FS3ENet_PackStr(&req->fs3ep_Visibility,   &p, visibility);
+    req->fs3ep_Sensitive = (ULONG)sensitive;
     FS3ENet_PackStr(&req->fs3ep_Spoiler,      &p, spoiler);
     FS3ENet_PackStr(&req->fs3ep_InReplyToId,  &p, inReplyToId);
     FS3ENet_PackStr(&req->fs3ep_QuoteApprovalPolicy, &p, quoteApprovalPolicy);
@@ -2924,7 +2925,8 @@ static void FS3ENet_HandlePostStatus(FS3ENetMessage *fs3em)
 
 
     if (!FS3EMastodon_PostStatus(req->fs3ep_ApiBaseUrl, req->fs3ep_AccessToken,
-            req->fs3ep_Content, req->fs3ep_Visibility, req->fs3ep_InReplyToId,
+            req->fs3ep_Content, req->fs3ep_Visibility, (BOOL)req->fs3ep_Sensitive,
+            req->fs3ep_InReplyToId,
             req->fs3ep_QuoteApprovalPolicy, req->fs3ep_QuotedStatusId,
             (const char *const *)req->fs3ep_MediaIds, req->fs3ep_MediaCount,
             statusId, sizeof(statusId)))

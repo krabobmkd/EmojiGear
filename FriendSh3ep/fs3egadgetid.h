@@ -80,6 +80,14 @@
 #define GID_THEMEV_THEME_CHOOSER      215
 #define GID_THEMEV_SCAN_THEMES        216
 
+/* New toot window (fs3etootview.c), continued -- appended here rather than
+ * next to GID_TOOT_ATTACH_MEDIA_CLEAR above, since 26-29 already run
+ * straight into the title-bar block below with no room to keep growing
+ * in place. */
+#define GID_TOOT_SENSITIVE            220 /* "Sensitive content" checkbox, in bottomBar right before tootBtn */
+#define GID_TOOT_ATTACH_MEDIA2        221 /* second [getfile][X] attach-media row, below the first */
+#define GID_TOOT_ATTACH_MEDIA2_CLEAR  222
+
 /* General settings window (fs3esettingsview.c) */
 #define GID_SETTINGSV_CACHE_PATH      300
 #define GID_SETTINGSV_USERDATA_PATH   301

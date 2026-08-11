@@ -29,6 +29,9 @@
 #include <proto/getfile.h>
 #include <gadgets/getfile.h>
 
+#include <proto/checkbox.h>
+#include <gadgets/checkbox.h>
+
 #include <proto/label.h>
 #include <images/label.h>
 
@@ -221,6 +224,9 @@ BOOL FS3ETootView_Create(FS3ETootView *tv, struct URPDrawContext *textDC)
     Object *choosersCol;
     Object *attachMediaRow;
     Object *attachMediaLabel;
+    Object *attachMediaRow2;
+    Object *attachMediaLabel2;
+    Object *sensitiveLabel;
 
     int i;
 
@@ -319,6 +325,44 @@ BOOL FS3ETootView_Create(FS3ETootView *tv, struct URPDrawContext *textDC)
         TAG_END);
     if (!attachMediaRow) return FALSE;
 
+    /* Second attach-media row -- identical [getfile][X] pattern, most
+     * servers accept more than one attachment per toot. */
+    tv->attachMedia2GF = (Object *)NewObject(GETFILE_GetClass(), NULL,
+        GA_ID,                  (ULONG)GID_TOOT_ATTACH_MEDIA2,
+        GA_RelVerify,           TRUE,
+        GETFILE_TitleText,      (ULONG)LOC(MSG_TOOT_ATTACH_MEDIA),
+        GETFILE_RejectIcons,    TRUE,
+        GETFILE_DoPatterns,     TRUE,
+        GETFILE_Pattern,        (ULONG)FS3ETOOT_ATTACH_MEDIA_PATTERN,
+        GETFILE_FilterDrawers,  TRUE,
+        GETFILE_ReadOnly,       FALSE,
+        GETFILE_FullFileExpand, FALSE,
+        TAG_END);
+    if (!tv->attachMedia2GF) return FALSE;
+
+    tv->attachMedia2ClearBtn = (Object *)NewObject(BUTTON_GetClass(), NULL,
+        GA_ID,        (ULONG)GID_TOOT_ATTACH_MEDIA2_CLEAR,
+        GA_RelVerify, TRUE,
+        GA_Text,      (ULONG)"X",
+        TAG_END);
+    if (!tv->attachMedia2ClearBtn) return FALSE;
+
+    attachMediaLabel2 = (Object *)NewObject(LABEL_GetClass(), NULL,
+        LABEL_Text, (ULONG)LOC(MSG_TOOT_ATTACH_MEDIA), TAG_END);
+
+    attachMediaRow2 = (Object *)NewObject(LAYOUT_GetClass(), NULL,
+        LAYOUT_Orientation,   LAYOUT_ORIENT_HORIZ,
+        LAYOUT_BevelStyle,    BVS_NONE,
+        LAYOUT_SpaceInner,    FALSE,
+        LAYOUT_AddChild,      (ULONG)tv->attachMedia2GF,
+        CHILD_WeightedWidth,  1,
+        CHILD_WeightedHeight, 0,
+        LAYOUT_AddChild,      (ULONG)tv->attachMedia2ClearBtn,
+        CHILD_WeightedWidth,  0,
+        CHILD_WeightedHeight, 0,
+        TAG_END);
+    if (!attachMediaRow2) return FALSE;
+
     /* ------------------------------------------------------------------ */
     /* Bottom bar: visibility chooser, char count, emoji buttons, Toot     */
     /* ------------------------------------------------------------------ */
@@ -385,6 +429,19 @@ BOOL FS3ETootView_Create(FS3ETootView *tv, struct URPDrawContext *textDC)
 
     if (!tv->emojiBtn ) return FALSE;
 
+    /* "Sensitive content" -- Mastodon's `sensitive` flag applies to the
+     * whole status (see fs3etootview.h's field comment), one checkbox
+     * right before tootBtn. */
+    tv->sensitiveCheck = (Object *)NewObject(CHECKBOX_GetClass(), NULL,
+        GA_ID,        (ULONG)GID_TOOT_SENSITIVE,
+        GA_RelVerify, TRUE,
+        GA_Selected,  FALSE,
+        TAG_END);
+    if (!tv->sensitiveCheck) return FALSE;
+
+    sensitiveLabel = (Object *)NewObject(LABEL_GetClass(), NULL,
+        LABEL_Text, (ULONG)LOC(MSG_TOOT_SENSITIVE), TAG_END);
+
     tv->tootBtn = (Object *)NewObject(BUTTON_GetClass(), NULL,
         GA_ID,        (ULONG)GID_TOOT_SEND_BUTTON,
         GA_RelVerify, TRUE,
@@ -421,6 +478,9 @@ BOOL FS3ETootView_Create(FS3ETootView *tv, struct URPDrawContext *textDC)
             CHILD_WeightedWidth, 0,
         LAYOUT_AddChild,     (ULONG)Spacer(),
             CHILD_WeightedWidth, 1,
+        LAYOUT_AddChild,     (ULONG)tv->sensitiveCheck,
+            CHILD_WeightedWidth, 0,
+            CHILD_Label,         (ULONG)sensitiveLabel,
         LAYOUT_AddChild,     (ULONG)tv->tootBtn,
             CHILD_WeightedWidth, 0,
         TAG_END);
@@ -439,6 +499,9 @@ BOOL FS3ETootView_Create(FS3ETootView *tv, struct URPDrawContext *textDC)
         LAYOUT_AddChild,    (ULONG)attachMediaRow,
             CHILD_WeightedHeight, 0,
             CHILD_Label,          (ULONG)attachMediaLabel,
+        LAYOUT_AddChild,    (ULONG)attachMediaRow2,
+            CHILD_WeightedHeight, 0,
+            CHILD_Label,          (ULONG)attachMediaLabel2,
         LAYOUT_AddChild,    (ULONG)bottomBar,
             CHILD_WeightedHeight, 0,
         LAYOUT_AddChild,    (ULONG)tv->visibilityMeaning,
@@ -541,6 +604,16 @@ void FS3ETootView_Open(FS3ETootView *tv)
                  GETFILE_File,   (ULONG)"",
                  GETFILE_Drawer, (ULONG)"",
                  TAG_END);
+    }
+    if (tv->attachMedia2GF) {
+        SetAttrs(tv->attachMedia2GF,
+                 GETFILE_File,   (ULONG)"",
+                 GETFILE_Drawer, (ULONG)"",
+                 TAG_END);
+    }
+    /* Same reasoning again: don't carry over a previous toot's flag. */
+    if (tv->sensitiveCheck) {
+        SetAttrs(tv->sensitiveCheck, GA_Selected, FALSE, TAG_END);
     }
 
     if (CurrentMainScreen) {
@@ -660,6 +733,14 @@ BOOL FS3ETootView_HandleInput(FS3ETootView *tv)
                     gfRequestFile(tv->attachMediaGF, tv->window);
                 } else if (gadId == GID_TOOT_ATTACH_MEDIA_CLEAR) {
                     SetGadgetAttrs((struct Gadget *)tv->attachMediaGF,
+                                   tv->window, NULL,
+                                   GETFILE_File,   (ULONG)"",
+                                   GETFILE_Drawer, (ULONG)"",
+                                   TAG_DONE);
+                } else if (gadId == GID_TOOT_ATTACH_MEDIA2) {
+                    gfRequestFile(tv->attachMedia2GF, tv->window);
+                } else if (gadId == GID_TOOT_ATTACH_MEDIA2_CLEAR) {
+                    SetGadgetAttrs((struct Gadget *)tv->attachMedia2GF,
                                    tv->window, NULL,
                                    GETFILE_File,   (ULONG)"",
                                    GETFILE_Drawer, (ULONG)"",
@@ -1130,6 +1211,16 @@ LONG FS3ETootView_GetQuotePolicy(FS3ETootView *tv)
     return (LONG)active;
 }
 
+BOOL FS3ETootView_GetSensitive(FS3ETootView *tv)
+{
+    ULONG selected = 0;
+
+    if (!tv || !tv->sensitiveCheck) return FALSE;
+
+    GetAttr(GA_Selected, tv->sensitiveCheck, &selected);
+    return selected ? TRUE : FALSE;
+}
+
 /* Case-insensitive full-string match -- avoids a Stricmp()/UtilityBase
  * dependency just for this one small check. */
 static BOOL ExtEquals(const char *ext, const char *want)
@@ -1142,7 +1233,10 @@ static BOOL ExtEquals(const char *ext, const char *want)
     return (BOOL)(*ext == '\0' && *want == '\0');
 }
 
-FS3ETootAttachStatus FS3ETootView_CheckAttachment(FS3ETootView *tv,
+/* Shared body for FS3ETootView_CheckAttachment/CheckAttachment2 -- gf is
+ * whichever attach-media GetFile gadget (attachMediaGF or attachMedia2GF)
+ * the caller wants checked. */
+static FS3ETootAttachStatus CheckAttachmentGF(Object *gf,
     char *outPath, ULONG outPathSize, const char **outMimeType)
 {
     ULONG filePtr = 0, drawerPtr = 0;
@@ -1152,15 +1246,15 @@ FS3ETootAttachStatus FS3ETootView_CheckAttachment(FS3ETootView *tv,
     struct FileInfoBlock *fib;
     BOOL sizeOk;
 
-    if (!tv || !tv->attachMediaGF || !outPath || outPathSize < 1)
+    if (!gf || !outPath || outPathSize < 1)
         return FS3ETOOT_ATTACH_NONE;
 
-    GetAttr(GETFILE_File, tv->attachMediaGF, &filePtr);
+    GetAttr(GETFILE_File, gf, &filePtr);
     file = (const char *)filePtr;
     if (!file || !file[0])
         return FS3ETOOT_ATTACH_NONE;
 
-    GetAttr(GETFILE_Drawer, tv->attachMediaGF, &drawerPtr);
+    GetAttr(GETFILE_Drawer, gf, &drawerPtr);
     drawer = (const char *)drawerPtr;
 
     if (drawer && drawer[0]) {
@@ -1200,4 +1294,18 @@ FS3ETootAttachStatus FS3ETootView_CheckAttachment(FS3ETootView *tv,
     if (!sizeOk) return FS3ETOOT_ATTACH_TOOBIG;
 
     return FS3ETOOT_ATTACH_OK;
+}
+
+FS3ETootAttachStatus FS3ETootView_CheckAttachment(FS3ETootView *tv,
+    char *outPath, ULONG outPathSize, const char **outMimeType)
+{
+    if (!tv) return FS3ETOOT_ATTACH_NONE;
+    return CheckAttachmentGF(tv->attachMediaGF, outPath, outPathSize, outMimeType);
+}
+
+FS3ETootAttachStatus FS3ETootView_CheckAttachment2(FS3ETootView *tv,
+    char *outPath, ULONG outPathSize, const char **outMimeType)
+{
+    if (!tv) return FS3ETOOT_ATTACH_NONE;
+    return CheckAttachmentGF(tv->attachMedia2GF, outPath, outPathSize, outMimeType);
 }
