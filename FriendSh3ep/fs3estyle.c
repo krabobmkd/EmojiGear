@@ -73,6 +73,8 @@ static const ULONG defaultColors[FS3E_COLOR_COUNT] = {
 
     0x00000000,   /* FS3E_COLOR_BTBGBM_TEXT_ENABLED */
     0x00FFFFFF,   /* FS3E_COLOR_BTBGBM_TEXT_SELECTED */
+
+    0x00E0B000,   /* FS3E_COLOR_SENSITIVE_WARNING   warning yellow */
 };
 
 /* style.txt key for each FS3EColorRole, in the same order as the enum --
@@ -94,6 +96,8 @@ static const char *colorStyleKeys[FS3E_COLOR_COUNT] = {
 
     "btbgbm.textcolor.enabled",
     "btbgbm.textcolor.selected",
+
+    "timeline.color.sensitivewarning",
 };
 
 /* ------------------------------------------------------------------ */

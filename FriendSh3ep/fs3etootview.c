@@ -1000,6 +1000,7 @@ static const FS3ETootKindConfig tootKindConfig[] = {
     /* FS3ETOOT_KIND_REPLY   */ { MSG_TOOT_CONTEXT_NEW /* unused, see above */, MSG_TOOT_SEND_REPLY, TRUE, TRUE },
     /* FS3ETOOT_KIND_QUOTE   */ { MSG_TOOT_CONTEXT_NEW /* unused, see above */, MSG_TOOT_SEND_QUOTE, FALSE, TRUE },
     /* FS3ETOOT_KIND_MESSAGE */ { MSG_TOOT_CONTEXT_NEW /* unused, see above */, MSG_TOOT_SEND,       TRUE, TRUE },
+    /* FS3ETOOT_KIND_MODIFY_BIO */ { MSG_TOOT_CONTEXT_MODIFY_BIO, MSG_TOOT_SEND_MODIFY, TRUE, FALSE },
 };
 
 /* Updates tv->visibilityMeaning's text -- blank for kinds whose

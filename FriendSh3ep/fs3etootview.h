@@ -53,11 +53,21 @@ typedef enum FS3ETootKind {
     FS3ETOOT_KIND_QUOTE,   /* quoting params->postId (own new toot + quoted_status_id),
                              * title shows params->acct -- see TTL_HOT_BOOST's
                              * Boost/Quote choice in friendsh3ep.c */
-    FS3ETOOT_KIND_MESSAGE  /* a fresh, non-reply toot addressed at params->acct (no
+    FS3ETOOT_KIND_MESSAGE, /* a fresh, non-reply toot addressed at params->acct (no
                              * postId -- unlike REPLY, nothing is being replied to):
                              * bodyEditor prefilled with "@acct ", title shows
                              * params->acct -- see a profile header's "Message"
                              * button (TTL_HOT_MESSAGE) in friendsh3ep.c */
+    FS3ETOOT_KIND_MODIFY_BIO /* editing the connected user's own profile
+                               * description (Mastodon account "note", not a
+                               * status), bodyEditor prefilled from
+                               * params->body -- see a profile header's
+                               * "Modify" button (TTL_HOT_MODIFY_BIO) in
+                               * friendsh3ep.c. params->postId/mediaIds are
+                               * unused (there is no status involved). Submit
+                               * goes through FS3EApp_SubmitBioUpdate instead
+                               * of FS3EApp_SubmitToot -- see
+                               * GID_TOOT_SEND_BUTTON in friendsh3ep.c. */
 } FS3ETootKind;
 
 /* Max media attachments carried through a compose context (mirrors

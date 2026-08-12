@@ -146,6 +146,11 @@ TTLPost *ttl_profile_header_alloc(const TTLProfileHeaderSetup *setup)
          * there's no separate flag field on TTLPost for it). Simplest:
          * reuse mediaCount, unused by this class, as a 0/1 flag. */
         post->mediaCount = setup->showFollow ? 1 : 0;
+
+        /* Reuses the same field a toot's own Modify/Delete gate already
+         * means ("is this mine") -- see TTLPost.isOwn's comment. Profile
+         * header alloc never otherwise touches it. */
+        post->isOwn = setup->isSelf;
     }
 
     return post;
@@ -251,10 +256,11 @@ static void ttl_profile_header_layout(TTLData *inst, TTLPost *post)
      * counting back from post->height, not forward from here). Deliberately
      * a whole row, not just enough for one label, so a later second button
      * (e.g. a "This Toot"-style menu action) has somewhere to go without
-     * another layout change. Skipped entirely for a self-profile
-     * (post->mediaCount holds the showFollow flag -- see
-     * ttl_profile_header_alloc). */
-    if (post->mediaCount != 0)
+     * another layout change. Also reserved on a self-profile (post->isOwn)
+     * for the single "Modify" button instead -- see .render/.buildHotspots.
+     * post->mediaCount holds the showFollow flag -- see
+     * ttl_profile_header_alloc. */
+    if (post->mediaCount != 0 || post->isOwn)
         curRelY += TTL_PROFILE_BUTTON_GAP + ttl_profile_button_row_height(inst);
 
     curRelY += TTL_POST_PAD_BOT;
@@ -404,20 +410,23 @@ static void ttl_profile_header_render(TTLData *inst, struct RastPort *rp,
         URPDrawTextUTF8(rp, dc, &pos, followingLabel, (ULONG)nc);
     }
 
-    /* ---- Follow/Unfollow button (left) + Message button (right) -- same
-     * row, reserved as the LAST row before the separator (see .layout and
-     * ttl_profile_button_row_height's comment); boxH/boxY MUST match that
-     * reservation exactly, or the buttons end up drawn over whatever
-     * .layout actually left space for. Message shares Follow/Unfollow's
-     * visibility condition (post->mediaCount != 0, i.e. hidden on a
-     * self-profile -- see ttl_profile_header_alloc) since messaging
+    /* ---- Follow/Unfollow button (left) + Message button (right) on
+     * someone else's profile, OR a single Modify button (left) on your OWN
+     * profile (post->isOwn -- see ttl_profile_header_alloc) -- same row
+     * either way, reserved as the LAST row before the separator (see
+     * .layout and ttl_profile_button_row_height's comment); boxH/boxY MUST
+     * match that reservation exactly, or the buttons end up drawn over
+     * whatever .layout actually left space for. Message shares Follow/
+     * Unfollow's visibility condition (post->mediaCount != 0, i.e. hidden
+     * on a self-profile -- see ttl_profile_header_alloc) since messaging
      * yourself isn't a useful action either. ---- */
-    if (post->mediaCount != 0 && inst->style && inst->style->dcNormal) {
+    if ((post->mediaCount != 0 || post->isOwn) && inst->style && inst->style->dcNormal) {
         struct URPDrawContext *dc = inst->style->dcNormal;
         WORD  boxH = ttl_profile_button_row_height(inst);
         WORD  boxY = (WORD)(drawY + post->height - 1 - TTL_POST_PAD_BOT - boxH);
         struct URPTextPos    pos;
 
+        if (post->mediaCount != 0) {
         /* Follow/Unfollow */
         {
             const char *label = post->following ? "Following" : "Follow";
@@ -464,6 +473,31 @@ static void ttl_profile_header_render(TTLData *inst, struct RastPort *rp,
             pos.x = (WORD)(boxX + TTL_PROFILE_BUTTON_PADX);
             pos.y = (WORD)(boxY + TTL_PROFILE_BUTTON_PADY + inst->lineAscent);
             URPDrawTextUTF8(rp, dc, &pos, label, (ULONG)nc);
+        }
+        } else {
+        /* Modify -- self-profile only, same left position Follow uses */
+        {
+            const char *label = "Modify";
+            struct URPTextMetric m;
+            LONG  nc = utf8_codepoints_range(label, label + strlen(label));
+            WORD  boxW, boxX;
+            WORD  textX = (WORD)(padLeft + avatarW +
+                                  (inst->style ? inst->style->avatarGap : 6));
+
+            URPDC_TextSizeUTF8(dc, label, nc, &m);
+            boxW = (WORD)(m.width + TTL_PROFILE_BUTTON_PADX * 2);
+            boxX = textX;
+
+            SetAPen(rp, (LONG)FS3E_PEN(inst->style, FS3E_COLOR_BUTTON_BG));
+            RectFill(rp, boxX, boxY, (WORD)(boxX + boxW - 1), (WORD)(boxY + boxH - 1));
+
+            URPDC_SetDrawColorFromPen(dc, inst->screen,
+                (LONG)FS3E_PEN(inst->style, FS3E_COLOR_ACTION_TEXT),
+                (LONG)FS3E_PEN(inst->style, FS3E_COLOR_BUTTON_BG));
+            pos.x = (WORD)(boxX + TTL_PROFILE_BUTTON_PADX);
+            pos.y = (WORD)(boxY + TTL_PROFILE_BUTTON_PADY + inst->lineAscent);
+            URPDrawTextUTF8(rp, dc, &pos, label, (ULONG)nc);
+        }
         }
     }
 }
@@ -518,11 +552,13 @@ static void ttl_profile_header_build_hotspots(TTLData *inst, TTLPost *post)
 
     /* Same row as .render draws into -- see ttl_profile_button_row_height's
      * comment for why boxH/boxY must match that exactly. Message shares
-     * Follow/Unfollow's visibility condition -- see .render's comment. */
-    if (post->mediaCount != 0 && inst->style && inst->style->dcNormal) {
+     * Follow/Unfollow's visibility condition -- see .render's comment.
+     * Modify (self-profile, post->isOwn) takes over the same row instead. */
+    if ((post->mediaCount != 0 || post->isOwn) && inst->style && inst->style->dcNormal) {
         WORD boxH = ttl_profile_button_row_height(inst);
         WORD boxY = (WORD)(post->height - 1 - TTL_POST_PAD_BOT - boxH);
 
+        if (post->mediaCount != 0) {
         {
             const char *label = post->following ? "Following" : "Follow";
             struct URPTextMetric m;
@@ -547,6 +583,28 @@ static void ttl_profile_header_build_hotspots(TTLData *inst, TTLPost *post)
             boxX = (WORD)(inst->gadWidth - TTL_POST_PAD_RIGHT - boxW);
 
             ttl_hs_add(post, TTL_HOT_MESSAGE, boxX, boxY, boxW, boxH, NULL, 0);
+        }
+        } else {
+        {
+            const char *label = "Modify";
+            struct URPTextMetric m;
+            LONG  nc = utf8_codepoints_range(label, label + strlen(label));
+            WORD  boxW, boxX;
+
+            URPDC_TextSizeUTF8(inst->style->dcNormal, label, nc, &m);
+            boxW = (WORD)(m.width + TTL_PROFILE_BUTTON_PADX * 2);
+            boxX = textX;
+
+            /* data = the current bio text (post->body), so the click
+             * handler (TTL_HOT_MODIFY_BIO in friendsh3ep.c) can prefill the
+             * edit window from hotSpotString without a separate app-level
+             * copy -- same "carry the text through hs->data" convention as
+             * TTL_HOT_SEARCH_SUGGESTION. Borrowed pointer, not copied (see
+             * ttl_hs_add's own comment) -- safe because post->body outlives
+             * the click. */
+            ttl_hs_add(post, TTL_HOT_MODIFY_BIO, boxX, boxY, boxW, boxH,
+                       post->body, post->body ? (ULONG)strlen(post->body) : 0);
+        }
         }
     }
 }

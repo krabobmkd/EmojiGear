@@ -395,6 +395,81 @@ void ttl_draw_avatar_placeholder(struct RastPort *rp, WORD ax, WORD ay, WORD as,
     }
 }
 
+/* Sensitive-content blur/reveal zone -- see TTL_HOT_SENSITIVE_TOGGLE and
+ * TTLPost.sensitiveTopY/BottomY. Only called for post->sensitive posts.
+ *
+ * Hidden (!contentRevealed): the real body text/media draws were already
+ * skipped by the caller (ttl_toot_render), so [sensitiveTopY,
+ * sensitiveBottomY) is otherwise blank -- this draws two warning-pen lines
+ * bracketing the whole zone plus a centered "Show sensitive content"
+ * label, matching the ONE big TTL_HOT_SENSITIVE_TOGGLE hotspot
+ * ttl_toot_build_hotspots gives that same rect while hidden.
+ *
+ * Revealed: real content already drew normally (nothing was skipped) --
+ * this only adds a small "Hide sensitive content" label in the zone's
+ * top-right corner, matching the small corner hotspot
+ * ttl_toot_build_hotspots adds in that case. Deliberately not a full-zone
+ * overlay here: the real content underneath (links, media click-to-view)
+ * must stay reachable, and the reserved zone height never changes between
+ * the two states (see TTLPost.sensitive's doc comment), so there's no
+ * extra row to put this in without covering something. */
+static void ttl_draw_sensitive_zone(TTLData *inst, struct RastPort *rp,
+                                     TTLPost *post, WORD drawY)
+{
+    struct URPDrawContext *dcBody = inst->style ? inst->style->dcNormal : NULL;
+    LONG  warnPen = (LONG)FS3E_PEN(inst->style, FS3E_COLOR_SENSITIVE_WARNING);
+    LONG  txtPen  = (LONG)FS3E_PEN(inst->style, FS3E_COLOR_TEXT);
+    LONG  bgPen   = (LONG)FS3E_PEN(inst->style, FS3E_COLOR_TIMELINE_BG);
+    WORD  avatarW, padLeft, avatarGap, textX;
+    WORD  zoneTop    = (WORD)(drawY + post->sensitiveTopY);
+    WORD  zoneBottom = (WORD)(drawY + post->sensitiveBottomY);
+    WORD  zoneRight  = (WORD)(inst->gadWidth - TTL_POST_PAD_RIGHT);
+    const char *label = post->contentRevealed ? "Hide sensitive content" : "Show sensitive content";
+    struct URPTextMetric m;
+    struct URPTextPos    pos;
+    LONG  nc;
+
+    if (!dcBody || zoneBottom <= zoneTop) return;
+
+    if (inst->style && inst->style->avatarSize > 0) {
+        avatarW = inst->style->avatarSize;
+        padLeft = inst->style->postPadLeft;
+        avatarGap = inst->style->avatarGap;
+    } else {
+        avatarW = 35;
+        padLeft = 6;
+        avatarGap = 6;
+    }
+    textX = (WORD)(padLeft + avatarW + avatarGap);
+
+    nc = utf8_codepoints_range(label, label + strlen(label));
+    /* Label always in the theme's normal text pen -- FS3E_COLOR_SENSITIVE_
+     * WARNING is only used for the two bracket lines below; some themes
+     * pick a warning yellow too close to their own background/text pens
+     * to stay legible, but the normal text pen is guaranteed readable
+     * (every other post already relies on it). */
+    URPDC_SetDrawColorFromPen(dcBody, inst->screen, txtPen, bgPen);
+    URPDC_TextSizeUTF8(dcBody, label, nc, &m);
+
+    if (!post->contentRevealed) {
+        WORD midY = (WORD)((zoneTop + zoneBottom - inst->lineHeight) / 2);
+
+        SetAPen(rp, warnPen);
+        Move(rp, textX, zoneTop);
+        Draw(rp, zoneRight, zoneTop);
+        Move(rp, textX, (WORD)(zoneBottom - 1));
+        Draw(rp, zoneRight, (WORD)(zoneBottom - 1));
+
+        pos.x = (WORD)(textX + (zoneRight - textX - m.width) / 2);
+        pos.y = (WORD)(midY + inst->lineAscent);
+        URPDrawTextUTF8(rp, dcBody, &pos, label, (ULONG)nc);
+    } else {
+        pos.x = (WORD)(zoneRight - m.width);
+        pos.y = (WORD)(zoneTop + inst->lineAscent);
+        URPDrawTextUTF8(rp, dcBody, &pos, label, (ULONG)nc);
+    }
+}
+
 /* ------------------------------------------------------------------ */
 /* ttl_toot_render -- TTLItemClass.render for TTLToot_Class             */
 /*                                                                      */
@@ -602,12 +677,17 @@ void ttl_toot_render(TTLData *inst, struct RastPort *rp, TTLPost *post, LONG til
             /* Body text: draw the pre-wrapped TTL_SPAN_BODY spans built by
              * ttl_post_layout (via fs3etextwrap) -- this is what makes
              * drawn pixels match the height layout reserved; there is no
-             * re-wrapping at draw time anymore. */
+             * re-wrapping at draw time anymore. Skipped while a sensitive
+             * post is hidden -- ttl_draw_sensitive_zone() below draws the
+             * blur/warning zone over the same [sensitiveTopY,
+             * sensitiveBottomY) rect instead. */
             URPDC_SetDrawColorFromPen(dcBody, inst->screen, txtPen, bgPen);
             {
                 TTLTextSpan *sp;
                 UBYTE hi;
+                BOOL  contentHidden = (post->sensitive && !post->contentRevealed);
 
+                if (!contentHidden) {
                 for (sp = (TTLTextSpan *)post->textSpans.mlh_Head;
                      sp->node.mln_Succ;
                      sp = (TTLTextSpan *)sp->node.mln_Succ)
@@ -618,11 +698,22 @@ void ttl_toot_render(TTLData *inst, struct RastPort *rp, TTLPost *post, LONG til
                     baseline = (WORD)(lineY + sp->ascent);
                     tile_draw_text(inst, rp, sp->x, baseline, sp->utf8, dcBody);
                 }
+                }
+
+                if (post->sensitive)
+                    ttl_draw_sensitive_zone(inst, rp, post, drawY);
 
                 /* Recolor @mention / #hashtag / URL tokens with the link
                  * pen: same glyphs, same spot, redrawn on top in a
                  * different draw colour (see ttl_post_ensure_hotspots for
-                 * where these rects/strings come from). */
+                 * where these rects/strings come from). Draws hs->visibleLen
+                 * bytes, NOT hs->dataLen -- dataLen is the token's full,
+                 * unwrapped click-target text (can run past this row when
+                 * word-wrap split a long URL across rows), while
+                 * visibleLen is just the prefix that actually landed in
+                 * this hotspot's own [x,w) -- see TTLHotSpot.visibleLen's
+                 * doc comment. Using dataLen here redrew the WHOLE token as
+                 * one unwrapped, unclickable line past the wrapped text. */
                 {
                     LONG linkPen = (LONG)FS3E_PEN(inst->style, FS3E_COLOR_HASHTAG);
                     URPDC_SetDrawColorFromPen(dcBody, inst->screen, linkPen, bgPen);
@@ -633,7 +724,7 @@ void ttl_toot_render(TTLData *inst, struct RastPort *rp, TTLPost *post, LONG til
                             hs->type != TTL_HOT_URL) continue;
                         tile_draw_text_n(rp, hs->x,
                                          (WORD)(drawY + hs->y + inst->lineAscent),
-                                         hs->data, hs->dataLen, dcBody);
+                                         hs->data, hs->visibleLen, dcBody);
                     }
                 }
 
@@ -788,8 +879,13 @@ void ttl_toot_render(TTLData *inst, struct RastPort *rp, TTLPost *post, LONG til
                  * corner of the preview rect whenever there's more than
                  * one to browse between (same condition as the prev/next
                  * arrows above) -- background-filled so it stays legible
-                 * over any image content, not just plain-colored ones. */
-                if (post->mediaCount > 1) {
+                 * over any image content, not just plain-colored ones.
+                 * Skipped while hidden: unlike the image/arrow draws above
+                 * (which naturally no-op with no TTL_HOT_IMAGE/MEDIA_PREV/
+                 * NEXT hotspots present -- see ttl_toot_build_hotspots),
+                 * this one is driven by post->mediaCount directly, so it
+                 * needs its own explicit check. */
+                if (post->mediaCount > 1 && !contentHidden) {
                     char  counter[16];
                     struct URPTextMetric m;
                     struct URPTextPos    pos;

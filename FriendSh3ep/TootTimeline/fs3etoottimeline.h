@@ -200,6 +200,17 @@
  * header right now, or its header is for a different account id than
  * accountId (a stale reply racing a new profile being opened). */
 #define TTIMELINE_UpdateProfileFollow (TTIMELINE_Base + 27)
+/* [S] TTLProfileBioUpdate*: upd->channel's current profile header's bio
+ * text was just changed on the server (a successful "Modify" edit of the
+ * connected user's own description -- see TTL_HOT_MODIFY_BIO). Unlike
+ * TTIMELINE_UpdateProfileFollow this can change the header's height (the
+ * bio is word-wrapped the same way a toot body is), so instead of a
+ * targeted range-invalidate this forces the same full-relayout path
+ * TTIMELINE_RefreshPost uses (lastTileWidth = -1 / layoutToDo = TRUE).
+ * Silent no-op if upd->channel has no header right now, or its header is
+ * for a different account id than accountId (a stale reply racing a new
+ * profile being opened). */
+#define TTIMELINE_UpdateProfileBio    (TTIMELINE_Base + 43)
 /* [S] any: like TTIMELINE_ClearPosts, but every channel (0..
  * TTIMELINE_NUM_VIEWMODES-1), not just the currently active one -- for
  * switching the connected account, where every channel's posts belong to
@@ -503,6 +514,13 @@ typedef struct TTLPostSetup {
     BOOL        favourited;
     BOOL        reblogged;
 
+    /* TRUE if this post is marked sensitive (Mastodon's `sensitive` flag,
+     * see FS3ENetStatus.fmas_Sensitive's doc comment) -- body text and
+     * every attachment are blurred/hidden behind a "Show sensitive
+     * content" hotspot until the user reveals it (per-post, not
+     * persisted -- see TTLPost.contentRevealed). */
+    BOOL        sensitive;
+
     /* TRUE if the connected user is currently allowed to Quote this post
      * (server-computed from the post author's quote_approval_policy plus
      * the follow relationship -- see FS3ENetStatus.fmas_Quotable's doc
@@ -685,6 +703,18 @@ typedef struct TTLProfileHeaderSetup {
     BOOL        showFollow;   /* FALSE hides the Follow/Unfollow hot-spot entirely --
                                 * for viewing your own profile, where following yourself
                                 * makes no sense */
+    BOOL        isSelf;       /* TRUE for the connected user's own profile -- always TRUE
+                                * from FS3EApp_ShowOwnProfileHeader's VIEWMODE_User flow,
+                                * or (app->accountId == acc->fma_Id) from the Search flow
+                                * viewing yourself (same comparison showFollow's !isSelf
+                                * already uses -- see fs3erequests.c). Shows the "Modify"
+                                * hot-spot (TTL_HOT_MODIFY_BIO) in the same button row
+                                * Follow/Message occupy on someone else's profile -- the two
+                                * are mutually exclusive in practice (nothing sets both
+                                * showFollow and isSelf true at once), but kept as separate
+                                * fields rather than inferring one from the other so a
+                                * future reason to hide Follow doesn't silently start
+                                * showing Modify too. */
 } TTLProfileHeaderSetup;
 
 /* ------------------------------------------------------------------ */
@@ -698,6 +728,20 @@ typedef struct TTLProfileFollowUpdate {
     const char *accountId;   /* must match the current header's account, else no-op */
     BOOL        following;   /* new state */
 } TTLProfileFollowUpdate;
+
+/* ------------------------------------------------------------------ */
+/* Profile-header bio update (passed via TTIMELINE_UpdateProfileBio)   */
+/* -- see that tag's comment.                                          */
+/* ------------------------------------------------------------------ */
+
+typedef struct TTLProfileBioUpdate {
+    ULONG       channel;     /* which channel's header to patch -- see
+                               * TTLProfileHeaderSetup.channel's comment */
+    const char *accountId;   /* must match the current header's account, else no-op */
+    const char *bio;         /* new bio text, already HTML-stripped by the
+                               * caller (same convention as
+                               * TTLProfileHeaderSetup.bio) -- may be "" */
+} TTLProfileBioUpdate;
 
 /* ------------------------------------------------------------------ */
 /* Hot-spot types  (forwarded in TTLHotSpotActivated notification)     */
@@ -793,6 +837,21 @@ typedef struct TTLProfileFollowUpdate {
                                  * app->searchProfileAcct app-side (same as TTL_HOT_FOLLOW
                                  * reads app->searchProfileAccountId) and opens the compose
                                  * window with FS3ETOOT_KIND_MESSAGE. */
+#define TTL_HOT_SENSITIVE_TOGGLE 24 /* "Show sensitive content"/"Hide sensitive content" text
+                                 * button, drawn over the blurred body/media zone of a post
+                                 * with sensitive==TRUE (see TTLPost.sensitiveTopY/BottomY).
+                                 * Purely local: ttl_toot_activate flips post->contentRevealed
+                                 * and asks for a redraw, no server round-trip, no relayout
+                                 * (post->height never changes). data/postId are NULL. */
+#define TTL_HOT_MODIFY_BIO   25 /* profile header's "Modify" button -- same row Follow/
+                                 * Message occupy on someone else's profile, shown instead
+                                 * of them on your OWN profile (see TTLProfileHeaderSetup.
+                                 * isSelf/TTLPost.isOwn -- reuses the same field a toot's
+                                 * own TTL_HOT_MODIFY already uses for "is this mine").
+                                 * data/postId are NULL -- the handler opens the compose
+                                 * window (fs3etootview.c) in a new "modify bio" mode
+                                 * prefilled with the current bio, same FS3ETootView_Open
+                                 * pattern as TTL_HOT_MESSAGE. */
 
 /* Opaque handle; cast to TTLHotSpot* from private header if needed */
 typedef struct TTLHotSpot TTLHotSpot;

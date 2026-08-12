@@ -39,6 +39,8 @@ static const char *defaultStrings[MSG_COUNT] = {
     "Creating a new toot",
     /* MSG_TOOT_CONTEXT_MODIFY */
     "Modify your toot",
+    /* MSG_TOOT_CONTEXT_MODIFY_BIO */
+    "Modifying your bio",
     /* MSG_TOOT_CONTEXT_POLL */
     "Creating a new poll",
     /* MSG_TOOT_CONTEXT_REPLY_FORMAT */

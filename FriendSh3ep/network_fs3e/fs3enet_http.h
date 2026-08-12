@@ -75,6 +75,14 @@ BOOL FS3EHttp_Put(const char *url, const FS3EHttpHeader *headers,
                  const void *body, ULONG bodyLen,
                  FS3EHttpResponse *out);
 
+/* Same raw-BIO path as FS3EHttp_Put() -- see its comment -- just a
+ * different verb. Mastodon's PATCH /api/v1/accounts/update_credentials is
+ * the only user of this today (see FS3EMastodon_UpdateBio). */
+BOOL FS3EHttp_Patch(const char *url, const FS3EHttpHeader *headers,
+                 const char *contentType,
+                 const void *body, ULONG bodyLen,
+                 FS3EHttpResponse *out);
+
 /* Blocking HTTPS DELETE, no request body. Same raw-BIO path as
  * FS3EHttp_Put() -- see its comment -- just a different verb and no
  * Content-Type/Content-Length headers. */

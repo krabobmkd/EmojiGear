@@ -207,7 +207,19 @@ struct TTLHotSpot {
     WORD        x, y, w, h;  /* pixel rect; x/w absolute gadget X, y/h relative to post->timelineY */
     UBYTE       type;        /* TTL_HOT_* (see fs3etoottimeline.h) */
     const char *data;        /* borrowed, not NUL-terminated; NULL if not applicable (Reply/Boost/Fave/media) */
-    ULONG       dataLen;     /* byte length of data */
+    ULONG       dataLen;     /* byte length of data -- the full click-target text (see
+                               * ttl_scan_span_tokens: for a body @mention/#hashtag/URL this
+                               * is re-measured from the persistent, unwrapped post->body via
+                               * TTLTextSpan.bodySrc, so a click anywhere on the visible
+                               * fragment still opens/targets the WHOLE token even if
+                               * word-wrap split it across rows -- never truncated to fit [x,w). */
+    ULONG       visibleLen;  /* byte length of the PREFIX of data that's actually drawn at
+                               * [x,w) on this one row -- equal to dataLen for every hotspot
+                               * except a body token that word-wrap continues past this row's
+                               * own end (see ttl_scan_span_tokens); ttl_toot_render's
+                               * mention/hashtag/URL recolor pass must draw only this many
+                               * bytes, or it redraws the token's full, unwrapped text as one
+                               * overflowing line instead of respecting the wrap. */
 };
 
 /* ------------------------------------------------------------------ */
@@ -359,6 +371,24 @@ typedef struct TTLPost {
     BOOL   isReply;    /* see TTLPostSetup.isReply */
     BOOL   isOwn;      /* see TTLPostSetup.isOwn */
     BOOL   isThreadReply; /* see TTLPostSetup.isThreadReply */
+
+    /* Sensitive-content blur/reveal -- see TTLPostSetup.sensitive's doc
+     * comment. sensitive is copied straight from the server; contentRevealed
+     * is purely local/transient UI state (never sent anywhere, reset back to
+     * FALSE by ttl_post_refresh_fields like every other server-driven field
+     * refresh -- see its own comment). Deliberately does NOT change
+     * post->height: ttl_toot_layout always reserves the body/media area at
+     * full size regardless of this flag, so toggling it is a pure render-time
+     * decision (ttl_toot_render) needing only a tile-range invalidate, never
+     * a relayout -- see TTL_HOT_SENSITIVE_TOGGLE in ttl_toot_activate. */
+    BOOL   sensitive;
+    BOOL   contentRevealed;
+    /* [sensitiveTopY, sensitiveBottomY) in post-relative Y -- the blur/
+     * reveal zone computed once by ttl_toot_layout, reused as-is by
+     * ttl_toot_render/ttl_toot_build_hotspots, same "store once" rule as
+     * previewX/Y/W/H etc. above. Meaningless when !sensitive. */
+    WORD   sensitiveTopY;
+    WORD   sensitiveBottomY;
 
     /* Notifications view -- see the matching TTLPostSetup fields. Mutually
      * exclusive with boostBy/boostByAcct above by construction (nothing

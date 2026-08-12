@@ -60,10 +60,26 @@ static BOOL row_array_grow(FS3ETextWrap *tw, ULONG *alloc)
 
 /* Build one wrapped row's FS3ETextRow entry: its own charXOffsets array,
  * scoped to just that row (offsets are 0-based within the row, not within
- * the whole logical line). */
+ * the whole logical line).
+ *
+ * lineOffs/lineBaseChar (NULL/0 for the empty-row case) are the SAME
+ * per-logical-line offset array + row start index the caller's binary
+ * search already used to decide this row's split point -- row->charXOffsets
+ * is filled by slicing/rebasing that array (subtracting
+ * lineOffs[lineBaseChar]) rather than a second, independent
+ * URPDC_HorizontalOffsetArrayUTF8() call starting fresh at rowStart. A
+ * second call measures the substring in isolation, with no guarantee it
+ * agrees pixel-for-pixel with the whole-line measurement the split
+ * decision was based on (font shaping/kerning can differ with
+ * surrounding context) -- for ordinary space-separated words that slack
+ * is invisible, but a long run with no spaces gets pushed right up to
+ * the maxW boundary, exactly where any such discrepancy would surface as
+ * this row's real width exceeding maxW. Reusing the caller's own numbers
+ * makes row->width <= maxW true by construction instead of by two
+ * separate measurements happening to agree. */
 static BOOL emit_row(FS3ETextWrap *tw, ULONG *alloc,
-                      struct URPDrawContext *dc,
-                      const char *rowStart, ULONG rowByteLen, ULONG rowCharCount)
+                      const char *rowStart, ULONG rowByteLen, ULONG rowCharCount,
+                      const LONG *lineOffs, ULONG lineBaseChar)
 {
     FS3ETextRow *row;
 
@@ -76,12 +92,14 @@ static BOOL emit_row(FS3ETextWrap *tw, ULONG *alloc,
     row->width     = 0;
     row->charXOffsets = NULL;
 
-    if (rowCharCount > 0) {
+    if (rowCharCount > 0 && lineOffs) {
         row->charXOffsets = (LONG *)AllocVec(
             (rowCharCount + 1) * sizeof(LONG), MEMF_ANY);
         if (row->charXOffsets) {
-            URPDC_HorizontalOffsetArrayUTF8(dc, rowStart, (LONG)rowCharCount,
-                                             row->charXOffsets);
+            LONG base = lineOffs[lineBaseChar];
+            ULONG i;
+            for (i = 0; i <= rowCharCount; i++)
+                row->charXOffsets[i] = lineOffs[lineBaseChar + i] - base;
             row->width = (WORD)row->charXOffsets[rowCharCount];
         }
     }
@@ -112,7 +130,7 @@ BOOL FS3ETextWrap_Build(FS3ETextWrap *tw, struct URPDrawContext *dc,
         if (n == 0) {
             /* Blank logical line: one zero-width row so callers that
              * iterate rows still see the vertical gap. */
-            if (!emit_row(tw, &alloc, dc, logStart, 0, 0)) goto fail;
+            if (!emit_row(tw, &alloc, logStart, 0, 0, NULL, 0)) goto fail;
         } else {
             LONG *lineOffs = (LONG *)AllocVec((n + 1) * sizeof(LONG), MEMF_ANY);
             LONG  rowStartChar = 0;
@@ -152,8 +170,9 @@ BOOL FS3ETextWrap_Build(FS3ETextWrap *tw, struct URPDrawContext *dc,
                 {
                     ULONG byteStart = char_to_byte(logStart, (ULONG)rowStartChar);
                     ULONG byteEnd   = char_to_byte(logStart, (ULONG)wrapAt);
-                    if (!emit_row(tw, &alloc, dc, logStart + byteStart,
-                                  byteEnd - byteStart, (ULONG)(wrapAt - rowStartChar))) {
+                    if (!emit_row(tw, &alloc, logStart + byteStart,
+                                  byteEnd - byteStart, (ULONG)(wrapAt - rowStartChar),
+                                  lineOffs, (ULONG)rowStartChar)) {
                         FreeVec(lineOffs);
                         goto fail;
                     }

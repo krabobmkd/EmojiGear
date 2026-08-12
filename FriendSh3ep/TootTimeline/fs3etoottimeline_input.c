@@ -263,9 +263,10 @@ static void ttl_activate_hotspot(TTLData *inst, Class *cl, Object *o,
 }
 
 /* TTLItemClass.activate for TTLToot_Class: TTL_HOT_MEDIA_PREV/NEXT browse
- * to the prev/next attachment within the post's single preview rect and
- * ask for a redraw. Every other hot-spot type has no local reaction --
- * the generic notify above (ttl_notify_hotspot) is already everything
+ * to the prev/next attachment within the post's single preview rect,
+ * TTL_HOT_SENSITIVE_TOGGLE flips the blur/reveal state -- both just ask
+ * for a redraw. Every other hot-spot type has no local reaction -- the
+ * generic notify above (ttl_notify_hotspot) is already everything
  * external code needs. */
 void ttl_toot_activate(TTLData *inst, Class *cl, Object *o,
                         struct GadgetInfo *gi, TTLPost *post, TTLHotSpot *hs)
@@ -286,6 +287,18 @@ void ttl_toot_activate(TTLData *inst, Class *cl, Object *o,
          * makes the next ttl_post_ensure_hotspots() rebuild pick up the
          * new index; tile invalidation + notify make that "next" happen
          * now instead of whenever this post's tile next redraws anyway. */
+        post->hotSpotsDirty = TRUE;
+        ttl_tiles_invalidate_range(inst, post->timelineY, post->timelineY + post->height);
+        ttl_notify(cl, o, gi, TTIMELINE_ProcessRefresh, TRUE);
+    } else if (hs->type == TTL_HOT_SENSITIVE_TOGGLE) {
+        /* Purely local, transient UI state (see TTLPost.contentRevealed's
+         * doc comment) -- no server round-trip, and post->height never
+         * changes (ttl_toot_layout always reserved the full body/media
+         * area regardless of this flag), so no relayout is needed, just
+         * the same invalidate+redraw dance as the media browse above. The
+         * hotspot rect itself (whole zone vs. small corner label) differs
+         * between the two states -- see ttl_toot_build_hotspots. */
+        post->contentRevealed = !post->contentRevealed;
         post->hotSpotsDirty = TRUE;
         ttl_tiles_invalidate_range(inst, post->timelineY, post->timelineY + post->height);
         ttl_notify(cl, o, gi, TTIMELINE_ProcessRefresh, TRUE);

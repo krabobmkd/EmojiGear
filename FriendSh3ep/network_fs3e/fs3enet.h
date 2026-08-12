@@ -40,6 +40,7 @@ enum FS3ENetRequestType
     FS3ENETQ_INSTANCE_INFO,  /* fetch the server's per-toot character limit */
     FS3ENETQ_EDIT_STATUS,    /* edit an existing status' text (own toots only) */
     FS3ENETQ_DELETE_STATUS,  /* delete an existing status (own toots only) */
+    FS3ENETQ_UPDATE_BIO,     /* set the connected user's own profile bio (note) */
     FS3ENETQ_UPLOAD_MEDIA,   /* POST /api/v2/media, upload one attachment file --
                                * see FS3ENetUploadMediaReq/Reply below. Fired before
                                * FS3ENETQ_POST_STATUS when composing a toot with an
@@ -616,6 +617,13 @@ typedef struct FS3ENetStatus {
     BOOL   fmas_Favourited;   /* connected user already favourited this status */
     BOOL   fmas_Reblogged;    /* connected user already boosted this status */
 
+    /* Mastodon's `sensitive` flag -- applies to the whole status incl.
+     * every attachment, not per-attachment (see FS3ENetPostStatusReq.
+     * fs3ep_Sensitive's comment for the posting-side equivalent). Drives
+     * TootTimeline's blur/reveal toggle -- see TTLPost.sensitive and
+     * TTLPost.contentRevealed. */
+    BOOL   fmas_Sensitive;
+
     /* TRUE if this status is itself a reply (src's own "in_reply_to_id" is
      * non-null) -- doesn't need the actual parent id, just whether one
      * exists: fetching GET .../statuses/:id/context with THIS status' own
@@ -805,6 +813,27 @@ FS3ENetEditStatusReq *FS3ENetEditStatusReq_Alloc(
 typedef struct FS3ENetEditStatusReply {
     char *fs3ee_StatusId; /* echoes the edited status id back */
 } FS3ENetEditStatusReply;
+
+/*
+ * FS3ENETQ_UPDATE_BIO — PATCH /api/v1/accounts/update_credentials, set the
+ * connected user's own profile bio -- see FS3EMastodon_UpdateBio. On
+ * FS3ENETR_OK, fs3em_Data is replaced with an FS3ENetUpdateBioReply.
+ */
+typedef struct FS3ENetUpdateBioReq {
+    char *fs3eub_ApiBaseUrl;
+    char *fs3eub_AccessToken;
+    char *fs3eub_Note; /* UTF-8 new bio text */
+} FS3ENetUpdateBioReq;
+
+FS3ENetUpdateBioReq *FS3ENetUpdateBioReq_Alloc(
+    const char *apiBaseUrl, const char *accessToken, const char *note);
+
+typedef struct FS3ENetUpdateBioReply {
+    char *fs3eub_Note; /* server-echoed bio, HTML-stripped (see
+                         * FS3ENet_HandleUpdateBio) -- ready to show as-is,
+                         * same convention as every other timeline/profile
+                         * bio text. */
+} FS3ENetUpdateBioReply;
 
 /*
  * FS3ENETQ_DELETE_STATUS — DELETE /api/v1/statuses/:id, delete an existing

@@ -590,6 +590,28 @@ void FS3EApp_SubmitToot(const char *body, LONG visibility, LONG quotePolicy,
     }
 }
 
+/* Builds and sends the PATCH .../accounts/update_credentials request for
+ * FS3ETOOT_KIND_MODIFY_BIO -- GID_TOOT_SEND_BUTTON's early-dispatch branch
+ * for that compose kind calls this instead of FS3EApp_SubmitToot (there is
+ * no status involved, so none of that function's PUT/POST-status branching
+ * applies). Unlike FS3EApp_SubmitToot, an empty body is valid -- it clears
+ * the bio -- so there's no !body[0] rejection. Takes ownership of body:
+ * FreeVec()'d here, same contract as FS3EApp_SubmitToot. */
+static void FS3EApp_SubmitBioUpdate(const char *body)
+{
+    FS3ENetUpdateBioReq *req;
+
+    if (!body) return;
+    if (!app->accountAccessToken) {
+        FreeVec((APTR)body);
+        return;
+    }
+
+    req = FS3ENetUpdateBioReq_Alloc(app->accountApiBaseUrl, app->accountAccessToken, body);
+    FreeVec((APTR)body);
+    FS3EApp_NetSend(FS3ENETQ_UPDATE_BIO, req, sizeof(*req));
+}
+
 /* - - - - - - - - - - - - - - - - - - - HELPERS - - - - - - - - - - - - - */
 /* note: this is reached when messages are not used by boopsi gadgets */
 static ULONG IDCMPDispatch(
@@ -1077,6 +1099,27 @@ void StartSearchFromLine()
 
 /* - - - - - - - - - - - - - - - - - - - MAIN - - - - - - - - - - - - - - - */
 
+/* Ported from EmojiGear/emojigear.c's own copy of this mechanism -- see its
+ * doc comment there for the general idea (checked here too, comments not
+ * repeated verbatim):
+ *   - Always: reject a too-small stack outright before doing anything else,
+ *     rather than risking a silent stack-smash crash deep in TootTimeline/
+ *     network reply handling later.
+ *   - STACK_WATCH (off by default): sentinel-fills the unused stack at
+ *     startup, then at normal exit scans for the sentinel's high-water
+ *     mark to report how much was actually used, so FS3E_MIN_STACK can be
+ *     tightened from a real measurement instead of a guess.
+ * Not yet measured on real hardware for FriendSh3ep specifically -- build
+ * once with STACK_WATCH defined, note the printed "real use" figure, and
+ * tighten FS3E_MIN_STACK to a safe margin above it. Starting conservative
+ * (higher than EmojiGear's 28k) given FriendSh3ep's considerably deeper
+ * call chains (TootTimeline rendering, network reply dispatch, BOOPSI
+ * layout recursion) -- this only covers the main GUI task's own stack;
+ * the network/thumb/audio processes each set their own via
+ * NP_StackSize (see FS3ENET_STACK_SIZE and friends). */
+/*#define STACK_WATCH 1 ->does 19xxx b */
+#define FS3E_MIN_STACK (31 * 1024)
+
 int main(int argc, char **argv)
 {
     UWORD dpiH = DEFAULT_DPI_HEIGHT;
@@ -1098,6 +1141,27 @@ int main(int argc, char **argv)
         return 1;
     }
     myTask = FindTask(NULL);
+    {
+        int _stacksize = (int)((int)myTask->tc_SPReg - (int)myTask->tc_SPLower);
+        if (_stacksize < FS3E_MIN_STACK) {
+            printf("FriendSh3ep needs at least %dk stack. Use \"stack %d\" or set it in the icon properties.\n",
+                   FS3E_MIN_STACK / 1024, FS3E_MIN_STACK);
+            return 1;
+        }
+#ifdef STACK_WATCH
+        /* Fill the unused portion of the stack with a sentinel value so we
+         * can measure real high-water use at exit. _sw_near leaves a 64-byte
+         * safety margin below the current frame before the fill starts. */
+        {
+            int   _sw_anchor = 0;
+            int  *_sw_near   = (int *)((int)&_sw_anchor - 64);
+            int  *_sw_far    = (int *)((int)myTask->tc_SPLower + 4);
+            int   _sw_i;
+            for (_sw_i = 0; _sw_i < ((int)_sw_near - (int)_sw_far) / (int)sizeof(int); _sw_i++)
+                _sw_far[_sw_i] = (int)0xCAFEBABE;
+        }
+#endif
+    }
     atexit(&exitclose);
 
 
@@ -2234,6 +2298,16 @@ int main(int argc, char **argv)
                                 LONG quotePolicy    = FS3ETootView_GetQuotePolicy(&app->tootView);
                                 BOOL sensitive      = FS3ETootView_GetSensitive(&app->tootView);
 
+                                if (app->tootView.composeKind == FS3ETOOT_KIND_MODIFY_BIO) {
+                                    /* No status, no attachments/visibility/
+                                     * sensitive to check -- an empty body
+                                     * is a valid "clear my bio" edit, so
+                                     * this bypasses every check below
+                                     * (all status-specific). */
+                                    FS3EApp_SubmitBioUpdate(body);
+                                    break;
+                                }
+
                                 if (body && body[0] && app->accountAccessToken &&
                                     !app->tootUploadPending)
                                 {
@@ -2619,6 +2693,40 @@ int main(int argc, char **argv)
                                             }
                                             break;
 
+                                        case TTL_HOT_MODIFY_BIO:
+                                            /* Only ever shown on the
+                                             * connected user's own profile
+                                             * header (see TTLPost.isOwn /
+                                             * TTLProfileHeaderSetup.isSelf),
+                                             * whether that's VIEWMODE_User's
+                                             * own tab or the Search tab
+                                             * landing on yourself -- refresh
+                                             * searchProfileAcct/AccountId
+                                             * from the clicked header first,
+                                             * same as TTL_HOT_FOLLOWERS_LIST
+                                             * above, since VIEWMODE_User's
+                                             * own-profile flow never
+                                             * populates them. hotSpotString
+                                             * carries the current bio text
+                                             * (see ttl_hs_add's call in
+                                             * fs3etoottimeline_profile.c),
+                                             * NULL for an empty bio. */
+                                            if (hotSpotId && hotSpotAcct) {
+                                                if (app->searchProfileAcct)      FreeVec(app->searchProfileAcct);
+                                                if (app->searchProfileAccountId) FreeVec(app->searchProfileAccountId);
+                                                app->searchProfileAcct      = NetStrDup(hotSpotAcct);
+                                                app->searchProfileAccountId = NetStrDup(hotSpotId);
+                                            }
+                                            if (FS3EApp_RequireRealAccount()) {
+                                                FS3ETootComposeParams params;
+                                                memset(&params, 0, sizeof(params));
+                                                params.body = hotSpotString ? hotSpotString : "";
+                                                FS3ETootView_SetComposeContext(&app->tootView,
+                                                    FS3ETOOT_KIND_MODIFY_BIO, &params);
+                                                FS3ETootView_Open(&app->tootView);
+                                            }
+                                            break;
+
                                         case TTL_HOT_MEDIA_PREV:
                                         case TTL_HOT_MEDIA_NEXT:
                                             /* The gadget already advanced
@@ -2970,6 +3078,19 @@ int main(int argc, char **argv)
             }
         }  // ed while events
     }// end paragraph
+
+#ifdef STACK_WATCH
+    {
+        struct Task *_sw_task = FindTask(NULL);
+        int _sw_stacksize = (int)((int)_sw_task->tc_SPReg - (int)_sw_task->tc_SPLower);
+        int *_sw_p = (int *)((int)_sw_task->tc_SPLower + 4);
+        while (*_sw_p == (int)0xCAFEBABE && _sw_p < (int *)_sw_task->tc_SPReg)
+            _sw_p++;
+        printf("**** STACK_WATCH: total=%d  real use=%d\n",
+               _sw_stacksize,
+               (int)((int)_sw_task->tc_SPReg - (int)_sw_p));
+    }
+#endif
 
     return 0;
 }

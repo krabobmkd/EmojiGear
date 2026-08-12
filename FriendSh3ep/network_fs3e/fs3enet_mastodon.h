@@ -232,6 +232,25 @@ BOOL FS3EMastodon_EditStatus(const char *apiBaseUrl, const char *accessToken,
                             const char *const *mediaIds, ULONG mediaCount);
 
 /*
+ * PATCH /api/v1/accounts/update_credentials -- sets the connected user's
+ * own bio (Mastodon's "note" field on that endpoint; nothing else about
+ * the account is touched -- avatar/display name/etc. aren't wired up
+ * here). Only PATCH-capable of the raw-BIO verbs (see FS3EHttp_Patch),
+ * same reasoning as FS3EMastodon_EditStatus's PUT.
+ *
+ * On success, outNote is filled with the server's echoed note text --
+ * RAW HTML, same convention as FS3EMastodonAccount.fma_Note/
+ * FS3EMastodon_LookupAccount (the caller is responsible for stripping it
+ * before showing it anywhere, e.g. FS3ENet_HandleUpdateBio in fs3enet.c) --
+ * and returns TRUE. Reading it back from the response (rather than just
+ * trusting the request's own `note` text) matters because Mastodon may
+ * normalize it (e.g. collapsing blank lines) server-side.
+ */
+BOOL FS3EMastodon_UpdateBio(const char *apiBaseUrl, const char *accessToken,
+                            const char *note,
+                            char *outNote, ULONG outNoteSize);
+
+/*
  * DELETE /api/v1/statuses/:id -- deletes an existing status (own toots
  * only). No request body. Success = the server responded 200 OK, same
  * "real status code, not a parsed field" reasoning as FS3EMastodon_EditStatus.

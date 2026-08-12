@@ -667,6 +667,39 @@ ULONG ttl_apply_tags(Class *cl, Object *o, struct opSet *msg, int couldRefreshDr
                 break;
             }
 
+            case TTIMELINE_UpdateProfileBio: {
+                const TTLProfileBioUpdate *upd = (const TTLProfileBioUpdate *)tag->ti_Data;
+                if (upd && upd->channel < TTIMELINE_NUM_VIEWMODES) {
+                    TTLChannel *channel = &inst->channels[upd->channel];
+                    if (upd->accountId && channel->headerPost &&
+                        channel->headerPost->postId &&
+                        strcmp(channel->headerPost->postId, upd->accountId) == 0)
+                    {
+                        TTLPost    *header  = channel->headerPost;
+                        const char *bioSrc  = upd->bio ? upd->bio : "";
+                        ULONG       bioLen  = (ULONG)strlen(bioSrc);
+                        char       *newBody = (char *)AllocVec(bioLen + 1, MEMF_ANY);
+
+                        if (newBody) {
+                            CopyMem((APTR)bioSrc, newBody, bioLen + 1);
+                            if (header->body) FreeVec(header->body);
+                            header->body = newBody;
+
+                            /* Bio length change can grow or shrink the
+                             * header's word-wrapped height -- same
+                             * full-relayout path TTIMELINE_RefreshPost
+                             * uses, see TTIMELINE_UpdateProfileBio's
+                             * comment in fs3etoottimeline.h. */
+                            inst->lastTileWidth = -1;
+                            inst->layoutToDo    = TRUE;
+                            redraw = TRUE;
+                        }
+                    }
+                }
+                used = 1;
+                break;
+            }
+
             case TTIMELINE_ClearPosts:
                 ttl_clear_posts(inst);
                 redraw = TRUE;

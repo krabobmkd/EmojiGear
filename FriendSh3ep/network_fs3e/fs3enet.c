@@ -277,6 +277,25 @@ FS3ENetEditStatusReq *FS3ENetEditStatusReq_Alloc(
     return req;
 }
 
+FS3ENetUpdateBioReq *FS3ENetUpdateBioReq_Alloc(
+    const char *apiBaseUrl, const char *accessToken, const char *note)
+{
+    ULONG total = sizeof(FS3ENetUpdateBioReq)
+                + FS3ENet_PackLen(apiBaseUrl)
+                + FS3ENet_PackLen(accessToken)
+                + FS3ENet_PackLen(note);
+    FS3ENetUpdateBioReq *req =
+        (FS3ENetUpdateBioReq *)AllocVec(total, MEMF_ANY | MEMF_PUBLIC);
+    char *p;
+
+    if (!req) return NULL;
+    p = (char *)req + sizeof(*req);
+    FS3ENet_PackStr(&req->fs3eub_ApiBaseUrl,  &p, apiBaseUrl);
+    FS3ENet_PackStr(&req->fs3eub_AccessToken, &p, accessToken);
+    FS3ENet_PackStr(&req->fs3eub_Note,        &p, note);
+    return req;
+}
+
 FS3ENetUploadMediaReq *FS3ENetUploadMediaReq_Alloc(
     const char *apiBaseUrl, const char *accessToken,
     const char *filePath, const char *mimeType)
@@ -2392,6 +2411,9 @@ static void FS3ENet_FillStatusFields(const cJSON *item, const cJSON *src,
     v = cJSON_GetObjectItemCaseSensitive(src, "reblogged");
     dst->fmas_Reblogged = (v && cJSON_IsTrue(v)) ? TRUE : FALSE;
 
+    v = cJSON_GetObjectItemCaseSensitive(src, "sensitive");
+    dst->fmas_Sensitive = (v && cJSON_IsTrue(v)) ? TRUE : FALSE;
+
     v = cJSON_GetObjectItemCaseSensitive(src, "in_reply_to_id");
     dst->fmas_IsReply = (v && !cJSON_IsNull(v)) ? TRUE : FALSE;
 
@@ -2983,6 +3005,47 @@ static void FS3ENet_HandleEditStatus(FS3ENetMessage *fs3em)
     fs3em->fs3em_Result  = FS3ENETR_OK;
 }
 
+/* FS3ENETQ_UPDATE_BIO — set the connected user's own profile bio (note).
+ * FS3EMastodon_UpdateBio hands back the server-echoed note as RAW HTML
+ * (same convention as FS3EMastodonAccount.fma_Note) -- StripHTML it here
+ * before packing the reply, same treatment every other bio/content field
+ * in this file already gets (see FS3ENet_HandleAccountLookup). */
+static void FS3ENet_HandleUpdateBio(FS3ENetMessage *fs3em)
+{
+    FS3ENetUpdateBioReq   *req = (FS3ENetUpdateBioReq *)fs3em->fs3em_Data;
+    FS3ENetUpdateBioReply *reply;
+    char  rawNote[2048];
+    char  stripped[2048];
+    ULONG total;
+    char *p;
+
+    if (!req || fs3em->fs3em_DataLen < sizeof(*req)) {
+        fs3em->fs3em_Result = FS3ENETR_PARSE_ERROR;
+        return;
+    }
+
+    if (!FS3EMastodon_UpdateBio(req->fs3eub_ApiBaseUrl, req->fs3eub_AccessToken,
+            req->fs3eub_Note, rawNote, sizeof(rawNote)))
+    {
+        fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
+        return;
+    }
+
+    StripHTML(rawNote, stripped, sizeof(stripped));
+
+    total = sizeof(FS3ENetUpdateBioReply) + FS3ENet_PackLen(stripped);
+    reply = (FS3ENetUpdateBioReply *)AllocVec(total, MEMF_ANY | MEMF_PUBLIC);
+    if (!reply) { fs3em->fs3em_Result = FS3ENETR_NETWORK_ERROR; return; }
+
+    p = (char *)reply + sizeof(*reply);
+    FS3ENet_PackStr(&reply->fs3eub_Note, &p, stripped);
+
+    FreeVec(fs3em->fs3em_Data);
+    fs3em->fs3em_Data    = reply;
+    fs3em->fs3em_DataLen = total;
+    fs3em->fs3em_Result  = FS3ENETR_OK;
+}
+
 /* FS3ENETQ_UPLOAD_MEDIA — read fs3eum_FilePath off disk and upload it as a
  * new media attachment. All local-failure paths (file missing/unreadable/
  * too big) come back as FS3ENETR_HTTP_ERROR, same coarse-grained error
@@ -3486,6 +3549,10 @@ static BOOL FS3ENet_Dispatch(FS3ENetMessage *fs3em)
 
         case FS3ENETQ_EDIT_STATUS:
             FS3ENet_HandleEditStatus(fs3em);
+            break;
+
+        case FS3ENETQ_UPDATE_BIO:
+            FS3ENet_HandleUpdateBio(fs3em);
             break;
 
         case FS3ENETQ_DELETE_STATUS:

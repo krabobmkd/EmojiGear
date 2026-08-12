@@ -314,6 +314,9 @@ TTLPost *ttl_post_alloc(const TTLPostSetup *setup)
     post->isReply         = setup->isReply;
         post->isOwn           = setup->isOwn;
         post->isThreadReply   = setup->isThreadReply;
+        post->sensitive       = setup->sensitive;
+        /* contentRevealed left FALSE (MEMF_CLEAR) -- fresh post, not
+         * revealed yet even if sensitive. */
 
         post->notifType       = setup->notifType;
         post->notifActorName  = (setup->notifActorName && setup->notifActorName[0]) ? dup_str(setup->notifActorName) : NULL;
@@ -461,6 +464,11 @@ void ttl_post_refresh_fields(TTLPost *post, const TTLPostSetup *setup)
     post->reblogged       = setup->reblogged;
     post->quotable        = setup->quotable;
     post->isReply         = setup->isReply;
+    post->sensitive       = setup->sensitive;
+    /* contentRevealed intentionally left untouched -- transient UI state,
+     * not content (same reasoning as isThreadReply not being touched
+     * above): a routine refresh must not re-hide something the user
+     * already chose to reveal. */
 
     post->pollOptionCount = setup->pollOptionCount;
     if (post->pollOptionCount > TTL_POST_MAX_POLL_OPTIONS) post->pollOptionCount = TTL_POST_MAX_POLL_OPTIONS;
@@ -777,9 +785,12 @@ static void ttl_toot_layout(TTLData *inst, TTLPost *post)
      * pixel -- one TTL_SPAN_BODY span per visual row. ---- */
     {
         LONG bodyTopY  = curRelY;
+        LONG bodyBottomY;
         WORD rightW    = hasThumb ? previewW : cardW; /* equal by construction either way */
         WORD bodyTextW = (sideBySide && hasRight) ? (WORD)(textW - rightW - avatarGap) : textW;
         struct URPDrawContext *dcBody = inst->style ? inst->style->dcNormal : NULL;
+
+        post->sensitiveTopY = (WORD)bodyTopY;
 
         if (post->body && post->body[0] && dcBody) {
             FS3ETextWrap tw;
@@ -796,6 +807,8 @@ static void ttl_toot_layout(TTLData *inst, TTLPost *post)
             /* No draw context yet -- transient, see file header comment. */
             curRelY += ttl_count_wrapped_lines(inst, post->body, bodyTextW) * inst->lineHeight;
         }
+
+        bodyBottomY = curRelY;
 
         /* Thumbnail/card placement: side-by-side stacks them in a shared
          * right column (thumb above card); stacked narrow places them one
@@ -842,6 +855,14 @@ static void ttl_toot_layout(TTLData *inst, TTLPost *post)
                 curRelY += cardH;
             }
         }
+
+        /* Sensitive-content blur/reveal zone (see TTL_HOT_SENSITIVE_TOGGLE
+         * in ttl_toot_render/ttl_toot_activate) -- covers the body text
+         * always, plus the media preview when present (post->previewY/H,
+         * already computed above), but never the link preview card, which
+         * stays visible regardless -- see TTLPost.sensitive's doc comment:
+         * only text/media are ever hidden. */
+        post->sensitiveBottomY = (WORD)(hasThumb ? (post->previewY + post->previewH) : bodyBottomY);
     }
 
     /* ---- Poll ("survey") results block -- closed/result rendering only.
@@ -985,6 +1006,10 @@ void ttl_hs_add(TTLPost *post, UBYTE type, WORD x, WORD y, WORD w, WORD h,
     hs->x = x; hs->y = y; hs->w = w; hs->h = h;
     hs->data    = (data && dataLen > 0) ? data : NULL;
     hs->dataLen = hs->data ? dataLen : 0;
+    /* Default: the whole of data is visible/drawn at [x,w) -- true for
+     * every hotspot except a wrapped body token, which overrides this
+     * right after this call -- see ttl_scan_span_tokens/TTLHotSpot.visibleLen. */
+    hs->visibleLen = hs->dataLen;
 }
 
 static BOOL ttl_bytes_match(const unsigned char *p, const unsigned char *end,
@@ -1062,6 +1087,19 @@ void ttl_scan_span_tokens(TTLPost *post, TTLTextSpan *sp)
                            (WORD)(sp->charXOffsets[charIdx] - sp->charXOffsets[startChar]),
                            sp->height,
                            dataStart, (ULONG)(q - (const unsigned char *)dataStart));
+
+                /* dataLen above is the token's FULL length (bodySrc can run
+                 * past this row -- see this function's doc comment), but
+                 * only [tokStart, p) of it actually landed on this row's
+                 * own [x,w) -- ttl_toot_render's recolor pass must redraw
+                 * just that prefix, not the whole (possibly multi-row)
+                 * token, or it draws the rest as one overflowing unwrapped
+                 * line -- see TTLHotSpot.visibleLen. dataStart and tokStart
+                 * are byte-identical up to this row's own end (bodySrc and
+                 * sp->utf8 are copies of the same post->body bytes), so
+                 * this byte count applies to either buffer equally. */
+                post->hotSpots[post->hotSpotCount - 1].visibleLen =
+                    (ULONG)(p - tokStart);
             }
             continue;
         }
@@ -1081,6 +1119,7 @@ static void ttl_toot_build_hotspots(TTLData *inst, TTLPost *post)
 {
     TTLTextSpan *sp;
     WORD avatarW, padLeft, avatarGap, textX;
+    BOOL contentHidden = (post->sensitive && !post->contentRevealed);
 
     post->hotSpotCount = 0;
 
@@ -1139,12 +1178,27 @@ static void ttl_toot_build_hotspots(TTLData *inst, TTLPost *post)
                 ttl_hs_add(post, TTL_HOT_AVATAR, sp->x, (WORD)sp->postRelY,
                            sp->width, sp->height,
                            post->boostByAcct, (ULONG)strlen(post->boostByAcct));
-        } else if (sp->spanType == TTL_SPAN_BODY) {
+        } else if (sp->spanType == TTL_SPAN_BODY && !contentHidden) {
+            /* Skipped while hidden: the body text itself isn't drawn (see
+             * ttl_toot_render), so there are no mention/hashtag/URL glyphs
+             * on screen to make clickable -- the one big
+             * TTL_HOT_SENSITIVE_TOGGLE hotspot added below covers this
+             * whole zone instead. */
             ttl_scan_span_tokens(post, sp);
         }
     }
 
-    if (post->mediaCount > 0 && post->previewW > 0) {
+    if (contentHidden) {
+        /* Sensitive and not yet revealed: one hotspot over the whole
+         * reserved text+media zone (nothing else drawn in it -- see
+         * ttl_draw_sensitive_zone), instead of the normal per-token/media
+         * hotspots below. */
+        WORD rowW  = (WORD)(inst->gadWidth - textX - TTL_POST_PAD_RIGHT);
+        WORD zoneH = (WORD)(post->sensitiveBottomY - post->sensitiveTopY);
+        if (post->hotSpotCount < TTL_HOTSPOT_MAX_PER_TOOT && zoneH > 0)
+            ttl_hs_add(post, TTL_HOT_SENSITIVE_TOGGLE, textX, post->sensitiveTopY,
+                       rowW, zoneH, NULL, 0);
+    } else if (post->mediaCount > 0 && post->previewW > 0) {
         const char *curUrl = (post->mediaCurrentIndex < post->mediaCount)
                             ? post->mediaUrls[post->mediaCurrentIndex] : NULL;
         ULONG curKind = (post->mediaCurrentIndex < post->mediaCount)
@@ -1287,6 +1341,40 @@ static void ttl_toot_build_hotspots(TTLData *inst, TTLPost *post)
         ttl_hs_add(post, TTL_HOT_QUOTECARD, post->quoteX, post->quoteY,
                    post->quoteW, post->quoteH,
                    post->quoteId, post->quoteId ? (ULONG)strlen(post->quoteId) : 0);
+    }
+
+    /* Revealed sensitive content: real content above already got its own
+     * normal hotspots (media/mention/etc, added above under !contentHidden)
+     * -- this just adds a small "Hide sensitive content" corner hotspot so
+     * there's still a way back, matching ttl_draw_sensitive_zone's
+     * top-right corner label. Added LAST so it wins ties in back-to-front
+     * hit-testing (see ttl_hit_hotspot) over whatever's directly under it
+     * (e.g. a body-text token or the media rect, if either happens to
+     * reach that corner). */
+    if (post->sensitive && post->contentRevealed &&
+        post->hotSpotCount < TTL_HOTSPOT_MAX_PER_TOOT)
+    {
+        struct URPDrawContext *dcA = inst->style ? inst->style->dcNormal : NULL;
+        const char *label = "Hide sensitive content";
+        WORD zoneH = (WORD)(post->sensitiveBottomY - post->sensitiveTopY);
+        WORD labelH = inst->lineHeight;
+        WORD labelW = 160;
+
+        if (labelH > zoneH) labelH = zoneH;
+        if (dcA) {
+            struct URPTextMetric m;
+            LONG nc = utf8_codepoints_range(label, label + strlen(label));
+            URPDC_TextSizeUTF8(dcA, label, nc, &m);
+            labelW = (WORD)(m.width > 0 ? m.width : labelW);
+        }
+
+        {
+            WORD rowRight = (WORD)(inst->gadWidth - TTL_POST_PAD_RIGHT);
+            WORD labelX   = (WORD)(rowRight - labelW);
+            if (labelX < textX) labelX = textX;
+            ttl_hs_add(post, TTL_HOT_SENSITIVE_TOGGLE, labelX, post->sensitiveTopY,
+                       (WORD)(rowRight - labelX), labelH, NULL, 0);
+        }
     }
 }
 

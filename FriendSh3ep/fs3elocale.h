@@ -33,6 +33,7 @@ enum {
     MSG_TOOT_TITLE,
     MSG_TOOT_CONTEXT_NEW,          /* FS3ETOOT_KIND_NEW contextMessage text */
     MSG_TOOT_CONTEXT_MODIFY,       /* FS3ETOOT_KIND_MODIFY contextMessage text */
+    MSG_TOOT_CONTEXT_MODIFY_BIO,   /* FS3ETOOT_KIND_MODIFY_BIO contextMessage text */
     MSG_TOOT_CONTEXT_POLL,         /* FS3ETOOT_KIND_POLL contextMessage text */
     MSG_TOOT_CONTEXT_REPLY_FORMAT, /* FS3ETOOT_KIND_REPLY contextMessage format: "Reply to %s's
                                      * toot" + a second line reminding to stay civil -- UniButton

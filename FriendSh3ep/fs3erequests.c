@@ -967,6 +967,7 @@ static void FS3EApp_MapStatusToPostSetup(TTLPostSetup *post, const FS3ENetStatus
     post->reblogged       = st->fmas_Reblogged;
     post->quotable        = st->fmas_Quotable;
     post->isReply         = st->fmas_IsReply;
+    post->sensitive       = st->fmas_Sensitive;
 
     post->hasQuote        = st->fmas_HasQuote;
     post->quoteId         = st->fmas_QuoteId;
@@ -2087,6 +2088,47 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
         }
         break;
 
+    case FS3ENETQ_UPDATE_BIO:
+        /* FS3ETOOT_KIND_MODIFY_BIO's submit path (FS3EApp_SubmitBioUpdate)
+         * -- unlike EDIT_STATUS this DOES patch the live view in place
+         * (TTIMELINE_UpdateProfileBio), since a profile header's own bio is
+         * always on-screen right now if this window was even reachable
+         * (see TTL_HOT_MODIFY_BIO). Sent to both VIEWMODE_User and
+         * TTL_SEARCH_CHANNEL rather than picking one -- MODIFY_BIO is only
+         * ever reachable on the connected user's OWN header (see
+         * TTLPost.isOwn/TTLProfileHeaderSetup.isSelf), which can be showing
+         * in either channel (own tab, or Search landing on yourself), and
+         * the handler already no-ops on a channel with no header or a
+         * mismatched account id. */
+        if (msg->fs3em_Result == FS3ENETR_OK && app->tootTimeline && app->accountId) {
+            FS3ENetUpdateBioReply *reply = (FS3ENetUpdateBioReply *)msg->fs3em_Data;
+            const char *newBio = (reply && reply->fs3eub_Note) ? reply->fs3eub_Note : "";
+            TTLProfileBioUpdate upd;
+
+            upd.accountId = app->accountId;
+            upd.bio       = newBio;
+
+            upd.channel = VIEWMODE_User;
+            SetAttrs(app->tootTimeline, TTIMELINE_UpdateProfileBio, (ULONG)&upd, TAG_DONE);
+            upd.channel = TTL_SEARCH_CHANNEL;
+            SetAttrs(app->tootTimeline, TTIMELINE_UpdateProfileBio, (ULONG)&upd, TAG_DONE);
+
+            if (CurrentMainWindow)
+                RefreshGList((struct Gadget *)app->tootTimeline,
+                             CurrentMainWindow, NULL, 1);
+
+            FS3ETootView_Close(&app->tootView);
+        } else {
+            struct EasyStruct es = {
+                sizeof(struct EasyStruct), 0,
+                (UBYTE *)"FriendSh3ep - Profile Error",
+                (UBYTE *)"Could not update your bio.\nCheck your connection and try again.",
+                (UBYTE *)"OK"
+            };
+            EasyRequestArgs(app->tootView.window, &es, NULL, NULL);
+        }
+        break;
+
     case FS3ENETQ_UPLOAD_MEDIA:
         if (msg->fs3em_Result == FS3ENETR_OK) {
             FS3ENetUploadMediaReply *reply = (FS3ENetUploadMediaReply *)msg->fs3em_Data;
@@ -2261,6 +2303,7 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                     setup.followingCount = acc->fma_FollowingCount;
                     setup.following      = FALSE;
                     setup.showFollow     = FALSE; /* can't follow yourself */
+                    setup.isSelf         = TRUE;
 
                     SetAttrs(app->tootTimeline, TTIMELINE_ShowProfile, (ULONG)&setup, TAG_DONE);
 
@@ -2318,6 +2361,7 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                 setup.followingCount = acc->fma_FollowingCount;
                 setup.following      = FALSE; /* unknown until the FS3ENETQ_RELATIONSHIP reply */
                 setup.showFollow     = !isSelf;
+                setup.isSelf         = isSelf;
 
                 SetAttrs(app->tootTimeline, TTIMELINE_ShowProfile, (ULONG)&setup, TAG_DONE);
                 /* Back-restore scroll position -- see FS3EApp_SearchGoBack.

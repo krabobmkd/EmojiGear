@@ -98,6 +98,10 @@ typedef enum {
     FS3E_COLOR_BTBGBM_TEXT_ENABLED,
     FS3E_COLOR_BTBGBM_TEXT_SELECTED,
 
+    FS3E_COLOR_SENSITIVE_WARNING,   /* TootTimeline sensitive-content blur overlay:
+                                      * warning lines + "Show/Hide sensitive content"
+                                      * hotspot label (see TTL_HOT_SENSITIVE_TOGGLE) */
+
     FS3E_COLOR_COUNT                /* must be last */
 } FS3EColorRole;
 

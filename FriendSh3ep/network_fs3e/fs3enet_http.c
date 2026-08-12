@@ -735,6 +735,15 @@ BOOL FS3EHttp_Put(const char *url, const FS3EHttpHeader *headers,
                                   FALSE, 0, 0, FS3EHTTP_RAW_TIMEOUT_SECS, NULL, out);
 }
 
+BOOL FS3EHttp_Patch(const char *url, const FS3EHttpHeader *headers,
+                 const char *contentType,
+                 const void *body, ULONG bodyLen,
+                 FS3EHttpResponse *out)
+{
+    return FS3EHttp_DoRawRequest("PATCH", url, headers, contentType, body, bodyLen,
+                                  FALSE, 0, 0, FS3EHTTP_RAW_TIMEOUT_SECS, NULL, out);
+}
+
 BOOL FS3EHttp_Delete(const char *url, const FS3EHttpHeader *headers, FS3EHttpResponse *out)
 {
     return FS3EHttp_DoRawRequest("DELETE", url, headers, NULL, NULL, 0,
