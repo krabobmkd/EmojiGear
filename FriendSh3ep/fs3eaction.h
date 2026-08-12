@@ -125,8 +125,8 @@ BOOL Action_Refresh(struct App *ctx);
  * Settings->General). */
 BOOL Action_TimelineNextToot(struct App *ctx);
 BOOL Action_TimelineTop(struct App *ctx);
-BOOL Action_TimelineAutoscrollPlay(struct App *ctx);
-BOOL Action_TimelineAutoscrollStop(struct App *ctx);
+BOOL Action_TimelineAutoscrollPlay(struct App *ctx, int updateBt);
+BOOL Action_TimelineAutoscrollStop(struct App *ctx, int updateBt);
 BOOL Action_TimelineCopyText(struct App *ctx);
 
 /* Stops whichever FS3ETimer-driven scroll animation is currently running

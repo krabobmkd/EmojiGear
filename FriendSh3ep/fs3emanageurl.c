@@ -23,6 +23,7 @@
 #include "clipboard.h"
 #include "fs3emanageurl.h"
 #include "fs3erequests.h"
+#include "fs3erequester.h"
 #include "network_fs3e/fs3enet.h"
 #include "bdbprintf.h"
 
@@ -62,17 +63,12 @@ static void manageurl_open(const char *url)
  * either way instead of depending on it). */
 static void manageurl_ask(const char *url)
 {
-    struct EasyStruct es = {
-        sizeof(struct EasyStruct), 0,
-        (UBYTE *)"FriendSh3ep - Open Link",
-        (UBYTE *)"Open with ?",
-        NULL
-    };
     LONG choice;
 
     if (OpenURLBase) {
-        es.es_GadgetFormat = (UBYTE *)"Copy to Clipboard|Open with OpenURL|Cancel";
-        choice = EasyRequestArgs(CurrentMainWindow, &es, NULL, NULL);
+        choice = FS3ERequester_Show(CurrentMainWindow, "FriendSh3ep - Open Link",
+            "Open with ?", "Copy to Clipboard|Open with OpenURL|Cancel", FS3EREQ_QUESTION);
+        ExpungeMessages();
         if (choice == 1)
             Clipboard_WriteText(url);
         else if (choice == 2)
@@ -80,8 +76,9 @@ static void manageurl_ask(const char *url)
         /* choice == 0: Cancel, or the requester otherwise closed without
          * picking a real action -- do nothing. */
     } else {
-        es.es_GadgetFormat = (UBYTE *)"Copy to Clipboard|Cancel";
-        choice = EasyRequestArgs(CurrentMainWindow, &es, NULL, NULL);
+        choice = FS3ERequester_Show(CurrentMainWindow, "FriendSh3ep - Open Link",
+            "Open with ?", "Copy to Clipboard|Cancel", FS3EREQ_QUESTION);
+        ExpungeMessages();
         if (choice == 1)
             Clipboard_WriteText(url);
         /* choice == 0: Cancel -- do nothing (already the rightmost/0

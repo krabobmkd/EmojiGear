@@ -72,6 +72,10 @@ void FS3EMain_SyncStyleToWidgets(void)
         app->titlebar_closeBtn, app->titlebar_iconifyBtn,
         app->titlebar_altposBtn, app->titlebar_depthBtn);
 
+    FS3EStyle_SyncTitleBarDeckButtons(&app->style,
+        app->titlebar_networkLedBtn, app->titlebar_scrollUpBtn,
+        app->titlebar_playModeBtn);
+
     /* Re-derive style's font-size-dependent layout (avatarSize and friends)
      * and push TTIMELINE_Style so the toot timeline re-reads app->style's
      * (possibly just-changed) colors -- see FS3EApp_ApplyFontSettings_
@@ -134,6 +138,13 @@ static void GenericOpenWindow(FS3EMainWindow *mw, Object *window_obj)
 
     }
 
+    /* Theme images are the slow part of first startup (datatype decode of
+     * every theme bitmap) -- mark it done on the startup progress bar (see
+     * FS3EInitStage in friendsh3ep.h). No-op on every later reopen
+     * (WM_ICONIFY/WM_UNICONIFY), same as every FS3EApp_InitProgress() call
+     * below -- the bar is long closed by then. */
+    FS3EApp_InitProgress(FS3E_INIT_THEME_IMAGES);
+
     /* Synchronize screen palette colors.
      * must be done before opening window, and when screen is known.
      * note: as datatype image reading in FS3EStyle_LoadThemeImages can realloc colors,
@@ -152,9 +163,19 @@ static void GenericOpenWindow(FS3EMainWindow *mw, Object *window_obj)
     /* Loading screen bitmap datatypes allocs/free colors to screen palette */
     FS3EStyle_UpdateAllDCColorMap(&app->style,CurrentMainScreen);
 
+    FS3EApp_InitProgress(FS3E_INIT_STYLE_APPLIED);
     /* Button cell size may have changed (theme-dependent), so this is
      * followed by a full relayout (WM_RETHINK below). */
     FS3EMain_SyncStyleToWidgets();
+
+    /* Colors/style fully applied -- the startup progress bar is done (see
+     * FS3EInitStage in friendsh3ep.h); close it right here, before WM_OPEN,
+     * rather than back in main() right after fs3e_setViewMode() like
+     * before -- everything from FS3EStyle_LoadThemeImages() above through
+     * here is real startup time that used to run after the bar had
+     * already closed. */
+
+    FS3EApp_InitProgressDone();
 
     DoMethod(window_obj, WM_RETHINK);
 

@@ -265,6 +265,8 @@ static const char *defaultStrings[MSG_COUNT] = {
     "ScalePixelArray()",
     /* MSG_SETTINGSV_RGBDRAW_INTERNAL_BILINEAR */
     "Internal Bilinear (>=68060)",
+    /* MSG_SETTINGSV_THUMBNAILS_RESTART_NOTE */
+    "These settings apply only to thumbnails fetched after restarting FriendSh3ep.",
     /* MSG_SETTINGSV_TOOTPLAYBACK_GROUP */
     "Toot Timeline Playback",
     /* MSG_SETTINGSV_PLAY_TOOT_TIME */
@@ -329,7 +331,7 @@ static const char *defaultStrings[MSG_COUNT] = {
     " FIRST USE WARNING!\n"
     "\n"
     " This app continuously writes tens of megabytes to a cache.\n"
-    " This is dangerous if your disk configuration is not 100%% reliable.\n"
+    " This is dangerous if your disk configuration is not 100% reliable.\n"
     "\n"
     " If your Amiga has frequent disk validation (slow boot) or\n"
     " recurrent HD troubles, you're strongly advised to contact\n"
@@ -339,6 +341,7 @@ static const char *defaultStrings[MSG_COUNT] = {
     " non-sensitive drive. 80Mb is minimum. If you have more than 128Mb,\n"
     " RAM:T/cache will let your disk safe and speed up FriendSh3ep.\n\n"
     " You may delete the whole .cache dir at any moment.\n"
+    " Note PROGDIR: is just your installation directory.\n"
     "\n"
     " Configure the cache directory in:\n"
     "\n",

@@ -21,8 +21,14 @@
  * Row 2 (height = max(dpiH, avatarSize + 2×avatarGap)):
  *   user-icon at far-left, sized (iconSz × iconSz) with TBLAYOUT_Style's
  *   avatarGap as padding on the left, top and bottom (falls back to
- *   TBLAYOUT_ICON_MARGIN with no style); settings/accounts/toot+ buttons
- *   packed at far-right.
+ *   TBLAYOUT_ICON_MARGIN with no style); a right-hand cluster packed
+ *   right-to-left: new-toot (rightmost), accounts, play-mode, scroll-up,
+ *   network-led -- each bottom-aligned with avatarGap padding from the
+ *   bottom, avatarGap between each pair. The 3 deck buttons (play-mode/
+ *   scroll-up/network-led) are sized from TBLAYOUT_Style's
+ *   tbDeckButtonWidth/Height (derived from the theme's btdeck.iff, see
+ *   fs3estyle.c), same "theme image cell size, else dpiH x dpiH square"
+ *   fallback rule row 1's buttons already use.
  *
  *   The user icon is NOT a child gadget -- it used to be a button.gadget
  *   wrapping an images/bitmap.image (BITMAP_BitMap/BITMAP_MaskPlane
@@ -93,6 +99,15 @@ static void tbl_button_size(UWORD dpiH, FS3EStyle *style, WORD *btnW, WORD *btnH
 {
     *btnW = (style && style->tbButtonWidth  > 0) ? style->tbButtonWidth  : (WORD)dpiH;
     *btnH = (style && style->tbButtonHeight > 0) ? style->tbButtonHeight : (WORD)dpiH;
+}
+
+/* Same fallback rule as tbl_button_size() above, for the row-2 deck
+ * buttons (network-led/scroll-up/play-mode) sized from btdeck.iff instead
+ * of tbbuttons.iff -- see FS3ESTYLE_BTDECK_* in fs3estyle.h. */
+static void tbl_deck_button_size(UWORD dpiH, FS3EStyle *style, WORD *btnW, WORD *btnH)
+{
+    *btnW = (style && style->tbDeckButtonWidth  > 0) ? style->tbDeckButtonWidth  : (WORD)dpiH;
+    *btnH = (style && style->tbDeckButtonHeight > 0) ? style->tbDeckButtonHeight : (WORD)dpiH;
 }
 
 /* Height of row 1: the button cell height, never less than dpiH */
@@ -356,36 +371,65 @@ static ULONG TitleBarLayout_OnLayout(Class *cl, Object *o, struct gpLayout *msg)
     inst->avatarY    = y2   + avGap;
     inst->avatarSize = iconSz;
 
-    /* settings and account buttons */
-    if (inst->childCount > 5)
+    /* Row 2 right cluster: new-toot (rightmost), accounts, play-mode,
+     * scroll-up, network-led -- packed right-to-left, avatarGap between
+     * each pair, all bottom-aligned with avatarGap padding from the
+     * bottom. accounts/new-toot are UniButtonP9 (auto-sized from their own
+     * GM_DOMAIN, same as before); the 3 deck buttons are plain
+     * button.gadget sized directly from TBLAYOUT_Style's
+     * tbDeckButtonWidth/Height (see tbl_deck_button_size), same "fixed
+     * theme-image cell size" approach row 1's buttons already use --
+     * there's no text/image-driven domain to query for a plain bevel
+     * button with no image loaded. */
+    if (inst->childCount > 8)
     {
+        struct Gadget *gledbt    = (struct Gadget *) inst->children[4];
+        struct Gadget *gscrollbt = (struct Gadget *) inst->children[5];
+        struct Gadget *gplaybt   = (struct Gadget *) inst->children[6];
+        struct Gadget *gaccbt    = (struct Gadget *) inst->children[7];
+        struct Gadget *gnewtbt   = (struct Gadget *) inst->children[8];
+        struct gpDomain dmAccountBt, dmntbt;
+        WORD deckBtnW, deckBtnH;
+        WORD bottomY = G(o)->TopEdge + G(o)->Height - inst->style->avatarGap;
+        WORD rightEdge;
 
-       /*olde struct Gadget *gsettingsbt = (struct Gadget *) inst->children[4];*/
-        struct Gadget *gaccbt = (struct Gadget *) inst->children[4];
-        struct Gadget *gnewtbt = (struct Gadget *) inst->children[5];
-        struct gpDomain dmAccountBt,dmntbt; // dmsettingsBt
-/* olde
-        prepDomain(&dmsettingsBt,msg->gpl_GInfo);
-        DoMethodA(inst->children[4], (Msg)&dmsettingsBt);
-*/
+        tbl_deck_button_size(inst->dpiHeight, inst->style, &deckBtnW, &deckBtnH);
+
         prepDomain(&dmAccountBt,msg->gpl_GInfo);
-        DoMethodA(inst->children[4], (Msg)&dmAccountBt);
+        DoMethodA(inst->children[7], (Msg)&dmAccountBt);
 
         prepDomain(&dmntbt,msg->gpl_GInfo);
-        DoMethodA(inst->children[5], (Msg)&dmntbt);
+        DoMethodA(inst->children[8], (Msg)&dmntbt);
 
         gnewtbt->Width = dmntbt.gpd_Domain.Width;
         gnewtbt->Height = dmntbt.gpd_Domain.Height;
-        gnewtbt->TopEdge = G(o)->TopEdge + G(o)->Height - gnewtbt->Height - inst->style->avatarGap;
+        gnewtbt->TopEdge = bottomY - gnewtbt->Height;
         gnewtbt->LeftEdge =
             G(o)->LeftEdge + G(o)->Width - gnewtbt->Width - inst->style->avatarGap;
+        rightEdge = gnewtbt->LeftEdge;
 
         gaccbt->Width = dmAccountBt.gpd_Domain.Width;
         gaccbt->Height = dmAccountBt.gpd_Domain.Height;
-        gaccbt->TopEdge = G(o)->TopEdge + G(o)->Height - gaccbt->Height - inst->style->avatarGap;
-        gaccbt->LeftEdge =
-            gnewtbt->LeftEdge - gaccbt->Width - inst->style->avatarGap;
+        gaccbt->TopEdge = bottomY - gaccbt->Height;
+        gaccbt->LeftEdge = rightEdge - gaccbt->Width - inst->style->avatarGap;
+        rightEdge = gaccbt->LeftEdge;
 
+        gplaybt->Width  = deckBtnW;
+        gplaybt->Height = deckBtnH;
+        gplaybt->TopEdge  = bottomY - deckBtnH;
+        gplaybt->LeftEdge = rightEdge - deckBtnW - inst->style->avatarGap;
+        rightEdge = gplaybt->LeftEdge;
+
+        gscrollbt->Width  = deckBtnW;
+        gscrollbt->Height = deckBtnH;
+        gscrollbt->TopEdge  = bottomY - deckBtnH;
+        gscrollbt->LeftEdge = rightEdge - deckBtnW - inst->style->avatarGap;
+        rightEdge = gscrollbt->LeftEdge;
+
+        gledbt->Width  = deckBtnW;
+        gledbt->Height = deckBtnH;
+        gledbt->TopEdge  = bottomY - deckBtnH;
+        gledbt->LeftEdge = rightEdge - deckBtnW - inst->style->avatarGap;
     }
 
     /* Recurse into each child so nested layout.gadgets re-layout too */

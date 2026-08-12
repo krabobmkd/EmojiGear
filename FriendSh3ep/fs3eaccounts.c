@@ -35,6 +35,7 @@
 #include "fs3erequests.h"
 #include "fs3eaccounts.h"
 #include "fs3enetworkhelper.h"
+#include "fs3erequester.h"
 
 void wait2sec();
 
@@ -218,17 +219,12 @@ void FS3EApp_SetAccount(const char *apiBaseUrl, const char *accessToken,
  * see the extern declaration in fs3eaccounts.h. */
 BOOL FS3EApp_RequireRealAccount(void)
 {
-    struct EasyStruct es;
-
     if (app->accountAccessToken && !app->accountTokenRejected)
         return TRUE;
 
-    es.es_StructSize   = sizeof(es);
-    es.es_Flags        = 0;
-    es.es_Title        = (UBYTE *)"FriendSh3ep";
-    es.es_TextFormat   = (UBYTE *)"Connect to a real account to toot.";
-    es.es_GadgetFormat = (UBYTE *)"OK";
-    EasyRequestArgs(CurrentMainWindow, &es, NULL, NULL);
+    FS3ERequester_Show(CurrentMainWindow, "FriendSh3ep",
+        "Connect to a real account to toot.", "OK", FS3EREQ_WARNING);
+    ExpungeMessages();
     return FALSE;
 }
 

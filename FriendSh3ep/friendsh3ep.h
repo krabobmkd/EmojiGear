@@ -31,7 +31,7 @@
 #include "fs3esettings.h"
 #include "avatarimages.h"
 
-#define FRIENDSH3EP_VERSION "0.8b"
+#define FRIENDSH3EP_VERSION "0.8.2"
 
 /* Login two-phase OAuth state machine */
 typedef enum {
@@ -153,6 +153,16 @@ struct App {
 //olde    Object *titlebar_settingsBtn;       /*  */
     Object *titlebar_accountBtn;       /*  */
     Object *titlebar_newtootBtn;       /*  */
+    /* Row 2 right cluster, packed left of accounts/newtoot -- plain
+     * button.gadget, image from btdeck.iff (see FS3ESTYLE_BTDECK_* in
+     * fs3estyle.h). networkLedBtn is GA_ReadOnly (never clickable, driven
+     * programmatically); scrollUpBtn/playModeBtn are ordinary clickable
+     * buttons (see GID_TITLEBAR_SCROLLUP/PLAYMODE in friendsh3ep.c).
+     * playModeBtn is BUTTON_PushButton (stays depressed/GA_Selected until
+     * clicked again). */
+    Object *titlebar_networkLedBtn;    /* GID_TITLEBAR_NETWORKLED */
+    Object *titlebar_scrollUpBtn;      /* GID_TITLEBAR_SCROLLUP   */
+    Object *titlebar_playModeBtn;      /* GID_TITLEBAR_PLAYMODE   */
 
     /* Part B: navigation bar (NavBarLayoutClass).
      * nav_btns[0..7] correspond to GID_NAV_HOME..GID_NAV_ACCOUNTS. */
@@ -193,6 +203,17 @@ struct App {
     /* fs3enet ports: requestPort send-only; replyPort receives async replies */
     struct MsgPort *netRequestPort;
     struct MsgPort *netReplyPort;
+
+    /* Count of FS3EApp_NetSend() calls not yet matched by a reply drained
+     * from netReplyPort -- incremented on every successful send, decremented
+     * on every reply EXCEPT FS3ENETQ_FETCH_PROGRESS pings (those are interim
+     * status for a download whose original request is still outstanding,
+     * not a completion -- see FS3EApp_HandleNetReply). Drives
+     * GID_TITLEBAR_NETWORKLED's GA_Selected via FS3EApp_UpdateNetworkLed()
+     * (friendsh3ep.c): TRUE while > 0, i.e. "the network process has work
+     * queued or in flight" in the broadest sense (timeline/login/post
+     * requests included, not just downloads despite the button's name). */
+    ULONG netRequestsPending;
 
     /* fs3ethumb ports: same shape as the fs3enet ports above, but talking
      * to the thumbnail process (see fs3ethumb.h) instead of the network
@@ -458,6 +479,14 @@ extern struct App *app;
 /* Print pmessage (if non-NULL) and exit(0); runs exitclose() via atexit(). */
 void cleanexit(const char *pmessage);
 
+/* Drains and discards every window's pending WM_HANDLEINPUT backlog -- see
+ * the doc comment on its definition in friendsh3ep.c for why. Not static:
+ * every FS3ERequester_Show() call site (fs3eaction.c, fs3eaccounts.c,
+ * fs3emanageurl.c, fs3erequests.c, friendsh3ep.c) calls this right after
+ * the requester closes, except main()'s very first one (no window exists
+ * yet). */
+void ExpungeMessages(void);
+
 /* notifyMessage() severity levels -- see its own doc comment below. */
 enum {
     FS3ENOTIFY_OK = 0,
@@ -506,4 +535,49 @@ void FS3EApp_ApplyFontSettings_Delayed(void);
 void FS3EApp_LoadTheme(const char *themeName);
 
 void flushThemeImagesFromButtons();
+
+/* Startup progress bar stages -- one entry per FS3EProgressView_SetValue()
+ * call along main()'s init path, in the order they actually happen. Kept
+ * as its own enum (instead of bare FS3EProgressView_SetValue() calls with
+ * inline indices) so fs3eboopsimainwindow.c's GenericOpenWindow() -- which
+ * runs the last two stages, theme image loading and color/style setup,
+ * since that's real startup time spent between the window object existing
+ * and its first WM_OPEN -- can drive the same bar as main() without either
+ * file owning a bare magic index into the other's table. Also leaves room
+ * for a future name string table keyed by this same enum (see
+ * fs3eInitProgressSteps' own comment in friendsh3ep.c), without call sites
+ * changing again when that lands. */
+typedef enum FS3EInitStage {
+    FS3E_INIT_RUNTIME = 0,        /* core app/runtime init done */
+    FS3E_INIT_BOOPSI_CLASSES,     /* private BOOPSI classes registered */
+    FS3E_INIT_BG_PROCESSES,       /* button draw context & background processes started */
+    FS3E_INIT_ACCOUNT_LOADED,     /* account data loaded */
+    FS3E_INIT_SUBWINDOWS,         /* classic BOOPSI sub-windows created */
+    FS3E_INIT_TITLEBAR_NAVBAR,    /* title bar & nav bar built */
+    FS3E_INIT_TIMELINE_SEARCHBAR, /* toot timeline & search bar built */
+    FS3E_INIT_WINDOW_OBJECT,      /* main layout & window object ready */
+    FS3E_INIT_THEME_IMAGES,       /* GenericOpenWindow: theme images loaded */
+    FS3E_INIT_STYLE_APPLIED,      /* GenericOpenWindow: colors/style applied, ready for WM_OPEN */
+    FS3E_INIT_STAGE_COUNT
+} FS3EInitStage;
+
+/* Advances the startup progress bar to stage (see FS3EInitStage). Safe to
+ * call whether or not the bar is currently open -- FS3EProgressView_
+ * SetValue() is a no-op on a closed/never-opened view, which is what makes
+ * it safe for GenericOpenWindow to call the last two stages again on every
+ * later WM_ICONIFY/WM_UNICONIFY reopen too (the bar is long closed by
+ * then). Not static: fs3eboopsimainwindow.c's GenericOpenWindow() calls
+ * this for FS3E_INIT_THEME_IMAGES/FS3E_INIT_STYLE_APPLIED. */
+void FS3EApp_InitProgress(FS3EInitStage stage);
+
+/* Closes the startup progress bar. Called from GenericOpenWindow() right
+ * before WM_OPEN -- not from main() right before FS3EMain_Show() anymore --
+ * since GenericOpenWindow's own theme-image-loading and color/style setup
+ * (FS3E_INIT_THEME_IMAGES/FS3E_INIT_STYLE_APPLIED above) is itself a
+ * significant chunk of startup time that used to run after the bar had
+ * already closed. Safe to call more than once (every GenericOpenWindow
+ * call, including uniconify reopens) -- FS3EProgressView_Close() is a
+ * no-op past the first call. Not static: see above. */
+void FS3EApp_InitProgressDone(void);
+
 #endif /* FRIENDSH3EP_H */

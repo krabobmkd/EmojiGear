@@ -14,7 +14,7 @@
 #include <proto/exec.h>
 #include <proto/intuition.h>
 #include <intuition/intuition.h>
-
+#include <gadgets/button.h>
 #include "fs3eaction.h"
 #include "fs3elocale.h"
 #include "friendsh3ep.h"
@@ -25,6 +25,7 @@
 #include "fs3esettings.h"
 #include "fs3erequests.h"
 #include "fs3eaccounts.h"
+#include "fs3erequester.h"
 #include "clipboard.h"
 #include "fs3etimer.h"
 #include "TootTimeline/fs3etoottimeline.h"
@@ -139,22 +140,18 @@ BOOL Action_NewToot(struct App *ctx)
 
 BOOL Action_About(struct App *ctx)
 {
-    struct EasyStruct es;
     (void)ctx;
 
-    es.es_StructSize   = sizeof(es);
-    es.es_Flags        = 0;
-    es.es_Title        = (UBYTE *)"About FriendSh3ep";
-    es.es_TextFormat   = (UBYTE *)"FriendSh3ep\n"
-                                  "A Mastodon client for AmigaOS\n"
-                                  " License GPL  sources at:\n"
-                                  "github.com/krabobmkd/EmojiGear/FriendSh3ep"
-                                  "Version " FRIENDSH3EP_VERSION "\n\n"
-                                  "Built with utf8rastport.library\n"
-                                  "and BOOPSI gadgets.";
-    es.es_GadgetFormat = (UBYTE *)"OK";
-
-    EasyRequestArgs(NULL, &es, NULL, NULL);
+    FS3ERequester_Show(NULL, "About FriendSh3ep",
+        "FriendSh3ep\n"
+        "A Mastodon client for AmigaOS\n"
+        " License GPL  sources at:\n"
+        "github.com/krabobmkd/EmojiGear/FriendSh3ep"
+        "Version " FRIENDSH3EP_VERSION "\n\n"
+        "Built with utf8rastport.library\n"
+        "and BOOPSI gadgets.",
+        "OK", FS3EREQ_INFO);
+    ExpungeMessages();
     return TRUE;
 }
 
@@ -418,7 +415,7 @@ static BOOL FS3ETimelineNextToot_Internal(struct App *ctx)
  * hook WITHOUT this cancellation (it must not stop itself). */
 BOOL Action_TimelineNextToot(struct App *ctx)
 {
-    Action_TimelineAutoscrollStop(ctx);
+    Action_TimelineAutoscrollStop(ctx,TRUE);
     return FS3ETimelineNextToot_Internal(ctx);
 }
 
@@ -442,12 +439,20 @@ static void FS3EPlayModeAnim_Hook(FS3ETimer *t, ULONG ticks)
  * resets timelineAutoscrollActive so Space's context-dependent dispatch
  * (friendsh3ep.c) correctly falls back to "Next toot" instead of
  * staying stuck offering "Stop autoscroll" for a mode that's no longer
- * actually running. */
+ * actually running. Also syncs the title bar's PlayMode button (GID_
+ * TITLEBAR_PLAYMODE) back to unselected -- this is the path keyboard/
+ * wheel/drag-scroll (friendsh3ep.c) actually calls to cancel Play mode,
+ * not Action_TimelineAutoscrollStop, so without this the button stayed
+ * depressed even though playback had actually stopped (confirmed bug). */
 void Action_TimelineStopScrollAnimation(void)
 {
     FS3ETimer_Stop(&s_nextTootAnim.timer);
     FS3ETimer_Stop(&s_playModeTimer);
-    if (app) app->timelineAutoscrollActive = FALSE;
+    if (app) {
+        app->timelineAutoscrollActive = FALSE;
+        if (app->titlebar_playModeBtn)
+            SetGdAttrs(app->titlebar_playModeBtn, GA_Selected, FALSE, TAG_END);
+    }
 }
 
 /* "Move to Top" -- an instant jump, not animated (unlike Next Toot):
@@ -477,7 +482,7 @@ BOOL Action_TimelineTop(struct App *ctx)
  * comment), each firing doing one Next-toot move. Restarts cleanly
  * (FS3ETimer_Start's own contract) if pressed again while already
  * playing, picking the interval back up from a fresh countdown. */
-BOOL Action_TimelineAutoscrollPlay(struct App *ctx)
+BOOL Action_TimelineAutoscrollPlay(struct App *ctx, int updateBt)
 {
     ULONG secs;
 
@@ -489,13 +494,27 @@ BOOL Action_TimelineAutoscrollPlay(struct App *ctx)
     ctx->timelineAutoscrollActive = TRUE;
     FS3ETimer_Start(&s_playModeTimer, FS3EPlayModeAnim_Hook,
                      secs * FS3ETimer_Frequency(), 0);
+
+    /* Keep the title bar's PlayMode button (GID_TITLEBAR_PLAYMODE) in sync
+     * regardless of which of the 3 entry points (this function, Stop
+     * below, or the button's own click) actually changed the state -- the
+     * Space/P key paths in friendsh3ep.c would otherwise leave the button
+     * showing stale GA_Selected. Harmless redundant SetGdAttrs when this
+     * call came from the button's own click roundtrip. */
+    if (updateBt && ctx->titlebar_playModeBtn)
+        SetGdAttrs(ctx->titlebar_playModeBtn,BUTTON_PushButton,TRUE, GA_Selected, TRUE,  TAG_END);
     return TRUE;
 }
 
-BOOL Action_TimelineAutoscrollStop(struct App *ctx)
+BOOL Action_TimelineAutoscrollStop(struct App *ctx, int updateBt)
 {
+
     if (ctx) ctx->timelineAutoscrollActive = FALSE;
     FS3ETimer_Stop(&s_playModeTimer);
+    /* See Action_TimelineAutoscrollPlay's comment above. */
+    if (ctx && ctx->titlebar_playModeBtn && updateBt)
+        SetGdAttrs(ctx->titlebar_playModeBtn, GA_Selected, FALSE, TAG_END);
+
     return TRUE;
 }
 

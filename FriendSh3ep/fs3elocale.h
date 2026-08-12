@@ -192,6 +192,13 @@ enum {
     MSG_SETTINGSV_RGB_DRAW_FUNCTION,
     MSG_SETTINGSV_RGBDRAW_SCALEPIXELARRAY,
     MSG_SETTINGSV_RGBDRAW_INTERNAL_BILINEAR,
+    /* Read-only note under the 4 thumbnail/icon-scaling controls above
+     * (biggerThumbnailsCheck/minifyThumbnailsCheck/scalingQualityChooser/
+     * rgbDrawFunctionChooser) -- unlike every other setting in this window,
+     * changing those 4 doesn't retroactively redecode/rescale thumbnails
+     * already fetched this session, so the change won't visibly take
+     * effect until FriendSh3ep is restarted. */
+    MSG_SETTINGSV_THUMBNAILS_RESTART_NOTE,
     MSG_SETTINGSV_TOOTPLAYBACK_GROUP, /* was "Playback", now "Toot Timeline Playback" */
     MSG_SETTINGSV_PLAY_TOOT_TIME,
     MSG_SETTINGSV_SMOOTH_AUTO_SCROLL,

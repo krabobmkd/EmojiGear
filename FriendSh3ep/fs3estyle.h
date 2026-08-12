@@ -120,6 +120,24 @@ typedef enum {
 
 #define FS3ESTYLE_TBBUTTON_COUNT 4
 
+/* ------------------------------------------------------------------ */
+/* Image theme — btdeck.iff: 2 columns (unselected | selected) x 3 rows */
+/* (PlayMode, ScrollUp, NetworkLed, top to bottom) of title bar row-2   */
+/* glyphs. Same "single sheet, sliced by coords" mechanism as           */
+/* tbButtons/tbImages above, just a second independent sheet/slot set   */
+/* -- these 3 buttons are plain button.gadget (not UniButtonP9/BGBM),   */
+/* placed in TitleBarLayout's row 2, packed leftward from the           */
+/* accounts/newtoot cluster (see fs3etitlebar.c). Unlike tbImages,      */
+/* there is no built-in penmap.image fallback for the "no theme" state  */
+/* -- a missing/absent btdeck.iff just means these 3 render as plain    */
+/* bevelled buttons with no image (see FS3EStyle_SyncTitleBarDeckButtons). */
+/* ------------------------------------------------------------------ */
+
+#define FS3ESTYLE_BTDECK_PLAYMODE   0
+#define FS3ESTYLE_BTDECK_SCROLLUP   1
+#define FS3ESTYLE_BTDECK_NETWORKLED 2
+#define FS3ESTYLE_BTDECK_COUNT      3
+
 /* UniButtonP9 Patch9 skin slots -- each one is a "<prefix>.image" /
  * "<prefix>.cornersize" pair in style.txt (see FS3EStyle_LoadThemeImages'
  * patch9Slots[] table in fs3estyle.c), loaded into st->patch9[slot].
@@ -189,6 +207,20 @@ typedef struct {
      * in that case. */
     WORD tbButtonWidth;
     WORD tbButtonHeight;
+
+    /* btdeck.iff: NetworkLed/ScrollUp/PlayMode source bitmap, remapped to
+     * the current screen -- same "one sheet, sliced into per-button
+     * bitmap.image objects" mechanism as tbButtons/tbImages above, just a
+     * second independent sheet (see FS3ESTYLE_BTDECK_* above). */
+    BmImage        btDeck;
+    struct Image  *btDeckImages[FS3ESTYLE_BTDECK_COUNT];
+
+    /* Cell size derived from btDeck as (width / 2, height / 3) by
+     * FS3EStyle_LoadThemeImages. 0 when no theme image is loaded --
+     * TitleBarLayout must fall back to its own dpiHeight-based square size
+     * in that case (mirrors tbButtonWidth/Height above). */
+    WORD tbDeckButtonWidth;
+    WORD tbDeckButtonHeight;
 
     /* Title bar background: tbbg.png, tiled across the title bar by
      * tbBgHook. Pass &style->tbBgHook as LAYOUT_BackFill when creating
@@ -394,6 +426,19 @@ void FS3EStyle_CreateDefaultButtonImages(FS3EStyle *st, struct Screen *scr);
 void FS3EStyle_SyncTitleBarButtons(FS3EStyle *st,
                                     Object *closeBtn, Object *iconifyBtn,
                                     Object *altposBtn, Object *depthBtn);
+
+/* Push GA_Image plus BUTTON_Transparent onto the 3 title bar row-2 deck
+ * buttons (GID_TITLEBAR_NETWORKLED/SCROLLUP/PLAYMODE), in that order.
+ * Unlike FS3EStyle_SyncTitleBarButtons there is no built-in-glyph fallback
+ * tier -- when btDeckImages[N] is unset (no theme, or a theme that doesn't
+ * ship btdeck.iff), this always falls straight to a plain BVS_BUTTON bevel
+ * with no image, same as the "no image at all" end of
+ * FS3EStyle_SyncTitleBarButtons. A NULL gadget pointer is skipped. Uses
+ * SetGdAttrs(), same as FS3EStyle_SyncTitleBarButtons. */
+void FS3EStyle_SyncTitleBarDeckButtons(FS3EStyle *st,
+                                        Object *networkLedBtn,
+                                        Object *scrollUpBtn,
+                                        Object *playModeBtn);
 
 /* Push UBTP9_Patch9 onto accountBtn/newtootBtn (the two UniButtonP9
  * gadgets skinned from st->patch9[FS3ESTYLE_PATCH9_BT1]/[_BT2] instead of

@@ -157,6 +157,7 @@ BOOL FS3ESettingsView_Create(FS3ESettingsView *sv, const char *title)
     Object *minifyThumbnailsLabel;
     Object *scalingQualityLabel;
     Object *rgbDrawFunctionLabel;
+    Object *thumbnailsRestartNoteLabel;
     Object *playTootTimeLabel;
     Object *smoothAutoScrollLabel;
     Object *urlLinkActionLabel;
@@ -455,6 +456,14 @@ BOOL FS3ESettingsView_Create(FS3ESettingsView *sv, const char *title)
     rgbDrawFunctionLabel = NewObject(LABEL_GetClass(), NULL,
         LABEL_Text, (ULONG)LOC(MSG_SETTINGSV_RGB_DRAW_FUNCTION), TAG_END);
 
+    /* Read-only, no GA_ID/no GA_RelVerify -- purely informational, same
+     * "plain LABEL_GetClass row of its own, not a CHILD_Label" pattern as
+     * fs3eloginview.c's urlInstructLabel. See MSG_SETTINGSV_THUMBNAILS_
+     * RESTART_NOTE's own doc comment for why these 4 controls above need
+     * this note and nothing else in this window does. */
+    thumbnailsRestartNoteLabel = NewObject(LABEL_GetClass(), NULL,
+        LABEL_Text, (ULONG)LOC(MSG_SETTINGSV_THUMBNAILS_RESTART_NOTE), TAG_END);
+
     /* Trailing filler -- an unadorned layout.gadget used purely as flexible
      * "glue" -- absorbs whatever vertical space the tab page has beyond
      * this group's natural content height, instead of the group's own
@@ -485,6 +494,8 @@ BOOL FS3ESettingsView_Create(FS3ESettingsView *sv, const char *title)
         LAYOUT_AddChild,      (ULONG)sv->rgbDrawFunctionChooser,
         CHILD_WeightedHeight, 0,
         CHILD_Label,          (ULONG)rgbDrawFunctionLabel,
+        LAYOUT_AddChild,      (ULONG)thumbnailsRestartNoteLabel,
+        CHILD_WeightedHeight, 0,
         LAYOUT_AddChild,      (ULONG)thumbnailsSpacer,
         CHILD_WeightedHeight, 1,
         TAG_END);

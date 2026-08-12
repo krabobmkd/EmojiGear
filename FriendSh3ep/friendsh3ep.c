@@ -115,6 +115,7 @@
 #include "fs3etimer.h"
 #include "fs3esettings.h"
 #include "fs3emanageurl.h"
+#include "fs3erequester.h"
 #include "fs3emachineid.h"
 #include "fs3erequests.h"
 #include "fs3eaccounts.h"
@@ -205,6 +206,9 @@ struct Library *ListBrowserBase    = NULL;  /* proto/listbrowser.h's inline stub
  * tries to NewObject() it. */
 struct Library *TapeDeckBase       = NULL;
 struct Library *SliderBase         = NULL;  /* proto/slider.h's SLIDER_GetClass() needs this exact name */
+struct Library *RequesterBase      = NULL;  /* proto/requester.h's REQUESTER_GetClass() needs this exact
+                                              * name -- see fs3erequester.c, replacing EasyRequestArgs
+                                              * everywhere in this app. */
 
 /* utf8rastport.library – required by UniButtonP9 (private UniButton class) */
 struct Library *URPBase  = NULL;
@@ -258,6 +262,7 @@ static LibraryEntry libraryTable[] = {
     {"gadgets/listbrowser.gadget",  40, &ListBrowserBase},
     {"gadgets/tapedeck.gadget",     39, &TapeDeckBase},
     {"gadgets/slider.gadget",       40, &SliderBase},
+    {"requester.class",             47, &RequesterBase},
     {"utf8rastport.library",         5, &URPBase},
     {"datatypes.library",           44, &DataTypesBase},
 
@@ -270,11 +275,35 @@ struct App *app = NULL;
  * in main(), so exitclose() can close it too: a cleanexit()/exit() called
  * mid-init (any of main()'s many `cleanexit("...")` early-outs) would
  * otherwise leave this borderless window stuck on screen forever, since
- * main() itself never returns to reach its own FS3EProgressView_Close()
+ * main() itself never returns to reach its own FS3EApp_InitProgressDone()
  * call in that case. Zero-initialized by BSS, same as every other global
  * here -- FS3EProgressView_Close() is always safe to call on an
  * unopened/already-closed view. */
 static FS3EProgressView progressView={0};
+
+/* 0..255 == 0..100%: opening libraryTable's libraries in main() is the
+ * first 25% (value 0..64, one increment per library, set directly there --
+ * see the OpenLibrary() loop); the remaining 75% (64..255) is this table,
+ * one entry per FS3EInitStage (friendsh3ep.h) -- floor(64 + 191*(stage+1)/
+ * FS3E_INIT_STAGE_COUNT), same rounding main() always used for this. The
+ * last two stages (FS3E_INIT_THEME_IMAGES/FS3E_INIT_STYLE_APPLIED) are
+ * reached from fs3eboopsimainwindow.c's GenericOpenWindow(), not main()
+ * itself -- see FS3EApp_InitProgress's doc comment in friendsh3ep.h.
+ * Indexed by FS3EInitStage; a future name string table (per-stage label
+ * for the bar) would key off that same enum, right alongside this. */
+static const UBYTE fs3eInitProgressSteps[FS3E_INIT_STAGE_COUNT] =
+    { 83, 102, 121, 140, 159, 178, 197, 216, 235, 255 };
+
+void FS3EApp_InitProgress(FS3EInitStage stage)
+{
+    if ((ULONG)stage >= FS3E_INIT_STAGE_COUNT) return;
+    FS3EProgressView_SetValue(&progressView, fs3eInitProgressSteps[stage]);
+}
+
+void FS3EApp_InitProgressDone(void)
+{
+    FS3EProgressView_Close(&progressView);
+}
 
 //extern int refreshTitleBarLayout;
 
@@ -312,6 +341,18 @@ void FS3EApp_UpdateUserIcon(void)
 {
     if (CurrentMainWindow && app->titleBarLayout)
         RefreshGList((struct Gadget *)app->titleBarLayout, CurrentMainWindow, NULL, 1);
+}
+
+/* Reflects app->netRequestsPending onto GID_TITLEBAR_NETWORKLED's
+ * GA_Selected (btDeckImages[FS3ESTYLE_BTDECK_NETWORKLED]'s unselected/
+ * selected sub-image) -- see that field's doc comment in friendsh3ep.h.
+ * Not static: fs3erequests.c's FS3EApp_NetSend/FS3EApp_HandleNetReply call
+ * this too -- see the extern declaration there. */
+void FS3EApp_UpdateNetworkLed(void)
+{
+    if (app && app->titlebar_networkLedBtn)
+        SetGdAttrs(app->titlebar_networkLedBtn, GA_Selected,
+                   (ULONG)(app->netRequestsPending > 0), TAG_END);
 }
 
 /* s_searchWaitMsgIdx lives in fs3erequests.c (bumped by FS3EApp_SearchWord);
@@ -1124,17 +1165,17 @@ int main(int argc, char **argv)
 {
     UWORD dpiH = DEFAULT_DPI_HEIGHT;
     /* Startup progress bar -- a plain, non-BOOPSI window (see
-     * fs3eprogressview.h and the file-scope progressView declaration
-     * above), open for the whole of this function's init work and closed
-     * again right before FS3EMain_Show() opens the real window (or by
-     * exitclose() if some early-init cleanexit() cuts that short).
-     * 0..255 == 0..100%: opening libraryTable's libraries below is the
-     * first 25% (value 0..64, one increment per library); the remaining
-     * 75% (64..255) is fs3eInitProgressSteps[], one entry per init stage
-     * further down, ending at 255 right after the window object itself is
-     * built -- see each FS3EProgressView_SetValue() call below for which
-     * stage it marks done. */
-    static const UBYTE fs3eInitProgressSteps[8] = { 87, 111, 135, 159, 183, 207, 231, 255 };
+     * fs3eprogressview.h and the file-scope progressView/
+     * fs3eInitProgressSteps[] declarations above), open for the whole of
+     * this function's init work. NOT closed here anymore -- GenericOpenWindow
+     * (fs3eboopsimainwindow.c) closes it right before its own WM_OPEN,
+     * after driving the last two FS3EInitStage entries itself (theme image
+     * loading and color/style setup are real startup time spent between
+     * the window object below existing and the window actually opening --
+     * see FS3EApp_InitProgress's doc comment in friendsh3ep.h). Only
+     * exitclose() closes it directly from here now, if some early-init
+     * cleanexit() cuts init short before a window object even exists to
+     * open. */
 
     if (SysBase->LibNode.lib_Version < 40) {
         printf("FriendSh3ep needs OS3.9 (v40) or OS3.2, you may upgrade.\n");
@@ -1241,7 +1282,7 @@ int main(int argc, char **argv)
      * VBlank interrupt Signal()s) -- see fs3etimer.h. */
     if (!FS3ETimer_Init()) cleanexit("Can't install VBlank timer service");
 
-    FS3EProgressView_SetValue(&progressView, fs3eInitProgressSteps[0]); /* core app/runtime init done */
+    FS3EApp_InitProgress(FS3E_INIT_RUNTIME);
 
     /* --- Private BOOPSI classes ---------------------------------------- */
     if (!UniButtonP9_Init())    cleanexit("Can't init UniButtonP9 class");
@@ -1251,7 +1292,7 @@ int main(int argc, char **argv)
     if (!SearchBarLayout_Init()) cleanexit("Can't init SearchBarLayout class");
     if (!TootTimeline_Init())   cleanexit("Can't init TootTimeline class");
 
-    FS3EProgressView_SetValue(&progressView, fs3eInitProgressSteps[1]); /* BOOPSI classes registered */
+    FS3EApp_InitProgress(FS3E_INIT_BOOPSI_CLASSES);
 
     /* --- Shared button draw context (utf8rastport, fonts, emoji) -------- */
     app->buttonDC = URPDC_Create(NULL);
@@ -1297,7 +1338,7 @@ int main(int argc, char **argv)
 
     app->audioRequestPort = FS3EAudio_Start();
 
-    FS3EProgressView_SetValue(&progressView, fs3eInitProgressSteps[2]); /* draw context & background processes started */
+    FS3EApp_InitProgress(FS3E_INIT_BG_PROCESSES);
 
 // printf("FS3EApp_MachineKey\n");
     /* Debug: print the derived machine key unconditionally, even before any
@@ -1317,7 +1358,7 @@ int main(int argc, char **argv)
         FS3EApp_SeedDefaultAnonymousAccount();
     }
 
-    FS3EProgressView_SetValue(&progressView, fs3eInitProgressSteps[3]); /* account data loaded */
+    FS3EApp_InitProgress(FS3E_INIT_ACCOUNT_LOADED);
 
     /* FS3EApp_VerifyStoredAccount() moved to right after FS3ENet_Start()
      * further down (no netRequestPort yet at this point -- see that
@@ -1357,7 +1398,7 @@ int main(int argc, char **argv)
 
     FS3EMediaView_Init(&app->mediaView);
 
-    FS3EProgressView_SetValue(&progressView, fs3eInitProgressSteps[4]); /* sub-windows created */
+    FS3EApp_InitProgress(FS3E_INIT_SUBWINDOWS);
 
 // printf(" ext window created\n");
     /* ================================================================== */
@@ -1412,6 +1453,32 @@ int main(int argc, char **argv)
         UBTP9_URPDrawContext,   (ULONG)app->buttonDC,
         UBTP9_BevelStyle,       BVS_NONE, //BVS_NONE,
         TAG_END);
+
+    /* Row 2 right cluster, packed left of accounts/newtoot -- plain
+     * button.gadget, image from btdeck.iff (see FS3EStyle_SyncTitleBar
+     * DeckButtons). No GA_Text/no UBTP9_URPDrawContext -- unlike accounts/
+     * newtoot above these carry no label, purely themed glyphs. */
+    app->titlebar_networkLedBtn = (Object *)NewObject(BUTTON_GetClass(), NULL,
+        GA_ID,              GID_TITLEBAR_NETWORKLED,
+        GA_ReadOnly,        TRUE,   /* never clickable -- driven programmatically */
+        BUTTON_PushButton,  TRUE,   /* GA_Selected persists until code changes it */
+        TAG_DONE);
+
+    app->titlebar_scrollUpBtn = (Object *)NewObject(BUTTON_GetClass(), NULL,
+        GA_ID,         GID_TITLEBAR_SCROLLUP,
+        GA_RelVerify,  TRUE,
+        TAG_DONE);
+
+    app->titlebar_playModeBtn = (Object *)NewObject(BUTTON_GetClass(), NULL,
+        GA_ID,              GID_TITLEBAR_PLAYMODE,
+        GA_RelVerify,       TRUE,
+        BUTTON_PushButton,  TRUE,   /* toggle: stays depressed/selected until clicked again */
+        TAG_DONE);
+
+    if (!app->titlebar_networkLedBtn || !app->titlebar_scrollUpBtn ||
+        !app->titlebar_playModeBtn)
+        cleanexit("Can't create title bar deck gadgets");
+
     /* titlebar_postsLabel and titlebar_newPostsLabel disabled */
     /*
     app->titlebar_postsLabel    = makeLabel("Posts:0", dpiH);
@@ -1448,6 +1515,9 @@ int main(int argc, char **argv)
         LAYOUT_AddChild, (ULONG)app->titlebar_depthBtn,
 
     /*olde    LAYOUT_AddChild, (ULONG)app->titlebar_settingsBtn,*/
+        LAYOUT_AddChild, (ULONG)app->titlebar_networkLedBtn,
+        LAYOUT_AddChild, (ULONG)app->titlebar_scrollUpBtn,
+        LAYOUT_AddChild, (ULONG)app->titlebar_playModeBtn,
         LAYOUT_AddChild, (ULONG)app->titlebar_accountBtn,
         LAYOUT_AddChild, (ULONG)app->titlebar_newtootBtn,
         /* titlebar_postsLabel and titlebar_newPostsLabel disabled */
@@ -1501,7 +1571,7 @@ int main(int argc, char **argv)
         TAG_END);
     if (!app->navBarLayout) cleanexit("Can't create nav bar layout");
 
-    FS3EProgressView_SetValue(&progressView, fs3eInitProgressSteps[5]); /* title bar & nav bar built */
+    FS3EApp_InitProgress(FS3E_INIT_TITLEBAR_NAVBAR);
 
     /* ================================================================== */
     /* Part C: toot timeline                                               */
@@ -1601,7 +1671,7 @@ int main(int argc, char **argv)
         TAG_END);
     if (!app->searchBarLayout) cleanexit("Can't create search bar layout");
 
-    FS3EProgressView_SetValue(&progressView, fs3eInitProgressSteps[6]); /* toot timeline & search bar built */
+    FS3EApp_InitProgress(FS3E_INIT_TIMELINE_SEARCHBAR);
 
     /* ================================================================== */
     /* Root layout (A + B + C, vertical, borderless, no gaps)             */
@@ -1660,7 +1730,7 @@ int main(int argc, char **argv)
     /* synchronize fonts against settings before first layout */
     FS3EApp_ApplyFontSettings_Delayed();
 
-    FS3EProgressView_SetValue(&progressView, fs3eInitProgressSteps[7]); /* main layout & window object ready -- 100% */
+    FS3EApp_InitProgress(FS3E_INIT_WINDOW_OBJECT);
 
 // printf("first-use requester\n");
     /* First-use disk-cache-usage warning -- shown once, before the network
@@ -1677,13 +1747,9 @@ int main(int argc, char **argv)
      * function above (window_obj isn't open yet either way -- nothing
      * more to tear down here than any of those). */
     if (!app->settings.warningDone) {
-        struct EasyStruct es = {
-            sizeof(struct EasyStruct), 0,
-            (UBYTE *)LOC(MSG_FIRSTUSE_TITLE),
-            (UBYTE *)LOC(MSG_FIRSTUSE_TEXT),
-            (UBYTE *)LOC(MSG_FIRSTUSE_GADGETS)
-        };
-        LONG choice = EasyRequestArgs(NULL, &es, NULL, NULL);
+        LONG choice = FS3ERequester_Show(NULL,
+            LOC(MSG_FIRSTUSE_TITLE), LOC(MSG_FIRSTUSE_TEXT),
+            LOC(MSG_FIRSTUSE_GADGETS), FS3EREQ_WARNING);
 
         if (choice == 0) cleanexit(NULL); /* Quit */
 
@@ -1724,8 +1790,6 @@ int main(int argc, char **argv)
     fs3e_setViewMode(app->accountAccessToken ? VIEWMODE_Home : VIEWMODE_Local);
 
     flushbdbprint();
-
-    FS3EProgressView_Close(&progressView);
 
 // printf("FS3EMain_Show\n");
     FS3EMain_Show(&app->mainwindow, app->window_obj);
@@ -1934,14 +1998,14 @@ int main(int argc, char **argv)
                             if( key == 0x40 ) /* Space */
                             {
                                 if (app->timelineAutoscrollActive)
-                                    Action_TimelineAutoscrollStop(app);
+                                    Action_TimelineAutoscrollStop(app,TRUE);
                                 else
                                     Action_TimelineNextToot(app);
                             }
                             if( key == 0x19 ) /* P -- autoscroll play */
                             {
                             // printf("Action_TimelineAutoscrollPlay\n");
-                                Action_TimelineAutoscrollPlay(app);
+                                Action_TimelineAutoscrollPlay(app,TRUE);
                             }
                          }
                         /* ctrl- and ctrl+ change font size */
@@ -2155,6 +2219,36 @@ int main(int argc, char **argv)
                             }
                             break;
 
+                        case GID_TITLEBAR_SCROLLUP:
+                            /* Momentary, not BUTTON_PushButton -- same
+                             * "fire on release" idiom as GID_TOOT_SEND_
+                             * BUTTON. */
+                            ptag = FindTagItem(GA_Selected, msg);
+                            if (ptag && ptag->ti_Data == 0)
+                                Action_TimelineTop(app);
+                            break;
+
+                        case GID_TITLEBAR_PLAYMODE:
+                            /* BUTTON_PushButton -- GA_Selected here is the
+                             * NEW persisted state after the click, same
+                             * "toggle" idiom as GID_NAV_* above. */
+                             if(app->titlebar_playModeBtn)
+                             {
+                                ULONG sel;
+                                GetAttr(GA_Selected,app->titlebar_playModeBtn,&sel);
+                                ptag = FindTagItem(GA_Selected, msg);
+                                if(ptag)
+                                {
+
+                                    if (sel)
+                                        Action_TimelineAutoscrollPlay(app,FALSE);
+                                    else
+                                        Action_TimelineAutoscrollStop(app,FALSE);
+
+                                }
+                            }
+                            break;
+
                         /* ---- Navigation bar ---- */
                         case GID_NAV_USER:
                         case GID_NAV_HOME:
@@ -2336,13 +2430,10 @@ int main(int argc, char **argv)
                                          * see FS3ETootAttachStatus's doc comment. Nothing sent;
                                          * the user can fix or clear the offending attachment (the
                                          * "X" button) and try again. */
-                                        struct EasyStruct es = {
-                                            sizeof(struct EasyStruct), 0,
-                                            (UBYTE *)"FriendSh3ep - Attachment Error",
-                                            (UBYTE *)errText,
-                                            (UBYTE *)"OK"
-                                        };
-                                        EasyRequestArgs(app->tootView.window, &es, NULL, NULL);
+                                        FS3ERequester_Show(app->tootView.window,
+                                            "FriendSh3ep - Attachment Error", errText,
+                                            "OK", FS3EREQ_ERROR);
+                                        ExpungeMessages();
                                         FreeVec((APTR)body);
                                     } else if (st1 != FS3ETOOT_ATTACH_OK && st2 != FS3ETOOT_ATTACH_OK) {
                                         /* Neither row has a file -- send as-is. */
@@ -2869,13 +2960,10 @@ int main(int argc, char **argv)
                                             if (hotSpotReblogged || !hotSpotQuotable) {
                                                 Action_ToggleReblog(app, hotSpotId, hotSpotReblogged);
                                             } else if (hotSpotId && hotSpotId[0]) {
-                                                struct EasyStruct es = {
-                                                    sizeof(struct EasyStruct), 0,
-                                                    (UBYTE *)"FriendSh3ep - Share Toot",
-                                                    (UBYTE *)"Share this toot?",
-                                                    (UBYTE *)"Boost|Quote|Cancel"
-                                                };
-                                                LONG choice = EasyRequestArgs(CurrentMainWindow, &es, NULL, NULL);
+                                                LONG choice = FS3ERequester_Show(CurrentMainWindow,
+                                                    "FriendSh3ep - Share Toot", "Share this toot?",
+                                                    "Boost|Quote|Cancel", FS3EREQ_QUESTION);
+                                                ExpungeMessages();
 
                                                 if (choice == 1) {
                                                     Action_ToggleReblog(app, hotSpotId, hotSpotReblogged);
@@ -2947,13 +3035,12 @@ int main(int argc, char **argv)
                                              * AmigaOS EasyRequest
                                              * convention. */
                                             if (hotSpotId && hotSpotId[0]) {
-                                                struct EasyStruct es = {
-                                                    sizeof(struct EasyStruct), 0,
-                                                    (UBYTE *)"FriendSh3ep - Delete Toot",
-                                                    (UBYTE *)"Delete this toot?\nThis cannot be undone.",
-                                                    (UBYTE *)"Delete|Cancel"
-                                                };
-                                                if (EasyRequestArgs(CurrentMainWindow, &es, NULL, NULL)) {
+                                                LONG choice = FS3ERequester_Show(CurrentMainWindow,
+                                                    "FriendSh3ep - Delete Toot",
+                                                    "Delete this toot?\nThis cannot be undone.",
+                                                    "Delete|Cancel", FS3EREQ_WARNING);
+                                                ExpungeMessages();
+                                                if (choice) {
                                                     FS3ENetDeleteStatusReq *req =
                                                         FS3ENetDeleteStatusReq_Alloc(
                                                             app->accountApiBaseUrl,
@@ -3100,12 +3187,13 @@ int main(int argc, char **argv)
 void exitclose(void)
 {
     /* Belt-and-braces against every early cleanexit()/exit() call in main()
-     * that fires before FS3EProgressView_Close() at the very end of the
-     * init sequence -- otherwise this borderless window would be stuck on
-     * screen with no way to dismiss it. No-op if it was already closed, or
-     * never opened at all (e.g. FS3E_CheckSingleInstance() bailing before
+     * that fires before GenericOpenWindow (fs3eboopsimainwindow.c) reaches
+     * its own FS3EApp_InitProgressDone() call, right before WM_OPEN --
+     * otherwise this borderless window would be stuck on screen with no
+     * way to dismiss it. No-op if it was already closed, or never opened
+     * at all (e.g. FS3E_CheckSingleInstance() bailing before
      * FS3EProgressView_Open() even ran). */
-    FS3EProgressView_Close(&progressView);
+    FS3EApp_InitProgressDone();
 
     if (SIPCPort)
     {
@@ -3280,4 +3368,71 @@ void exitclose(void)
             }
         }
     }
+}
+
+/* Drains and DISCARDS every pending WM_HANDLEINPUT message on every BOOPSI
+ * window this app has (main window + every classic sub-window), plus any
+ * queued BoopsiDelay message -- called right after a modal FS3ERequester_
+ * Show() call returns (see its call sites), except the very first one in
+ * main() (no window exists yet at that point, nothing to drain).
+ *
+ * Why discard instead of dispatch: FS3ERequester_Show()'s RM_OPENREQ call
+ * runs requester.class's own internal Wait()/IDCMP loop until the user
+ * picks a button -- the whole task is blocked inside it, so nothing here
+ * services app_port/netReplyPort/thumbReplyPort/audioReplyPort or any
+ * window's own IDCMP for as long as the requester is up (see the
+ * conversation this was raised in -- classic Intuition/ReAction modal
+ * requesters have always worked this way, EasyRequestArgs before this one
+ * included). Signals aren't lost -- Signal() sets pending bits regardless
+ * of what the task is Wait()ing on -- but if the user clicked around in
+ * other windows while the requester was up, those clicks queued as real
+ * WM_HANDLEINPUT messages and would otherwise all fire at once the moment
+ * the main loop's Wait() next runs, as if the user had rapid-fired every
+ * one of those clicks in the space of one event -- confirmed as a real,
+ * dangerous replay: gadgets can end up acted on well after the screen
+ * state that prompted the click has changed. Discarding them here instead
+ * means "anything clicked while a requester was blocking input is
+ * ignored", which is what the user actually experienced anyway (nothing
+ * visibly responded to those clicks while the requester was up). */
+void ExpungeMessages()
+{
+    if(!app) return;
+    if(app->window_obj)
+    {
+        while ((DoMethod(app->window_obj, WM_HANDLEINPUT, NULL)) != WMHI_LASTMSG) {}
+    }
+    if(app->loginView.windowObj)
+    {
+        while ((DoMethod(app->loginView.windowObj, WM_HANDLEINPUT, NULL)) != WMHI_LASTMSG) {}
+    }
+    if(app->tootView.windowObj)
+    {
+        while ((DoMethod(app->tootView.windowObj, WM_HANDLEINPUT, NULL)) != WMHI_LASTMSG) {}
+    }
+    if(app->themeView.windowObj)
+    {
+        while ((DoMethod(app->themeView.windowObj, WM_HANDLEINPUT, NULL)) != WMHI_LASTMSG) {}
+    }
+    if(app->settingsView.windowObj)
+    {
+        while ((DoMethod(app->settingsView.windowObj, WM_HANDLEINPUT, NULL)) != WMHI_LASTMSG) {}
+    }
+    if(app->networkView.windowObj)
+    {
+        while ((DoMethod(app->networkView.windowObj, WM_HANDLEINPUT, NULL)) != WMHI_LASTMSG) {}
+    }
+    if(app->emojiBoxWindow.windowObj)
+    {
+        while ((DoMethod(app->emojiBoxWindow.windowObj, WM_HANDLEINPUT, NULL)) != WMHI_LASTMSG) {}
+    }
+    if(app->mediaView.windowObj)
+    {
+        while ((DoMethod(app->mediaView.windowObj, WM_HANDLEINPUT, NULL)) != WMHI_LASTMSG) {}
+    }
+
+    if (DelayQueue && BoopsiDelay_HasMessages(DelayQueue))
+    {
+        while ((BoopsiDelay_NextMessage(DelayQueue)) != NULL) {}
+    }
+
 }

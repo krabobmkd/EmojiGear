@@ -38,11 +38,13 @@
 #include "fs3erequests.h"
 #include "fs3eaccounts.h"
 #include "fs3enetworkhelper.h"
+#include "fs3erequester.h"
 
 /* Functions defined in friendsh3ep.c, reused here -- not static there, see
  * the "Not static" comment on each definition. */
 extern void  FS3EApp_CheckConnectionState(void);
 extern void  FS3EApp_UpdateUserIcon(void);
+extern void  FS3EApp_UpdateNetworkLed(void);
 extern void  FS3EApp_SubmitToot(const char *body, LONG visibility, LONG quotePolicy,
                                  BOOL sensitive,
                                  const char *const *newMediaIds, ULONG newMediaCount);
@@ -77,6 +79,9 @@ BOOL FS3EApp_NetSend(ULONG type, APTR data, ULONG dataLen)
     msg->fs3em_Data    = data;
     msg->fs3em_DataLen = dataLen;
     PutMsg(app->netRequestPort, &msg->fs3em_Msg);
+
+    app->netRequestsPending++;
+    FS3EApp_UpdateNetworkLed();
     return TRUE;
 }
 
@@ -1152,6 +1157,16 @@ static void FS3EApp_TriggerMediaFetchesForStatus(const FS3ENetStatus *st)
 /* Handle one reply message from the network process. */
 void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
 {
+    /* FS3ENETQ_FETCH_PROGRESS is an interim ping for a download whose
+     * original request is still outstanding (its own FS3EApp_NetSend()
+     * increment hasn't been matched by a real completion yet) -- see
+     * netRequestsPending's doc comment in friendsh3ep.h. Every other type
+     * here is a genuine completion. */
+    if (msg->fs3em_Type != FS3ENETQ_FETCH_PROGRESS) {
+        if (app->netRequestsPending > 0) app->netRequestsPending--;
+        FS3EApp_UpdateNetworkLed();
+    }
+
     switch (msg->fs3em_Type)
     {
     case FS3ENETQ_LOGIN_START:
@@ -1196,13 +1211,10 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
             FS3EApp_RefreshLoginAccountsList(); /* new/refreshed row, mark current */
             FS3ELoginView_Close(&app->loginView);
         } else {
-            struct EasyStruct es = {
-                sizeof(struct EasyStruct), 0,
-                (UBYTE *)"FriendSh3ep - Login Error",
-                (UBYTE *)"Could not exchange the authorization code.\nCheck the code and try again.",
-                (UBYTE *)"OK"
-            };
-            EasyRequestArgs(CurrentMainWindow, &es, NULL, NULL);
+            FS3ERequester_Show(CurrentMainWindow, "FriendSh3ep - Login Error",
+                "Could not exchange the authorization code.\nCheck the code and try again.",
+                "OK", FS3EREQ_ERROR);
+            ExpungeMessages();
             app->loginPhase = FS3ELOGIN_WAITING_CODE; /* let user retry code */
         }
         break;
@@ -2057,13 +2069,10 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
              * server 422ing because it isn't ready yet (see
              * FS3EMastodon_UploadMedia's doc comment in fs3enet_mastodon.h
              * for why that isn't polled around). */
-            struct EasyStruct es = {
-                sizeof(struct EasyStruct), 0,
-                (UBYTE *)"FriendSh3ep - Toot Error",
-                (UBYTE *)"Could not post the toot.\nCheck your connection and try again.",
-                (UBYTE *)"OK"
-            };
-            EasyRequestArgs(app->tootView.window, &es, NULL, NULL);
+            FS3ERequester_Show(app->tootView.window, "FriendSh3ep - Toot Error",
+                "Could not post the toot.\nCheck your connection and try again.",
+                "OK", FS3EREQ_ERROR);
+            ExpungeMessages();
         }
         break;
 
@@ -2078,13 +2087,10 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
         if (msg->fs3em_Result == FS3ENETR_OK) {
             FS3ETootView_Close(&app->tootView);
         } else {
-            struct EasyStruct es = {
-                sizeof(struct EasyStruct), 0,
-                (UBYTE *)"FriendSh3ep - Toot Error",
-                (UBYTE *)"Could not save the edit.\nCheck your connection and try again.",
-                (UBYTE *)"OK"
-            };
-            EasyRequestArgs(app->tootView.window, &es, NULL, NULL);
+            FS3ERequester_Show(app->tootView.window, "FriendSh3ep - Toot Error",
+                "Could not save the edit.\nCheck your connection and try again.",
+                "OK", FS3EREQ_ERROR);
+            ExpungeMessages();
         }
         break;
 
@@ -2119,13 +2125,10 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
 
             FS3ETootView_Close(&app->tootView);
         } else {
-            struct EasyStruct es = {
-                sizeof(struct EasyStruct), 0,
-                (UBYTE *)"FriendSh3ep - Profile Error",
-                (UBYTE *)"Could not update your bio.\nCheck your connection and try again.",
-                (UBYTE *)"OK"
-            };
-            EasyRequestArgs(app->tootView.window, &es, NULL, NULL);
+            FS3ERequester_Show(app->tootView.window, "FriendSh3ep - Profile Error",
+                "Could not update your bio.\nCheck your connection and try again.",
+                "OK", FS3EREQ_ERROR);
+            ExpungeMessages();
         }
         break;
 
@@ -2183,13 +2186,6 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
             }
         } else {
             ULONG i;
-            struct EasyStruct es = {
-                sizeof(struct EasyStruct), 0,
-                (UBYTE *)"FriendSh3ep - Attachment Error",
-                (UBYTE *)"Could not upload the attached file.\nCheck your connection and try again, "
-                         "or remove the attachment to post without it.",
-                (UBYTE *)"OK"
-            };
 
             /* Whole toot is abandoned on any upload failure (whichever
              * attachment it was) -- same as before, just also draining
@@ -2197,7 +2193,11 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
             app->tootUploadPending = FALSE;
             FS3ETootView_UpdateSendEnabled(&app->tootView);
 
-            EasyRequestArgs(app->tootView.window, &es, NULL, NULL);
+            FS3ERequester_Show(app->tootView.window, "FriendSh3ep - Attachment Error",
+                "Could not upload the attached file.\nCheck your connection and try again, "
+                "or remove the attachment to post without it.",
+                "OK", FS3EREQ_ERROR);
+            ExpungeMessages();
             if (app->pendingTootBody) {
                 FreeVec(app->pendingTootBody);
                 app->pendingTootBody = NULL;

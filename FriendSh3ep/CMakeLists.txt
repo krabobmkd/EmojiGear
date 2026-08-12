@@ -55,6 +55,7 @@ set(FRIENDSH3EP_SOURCES
     fs3eaction.c
     fs3esettings.c
     fs3emanageurl.c
+    fs3erequester.c
     fs3emachineid.c
     fs3eaudio.c
     fs3etimer.c

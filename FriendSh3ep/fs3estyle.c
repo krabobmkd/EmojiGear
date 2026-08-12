@@ -299,6 +299,10 @@ void FS3EStyle_InitDefaults(FS3EStyle *st)
     memset(st->tbDefaultImages, 0, sizeof(st->tbDefaultImages));
     st->tbButtonWidth  = 0;
     st->tbButtonHeight = 0;
+    memset(&st->btDeck, 0, sizeof(st->btDeck));
+    memset(st->btDeckImages, 0, sizeof(st->btDeckImages));
+    st->tbDeckButtonWidth  = 0;
+    st->tbDeckButtonHeight = 0;
     st->themePath = NULL;
     FS3EStyle_SetThemePath(st, NULL);
 
@@ -371,6 +375,18 @@ void free_tb_images(FS3EStyle *st)
         if (st->tbImages[i]) {
             DisposeObject((Object *)st->tbImages[i]);
             st->tbImages[i] = NULL;
+        }
+    }
+}
+
+/* Mirrors free_tb_images() above, for btDeckImages[]/btDeck. */
+static void free_btdeck_images(FS3EStyle *st)
+{
+    int i;
+    for (i = 0; i < FS3ESTYLE_BTDECK_COUNT; i++) {
+        if (st->btDeckImages[i]) {
+            DisposeObject((Object *)st->btDeckImages[i]);
+            st->btDeckImages[i] = NULL;
         }
     }
 }
@@ -718,6 +734,51 @@ BOOL FS3EStyle_LoadThemeImages(FS3EStyle *st, struct Screen *scr)
         }
     }
 
+    /* btdeck.iff: NetworkLed/ScrollUp/PlayMode row-2 title bar buttons --
+     * same "2 columns (unselected | selected) x N rows" sheet convention
+     * as tbbuttons.iff above, just FS3ESTYLE_BTDECK_COUNT rows instead of
+     * FS3ESTYLE_TBBUTTON_COUNT, and no built-in-glyph fallback tier (see
+     * FS3EStyle_SyncTitleBarDeckButtons). Same "don't build images over an
+     * unloaded bitmap" reasoning as tbImages[] above. */
+    snprintf(path, sizeof(path), "%s/%s", st->themePath,
+             StyleFile_GetString(&sf, "titlebar.btdeck", "btdeck.iff"));
+
+    BmImage_Init(&st->btDeck, path);
+    BmImage_Load(&st->btDeck, scr);
+
+    if (BmImage_IsLoaded(&st->btDeck)) {
+        bm = st->btDeck.bitmap;
+
+        cellW = (WORD)(st->btDeck.width  / 2);
+        cellH = (WORD)(st->btDeck.height / FS3ESTYLE_BTDECK_COUNT);
+        if (cellW < 1) cellW = 1;
+        if (cellH < 1) cellH = 1;
+        st->tbDeckButtonWidth  = cellW;
+        st->tbDeckButtonHeight = cellH;
+
+        for (i = 0; i < FS3ESTYLE_BTDECK_COUNT; i++) {
+            st->btDeckImages[i] = (struct Image *)NewObject(BITMAP_GetClass(), NULL,
+                BITMAP_BitMap,          (ULONG)bm,
+                BITMAP_Width,           cellW,
+                BITMAP_Height,          cellH,
+                BITMAP_OffsetX,         0,
+                BITMAP_OffsetY,         i * cellH,
+                BITMAP_MaskPlane,       (ULONG)st->btDeck.mask,
+                BITMAP_SelectBitMap,    (ULONG)bm,
+                BITMAP_SelectWidth,     cellW,
+                BITMAP_SelectHeight,    cellH,
+                BITMAP_SelectOffsetX,   cellW,
+                BITMAP_SelectOffsetY,   i * cellH,
+                BITMAP_SelectMaskPlane, (ULONG)st->btDeck.mask,
+                BITMAP_Masking,         TRUE,
+                BITMAP_Transparent,     TRUE,
+                TAG_DONE);
+        }
+    } else
+    {
+     printf("btdeck img not loaded\n");
+    }
+
     /* Title bar background: tbbg.png, tiled by FS3EStyle_TitleBarBackFillFunc
      * (installed on TitleBarLayout's GA_BackFill at creation, see
      * friendsh3ep.c). Optional -- a missing file just means no custom
@@ -899,6 +960,44 @@ void FS3EStyle_SyncTitleBarButtons(FS3EStyle *st,
     }
 }
 
+/* Same "always act, never leave a dangling GA_Image" reasoning as
+ * FS3EStyle_SyncTitleBarButtons above, but with no tbDefaultImages[]-style
+ * fallback tier -- btDeckImages[N] unset always means the plain-bevel-no-
+ * image branch directly (see FS3ESTYLE_BTDECK_* in fs3estyle.h). */
+void FS3EStyle_SyncTitleBarDeckButtons(FS3EStyle *st,
+                                        Object *networkLedBtn,
+                                        Object *scrollUpBtn,
+                                        Object *playModeBtn)
+{
+    struct Image *img;
+
+    if (!st) return;
+
+    if (networkLedBtn) {
+        img = st->btDeckImages[FS3ESTYLE_BTDECK_NETWORKLED];
+        SetGdAttrs(networkLedBtn,
+            GA_Image, (ULONG)img,
+            BUTTON_BevelStyle, (ULONG)(img ? BVS_NONE : BVS_BUTTON),
+            BUTTON_Transparent, (ULONG)(img ? TRUE : FALSE), TAG_DONE);
+    }
+
+    if (scrollUpBtn) {
+        img = st->btDeckImages[FS3ESTYLE_BTDECK_SCROLLUP];
+        SetGdAttrs(scrollUpBtn,
+            GA_Image, (ULONG)img,
+            BUTTON_BevelStyle, (ULONG)(img ? BVS_NONE : BVS_BUTTON),
+            BUTTON_Transparent, (ULONG)(img ? TRUE : FALSE), TAG_DONE);
+    }
+
+    if (playModeBtn) {
+        img = st->btDeckImages[FS3ESTYLE_BTDECK_PLAYMODE];
+        SetGdAttrs(playModeBtn,
+            GA_Image, (ULONG)img,
+            BUTTON_BevelStyle, (ULONG)(img ? BVS_NONE : BVS_BUTTON),
+            BUTTON_Transparent, (ULONG)(img ? TRUE : FALSE), TAG_DONE);
+    }
+}
+
 /* Push UBTP9_Patch9 onto accountBtn (FS3ESTYLE_PATCH9_BT1) and newtootBtn
  * (FS3ESTYLE_PATCH9_BT2) -- the two UniButtonP9 gadgets skinned from a
  * Patch9 slot instead of a plain GA_Image (see FS3EStyle_SyncTitleBarButtons
@@ -942,6 +1041,8 @@ void FS3EStyle_UnloadThemeImages(FS3EStyle *st)
     if (!st) return;
     free_tb_images(st);
     BmImage_Unload(&st->tbButtons);
+    free_btdeck_images(st);
+    BmImage_Unload(&st->btDeck);
     BmImage_Unload(&st->tbBg);
     BmImage_Unload(&st->titlebarTitle);
     BmImage_Unload(&st->titlebarLeft);
@@ -971,6 +1072,8 @@ void FS3EStyle_UnloadThemeImages(FS3EStyle *st)
     /* No image loaded -- TitleBarLayout must fall back to dpiHeight sizing. */
     st->tbButtonWidth  = 0;
     st->tbButtonHeight = 0;
+    st->tbDeckButtonWidth  = 0;
+    st->tbDeckButtonHeight = 0;
 }
 
 void FS3EStyle_FreeThemeImages(FS3EStyle *st)
@@ -984,6 +1087,7 @@ void FS3EStyle_FreeThemeImages(FS3EStyle *st)
      * switch and only go away here, at final app exit. */
     FS3ETBDefaultBtn_Dispose(st->tbDefaultImages);
     BmImage_Free(&st->tbButtons);
+    BmImage_Free(&st->btDeck);
     BmImage_Free(&st->tbBg);
     BmImage_Free(&st->titlebarTitle);
     BmImage_Free(&st->titlebarLeft);

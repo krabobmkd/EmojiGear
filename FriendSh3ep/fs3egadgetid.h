@@ -41,6 +41,12 @@
 #define GID_TITLEBAR_ACCOUNTS    35
 #define GID_TITLEBAR_NEWTOOT     36
 
+/* Title bar row 2, right cluster, packed left of accounts/newtoot -- image
+ * from btdeck.iff, see FS3ESTYLE_BTDECK_* in fs3estyle.h. */
+#define GID_TITLEBAR_NETWORKLED  37  /* read-only status indicator, GA_ReadOnly */
+#define GID_TITLEBAR_SCROLLUP    38  /* momentary: Action_TimelineTop */
+#define GID_TITLEBAR_PLAYMODE    39  /* toggle (BUTTON_PushButton): Action_TimelineAutoscrollPlay/Stop */
+
 /* Navigation bar (Part B, NavBarLayout) */
 #define GID_NAV_USER             40
 #define GID_NAV_HOME             41
