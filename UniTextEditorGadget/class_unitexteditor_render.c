@@ -202,40 +202,6 @@ static void uted_do_layout( Class *cl, Object *o,
         }
     }
 
-   /* when a rastport is given or created rto draw on gadget,
-        It is most often delivered with no clipping at layer level.
-        Optionally during draw we can force installation of a clipping rect,
-        that will cut any graphics.library drawing cals using RastPort.
-        Here we refresh a Region geometry that is used as clipping at draw.
-      */
-
-    if (inst->clipRegion)
-    {
-        struct Rectangle framerect;
-        framerect.MinX = G(o)->LeftEdge + inst->leftMargin;
-        framerect.MinY = G(o)->TopEdge + inst->topMargin;
-        framerect.MaxX = G(o)->LeftEdge  + G(o)->Width -1 - inst->rightMargin;
-        framerect.MaxY = G(o)->TopEdge + G(o)->Height -1 - inst->bottomMargin;
-
-        /* note you can go wild with Or/And boolean operation on geometry.
-           But a single rect (should be) enough at Gadget level.
-           Note there are issues on "Virtual.class" up to OS3.2.2 with this.
-           One of the reason we don't use Virtual.class.
-           */
-        ClearRegion(inst->clipRegion);
-        OrRectRegion(inst->clipRegion, &framerect);
-    }
-
-    if(inst->bevel)
-    {
-        SetAttrs((Object *)inst->bevel,
-            IA_Left,        (ULONG)G(o)->LeftEdge,
-            IA_Top,        (ULONG)G(o)->TopEdge,
-            IA_Width,      (ULONG)G(o)->Width,
-            IA_Height,     (ULONG)G(o)->Height,
-            TAG_DONE);
-        inst->redrawBevel = TRUE;
-    }
 
 }
 
@@ -429,6 +395,43 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
         uted_do_layout(cl, o, width, height, scr);
     }
 
+
+   /* when a rastport is given or created rto draw on gadget,
+        It is most often delivered with no clipping at layer level.
+        Optionally during draw we can force installation of a clipping rect,
+        that will cut any graphics.library drawing cals using RastPort.
+        Here we refresh a Region geometry that is used as clipping at draw.
+      */
+
+    if (inst->clipRegion)
+    {
+        struct Rectangle framerect;
+        framerect.MinX = G(o)->LeftEdge + inst->leftMargin;
+        framerect.MinY = G(o)->TopEdge + inst->topMargin;
+        framerect.MaxX = G(o)->LeftEdge  + G(o)->Width -1 - inst->rightMargin;
+        framerect.MaxY = G(o)->TopEdge + G(o)->Height -1 - inst->bottomMargin;
+
+        /* note you can go wild with Or/And boolean operation on geometry.
+           But a single rect (should be) enough at Gadget level.
+           Note there are issues on "Virtual.class" up to OS3.2.2 with this.
+           One of the reason we don't use Virtual.class.
+           */
+        ClearRegion(inst->clipRegion);
+        OrRectRegion(inst->clipRegion, &framerect);
+    }
+
+    if(inst->bevel)
+    {
+        SetAttrs((Object *)inst->bevel,
+            IA_Left,        (ULONG)G(o)->LeftEdge,
+            IA_Top,        (ULONG)G(o)->TopEdge,
+            IA_Width,      (ULONG)G(o)->Width,
+            IA_Height,     (ULONG)G(o)->Height,
+            TAG_DONE);
+        inst->redrawBevel = TRUE;
+    }
+
+
     /* Rebuild wrap map if text or width changed since last render */
     if (inst->wordWrap && inst->wrapMapDirty)
         uted_rebuild_wrap_map(inst);
@@ -441,9 +444,6 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
 
         return 0;
     }
-
-    /* isChip: OK HERE */
-
 
     /* ------------------------------------------------------------------
      * Replay deferred mouse input from the input.device context.
