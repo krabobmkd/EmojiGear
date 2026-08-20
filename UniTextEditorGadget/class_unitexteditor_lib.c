@@ -51,7 +51,7 @@ struct Library *URPBase=NULL;
         struct Library        *__UtilityBase=NULL; // amiga gcc2.95 with noixemul and 68000, and our gadget startup needs that.
     #endif
 
-const char VersionString[] = "unitexteditor.gadget 5.1 (" __DATE__ ")";
+const char VersionString[] = "unitexteditor.gadget 5.2 (" __DATE__ ")";
 const char Lib_ID[]= "unitexteditor.gadget";
 
 #endif
