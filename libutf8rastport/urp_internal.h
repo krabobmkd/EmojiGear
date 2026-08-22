@@ -134,6 +134,17 @@ struct URPDrawContext {
      * Range [1..12], default 4.  Set via URPDC_SetAttribsA(). */
     ULONG tabSpaces;
 
+    /* Correction added to the draw loop's local pen x to recover the true
+     * pixel x since the start of the logical line, for tab-stop alignment.
+     * A caller that draws a line in one shot from x=0 leaves this at its
+     * default of 0.  A caller that draws a mid-line slice (tile cache,
+     * selection-overlay redraw, ...) must set it to
+     * (trueLineX_of_firstChar - pos.x) immediately before the draw call,
+     * via URPDC_SetAttribsA(dc, {URPDCA_TabOriginX, value, TAG_DONE}).
+     * Not persistent: callers are expected to set it before every draw
+     * that needs a non-zero value. */
+    LONG tabOriginX;
+
     int   numberOfGlyphsNotFound;
     ULONG codeNotFound[MAX_CODE_NOT_FOUND];
 

@@ -25,6 +25,23 @@
 #define RAWKEY_F10  0x59
 #define RAWKEY_HELP  0x5F
 
+/* Spaces needed for a soft-TAB (UTED_TabsAreSpaces) to reach the next tab
+ * stop from character column 'col', 'n' spaces per stop (1..12).  Always in
+ * [1, n] -- even from an already-aligned column a TAB still advances one
+ * full stop, mirroring the hard-TAB pixel alignment in urp_tab_advance(). */
+static ULONG uted_soft_tab_forward_count(ULONG col, ULONG n)
+{
+    return n - (col % n);
+}
+
+/* Spaces to remove for a soft-Shift+TAB to reach the *previous* tab stop
+ * from column 'col' (caller ensures col > 0).  Always in [1, n]. */
+static ULONG uted_soft_tab_backward_count(ULONG col, ULONG n)
+{
+    ULONG rem = col % n;
+    return rem ? rem : n;
+}
+
 /* Tab / Shift+Tab with a selection spanning more than one line: block
  * indent/unindent, using low-level uted_line_insert/delete_bytes directly
  * so the selection-replace and undo side-effects of DoInsertText/
@@ -230,11 +247,13 @@ int uted_manage_rawkey_keycode(Class *cl, Object *o,ULONG codedata, struct Gadge
                         if (curLine && curLine->utf8) {
                             const char *s = curLine->utf8;
                             if (inst->tabsAreSpaces) {
-                                int nbsp = (int)inst->tabSpaces;
-                                int j;
+                                int n = (int)inst->tabSpaces;
+                                int j, nbsp;
                                 BOOL allSpaces;
-                                if (nbsp < 1) nbsp = 1;
-                                if (nbsp > 12) nbsp = 12;
+                                if (n < 1) n = 1;
+                                if (n > 12) n = 12;
+                                nbsp = (int)uted_soft_tab_backward_count(
+                                            inst->cursor.col, (ULONG)n);
                                 if ((int)inst->cursor.col >= nbsp) {
                                     ULONG byteOff = uted_char_to_byte(s, curLine->byteUsed,
                                                         inst->cursor.col - (ULONG)nbsp);
@@ -259,11 +278,12 @@ int uted_manage_rawkey_keycode(Class *cl, Object *o,ULONG codedata, struct Gadge
                     /* Tab forward */
                     if (inst->tabsAreSpaces) {
                         char spaces[13];
-                        ULONG n = inst->tabSpaces, si;
+                        ULONG n = inst->tabSpaces, si, count;
                         if (n < 1) n = 1; if (n > 12) n = 12;
-                        for (si = 0; si < n; si++) spaces[si] = ' ';
-                        spaces[n] = '\0';
-                        UniTextEditor_DoInsertText(cl, o, spaces, (LONG)n);
+                        count = uted_soft_tab_forward_count(inst->cursor.col, n);
+                        for (si = 0; si < count; si++) spaces[si] = ' ';
+                        spaces[count] = '\0';
+                        UniTextEditor_DoInsertText(cl, o, spaces, (LONG)count);
                     } else {
                         UniTextEditor_DoInsertText(cl, o, "\t", 1);
                     }
@@ -457,11 +477,12 @@ int uted_manage_vanilla_keycode(Class *cl, Object *o,ULONG codedata, struct Gadg
                 if (!vshift) {
                     if (inst->tabsAreSpaces) {
                         char spaces[13];
-                        ULONG n = inst->tabSpaces, si;
+                        ULONG n = inst->tabSpaces, si, count;
                         if (n < 1) n = 1; if (n > 12) n = 12;
-                        for (si = 0; si < n; si++) spaces[si] = ' ';
-                        spaces[n] = '\0';
-                        UniTextEditor_DoInsertText(cl, o, spaces, (LONG)n);
+                        count = uted_soft_tab_forward_count(inst->cursor.col, n);
+                        for (si = 0; si < count; si++) spaces[si] = ' ';
+                        spaces[count] = '\0';
+                        UniTextEditor_DoInsertText(cl, o, spaces, (LONG)count);
                     } else {
                         UniTextEditor_DoInsertText(cl, o, "\t", 1);
                     }
@@ -472,9 +493,11 @@ int uted_manage_vanilla_keycode(Class *cl, Object *o,ULONG codedata, struct Gadg
                         if (curLine && curLine->utf8) {
                             const char *s = curLine->utf8;
                             if (inst->tabsAreSpaces) {
-                                int nbsp = (int)inst->tabSpaces;
-                                int j; BOOL allSpaces;
-                                if (nbsp < 1) nbsp = 1; if (nbsp > 12) nbsp = 12;
+                                int n = (int)inst->tabSpaces;
+                                int j, nbsp; BOOL allSpaces;
+                                if (n < 1) n = 1; if (n > 12) n = 12;
+                                nbsp = (int)uted_soft_tab_backward_count(
+                                            inst->cursor.col, (ULONG)n);
                                 if ((int)inst->cursor.col >= nbsp) {
                                     ULONG byteOff = uted_char_to_byte(s, curLine->byteUsed,
                                                         inst->cursor.col - (ULONG)nbsp);

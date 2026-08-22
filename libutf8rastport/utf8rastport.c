@@ -1617,6 +1617,9 @@ void URPDC_SetAttribsA(REG(a0, struct URPDrawContext *dc),
                 if (v > 12) v = 12;
                 dc->tabSpaces = v;
                 break;
+            case URPDCA_TabOriginX:
+                dc->tabOriginX = (LONG)v;
+                break;
         }
     }
 }
@@ -1624,8 +1627,13 @@ void URPDC_SetAttribsA(REG(a0, struct URPDrawContext *dc),
 /* =========================================================================
  * urp_tab_advance – pixel advance width for one tab character
  *
- * Returns tabSpaces * advanceX-of-space.
- * Falls back to tabSpaces * 8 if the space glyph isn't available.
+ * Aligns to the next multiple of (tabSpaces * unit-advance) measured from
+ * the true start of the logical line, not a fixed jump: curX is the pen's
+ * current local x (whatever the caller already tracks -- totalAdvance,
+ * curX, pos->x); dc->tabOriginX (see URPDCA_TabOriginX) corrects it to the
+ * true line-relative x when curX's zero point isn't the line's own start
+ * (e.g. a mid-line tile/selection redraw).  Guarantees at least one
+ * unit-advance of width so a tab never collapses to a sliver.
  * ========================================================================= */
 
 /* Compute the monospace cell width from the advance of 'M' in the primary font.
@@ -1654,20 +1662,30 @@ INLINE WORD urp_glyph_advance(struct URPDrawContext *dc,
     return ge->advanceX;
 }
 
-INLINE WORD urp_tab_advance(struct URPDrawContext *dc)
+INLINE WORD urp_tab_advance(struct URPDrawContext *dc, LONG curX)
 {
+    LONG unitAdv, tabWidth, absX, advance;
+
     if (dc->prefFlags & URP_PREF_FORCE_MONOSPACE) {
         if (dc->monoAdvanceX <= 0)
             urp_compute_mono_advance(dc);
-        if (dc->monoAdvanceX > 0)
-            return (WORD)((ULONG)dc->tabSpaces * (ULONG)dc->monoAdvanceX);
-    }
-    {
+        unitAdv = (dc->monoAdvanceX > 0) ? dc->monoAdvanceX : 8;
+    } else {
         struct URPGlyphEntry *ge = urp_get_glyph(dc, 0x20UL, NULL, NULL);
-        if (ge && ge->advanceX > 0)
-            return (WORD)((ULONG)dc->tabSpaces * (ULONG)ge->advanceX);
+        unitAdv = (ge && ge->advanceX > 0) ? ge->advanceX : 8;
     }
-    return (WORD)((ULONG)dc->tabSpaces * 8UL);
+
+    tabWidth = (LONG)dc->tabSpaces * unitAdv;
+    if (tabWidth <= 0) tabWidth = (unitAdv > 0) ? unitAdv : 8;
+
+    /* Align to the next tab stop measured from the true line start. */
+    absX    = curX + dc->tabOriginX;
+    advance = (((absX / tabWidth) + 1) * tabWidth) - absX;
+
+    /* Never let a tab collapse to less than one full unit-advance wide. */
+    if (advance < unitAdv) advance += tabWidth;
+
+    return (WORD)advance;
 }
 
 static WORD urp_font_ascender(struct URPDrawContext *dc)
@@ -1744,6 +1762,10 @@ void URPDC_TextSizeUTF8(REG(a0, struct URPDrawContext *dc),
     if (!dc || !utf8) return;
 
     ObtainSemaphore(&dc->sem);
+    /* This measures the whole string from its own start, so tab stops are
+     * always relative to totalAdvance's own zero -- ignore any origin
+     * correction a mid-line draw call may have left set. */
+    dc->tabOriginX = 0;
     p         = (const unsigned char *)utf8;
     remaining = (maxChars < 0) ? INT_MAX : maxChars;
 
@@ -1763,9 +1785,9 @@ void URPDC_TextSizeUTF8(REG(a0, struct URPDrawContext *dc),
             continue;
         }
 
-        /* Tab: fixed advance = tabSpaces * space advance */
+        /* Tab: advance to the next tab stop (min one unit-advance wide) */
         if (cp == 0x09) {
-            totalAdvance += (WORD)urp_tab_advance(dc);
+            totalAdvance += (WORD)urp_tab_advance(dc, totalAdvance);
             continue;
         }
 
@@ -1924,6 +1946,10 @@ void URPDC_HorizontalOffsetArrayUTF8(REG(a0, struct URPDrawContext *dc),
 
     if (!arrayout || !dc || !utf8) return;
 
+    /* This always measures the whole line from char 0 (see caller
+     * uted_line_build_metrics), so tab stops are relative to totalAdvance's
+     * own zero -- ignore any origin correction a draw call may have left. */
+    dc->tabOriginX = 0;
     p         = (const unsigned char *)utf8;
     remaining = (maxChars < 0) ? INT_MAX : maxChars;
 
@@ -1933,9 +1959,9 @@ void URPDC_HorizontalOffsetArrayUTF8(REG(a0, struct URPDrawContext *dc),
         *arrayout++ = totalAdvance;
         if (cp == 0) break;
 
-        /* Tab: fixed advance = tabSpaces * space advance */
+        /* Tab: advance to the next tab stop (min one unit-advance wide) */
         if (cp == 0x09) {
-            totalAdvance += (WORD)urp_tab_advance(dc);
+            totalAdvance += (WORD)urp_tab_advance(dc, totalAdvance);
             continue;
         }
 
@@ -2115,7 +2141,7 @@ static void urp_cgx_clip_hook_func(
                 continue;
             }
             if (cp == 0x09) {
-                curX += (WORD)((ULONG)hd->dc->tabSpaces * (ULONG)cellW);
+                curX += urp_tab_advance(hd->dc, curX);
                 continue;
             }
             ge = urp_get_glyph(hd->dc, cp, NULL, NULL);
@@ -2185,7 +2211,7 @@ static void urp_cgx_clip_hook_func(
                 continue;
             }
             if (cp == 0x09) {
-                curX += urp_tab_advance(hd->dc);
+                curX += urp_tab_advance(hd->dc, curX);
                 continue;
             }
             ge = urp_get_glyph(hd->dc, cp, NULL, NULL);
@@ -2315,7 +2341,7 @@ static void urp_draw_text_cgx(struct RastPort      *rp,
 
         /* Tab: advance without drawing */
         if (cp == 0x09) {
-            pos->x += urp_tab_advance(dc);
+            pos->x += urp_tab_advance(dc, pos->x);
             continue;
         }
 
@@ -2446,7 +2472,7 @@ static void urp_draw_text_cgx_forcedmono(struct RastPort      *rp,
             continue;
         }
         if (cp == 0x09) {
-            pos->x += (WORD)((ULONG)dc->tabSpaces * (ULONG)cellW);
+            pos->x += urp_tab_advance(dc, pos->x);
             continue;
         }
 
@@ -2554,7 +2580,7 @@ static void urp_draw_text_clut(struct RastPort      *rp,
 
         /* Tab: advance without drawing */
         if (cp == 0x09) {
-            pos->x += urp_tab_advance(dc);
+            pos->x += urp_tab_advance(dc, pos->x);
             continue;
         }
 
@@ -2749,7 +2775,7 @@ static void urp_draw_text_clut_forcedmono(struct RastPort      *rp,
             continue;
         }
         if (cp == 0x09) {
-            pos->x += (WORD)((ULONG)dc->tabSpaces * (ULONG)cellW);
+            pos->x += urp_tab_advance(dc, pos->x);
             continue;
         }
 
@@ -2911,7 +2937,10 @@ void URPDrawTextUTF8(REG(a0, struct RastPort      *rp),
     const unsigned char *p;
     int                  remaining;
     if (!rp || !rp->BitMap || !dc || !utf8) return;
-    if(*utf8 == 0) return; /* empty string, happens a lot. */
+    /* URPDCA_TabOriginX (if set) applies to this call only -- consume it
+     * unconditionally so a shared/external dc never leaks it into an
+     * unrelated draw. */
+    if(*utf8 == 0) { dc->tabOriginX = 0; return; } /* empty string, happens a lot. */
     dc->numberOfGlyphsNotFound = 0;
     p         = (const unsigned char *)utf8;
     remaining = ((int)maxChars < 0) ? 32767 : maxChars;
@@ -2975,5 +3004,6 @@ void URPDrawTextUTF8(REG(a0, struct RastPort      *rp),
     }
     /* can't retain that */
     dc->currentFriendBitmap = NULL;
+    dc->tabOriginX = 0;
 
 }

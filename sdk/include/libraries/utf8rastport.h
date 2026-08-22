@@ -112,6 +112,18 @@ struct URPDrawContext; /* opaque */
  *             Valid range: [1..12].  Default: 4. */
 #define URPDCA_TabSpaces    (URPDCA_Dummy + 1)
 
+/* [S] (LONG) Not persistent -- applies to the very next draw/measure call
+ *            only, then must be re-set (default reverts to 0).
+ *            Correction added to a draw call's local pen x before computing
+ *            TAB stops, so that mid-line slices (e.g. a scrolled tile, or a
+ *            selection-overlay redraw starting mid-line) still align TAB
+ *            stops to the true left edge of the logical line rather than to
+ *            the slice's own local x=0.  Pass
+ *            (trueLineXOfFirstChar - pos.x) of the upcoming call.  Leave
+ *            unset (0) when drawing/measuring a whole line from its own
+ *            start. */
+#define URPDCA_TabOriginX   (URPDCA_Dummy + 2)
+
 
 /* Varargs convenience wrapper – builds the array on the stack. */
 #define URPDC_SetAttribs(dc, ...) \

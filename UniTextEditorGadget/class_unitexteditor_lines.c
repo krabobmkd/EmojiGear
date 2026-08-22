@@ -1061,6 +1061,14 @@ void uted_line_render_chunk(UniTextEditorData *inst,
                 SetBPen(rp, bgPenRun);
                 SetDrMd(rp, JAM2);
 
+                /* This chunk is a mid-line slice: pos.x is tile-relative,
+                 * not line-relative, so TAB stops need the correction back
+                 * to true line-start x (see URPDCA_TabOriginX). */
+                {
+                    ULONG _ta[] = {URPDCA_TabOriginX, (ULONG)chunkStartPx, TAG_DONE};
+                    URPDC_SetAttribsA(inst->dc, _ta);
+                }
+
                 URPDrawTextUTF8(rp, inst->dc, &pos,
                                 line->utf8 + startByte,
                                 run->endChar - startChar);
@@ -1108,6 +1116,14 @@ void uted_line_render_chunk(UniTextEditorData *inst,
             SetAPen(rp, (LONG)inst->txtPen);
             SetBPen(rp, (LONG)inst->bgPen);
             SetDrMd(rp, JAM2);
+
+            /* This chunk is a mid-line slice: pos.x is tile-relative, not
+             * line-relative, so TAB stops need the correction back to true
+             * line-start x (see URPDCA_TabOriginX). */
+            {
+                ULONG _ta[] = {URPDCA_TabOriginX, (ULONG)chunkStartPx, TAG_DONE};
+                URPDC_SetAttribsA(inst->dc, _ta);
+            }
 
             URPDrawTextUTF8(rp, inst->dc, &pos,
                             line->utf8 + startByte, (ULONG)(-1));

@@ -93,6 +93,12 @@ utf8rastport.library/--datasheet--           utf8rastport.library/--datasheet--
             (ULONG) Number of space-glyph advances per TAB character.
             Valid range: 1 to 12.  Default: 4.
 
+        URPDCA_TabOriginX  (TAG_USER|0x7202)
+            (LONG) Not persistent; see URPDC_SetAttribsA below.
+            Origin correction for TAB-stop alignment when drawing or
+            measuring a slice of a line rather than the whole line from
+            its own start.  Default: 0.
+
     STRUCTURES
         struct URPTextMetric
             WORD width    Total advance width of the measured string.
@@ -353,6 +359,18 @@ utf8rastport.library/URPDC_SetAttribsA   utf8rastport.library/URPDC_SetAttribsA
             URPDCA_TabSpaces (TAG_USER|0x7201)
                 (ULONG) Spaces per TAB character.  Range: 1..12.
                 Default: 4.
+
+            URPDCA_TabOriginX (TAG_USER|0x7202)
+                (LONG) Not persistent -- applies to the very next
+                draw/measure call only, then reverts to its default of 0.
+                Correction added to a draw call's local pen x before
+                computing TAB stops, so a mid-line slice (e.g. a scrolled
+                tile, or a selection-overlay redraw starting mid-line)
+                still aligns TAB stops to the true left edge of the
+                logical line instead of to the slice's own local x=0.
+                Pass (trueLineXOfFirstChar - pos.x) of the upcoming call.
+                Leave unset when drawing/measuring a whole line from its
+                own start.
 
     INPUTS
         dc      -- target URPDrawContext.

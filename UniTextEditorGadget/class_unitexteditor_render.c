@@ -854,6 +854,15 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
                                         SetAPen(rp, (LONG)inst->bgPen);
                                         SetBPen(rp, (LONG)inst->txtPen);
                                         SetDrMd(rp, JAM2);
+                                        /* Mid-line slice: pos.x isn't
+                                         * line-relative, so correct TAB
+                                         * stops back to true line-start x. */
+                                        {
+                                            ULONG _ta[] = {URPDCA_TabOriginX,
+                                                (ULONG)((LONG)line->charXOffsets[vss] - (LONG)pos.x),
+                                                TAG_DONE};
+                                            URPDC_SetAttribsA(inst->dc, _ta);
+                                        }
                                         URPDrawTextUTF8(rp, inst->dc, &pos,
                                             line->utf8 + startByte, vse - vss);
                                     }
@@ -1061,6 +1070,15 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
                                     SetAPen(rp, (LONG)inst->bgPen);
                                     SetBPen(rp, (LONG)inst->txtPen);
                                     SetDrMd(rp, JAM2);
+                                    /* Mid-line slice: pos.x isn't
+                                     * line-relative, so correct TAB stops
+                                     * back to true line-start x. */
+                                    {
+                                        ULONG _ta[] = {URPDCA_TabOriginX,
+                                            (ULONG)((LONG)line->charXOffsets[lineSelStart] - (LONG)pos.x),
+                                            TAG_DONE};
+                                        URPDC_SetAttribsA(inst->dc, _ta);
+                                    }
                                     URPDrawTextUTF8(rp, inst->dc, &pos,
                                         line->utf8 + startByte,
                                         lineSelEnd - lineSelStart);
