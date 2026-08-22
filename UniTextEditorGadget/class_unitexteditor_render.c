@@ -98,7 +98,7 @@ void exit(int a) {}
  * uted_do_layout  (internal)
  * =========================================================================
  */
-static void uted_do_layout( Class *cl, Object *o,
+static void uted_do_layout_size( Class *cl, Object *o,
                             WORD               newWidth,
                             WORD               newHeight,
                             struct Screen     *screen)
@@ -223,12 +223,8 @@ ULONG UniTextEditor_OnLayout(Class *cl, Object *o, struct gpLayout *msg)
     if((FindTask(NULL) == inst->callerTask) &&  msg->gpl_GInfo && msg->gpl_GInfo->gi_Screen )
     {
 
-        uted_do_layout(cl,o, G(o)->Width, G(o)->Height, msg->gpl_GInfo->gi_Screen);
-        /* MUI integration need scroller refresh at this level */
-        // if (msg->gpl_GInfo)
-        // {
-        //     uted_notify(cl, o, msg->gpl_GInfo, UTEDN_ScrollChanged, inst->scrollTopLine);
-        // }
+        uted_do_layout_size(cl,o, G(o)->Width, G(o)->Height, msg->gpl_GInfo->gi_Screen);
+
     }else
     if (msg->gpl_GInfo)
     {
@@ -317,7 +313,7 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
     WORD    textHeight;
     WORD    bevelLeft;   /* BEVEL_VertSize:  pixels of bevel on left/right sides */
     WORD    bevelTop;    /* BEVEL_HorizSize: pixels of bevel on top/bottom sides */
-    BOOL    needLayout;
+    BOOL    needSizeLayout;
     BOOL    isFullRefresh;
     ULONG   rStart, rEnd;
     bevelLeft = 0;
@@ -369,7 +365,7 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
         ULONG modeid = GetVPModeID(&scr->ViewPort);
         ULONG sdepth = GetBitMapAttr(scr->RastPort.BitMap,BMA_DEPTH);
 
-        needLayout = (width  != inst->layoutedWidth  ||
+        needSizeLayout = (width  != inst->layoutedWidth  ||
                       height != inst->layoutedHeight ||
                       (scr != inst->screen) ||
                       modeid != inst->screen_last_mode ||
@@ -377,7 +373,8 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
                       );
     }
 
-    if (msg->gpr_Redraw != GREDRAW_UPDATE || needLayout) {
+
+    if (msg->gpr_Redraw != GREDRAW_UPDATE || needSizeLayout) {
         isFullRefresh = TRUE;
         rStart = 0;
         rEnd   = ~0UL;
@@ -390,46 +387,54 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
     inst->refreshStartLine = 0;
     inst->refreshEndLine   = ~0L;
 
-    if (needLayout)
+    if (needSizeLayout)
     {
-        uted_do_layout(cl, o, width, height, scr);
+        uted_do_layout_size(cl, o, width, height, scr);
     }
+    /* if any change in size or also position,
+     * need to reconfigure cliping rectangle & bevel ... */
+    if( needSizeLayout ||
+        inst->layoutedTop != G(o)->TopEdge ||
+        inst->layoutedLeft != G(o)->LeftEdge )
+    {
+        inst->layoutedTop = G(o)->TopEdge;
+        inst->layoutedLeft = G(o)->LeftEdge;
 
-
-   /* when a rastport is given or created rto draw on gadget,
+        /* when a rastport is given or created to draw on gadget,
         It is most often delivered with no clipping at layer level.
         Optionally during draw we can force installation of a clipping rect,
         that will cut any graphics.library drawing cals using RastPort.
         Here we refresh a Region geometry that is used as clipping at draw.
-      */
+        */
 
-    if (inst->clipRegion)
-    {
-        struct Rectangle framerect;
-        framerect.MinX = G(o)->LeftEdge + inst->leftMargin;
-        framerect.MinY = G(o)->TopEdge + inst->topMargin;
-        framerect.MaxX = G(o)->LeftEdge  + G(o)->Width -1 - inst->rightMargin;
-        framerect.MaxY = G(o)->TopEdge + G(o)->Height -1 - inst->bottomMargin;
+        if (inst->clipRegion)
+        {
+            struct Rectangle framerect;
+            framerect.MinX = G(o)->LeftEdge + inst->leftMargin;
+            framerect.MinY = G(o)->TopEdge + inst->topMargin;
+            framerect.MaxX = G(o)->LeftEdge  + G(o)->Width -1 - inst->rightMargin;
+            framerect.MaxY = G(o)->TopEdge + G(o)->Height -1 - inst->bottomMargin;
 
-        /* note you can go wild with Or/And boolean operation on geometry.
-           But a single rect (should be) enough at Gadget level.
-           Note there are issues on "Virtual.class" up to OS3.2.2 with this.
-           One of the reason we don't use Virtual.class.
-           */
-        ClearRegion(inst->clipRegion);
-        OrRectRegion(inst->clipRegion, &framerect);
-    }
+            /* note you can go wild with Or/And boolean operation on geometry.
+               But a single rect (should be) enough at Gadget level.
+               Note there are issues on "Virtual.class" up to OS3.2.2 with this.
+               One of the reason we don't use Virtual.class.
+               */
+            ClearRegion(inst->clipRegion);
+            OrRectRegion(inst->clipRegion, &framerect);
+        }
 
-    if(inst->bevel)
-    {
-        SetAttrs((Object *)inst->bevel,
-            IA_Left,        (ULONG)G(o)->LeftEdge,
-            IA_Top,        (ULONG)G(o)->TopEdge,
-            IA_Width,      (ULONG)G(o)->Width,
-            IA_Height,     (ULONG)G(o)->Height,
-            TAG_DONE);
-        inst->redrawBevel = TRUE;
-    }
+        if(inst->bevel)
+        {
+            SetAttrs((Object *)inst->bevel,
+                IA_Left,        (ULONG)G(o)->LeftEdge,
+                IA_Top,        (ULONG)G(o)->TopEdge,
+                IA_Width,      (ULONG)G(o)->Width,
+                IA_Height,     (ULONG)G(o)->Height,
+                TAG_DONE);
+            inst->redrawBevel = TRUE;
+        }
+    } /* end if geometry changed, size or position */
 
 
     /* Rebuild wrap map if text or width changed since last render */

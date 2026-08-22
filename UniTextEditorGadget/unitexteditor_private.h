@@ -356,6 +356,10 @@ typedef struct UniTextEditorData {
     WORD                  visibleLines;   /* floor((gadHeight - topMargin - bottomMargin) / lineHeight) */
     WORD                  layoutedWidth;  /* gadWidth at last uted_do_layout call */
     WORD                  layoutedHeight; /* gadHeight at last uted_do_layout call */
+
+    WORD                layoutedTop;
+    WORD                layoutedLeft;
+
     WORD                  leftMargin;     /* UTED_LeftMargin: px gap left of glyphs; default 2 */
     WORD                  rightMargin;    /* UTED_RightMargin: px gap right of glyphs; default 0 */
     WORD                  topMargin;      /* UTED_TopMargin: px gap above first line; default 0 */
