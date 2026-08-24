@@ -201,7 +201,9 @@ static void uted_do_layout_size( Class *cl, Object *o,
             }
         }
     }
-
+    /* will force the rectangle clip region and bevel updates */
+    inst->layoutedTop = -1;
+    inst->layoutedLeft = -1;
 
 }
 

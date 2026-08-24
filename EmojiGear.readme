@@ -2,11 +2,35 @@ Short:        UTF-8/Unicode text editor+Emoji+gadgets
 Author:       krabobmkd
 Uploader:     victorien.ferry@free.fr
 Type:         text/edit
-Version:      5.1
+Version:      5.3
 Architecture: m68k-amigaos >= 3.0
 Requires:     68020, better with OS 3.2.x, 8 MB Fast RAM
-Replaces:     text/edit/EmojiGear4.3.lha
+Replaces:     text/edit/EmojiGear5.2.lha
 
+------------------------- Version 5.3
+
+ A last layout bug was still inUniTextEditor.gadget
+ ... this times corrected for sure !
+
+------------------------- Version 5.2
+
+ 3 modifications, but important:
+ 
+  - lib FreeType2 linked in utf8rastport.library is now
+     used under the FTL license terms. read FTL.txt for terms.
+   incidently now EmojiGear, unitexteditor.gadget and unibutton.gadget
+   are distributed under LGPLv2 license, which allows integrating
+   them in opensource or closed source , commercial or non commercial
+   projects. Yet you must still tell you use them in some readme.
+
+  - behaviour bug with tabs in unitexteditor corrected:
+    now tabs aligns vertically texts on column instead of jumping
+    max tab size. Of course.
+    
+  - There was a ugly layouting bug that was appearing on some window
+   resize: that used to make that glitch when resizing search window. 
+   Corrected for ever. Needed by forthcoming Mastodon client "FriendSh3ep".
+     
 
 ------------------------- Version 5.1
 
