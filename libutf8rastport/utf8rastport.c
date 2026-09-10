@@ -96,6 +96,17 @@ INLINE unsigned long urp_utf8_next(
     return cp;
 }
 
+/* Variation selectors (Mongolian FVS, standard VS, VS supplement) carry no
+ * glyph of their own -- they modify how the preceding base character is
+ * drawn.  We don't yet act on that, but they must never fall through to the
+ * "missing glyph" tofu-box path: no width, no glyph lookup, no draw. */
+INLINE int urp_is_variation_selector(unsigned long cp)
+{
+    return (cp >= 0x180B && cp <= 0x180D) ||   /* Mongolian free VS */
+           (cp >= 0xFE00 && cp <= 0xFE0F) ||   /* Variation Selectors */
+           (cp >= 0xE0100 && cp <= 0xE01EF);   /* Variation Selectors Supplement */
+}
+
 
 /* =========================================================================
  * Face size helper
@@ -1791,6 +1802,9 @@ void URPDC_TextSizeUTF8(REG(a0, struct URPDrawContext *dc),
             continue;
         }
 
+        /* Variation selector: no glyph, no width. */
+        if (urp_is_variation_selector(cp)) continue;
+
         fe = NULL; gi = 0;
         for (i = 0; i < dc->numFonts; i++) {
             gi = FT_Get_Char_Index(dc->fonts[i].face, (FT_ULong)cp);
@@ -1964,6 +1978,9 @@ void URPDC_HorizontalOffsetArrayUTF8(REG(a0, struct URPDrawContext *dc),
             totalAdvance += (WORD)urp_tab_advance(dc, totalAdvance);
             continue;
         }
+
+        /* Variation selector: no glyph, no width. */
+        if (urp_is_variation_selector(cp)) continue;
 
         fe = NULL; gi = 0;
         for (i = 0; i < dc->numFonts; i++) {
@@ -2144,6 +2161,7 @@ static void urp_cgx_clip_hook_func(
                 curX += urp_tab_advance(hd->dc, curX);
                 continue;
             }
+            if (urp_is_variation_selector(cp)) continue;
             ge = urp_get_glyph(hd->dc, cp, NULL, NULL);
             if (!ge) {
                 if (hd->firstCall && hd->dc->numberOfGlyphsNotFound < MAX_CODE_NOT_FOUND)
@@ -2214,6 +2232,7 @@ static void urp_cgx_clip_hook_func(
                 curX += urp_tab_advance(hd->dc, curX);
                 continue;
             }
+            if (urp_is_variation_selector(cp)) continue;
             ge = urp_get_glyph(hd->dc, cp, NULL, NULL);
             if (!ge) {
                 if (hd->firstCall && hd->dc->numberOfGlyphsNotFound < MAX_CODE_NOT_FOUND)
@@ -2344,6 +2363,8 @@ static void urp_draw_text_cgx(struct RastPort      *rp,
             pos->x += urp_tab_advance(dc, pos->x);
             continue;
         }
+
+        if (urp_is_variation_selector(cp)) continue;
 
         ge = urp_get_glyph(dc, cp, NULL, NULL);
         if (!ge) {
@@ -2476,6 +2497,8 @@ static void urp_draw_text_cgx_forcedmono(struct RastPort      *rp,
             continue;
         }
 
+        if (urp_is_variation_selector(cp)) continue;
+
         ge = urp_get_glyph(dc, cp, NULL, NULL);
         if (!ge) {
             if (dc->numberOfGlyphsNotFound < MAX_CODE_NOT_FOUND)
@@ -2583,6 +2606,8 @@ static void urp_draw_text_clut(struct RastPort      *rp,
             pos->x += urp_tab_advance(dc, pos->x);
             continue;
         }
+
+        if (urp_is_variation_selector(cp)) continue;
 
         ge = urp_get_glyph(dc, cp, NULL, NULL);
         if (!ge) {
@@ -2778,6 +2803,8 @@ static void urp_draw_text_clut_forcedmono(struct RastPort      *rp,
             pos->x += urp_tab_advance(dc, pos->x);
             continue;
         }
+
+        if (urp_is_variation_selector(cp)) continue;
 
         ge = urp_get_glyph(dc, cp, NULL, NULL);
         if (!ge) {

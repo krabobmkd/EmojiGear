@@ -388,15 +388,22 @@ int uted_manage_rawkey_keycode(Class *cl, Object *o,ULONG codedata, struct Gadge
             UniTextEditor_DoMoveCursor(cl, o,  0,  1, shift);
         }
         navHandled = TRUE; break;
-    case RAWKEY_PGUP: {
-        LONG vis = (LONG)(inst->visibleLines > 1 ? inst->visibleLines - 1 : 1);
-        UniTextEditor_DoMoveCursor(cl, o, 0, -vis, shift);
-        navHandled = TRUE; break;
+    case RAWKEY_PGUP: { /*same as numpad9*/
+        /* Only if some qualifier, else letter 9 pad !! */
+        if (qualifier & (IEQUALIFIER_RALT|IEQUALIFIER_LSHIFT|IEQUALIFIER_RSHIFT))
+        {
+            LONG vis = (LONG)(inst->visibleLines > 1 ? inst->visibleLines - 1 : 1);
+            UniTextEditor_DoMoveCursor(cl, o, 0, -vis, shift);
+            navHandled = TRUE; break;
+        }
     }
-    case RAWKEY_PGDN: {
-        LONG vis = (LONG)(inst->visibleLines > 1 ? inst->visibleLines - 1 : 1);
-        UniTextEditor_DoMoveCursor(cl, o, 0,  vis, shift);
-        navHandled = TRUE; break;
+    case RAWKEY_PGDN: { /*same as numpad3*/
+        if (qualifier & (IEQUALIFIER_RALT|IEQUALIFIER_LSHIFT|IEQUALIFIER_RSHIFT))
+        {
+            LONG vis = (LONG)(inst->visibleLines > 1 ? inst->visibleLines - 1 : 1);
+            UniTextEditor_DoMoveCursor(cl, o, 0,  vis, shift);
+            navHandled = TRUE; break;
+        }
     }
     default: break;
     }

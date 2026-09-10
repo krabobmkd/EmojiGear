@@ -336,7 +336,8 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
     if(FindTask(NULL) != inst->callerTask)
     {
         /* sorry, but on the right process will you ? */
-        uted_notify(cl, o, msg->gpr_GInfo, UTEDN_ScrollChanged, inst->scrollTopLine);
+        uted_notify_refresh(cl, o, msg->gpr_GInfo);
+
         return TRUE;
     }
 

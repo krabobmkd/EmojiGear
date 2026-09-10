@@ -575,7 +575,9 @@ BOOL uted_do_clipboard_paste(Class *cl, Object *o);
 
 /* Notify ICA_TARGET with an attribute change */
 void uted_notify(Class *cl, Object *o, struct GadgetInfo *gi, ULONG tag, ULONG value);
-
+/* Same, but send both UTEDN_CursorMoved & UTEDN_ScrollChanged,
+eitehr can be tested to resend refresh */
+void uted_notify_refresh(Class *cl, Object *o, struct GadgetInfo *gi);
 /* Recompute halfwayPen from the current txtPen, bgPen, and screen colormap */
 void uted_update_halfway_pen(UniTextEditorData *inst);
 

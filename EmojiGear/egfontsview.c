@@ -626,6 +626,12 @@ BOOL EgFontsView_HandleInput(EgFontsView *pfv)
 
                     removeAllFonts();
                     app->appSettings.primaryFontPath = FontStrDup("LiberationSans-Regular.ttf");
+                    /* Wider glyph coverage than primaryFontPath alone (CJK,
+                     * extra symbols) -- same two fonts GAD_FONTS_PRESET_MONO
+                     * uses below, both High Quality presets just differ in
+                     * primaryFontPath itself. */
+                    app->appSettings.fallback1FontPath = FontStrDup("Fonts:NotoSansJP-Regular.otf");
+                    app->appSettings.fallback2FontPath = FontStrDup("Fonts:TootGlyphs.ttf");
                     app->appSettings.emojiFontPath = FontStrDup("NotoColorEmoji32.ttf");
                     syncFontPaths(pfv);
                     UpdateEditorFontsFromSettings();
@@ -637,6 +643,11 @@ BOOL EgFontsView_HandleInput(EgFontsView *pfv)
 
                     removeAllFonts();
                     app->appSettings.primaryFontPath = FontStrDup("UbuntuMono-Regular.ttf");
+                    /* Same fallback pair as GAD_FONTS_PRESET_HQ above --
+                     * Monospace is High Quality too, just with a monospaced
+                     * primaryFontPath. */
+                    app->appSettings.fallback1FontPath = FontStrDup("Fonts:NotoSansJP-Regular.otf");
+                    app->appSettings.fallback2FontPath = FontStrDup("Fonts:TootGlyphs.ttf");
                     app->appSettings.emojiFontPath = FontStrDup("NotoColorEmoji32.ttf");
                     syncFontPaths(pfv);
                     UpdateEditorFontsFromSettings();

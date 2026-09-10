@@ -412,11 +412,11 @@ void uted_notify(Class *cl, Object *o, struct GadgetInfo *gi, ULONG tag, ULONG v
     struct opUpdate nmsg;
     ULONG tags[5];
 
-
-
     tags[0] = GA_ID;
+    /* good on os3.2, not on os3.9
     tags[1] = 0;
-    //good on os3.2 GetAttr(GA_ID, o, &tags[1]);
+    GetAttr(GA_ID, o, &tags[1]);
+    */
     tags[1] = inst->ga_id;
 
  //     bdbprintf("uted_notify GA_ID %08x !inst->target %08x\n",(int)ie->ie_Class);
@@ -445,6 +445,48 @@ void uted_notify(Class *cl, Object *o, struct GadgetInfo *gi, ULONG tag, ULONG v
     DoMethodA(inst->target,(Msg)&nmsg);
 
 }
+
+void uted_notify_refresh(Class *cl, Object *o, struct GadgetInfo *gi)
+{
+    UniTextEditorData *inst = UTED_DATA(cl, o);
+    struct opUpdate nmsg;
+    ULONG tags[7];
+
+    tags[0] = GA_ID;
+    /* good on os3.2, not on os3.9
+    tags[1] = 0;
+    GetAttr(GA_ID, o, &tags[1]);
+    */
+    tags[1] = inst->ga_id;
+
+    if (!tags[1] || !inst->target) return;
+
+    /*either messages should be tested to know if we should refresh */
+    tags[2] = UTEDN_CursorMoved;
+    tags[3] = TRUE;
+    tags[4] = UTEDN_ScrollChanged;
+    tags[5] = inst->scrollTopLine;
+    tags[6] = TAG_DONE;
+/* good on os3.2, and 1992 boopsi compliant
+    nmsg.MethodID     = OM_NOTIFY;
+    nmsg.opu_AttrList = (struct TagItem *)tags;
+    nmsg.opu_GInfo    = gi;
+    nmsg.opu_Flags    = 0;
+    DoSuperMethodA(cl, (APTR)o, (Msg)&nmsg);
+    */
+/*
+    OS3.9 boopsi can't send
+    notification by the "DoSuperMethodA" and GetAttr(GA_ID,...) mecanism
+*/
+    nmsg.MethodID     = OM_UPDATE;
+    nmsg.opu_AttrList = (struct TagItem *)tags;
+    nmsg.opu_GInfo    = gi;
+    nmsg.opu_Flags    = 0;
+    DoMethodA(inst->target,(Msg)&nmsg);
+
+}
+
+
 
 void uted_render_self(Class *cl, Object *o, struct GadgetInfo *gi)
 {
