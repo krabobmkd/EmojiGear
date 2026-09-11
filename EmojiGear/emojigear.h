@@ -21,7 +21,7 @@
 #include <gadgets/unibutton.h>
 #include "emojibox.h"
 
-#define EMOJIGEAR_VERSION "5.3"
+#define EMOJIGEAR_VERSION "5.4"
 
 #define EG_MAX_TABS 20
 

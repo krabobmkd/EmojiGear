@@ -5,7 +5,7 @@
 ;   - utf8rastport.library  -> Libs:
 ;   - unitexteditor.gadget  -> SYS:Classes/Gadgets/
 ;   - unibutton.gadget      -> SYS:Classes/Gadgets/
-;   - 4 TrueType fonts      -> Fonts:
+;   - 6 TrueType/OpenType fonts -> Fonts:
 ;
 ; Optional (user selects):
 ;   - EmojiGear             (requires AmigaOS 3.2 or later)
@@ -15,13 +15,37 @@
 ;
 
 (set #app-name    "EmojiGear")
-(set #app-version "v5.3")
+(set #app-version "v5.4")
 (set #app-default "Work:")
 
 ; Library/gadget versions we are shipping
-(set #urp-ver   (+ (* 4 65536) 3))   ; utf8rastport.library  v5.2
-(set #uted-ver  (+ (* 4 65536) 3))   ; unitexteditor.gadget  v5.3
+(set #urp-ver   (+ (* 4 65536) 3))   ; utf8rastport.library  v5.4
+(set #uted-ver  (+ (* 4 65536) 3))   ; unitexteditor.gadget  v5.4
 (set #ubtn-ver  (+ (* 4 65536) 3))   ; unibutton.gadget      v5.1
+
+; ---------------------------------------------------------------------------
+; Quit warning -- shown before anything else.  utf8rastport.library and the
+; two gadget classes are shared, cached AmigaOS resources: if any copy of
+; EmojiGear, MUImojiGear, or another app using them is still running, the
+; new files will be copied to disk but the OLD code will stay resident and
+; keep being used until every opener has quit (and even then a stray
+; delayed-expunge copy can survive an "Avail Flush").  A double-clicked,
+; Workbench-launched EmojiGear will NOT show up in a Shell "Status" listing
+; either (Workbench does not give it a CLI), so don't rely on Status to
+; confirm it's closed -- check visually.
+; ---------------------------------------------------------------------------
+(message
+    (cat
+        "Before installing, please make sure to QUIT:\n\n"
+        "  * EmojiGear\n"
+        "  * MUImojiGear\n"
+        "  * any other application using\n"
+        "    utf8rastport.library, unitexteditor.gadget\n"
+        "    or unibutton.gadget\n\n"
+        "Click Proceed once everything above is closed."
+    )
+    (all)
+)
 
 ; ---------------------------------------------------------------------------
 ; Welcome
@@ -210,9 +234,9 @@
 (complete 50)
 
 ; ---------------------------------------------------------------------------
-; Install TrueType fonts -> Fonts:
+; Install TrueType/OpenType fonts -> Fonts:
 ; ---------------------------------------------------------------------------
-(working "Installing TrueType fonts to Fonts: ...")
+(working "Installing fonts to Fonts: ...")
 
 (copyfiles
     (source "Fonts/LiberationSans-Regular.ttf")
@@ -228,6 +252,14 @@
 )
 (copyfiles
     (source "Fonts/UbuntuMono-Regular.ttf")
+    (dest "Fonts:")
+)
+(copyfiles
+    (source "Fonts/NotoSansJP-Regular.otf")
+    (dest "Fonts:")
+)
+(copyfiles
+    (source "Fonts/TootGlyphs.ttf")
     (dest "Fonts:")
 )
 
@@ -384,55 +416,93 @@
 (complete 95)
 
 ; ---------------------------------------------------------------------------
-; EmojiGear icon (skipped if EmojiGear.info already exists so an upgrade
-; never overwrites the user's saved settings)
+; EmojiGear icon.  A brand-new install always gets one.  An upgrade over an
+; existing EmojiGear.info asks first: that .info file stores the user's
+; current settings as tooltypes, and installing a fresh icon replaces the
+; whole icon file -- image AND tooltypes -- with the chosen preset's
+; defaults, so it must not happen silently.
 ; ---------------------------------------------------------------------------
 (if (BITAND #install-apps 1)
-    (if (not (exists (tackon #dest "EmojiGear.info")))
-        (
-            (set #icon-choice
-                (askchoice
-                    (prompt
-                        (cat
-                            "Which EmojiGear icon would you like to install?\n\n"
-                            "The icon stores the default display settings in its\n"
-                            "tooltypes.  You can adjust everything later from\n"
-                            "EmojiGear's Settings and Font Settings menus."
+    (
+        (set #do-install-icon 1)
+
+        (if (exists (tackon #dest "EmojiGear.info"))
+            (
+                (set #do-install-icon
+                    (askbool
+                        (prompt
+                            (cat
+                                "There is a nicer icon in this version, but\n"
+                                "installing it would replace your settings\n"
+                                "(the icon's tooltypes).\n\n"
+                                "Install new icon?"
+                            )
                         )
-                    )
-                    (help
-                        (cat
-                            "Low-end (2 colours):\n"
-                            "  Monochrome rendering, no antialiasing.\n"
-                            "  Best for OCS/ECS machines or low-colour screens.\n\n"
-                            "High Quality:\n"
-                            "  Antialiased fonts, colour Emoji support.\n"
-                            "  Recommended for AGA and RTG (Picasso, CyberGfx).\n"
+                        (help
+                            (cat
+                                "Your existing EmojiGear.info stores your current\n"
+                                "settings (fonts, colours, word wrap, etc.) as\n"
+                                "tooltypes.  Installing the new icon replaces the\n"
+                                "whole icon file, including those tooltypes, with\n"
+                                "the chosen preset's defaults.\n\n"
+                                "Choose No to keep your current icon and settings\n"
+                                "exactly as they are -- you can always adjust\n"
+                                "settings later from EmojiGear's Settings and\n"
+                                "Font Settings menus."
+                            )
                         )
+                        (default 0)
                     )
-                    (choices
-                        "Low-end (2 colours) -- OCS/ECS friendly"
-                        "High Quality -- AGA / RTG recommended"
-                    )
-                    (default 1)
                 )
             )
+        )
 
-            (if (= #icon-choice 0)
-                (
-                    (working "Installing EmojiGear icon (low-colour settings) ...")
-                    (copyfiles
-                        (source "bin/EmojiGearL.info")
-                        (dest #dest)
-                        (newname "EmojiGear.info")
+        (if (= #do-install-icon 1)
+            (
+                (set #icon-choice
+                    (askchoice
+                        (prompt
+                            (cat
+                                "Which EmojiGear icon would you like to install?\n\n"
+                                "The icon stores the default display settings in its\n"
+                                "tooltypes.  You can adjust everything later from\n"
+                                "EmojiGear's Settings and Font Settings menus."
+                            )
+                        )
+                        (help
+                            (cat
+                                "Low-end (2 colours):\n"
+                                "  Monochrome rendering, no antialiasing.\n"
+                                "  Best for OCS/ECS machines or low-colour screens.\n\n"
+                                "High Quality:\n"
+                                "  Antialiased fonts, colour Emoji support.\n"
+                                "  Recommended for AGA and RTG (Picasso, CyberGfx).\n"
+                            )
+                        )
+                        (choices
+                            "Low-end (2 colours) -- OCS/ECS friendly"
+                            "High Quality -- AGA / RTG recommended"
+                        )
+                        (default 1)
                     )
                 )
-                (
-                    (working "Installing EmojiGear icon (high-quality settings) ...")
-                    (copyfiles
-                        (source "bin/EmojiGearH.info")
-                        (dest #dest)
-                        (newname "EmojiGear.info")
+
+                (if (= #icon-choice 0)
+                    (
+                        (working "Installing EmojiGear icon (low-colour settings) ...")
+                        (copyfiles
+                            (source "bin/EmojiGearL.info")
+                            (dest #dest)
+                            (newname "EmojiGear.info")
+                        )
+                    )
+                    (
+                        (working "Installing EmojiGear icon (high-quality settings) ...")
+                        (copyfiles
+                            (source "bin/EmojiGearH.info")
+                            (dest #dest)
+                            (newname "EmojiGear.info")
+                        )
                     )
                 )
             )
@@ -471,7 +541,7 @@
         "  Libs:utf8rastport.library\n"
         "  SYS:Classes/Gadgets/unitexteditor.gadget\n"
         "  SYS:Classes/Gadgets/unibutton.gadget\n\n"
-        "TrueType fonts have been placed in Fonts:."
+        "TrueType/OpenType fonts have been placed in Fonts:."
     )
     (quiet)
 )

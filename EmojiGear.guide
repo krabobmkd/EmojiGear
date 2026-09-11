@@ -1,11 +1,11 @@
 @DATABASE EmojiGear.guide
-@$VER: EmojiGear.guide 5.3 (24.08.2026)
+@$VER: EmojiGear.guide 5.4 (11.09.2026)
 @AUTHOR krabobmkd
 @(C) 2026 krabobmkd
 @MASTER PROGDIR:EmojiGear.guide
 @NODE MAIN "EmojiGear - Unicode Text Editor"
 
-@{b}EmojiGear v5.3@{ub}
+@{b}EmojiGear v5.4@{ub}
 Unicode Text Editor for AmigaOS 3.2.x (68k)
 
 @{i}A UTF-8 text editor with full Emoji and Unicode support,@{ui}
@@ -29,6 +29,7 @@ Unicode Text Editor for AmigaOS 3.2.x (68k)
   @{" Requirements      " LINK REQUIRE}     What you need to run EmojiGear
   @{" OS 3.9 Notes      " LINK OS39COMPAT} AmigaOS 3.9 compatibility notes
   @{" MUImojiGear       " LINK MUIALT}    The MUI alternative
+  @{" Licenses          " LINK LICENSES}  License and credits for every component
 
 @ENDNODE
 
@@ -491,6 +492,9 @@ Use the Font Settings window to choose which font files to use.
   @{b}Fallback Font 2:@{ub}
     Second fallback, for even wider Unicode coverage.
 
+  @{b}Fallback Font 3:@{ub}
+    Third fallback, for even wider Unicode coverage still.
+
   @{b}Emoji Font:@{ub}
     A colour emoji font (CBDT/CBLC, e.g. NotoColorEmoji.ttf).
     When a character is in an emoji range and this font is set,
@@ -711,8 +715,9 @@ EmojiGear icon.  You can inspect and change them from the Workbench
 with @{b}Icons > Information...@{ub}.  Known tooltypes include:
 
   @{b}PRIMARYFONT=path@{ub}       Path to primary TrueType font.
-  @{b}FALLBACK1=path@{ub}         Path to first fallback font.
-  @{b}FALLBACK2=path@{ub}         Path to second fallback font.
+  @{b}FALLBACK1FONT=path@{ub}     Path to first fallback font.
+  @{b}FALLBACK2FONT=path@{ub}     Path to second fallback font.
+  @{b}FALLBACK3FONT=path@{ub}     Path to third fallback font.
   @{b}EMOJIFONT=path@{ub}         Path to colour emoji font.
   @{b}FONTSIZE=n@{ub}             Font size index (0=8pt, 1=12pt, ...).
   @{b}WORDWRAP=YES/NO@{ub}        Word wrap on or off.
@@ -913,6 +918,71 @@ etc.) are also stored as tooltypes and can be tweaked the same way.
   @{b}*@{ub}  @{b}Multi-file support:@{ub} only one document can be open at a time;
      there is no tab bar.
   @{b}*@{ub}  @{b}Find & Replace:@{ub} text search and replace are not available.
+
+@{" Back to Contents " LINK MAIN}
+@ENDNODE
+
+
+@NODE LICENSES "Licenses and Credits"
+@TOC MAIN
+
+@{b}License and Credits@{ub}
+
+@{u}Package@{uu}
+
+  @{b}Author@{ub}   Krb
+  @{b}License@{ub}  Package is GPL, App and libs are LGPL since v5.2.
+
+@{u}Components@{uu}
+
+Built upon open roots, free as the spring breeze:
+
+  @{b}utf8rastport.library@{ub}  (LGPL)
+    embedding FreeType2, libpng and zlib.
+
+  @{b}UniTextEditor@{ub}  (BOOPSI gadget, krb, License LGPL)
+
+  @{b}UniButton@{ub}      (BOOPSI gadget, krb, License LGPL)
+
+@{u}Fonts@{uu}
+
+This app installs the fonts below; you may install other ones too.
+Be warned that fonts are copyrighted artworks -- check a font's own
+license before installing and using it.
+
+  @{b}LiberationSans-Regular.ttf@{ub}
+    Ascender Corporation, license GPL.
+
+  @{b}NotoColorEmoji32.ttf@{ub}
+    NoTo, SIL Open Font License 1.1.
+
+  @{b}NotoSansJP-Regular.otf@{ub}
+    NoTo, SIL Open Font License 1.1.
+
+  @{b}UbuntuMono-Regular.ttf@{ub}
+    Canonical Ltd, Ubuntu Font Licence Version 1.0 (UFL).
+
+  @{b}OpenMoji-black-glyf.ttf@{ub}
+    HfG Schwabisch Gmuend, Creative Commons Attribution-ShareAlike 4.0
+    International (CC BY-SA 4.0).
+
+  @{b}TootGlyphs.ttf@{ub}
+    By krb, GPL-3.0.  A small fallback font covering Unicode blocks
+    missing from the other installed fonts.  Missing characters were
+    selected and mixed from:
+
+      fonts-freefont-ttf         GPL-3.0
+      fonts-dejavu-core          MIT-like licence
+      fonts-tibetan-machine      GPL-1.0
+      unifont_upper-17.0.05.otf  GPL-2.0
+
+@{u}Source and bug reports@{uu}
+
+  Source code:
+    @{b}https://github.com/krabobmkd/EmojiGear@{ub}
+
+  Bug reports and feature requests:
+    @{b}https://github.com/krabobmkd/EmojiGear/issues@{ub}
 
 @{" Back to Contents " LINK MAIN}
 @ENDNODE

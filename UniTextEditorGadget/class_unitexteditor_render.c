@@ -336,7 +336,8 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
     if(FindTask(NULL) != inst->callerTask)
     {
         /* sorry, but on the right process will you ? */
-        uted_notify_refresh(cl, o, msg->gpr_GInfo);
+        uted_notify(cl, o, msg->gpr_GInfo, UTEDN_CursorMoved, inst->cursor.line);
+        //uted_notify_refresh(cl, o, msg->gpr_GInfo);
 
         return TRUE;
     }
@@ -548,6 +549,18 @@ ULONG UniTextEditor_OnRender(Class *cl, Object *o, struct gpRender *msg)
                     WORD pixX = (WORD)((LONG)inst->pendingClickX
                                        - (LONG)inst->leftMargin
                                        + (LONG)inst->scrollLeftPx);
+                    if (inst->wordWrap) {
+                        /* pendingClickX is relative to the wrapped visual
+                         * row's left edge; charXOffsets is indexed in the
+                         * logical (unwrapped) line's pixel space, so the
+                         * row's startPixel must be added back in -- same
+                         * as UniTextEditor_DoHitTest does for hitCh above.
+                         * Without this, any click past the first visual
+                         * row of a wrapped line resolves the anchor floor
+                         * to an earlier row of the same logical line. */
+                        UTEDWrapRow *wr = uted_wrap_row_at_y(inst, inst->pendingClickY);
+                        if (wr) pixX = (WORD)((LONG)pixX + (LONG)wr->startPixel);
+                    }
                     inst->clickAnchorChFloor = (hitLn && hitLn->charXOffsets)
                         ? uted_x_to_char_floor(hitLn, pixX)
                         : hitCh;

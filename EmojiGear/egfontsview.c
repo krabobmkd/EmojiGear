@@ -143,6 +143,10 @@ static void syncFontPaths(EgFontsView *pfv)
                    pfv->window, NULL,
                    GETFILE_File, (ULONG)app->appSettings.fallback2FontPath,
                    TAG_END);
+    SetGadgetAttrs((struct Gadget *)pfv->fallback3FontGF,
+                   pfv->window, NULL,
+                   GETFILE_File, (ULONG)app->appSettings.fallback3FontPath,
+                   TAG_END);
     SetGadgetAttrs((struct Gadget *)pfv->emojiFontGF,
                    pfv->window, NULL,
                    GETFILE_File, (ULONG)app->appSettings.emojiFontPath,
@@ -159,6 +163,8 @@ static void removeAllFonts()
     app->appSettings.fallback1FontPath = NULL;
     FreeVec(app->appSettings.fallback2FontPath);
     app->appSettings.fallback2FontPath = NULL;
+    FreeVec(app->appSettings.fallback3FontPath);
+    app->appSettings.fallback3FontPath = NULL;
     FreeVec(app->appSettings.emojiFontPath);
     app->appSettings.emojiFontPath = NULL;
 
@@ -179,6 +185,7 @@ BOOL EgFontsView_Init(EgFontsView *pfv, const char *title)
     Object *primaryLabel;
     Object *fallback1Label;
     Object *fallback2Label;
+    Object *fallback3Label;
     Object *emojiFontLabel;
 
     if (!pfv) return FALSE;
@@ -247,6 +254,10 @@ BOOL EgFontsView_Init(EgFontsView *pfv, const char *title)
                                              app->appSettings.fallback2FontPath);
     if (!pfv->fallback2FontGF) return FALSE;
 
+    pfv->fallback3FontGF = makeGetFileGadget(GAD_FONTS_FALLBACK3_FONT,
+                                             app->appSettings.fallback3FontPath);
+    if (!pfv->fallback3FontGF) return FALSE;
+
     pfv->emojiFontGF = makeGetFileGadget(GAD_FONTS_EMOJI_FONT,
                                          app->appSettings.emojiFontPath);
     if (!pfv->emojiFontGF) return FALSE;
@@ -260,14 +271,17 @@ BOOL EgFontsView_Init(EgFontsView *pfv, const char *title)
     fallback2Label = NewObject(LABEL_GetClass(), NULL,
         LABEL_Text, (ULONG)LOC(MSG_FONTSETTINGS_FALLBACK2),
         TAG_END);
+    fallback3Label = NewObject(LABEL_GetClass(), NULL,
+        LABEL_Text, (ULONG)LOC(MSG_FONTSETTINGS_FALLBACK3),
+        TAG_END);
     emojiFontLabel = NewObject(LABEL_GetClass(), NULL,
         LABEL_Text, (ULONG)LOC(MSG_FONTSETTINGS_EMOJIFONT),
         TAG_END);
 
     /* --- [getfile][X] row sub-layouts (owned by fontsGroup) --- */
     {
-        Object *primaryRow, *fallback1Row, *fallback2Row, *emojiFontRow;
-        Object *primaryClearBtn, *fallback1ClearBtn, *fallback2ClearBtn, *emojyClearBtn;
+        Object *primaryRow, *fallback1Row, *fallback2Row, *fallback3Row, *emojiFontRow;
+        Object *primaryClearBtn, *fallback1ClearBtn, *fallback2ClearBtn, *fallback3ClearBtn, *emojyClearBtn;
 
         primaryClearBtn = NewObject(BUTTON_GetClass(), NULL,
             GA_ID,        GAD_FONTS_PRIMARY_CLEAR,
@@ -289,6 +303,13 @@ BOOL EgFontsView_Init(EgFontsView *pfv, const char *title)
             GA_Text,      (ULONG)"X",
             TAG_END);
         if (!fallback2ClearBtn) return FALSE;
+
+        fallback3ClearBtn = NewObject(BUTTON_GetClass(), NULL,
+            GA_ID,        GAD_FONTS_FALLBACK3_CLEAR,
+            GA_RelVerify, TRUE,
+            GA_Text,      (ULONG)"X",
+            TAG_END);
+        if (!fallback3ClearBtn) return FALSE;
 
         emojyClearBtn = NewObject(BUTTON_GetClass(), NULL,
             GA_ID,        GAD_FONTS_EMOJI_CLEAR,
@@ -336,6 +357,19 @@ BOOL EgFontsView_Init(EgFontsView *pfv, const char *title)
             TAG_END);
         if (!fallback2Row) return FALSE;
 
+        fallback3Row = NewObject(LAYOUT_GetClass(), NULL,
+            LAYOUT_Orientation,  LAYOUT_ORIENT_HORIZ,
+            LAYOUT_BevelStyle,   BVS_NONE,
+            LAYOUT_SpaceInner,   FALSE,
+            LAYOUT_AddChild,     (ULONG)pfv->fallback3FontGF,
+            CHILD_WeightedWidth,  1,
+            CHILD_WeightedHeight, 0,
+            LAYOUT_AddChild,     (ULONG)fallback3ClearBtn,
+            CHILD_WeightedWidth,  0,
+            CHILD_WeightedHeight, 0,
+            TAG_END);
+        if (!fallback3Row) return FALSE;
+
         emojiFontRow = NewObject(LAYOUT_GetClass(), NULL,
             LAYOUT_Orientation,  LAYOUT_ORIENT_HORIZ,
             LAYOUT_BevelStyle,   BVS_NONE,
@@ -369,6 +403,10 @@ BOOL EgFontsView_Init(EgFontsView *pfv, const char *title)
             LAYOUT_AddChild,      (ULONG)fallback2Row,
             CHILD_WeightedHeight, 0,
             CHILD_Label,          (ULONG)fallback2Label,
+
+            LAYOUT_AddChild,      (ULONG)fallback3Row,
+            CHILD_WeightedHeight, 0,
+            CHILD_Label,          (ULONG)fallback3Label,
 
             LAYOUT_AddChild,      (ULONG)emojiFontRow,
             CHILD_WeightedHeight, 0,
@@ -562,6 +600,11 @@ BOOL EgFontsView_HandleInput(EgFontsView *pfv)
                         updateFontPath(pfv->fallback2FontGF,
                                        &app->appSettings.fallback2FontPath);
 
+                } else if (gadId == GAD_FONTS_FALLBACK3_FONT) {
+                    if (gfRequestFile(pfv->fallback3FontGF, pfv->window))
+                        updateFontPath(pfv->fallback3FontGF,
+                                       &app->appSettings.fallback3FontPath);
+
                 } else if (gadId == GAD_FONTS_EMOJI_FONT) {
                     if (gfRequestFile(pfv->emojiFontGF, pfv->window))
                         updateFontPath(pfv->emojiFontGF,
@@ -595,6 +638,16 @@ BOOL EgFontsView_HandleInput(EgFontsView *pfv)
                                    TAG_END);
                     FreeVec(app->appSettings.fallback2FontPath);
                     app->appSettings.fallback2FontPath = NULL;
+                    UpdateEditorFontsFromSettings();
+
+                } else if (gadId == GAD_FONTS_FALLBACK3_CLEAR) {
+                    SetGadgetAttrs((struct Gadget *)pfv->fallback3FontGF,
+                                   pfv->window, NULL,
+                                   GETFILE_File,   (ULONG)"",
+                                   GETFILE_Drawer, (ULONG)"",
+                                   TAG_END);
+                    FreeVec(app->appSettings.fallback3FontPath);
+                    app->appSettings.fallback3FontPath = NULL;
                     UpdateEditorFontsFromSettings();
 
                 } else if (gadId == GAD_FONTS_EMOJI_CLEAR) {
@@ -687,6 +740,7 @@ void EgFontsView_Dispose(EgFontsView *pfv)
         pfv->primaryFontGF    = NULL;
         pfv->fallback1FontGF  = NULL;
         pfv->fallback2FontGF  = NULL;
+        pfv->fallback3FontGF  = NULL;
         pfv->emojiFontGF      = NULL;
         pfv->presetLowBtn     = NULL;
         pfv->presetHQBtn      = NULL;

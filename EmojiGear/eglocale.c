@@ -200,6 +200,8 @@ static const char *defaultStrings[MSG_COUNT] = {
     "Fallback Font 1:",
     /* MSG_FONTSETTINGS_FALLBACK2 */
     "Fallback Font 2:",
+    /* MSG_FONTSETTINGS_FALLBACK3 */
+    "Fallback Font 3:",
     /* MSG_FONTSETTINGS_EMOJIFONT */
     "Emoji Font:",
     /* MSG_FONTSETTINGS_PRESETS_GROUP */

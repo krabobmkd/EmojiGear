@@ -44,6 +44,8 @@
 #define GID_EMOJIBOX_ANSI_NORMAL     1370
 #define GID_EMOJIBOX_ANSI_GREEN      1371
 #define GID_EMOJIBOX_ANSI_YELLOW     1372
+#define GID_EMOJIBOX_HEXEDITOR       1373
+#define GID_EMOJIBOX_HEXBUTTON       1374
 
 /* Search & Replace box gadgets */
 #define ID_SEARCH_EDITOR        1338

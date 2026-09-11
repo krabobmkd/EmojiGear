@@ -446,45 +446,45 @@ void uted_notify(Class *cl, Object *o, struct GadgetInfo *gi, ULONG tag, ULONG v
 
 }
 
-void uted_notify_refresh(Class *cl, Object *o, struct GadgetInfo *gi)
-{
-    UniTextEditorData *inst = UTED_DATA(cl, o);
-    struct opUpdate nmsg;
-    ULONG tags[7];
+// void uted_notify_refresh(Class *cl, Object *o, struct GadgetInfo *gi)
+// {
+//     UniTextEditorData *inst = UTED_DATA(cl, o);
+//     struct opUpdate nmsg;
+//     ULONG tags[7];
 
-    tags[0] = GA_ID;
-    /* good on os3.2, not on os3.9
-    tags[1] = 0;
-    GetAttr(GA_ID, o, &tags[1]);
-    */
-    tags[1] = inst->ga_id;
+//     tags[0] = GA_ID;
+//     /* good on os3.2, not on os3.9
+//     tags[1] = 0;
+//     GetAttr(GA_ID, o, &tags[1]);
+//     */
+//     tags[1] = inst->ga_id;
 
-    if (!tags[1] || !inst->target) return;
+//     if (!tags[1] || !inst->target) return;
 
-    /*either messages should be tested to know if we should refresh */
-    tags[2] = UTEDN_CursorMoved;
-    tags[3] = TRUE;
-    tags[4] = UTEDN_ScrollChanged;
-    tags[5] = inst->scrollTopLine;
-    tags[6] = TAG_DONE;
-/* good on os3.2, and 1992 boopsi compliant
-    nmsg.MethodID     = OM_NOTIFY;
-    nmsg.opu_AttrList = (struct TagItem *)tags;
-    nmsg.opu_GInfo    = gi;
-    nmsg.opu_Flags    = 0;
-    DoSuperMethodA(cl, (APTR)o, (Msg)&nmsg);
-    */
-/*
-    OS3.9 boopsi can't send
-    notification by the "DoSuperMethodA" and GetAttr(GA_ID,...) mecanism
-*/
-    nmsg.MethodID     = OM_UPDATE;
-    nmsg.opu_AttrList = (struct TagItem *)tags;
-    nmsg.opu_GInfo    = gi;
-    nmsg.opu_Flags    = 0;
-    DoMethodA(inst->target,(Msg)&nmsg);
+//     /*either messages should be tested to know if we should refresh */
+//     tags[2] = UTEDN_CursorMoved;
+//     tags[3] = TRUE;
+//     tags[4] = UTEDN_ScrollChanged;
+//     tags[5] = inst->scrollTopLine;
+//     tags[6] = TAG_DONE;
+// /* good on os3.2, and 1992 boopsi compliant
+//     nmsg.MethodID     = OM_NOTIFY;
+//     nmsg.opu_AttrList = (struct TagItem *)tags;
+//     nmsg.opu_GInfo    = gi;
+//     nmsg.opu_Flags    = 0;
+//     DoSuperMethodA(cl, (APTR)o, (Msg)&nmsg);
+//     */
+// /*
+//     OS3.9 boopsi can't send
+//     notification by the "DoSuperMethodA" and GetAttr(GA_ID,...) mecanism
+// */
+//     nmsg.MethodID     = OM_UPDATE;
+//     nmsg.opu_AttrList = (struct TagItem *)tags;
+//     nmsg.opu_GInfo    = gi;
+//     nmsg.opu_Flags    = 0;
+//     DoMethodA(inst->target,(Msg)&nmsg);
 
-}
+// }
 
 
 
@@ -985,12 +985,18 @@ ULONG UniTextEditor_DoMoveCursor(Class *cl, Object *o, LONG deltaChar, LONG delt
             ULONG curVisRow  = uted_cursor_visual_row(inst);
             UTEDWrapRow *curWR = &inst->wrapMap[curVisRow];
             ULONG targetVisRow;
-            ULONG curAbsPx = 0; /* cursor absolute pixel X in logical line */
+            ULONG curRelPx = 0; /* cursor pixel X relative to its own row's
+                                  * start -- i.e. the on-screen X the caret
+                                  * is drawn at, independent of how far into
+                                  * the logical line this row lies */
 
             {
                 UniTextEditorLine *cl2 = uted_get_line(inst, curWR->logicalLine);
-                if (cl2 && cl2->charXOffsets && inst->cursor.col <= cl2->charCount)
-                    curAbsPx = (ULONG)cl2->charXOffsets[inst->cursor.col];
+                if (cl2 && cl2->charXOffsets && inst->cursor.col <= cl2->charCount) {
+                    ULONG absPx = (ULONG)cl2->charXOffsets[inst->cursor.col];
+                    curRelPx = absPx > curWR->startPixel
+                               ? absPx - curWR->startPixel : 0;
+                }
             }
 
             if (deltaLine > 0) {
@@ -1008,8 +1014,11 @@ ULONG UniTextEditor_DoMoveCursor(Class *cl, Object *o, LONG deltaChar, LONG delt
                 ULONG newCh = twr->startChar;
 
                 if (tline && tline->charXOffsets) {
-                    /* Find char closest to curAbsPx, clamped to this visual row */
-                    newCh = uted_x_to_char(tline, (WORD)curAbsPx);
+                    /* Re-project the row-relative X onto the target row's
+                     * slice of the logical line's pixel space, then find
+                     * the closest char, clamped to this visual row. */
+                    ULONG targetAbsPx = curRelPx + twr->startPixel;
+                    newCh = uted_x_to_char(tline, (WORD)targetAbsPx);
                     if (newCh < twr->startChar) newCh = twr->startChar;
                     if (newCh > twr->endChar)   newCh = twr->endChar;
                     /* On a non-last row endChar belongs to next row; stay within */
@@ -1347,15 +1356,7 @@ void UniTextEditor_DoHitTest(Class *cl, Object *o, WORD x, WORD y, ULONG *lineOu
 
     if (inst->wordWrap && inst->wrapMap && inst->wrapRowCount > 0) {
         /* Word-wrap: Y maps to a visual row; resolve back to logical line. */
-        ULONG visRow;
-        UTEDWrapRow *wr;
-        LONG relY = (LONG)y - (LONG)inst->topMargin;
-        if (relY < 0) relY = 0;
-        visRow = inst->scrollTopLine + (ULONG)(relY / inst->lineHeight);
-        if (visRow >= inst->wrapRowCount)
-            visRow = inst->wrapRowCount - 1;
-
-        wr = &inst->wrapMap[visRow];
+        UTEDWrapRow *wr = uted_wrap_row_at_y(inst, y);
         *lineOut = wr->logicalLine;
 
         line = uted_get_line(inst, wr->logicalLine);

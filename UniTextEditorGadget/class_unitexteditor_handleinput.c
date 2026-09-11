@@ -671,11 +671,11 @@ ULONG UniTextEditor_OnGoActive(Class *cl, Object *o, struct gpInput *msg)
         uted_notify(cl, o, msg->gpi_GInfo, UTEDN_CursorMoved, inst->cursor.line);
         return GMR_MEACTIVE;
     }
-    bdbprintf("UniTextEditor_OnGoActive %08x\n",(int)ie->ie_Class);
+    //bdbprintf("UniTextEditor_OnGoActive %08x\n",(int)ie->ie_Class);
 
     if(inst->useInternalRawKey && ie->ie_Class == IECLASS_RAWKEY)
     {
-        bdbprintf("uted OnGoActive %08x %08x %08x\n",ie->ie_Code,ie->ie_Qualifier,ie->ie_position.ie_addr);
+       // bdbprintf("uted OnGoActive %08x %08x %08x\n",ie->ie_Code,ie->ie_Qualifier,ie->ie_position.ie_addr);
         uted_notify(cl, o, msg->gpi_GInfo, UTEDN_CursorMoved, inst->cursor.line);
      //   uted_notify(cl, o, msg->gpi_GInfo, UTED_SetPrivateActivation, TRUE);
         return GMR_MEACTIVE | GMR_REUSE;

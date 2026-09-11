@@ -58,6 +58,25 @@ Tired of using IRC and mailer on Amiga and they would not display one of the tho
  
 
 
+## License and Credits
+
+Author: Krb. Package is GPL; the app and the libs/gadgets are LGPL since v5.2.
+
+- **utf8rastport.library** (LGPL) — embeds FreeType2, libpng and zlib
+- **UniTextEditor** (BOOPSI gadget, krb, LGPL)
+- **UniButton** (BOOPSI gadget, krb, LGPL)
+
+EmojiGear installs the following fonts (you may install others):
+
+| Font | Author | License |
+|---|---|---|
+| LiberationSans-Regular.ttf | Ascender Corporation | GPL |
+| NotoColorEmoji32.ttf | NoTo | SIL Open Font License 1.1 |
+| NotoSansJP-Regular.otf | NoTo | SIL Open Font License 1.1 |
+| UbuntuMono-Regular.ttf | Canonical Ltd | Ubuntu Font Licence Version 1.0 (UFL) |
+| OpenMoji-black-glyf.ttf | HfG Schwäbisch Gmünd | Creative Commons Attribution-ShareAlike 4.0 International (CC BY-SA 4.0) |
+| TootGlyphs.ttf | krb | GPL-3.0 — missing characters selected and mixed from: `fonts-freefont-ttf` (GPL-3.0), `fonts-dejavu-core` (MIT-like licence), `fonts-tibetan-machine` (GPL-1.0), `unifont_upper-17.0.05.otf` (GPL-2.0) |
+
 ## Build Instruction for Amiga OS3
 
  

@@ -39,6 +39,7 @@ typedef struct AppSettings {
     char *primaryFontPath;    /* AllocVec'd path to primary .ttf/.odt, NULL = none */
     char *fallback1FontPath;  /* AllocVec'd path to fallback font 1 */
     char *fallback2FontPath;  /* AllocVec'd path to fallback font 2 */
+    char *fallback3FontPath;  /* AllocVec'd path to fallback font 3 */
     char *emojiFontPath;      /* AllocVec'd path to emoji font */
 } AppSettings;
 

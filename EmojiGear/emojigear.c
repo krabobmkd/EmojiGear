@@ -276,6 +276,7 @@ void UpdateButtonFontsFromSettings(void)
         UBT_AddFont,     (ULONG)app->appSettings.primaryFontPath,
         UBT_AddFont,     (ULONG)app->appSettings.fallback1FontPath,
         UBT_AddFont,     (ULONG)app->appSettings.fallback2FontPath,
+        UBT_AddFont,     (ULONG)app->appSettings.fallback3FontPath,
         UBT_AddFont,     (ULONG)app->appSettings.emojiFontPath,
         GA_Text,         (ULONG)"\xF0\x9F\x98\x8A", // have to flush bitmap cache to change font
         TAG_END);
@@ -308,6 +309,7 @@ void UpdateEditorFontsFromSettings()
                 UTED_AddFont,app->appSettings.primaryFontPath,
                 UTED_AddFont,app->appSettings.fallback1FontPath,
                 UTED_AddFont,app->appSettings.fallback2FontPath,
+                UTED_AddFont,app->appSettings.fallback3FontPath,
                 UTED_AddFont,app->appSettings.emojiFontPath,
                 TAG_END
                 );
@@ -1038,6 +1040,11 @@ int main(int argc, char **argv)
                         case ID_SEARCH_EDITOR:
                         case ID_REPLACE_EDITOR:
                             EgSearchBox_HandleBoopsiMessages(&app->searchBox,sender_ID,msg);
+                            break;
+
+                        /*redirect messages for emoji box's "Unicode Hex:" field */
+                        case GID_EMOJIBOX_HEXEDITOR:
+                            EmojiBoxWindow_HandleBoopsiMessages(&app->emojiBoxWindow,sender_ID,msg);
                             break;
 
                         case GID_EMOJI_BUTTON:

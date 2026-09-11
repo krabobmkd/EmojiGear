@@ -11,6 +11,7 @@
  *     Primary Font:    [path display........] [...]
  *     Fallback Font 1: [path display........] [...]
  *     Fallback Font 2: [path display........] [...]
+ *     Fallback Font 3: [path display........] [...]
  *     Emoji Font:      [path display........] [...]
  *   Presets group (horizontal):
  *     [Low-end 2 colors]  [High Quality]  [High Monospace]
@@ -39,6 +40,7 @@ typedef struct EgFontsView
     Object        *primaryFontGF;
     Object        *fallback1FontGF;
     Object        *fallback2FontGF;
+    Object        *fallback3FontGF;
     Object        *emojiFontGF;
 
     /* Preset buttons */
@@ -62,6 +64,8 @@ typedef struct EgFontsView
 #define GAD_FONTS_FALLBACK1_CLEAR  210
 #define GAD_FONTS_FALLBACK2_CLEAR  211
 #define GAD_FONTS_EMOJI_CLEAR      212
+#define GAD_FONTS_FALLBACK3_FONT   213
+#define GAD_FONTS_FALLBACK3_CLEAR  214
 
 BOOL  EgFontsView_Init(EgFontsView *pfv, const char *title);
 void  EgFontsView_Open(EgFontsView *pfv);

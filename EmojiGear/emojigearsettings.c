@@ -41,6 +41,7 @@ static char *StrDup(const char *s)
 #define TT_PRIMARYFONT     "PRIMARYFONT"     /* absolute path to .ttf/.otf file    */
 #define TT_FALLBACK1FONT   "FALLBACK1FONT"   /* absolute path to fallback font 1   */
 #define TT_FALLBACK2FONT   "FALLBACK2FONT"   /* absolute path to fallback font 2   */
+#define TT_FALLBACK3FONT   "FALLBACK3FONT"   /* absolute path to fallback font 3   */
 #define TT_EMOJIFONT       "EMOJIFONT"       /* absolute path to emoji font        */
 // #define TT_USEONECLORBG  "USEONECLORBG"  /* "1" or "0" */
 // #define TT_BGIMAGE       "BGIMAGE"       /* absolute image file path */
@@ -199,6 +200,10 @@ void AppSettings_Load(AppSettings *as)
     val = ToolTypePrefs_Get(TT_FALLBACK2FONT);
     if (val && val[0] != '\0') as->fallback2FontPath = StrDup(val);
 
+    as->fallback3FontPath = NULL;
+    val = ToolTypePrefs_Get(TT_FALLBACK3FONT);
+    if (val && val[0] != '\0') as->fallback3FontPath = StrDup(val);
+
     as->emojiFontPath = NULL;
     val = ToolTypePrefs_Get(TT_EMOJIFONT);
     if (val && val[0] != '\0') as->emojiFontPath = StrDup(val);
@@ -322,6 +327,11 @@ void AppSettings_Save(AppSettings *as)
         ToolTypePrefs_Set(TT_FALLBACK2FONT, as->fallback2FontPath);
     else
         ToolTypePrefs_Remove(TT_FALLBACK2FONT);
+
+    if (as->fallback3FontPath && as->fallback3FontPath[0] != '\0')
+        ToolTypePrefs_Set(TT_FALLBACK3FONT, as->fallback3FontPath);
+    else
+        ToolTypePrefs_Remove(TT_FALLBACK3FONT);
 
     if (as->emojiFontPath && as->emojiFontPath[0] != '\0')
         ToolTypePrefs_Set(TT_EMOJIFONT, as->emojiFontPath);
@@ -448,6 +458,7 @@ void AppSettings_Close(AppSettings *as)
     FreeVec(as->primaryFontPath);  as->primaryFontPath  = NULL;
     FreeVec(as->fallback1FontPath); as->fallback1FontPath = NULL;
     FreeVec(as->fallback2FontPath); as->fallback2FontPath = NULL;
+    FreeVec(as->fallback3FontPath); as->fallback3FontPath = NULL;
     FreeVec(as->emojiFontPath);    as->emojiFontPath    = NULL;
 
     for(i = 0; i < APPSETTINGS_MAX_RECENT; i++) {

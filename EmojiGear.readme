@@ -2,16 +2,45 @@ Short:        UTF-8/Unicode text editor+Emoji+gadgets
 Author:       krabobmkd
 Uploader:     victorien.ferry@free.fr
 Type:         text/edit
-Version:      5.3
+Version:      5.4
 Architecture: m68k-amigaos >= 3.0
 Requires:     68020, better with OS 3.2.x, 8 MB Fast RAM
-Replaces:     text/edit/EmojiGear5.2.lha
+Replaces:     text/edit/EmojiGear5.3.lha
 
-------------------------- Version 5.3
 
- A last layout bug was still inUniTextEditor.gadget
- ... this times corrected for sure !
 
+------------------------- Version 5.4
+
+ Changes From Version 5.3 / 5.2:
+ 
+  Quite a bunch of corrections, if you're into savage Unicode use.
+  New features:
+  
+  - EmojiBox accept typing a hex value to find specific glyph or emoji or anywhat unicode-wise,
+     and type it. That's close to the "alt key+number" windows/linux thing.
+  - Package is bigger because We install an Asian font, and a "missing character" font,
+    that should do the job for most "missing glyph rectangles" you may have seen
+     (in the symbol panel,...). "Mathematical unicode block" and things like "Dingbats"
+     are managed: These are often used in Internet Message software like mastodon. 
+     "High quality" and "MonoSpace" presets has been modified to include these.
+      We will not install gigas of ttf for each alphabet of the planet like linux,
+      you are encouraged to install that yourself according to your needs and finetune
+      the font configuration.
+  - EmojiBox Diacritics panel have "bullet point".
+  - Replaced that ugly icon by a more serious but cool one. The quest for a
+      better icon is still open so do a better one and send it to me.  
+  
+  Bug correction:
+  - That nasty page/up/down on the numpad 9&3 key is gone.
+  - utf8rastport.library doesnt try to draw "unicode values that are not characters" anymore. 
+     So: less "missing glyph rectangles" also for this.
+  - UniTextEditor.gadget corrected bug for word-wrap mode: 
+     text selection behaviour and cursor up/down moves now does the job in word-wrap.
+  -  Also some refresh message issue corrected, again. Was affecting FriendSh3ep Mastodon client.
+  
+  This release brings more visible corrections for apps that also uses unitexteditor.gadget:
+  If you have internet and a 68060 or faster check Mastodon client FriendSh3ep
+  
 ------------------------- Version 5.2
 
  3 modifications, but important:
@@ -163,8 +192,33 @@ that any developer can open from their own application:
   with examples for MUI integration, and for library and gadget use.
 
 
- License is GPL for the library and LGPL for the gadgets.
- 
+---------------------------------------------------------------------------
+
+LICENSE AND CREDITS
+
+ Author  : Krb
+ License : Package is GPL, App and libs are LGPL since v5.2
+
+ Built upon open roots, free as the spring breeze:
+
+  utf8rastport.library  (LGPL)
+       embedding FreeType2, libpng and zlib
+  UniTextEditor  (BOOPSI gadget, krb, License LGPL)
+  UniButton      (BOOPSI gadget, krb, License LGPL)
+
+ This app installs those fonts, you may install other ones:
+
+  LiberationSans-Regular.ttf Ascender Corporation, license GPL
+  NotoColorEmoji32.ttf       NoTo, SIL Open Font License 1.1
+  NotoSansJP-Regular.otf     NoTo, SIL Open Font License 1.1
+  UbuntuMono-Regular.ttf     Canonical Ltd, Ubuntu Font Licence Version 1.0 (UFL)
+  OpenMoji-black-glyf.ttf    HfG Schwabisch Gmuend, Creative Commons Attribution-ShareAlike 4.0 International (CC BY-SA 4.0)
+  TootGlyphs.ttf  By krb - GPL-3.0, missing characters selected and mixed from:
+       fonts-freefont-ttf GPL-3.0
+       fonts-dejavu-core MIT like licence
+       fonts-tibetan-machine GPL-1.0
+       unifont_upper-17.0.05.otf GPL-2.0
+
 ---------------------------------------------------------------------------
 
 

@@ -50,6 +50,7 @@
 #include "emojigear.h"
 #include "gadgetid.h"
 #include "boopsimainwindow.h"
+#include "boopsimessage.h"
 
 #include <gadgets/unitexteditor.h>
 #include <proto/unitexteditor.h>
@@ -616,15 +617,17 @@ static const char *animalsEmojiTable[40] = {
 static const char *diacriticsTable[40] = {
     /* row 0: inclusive dot, French æ/œ ligatures + caps, other off-keyboard French signs */
     "\xC2\xB7",         /* ·  middle dot (inclusive writing, e.g. "iel·le") */
+    "\xE2\x80\xA2", /*bullet */
+    "\xE2\x97\x8F", /* bigger dot */
     "\xC3\xA6",         /* æ  ae ligature */
     "\xC5\x93",         /* œ  oe ligature */
     "\xC3\x86",         /* Æ  AE ligature */
     "\xC5\x92",         /* Œ  OE ligature */
     "\xC3\xBF",         /* ÿ  y diaeresis */
-    "\xC5\xB8",         /* Ÿ  Y diaeresis */
+ //   "\xC5\xB8",         /* Ÿ  Y diaeresis */
     "\xC2\xAB",         /* «  left guillemet */
     "\xC2\xBB",         /* »  right guillemet */
-    "\xE2\x80\x99",     /* '  right single quote (apostrophe typographique) */
+   // "\xE2\x80\x99",     /* '  right single quote (apostrophe typographique) */
     /* row 1: uppercase French accented vowels (need caps-lock+dead-key) */
     "\xC3\x89",         /* É */
     "\xC3\x88",         /* È */
@@ -1227,6 +1230,7 @@ static BOOL EmojiBoxWindow_Create(EmojiBoxWindow *ebw, struct App *curApp)
 {
     Object *topBar;
     Object *setLabel;
+    Object *unicodeLabel;
     Object *ansiSection;
     Object *styleRow;
     Object *colorRow;
@@ -1281,16 +1285,55 @@ static BOOL EmojiBoxWindow_Create(EmojiBoxWindow *ebw, struct App *curApp)
         LABEL_Text, (ULONG)"Set:",
         TAG_END);
 
-    /* Top bar: label + chooser */
+    /* "Unicode Hex:" input -- type a hex codepoint, preview/insert via the
+     * UniButton right next to it (shows the decoded UTF-8 character, or a
+     * single space when the field can't be parsed as one). ------------- */
+    unicodeLabel = (Object *)NewObject(LABEL_GetClass(), NULL,
+        LABEL_Text, (ULONG)"Unicode Hex:",
+        TAG_END);
+
+    /* Default to EmojiGear's own mascot bird -- "\xF0\x9F\x90\xA6" U+1F426,
+     * the same glyph used throughout the About text -- so the field and
+     * its preview button aren't blank/space on first open. */
+    ebw->hexEditor = (Object *)NewObject(UNITEXTEDITOR_GetClass(), NULL,
+        GA_ID,                  (ULONG)GID_EMOJIBOX_HEXEDITOR,
+        ICA_TARGET,             (ULONG)TargetInstance,
+        UTED_KeyMessageMode,    UKM_Internal,
+        UTED_InternalRawKey_SendBack, TRUE,
+        UTED_BevelStyle,        BVS_FIELD,
+        UTED_URPDrawContext,    (ULONG)ebw->dc,
+        UTED_TextPen,           1UL,
+        UTED_BgPen,             0UL,
+        UTED_MaxDisplayLines,   1UL,
+        UTED_NoLineFeed,        TRUE,
+        UTED_WordWrap,          FALSE,
+        UTED_LeftMargin,        2,
+        UTED_TopMargin,         3,
+        UTED_BottomMargin,      1,
+        UTED_LineSpacing,       0,
+        UTED_Text,              (ULONG)"1F99C",
+        TAG_END);
+
+    ebw->hexButton = (Object *)NewObject(UNIBUTTON_GetClass(), NULL,
+        GA_ID,            (ULONG)GID_EMOJIBOX_HEXBUTTON,
+        GA_RelVerify,     TRUE,
+        ICA_TARGET,       (ULONG)TargetInstance,
+        UBT_BevelStyle,   BVS_BUTTON,
+        UBT_URPDrawContext, (ULONG)ebw->dc,
+        GA_Text,          (ULONG)"\xF0\x9F\xA6\x9C",
+        TAG_END);
+
+    /* Top bar: "Unicode Hex:" [editor] [preview/insert]  Set: [chooser] --
+     * all on one line, directly above the grid it controls. */
     topBar = (Object *)NewObject(LAYOUT_GetClass(), NULL,
         LAYOUT_Orientation,  LAYOUT_ORIENT_HORIZ,
         LAYOUT_BottomSpacing, 4,
-        LAYOUT_AddChild, (ULONG)NewObject(BUTTON_GetClass(), NULL,
-                              GA_ReadOnly, TRUE,
-                              BUTTON_BevelStyle, BVS_NONE,
-                              BUTTON_Transparent, TRUE,
-                              TAG_END),
+        LAYOUT_AddChild, (ULONG)ebw->hexEditor,
             CHILD_WeightedWidth, 1,
+            CHILD_Label,         (ULONG)unicodeLabel,
+        LAYOUT_AddChild, (ULONG)ebw->hexButton,
+            CHILD_WeightedWidth, 0,
+            CHILD_MinWidth,      32,
         LAYOUT_AddChild, (ULONG)setLabel,
             CHILD_WeightedWidth, 0,
         LAYOUT_AddChild, (ULONG)ebw->chooser,
@@ -1392,7 +1435,7 @@ static BOOL EmojiBoxWindow_Create(EmojiBoxWindow *ebw, struct App *curApp)
             CHILD_WeightedHeight, 0,
         TAG_END);
 
-    /* Main vertical layout: top bar + grid + ANSI section */
+    /* Main vertical layout: top bar (Unicode Hex + Set chooser) + grid + ANSI section */
     ebw->mainLayout = (Object *)NewObject(LAYOUT_GetClass(), NULL,
         LAYOUT_Orientation,   LAYOUT_ORIENT_VERT,
         LAYOUT_SpaceOuter,    FALSE,
@@ -1427,6 +1470,129 @@ static BOOL EmojiBoxWindow_Create(EmojiBoxWindow *ebw, struct App *curApp)
         TAG_END);
 
     return (ebw->windowObj != NULL);
+}
+
+/* =========================================================================
+ * "Unicode Hex:" field -- parse + UTF-8 encode + live preview/insert
+ * =========================================================================
+ */
+
+/* Parses ebw->hexEditor's current text as a hex Unicode codepoint (an
+ * optional "U+" or "0x"/"0X" prefix and surrounding whitespace are
+ * allowed) and UTF-8 encodes it into outBuf (must be >= 5 bytes).
+ * Returns TRUE and fills outBuf with the encoded character on success;
+ * returns FALSE and fills outBuf with a single space on failure (empty
+ * field, unparsable text, a surrogate half, or a codepoint beyond
+ * U+10FFFF). */
+static BOOL EmojiBoxWindow_DecodeHex(EmojiBoxWindow *ebw, char *outBuf)
+{
+    ULONG textPtr = 0;
+    char *text;
+    const char *s;
+    ULONG cp = 0;
+    int i, n = 0;
+    BOOL valid = FALSE;
+
+    outBuf[0] = ' ';
+    outBuf[1] = '\0';
+
+    if (!ebw->hexEditor) return FALSE;
+    GetAttr(UTED_Text, ebw->hexEditor, &textPtr);
+    text = (char *)textPtr;
+    if (!text) return FALSE;
+
+    s = text;
+    while (*s == ' ' || *s == '\t') s++;
+    if ((s[0] == 'U' || s[0] == 'u') && s[1] == '+') s += 2;
+    else if (s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) s += 2;
+
+    for (i = 0; s[i] && n < 6; i++) {
+        char c = s[i];
+        ULONG digit;
+        if      (c >= '0' && c <= '9') digit = (ULONG)(c - '0');
+        else if (c >= 'a' && c <= 'f') digit = (ULONG)(10 + c - 'a');
+        else if (c >= 'A' && c <= 'F') digit = (ULONG)(10 + c - 'A');
+        else break;
+        cp = (cp << 4) | digit;
+        n++;
+    }
+    if (n > 0) {
+        while (s[i] == ' ' || s[i] == '\t') i++;
+        if (s[i] == '\0') valid = TRUE;
+    }
+
+    FreeVec(text);
+
+    /* Reject surrogate halves (not valid standalone codepoints) and
+     * anything beyond Unicode's own range. */
+    if (valid && ((cp >= 0xD800 && cp <= 0xDFFF) || cp > 0x10FFFF))
+        valid = FALSE;
+    if (!valid) return FALSE;
+
+    if (cp < 0x80) {
+        outBuf[0] = (char)cp;
+        outBuf[1] = '\0';
+    } else if (cp < 0x800) {
+        outBuf[0] = (char)(0xC0 | (cp >> 6));
+        outBuf[1] = (char)(0x80 | (cp & 0x3F));
+        outBuf[2] = '\0';
+    } else if (cp < 0x10000) {
+        outBuf[0] = (char)(0xE0 | (cp >> 12));
+        outBuf[1] = (char)(0x80 | ((cp >> 6) & 0x3F));
+        outBuf[2] = (char)(0x80 | (cp & 0x3F));
+        outBuf[3] = '\0';
+    } else {
+        outBuf[0] = (char)(0xF0 | (cp >> 18));
+        outBuf[1] = (char)(0x80 | ((cp >> 12) & 0x3F));
+        outBuf[2] = (char)(0x80 | ((cp >> 6) & 0x3F));
+        outBuf[3] = (char)(0x80 | (cp & 0x3F));
+        outBuf[4] = '\0';
+    }
+    return TRUE;
+}
+
+/* Re-decodes the hex field and refreshes the preview button's glyph.
+ * Called on every keystroke in the hex field (see
+ * EmojiBoxWindow_HandleBoopsiMessages below). */
+static void EmojiBoxWindow_RefreshHexPreview(EmojiBoxWindow *ebw)
+{
+    char utf8buf[8];
+
+    EmojiBoxWindow_DecodeHex(ebw, utf8buf);
+
+    if (ebw->hexButton) {
+        SetGadgetAttrs((struct Gadget *)ebw->hexButton,
+                        ebw->window, NULL,
+                        GA_Text, (ULONG)utf8buf, TAG_END);
+        if (ebw->window)
+            RefreshGadgets((struct Gadget *)ebw->hexButton, ebw->window, NULL);
+    }
+}
+
+/* -------------------------------------------------------------------------
+ * EmojiBoxWindow_HandleBoopsiMessages
+ * Redirect target for delayed notifications from gadgets living in this
+ * window but routed via TargetInstance/DelayQueue (same pattern as
+ * EgSearchBox_HandleBoopsiMessages -- see emojigear.c's DelayQueue switch).
+ * -------------------------------------------------------------------------*/
+void EmojiBoxWindow_HandleBoopsiMessages(EmojiBoxWindow *ebw, ULONG sender_ID,
+                                          struct TagItem *msg)
+{
+    (void)msg;
+    switch (sender_ID) {
+        case GID_EMOJIBOX_HEXEDITOR:
+            EmojiBoxWindow_RefreshHexPreview(ebw);
+            /* Unlike other BOOPSI gadgets, UniTextEditor does not
+             * self-refresh when driven through this delayed
+             * TargetInstance/OM_UPDATE notification path -- it needs an
+             * explicit RefreshGadgets, same as egsearchbox.c does for its
+             * searchEditor/replaceEditor on every notification. */
+            if (ebw->hexEditor && ebw->window)
+                RefreshGadgets((struct Gadget *)ebw->hexEditor, ebw->window, NULL);
+            break;
+        default:
+            break;
+    }
 }
 
 /* -------------------------------------------------------------------------
@@ -1601,6 +1767,14 @@ BOOL EmojiBoxWindow_HandleInput(EmojiBoxWindow *ebw)
                             (ULONG)emojiSets[newIdx].emojis,
                             TAG_END);
                 }
+            } else if (gadId == GID_EMOJIBOX_HEXBUTTON) {
+                /* Insert the decoded Unicode Hex character, if any */
+                char utf8buf[8];
+                if (EmojiBoxWindow_DecodeHex(ebw, utf8buf) && app && activeEditor)
+                    SetGadgetAttrs(activeEditor,
+                                   CurrentMainWindow, NULL,
+                                   UTED_InsertText, (ULONG)utf8buf,
+                                   TAG_END);
             } else if (app && activeEditor) {
                 /* ANSI escape modifier buttons */
                 static const struct { ULONG gid; const char *seq; } ansiButtons[] = {

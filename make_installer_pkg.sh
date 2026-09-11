@@ -103,10 +103,10 @@ cp "$SCRIPT_DIR/EmojiGear.readme"         "$PKG/EmojiGear.readme"
 cp "$INSTALLER_SRC/EmojiGear.readme.info" "$PKG/EmojiGear.readme.info"
 
 # ---------------------------------------------------------------------------
-# TrueType fonts
+# TrueType / OpenType fonts
 # ---------------------------------------------------------------------------
 echo "Copying fonts..."
-for ttf in "$FONTS_SRC"/*.ttf; do
+for ttf in "$FONTS_SRC"/*.ttf "$FONTS_SRC"/*.otf; do
     [ -f "$ttf" ] && cp "$ttf" "$PKG/Fonts/"
 done
 

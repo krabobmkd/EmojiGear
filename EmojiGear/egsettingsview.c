@@ -188,10 +188,14 @@ static void mirrorColorChange(EgSettingsView *psv, ULONG rrggbb, ULONG utedAttr,
                                Object *paletteToSync, Object *getcolorToSync)
 {
     UWORD pen = 0;
-
     if (CurrentMainScreen) {
-        pen = rrggbbToPenIndex(CurrentMainScreen, rrggbb);
-        SetGdAttrs(app->textEditorObj, utedAttr, (ULONG)pen, TAG_END);
+        UWORD penpen = rrggbbToPenIndex(CurrentMainScreen, app->appSettings.editorPenColor);
+        UWORD bgpen = rrggbbToPenIndex(CurrentMainScreen, app->appSettings.editorBgColor);
+        SetGdAttrs(app->textEditorObj,
+                        UTED_BgPen, (ULONG)bgpen,
+                        UTED_TextPen,(ULONG)penpen,
+                         TAG_END);
+
     }
 
     if (paletteToSync) {
@@ -541,6 +545,7 @@ BOOL EgSettingsView_HandleInput(EgSettingsView *psv)
                     }
 
                 } else if (gadId == GAD_SETTINGS_EDITORPENCOLOR) {
+
                     if (DoMethod(psv->penColorGetColor, GCOLOR_REQUEST, (ULONG)psv->window)) {
                         ULONG color = 0;
                         GetAttr(GETCOLOR_Color, psv->penColorGetColor, &color);
@@ -548,9 +553,10 @@ BOOL EgSettingsView_HandleInput(EgSettingsView *psv)
                         mirrorColorChange(psv, color, UTED_TextPen, psv->penColorPalette, NULL);
                     }
 
-                } else if (gadId == GAD_SETTINGS_EDITORPENCOLOR_PALETTE) {
+                } else if (gadId == GAD_SETTINGS_EDITORPENCOLOR_PALETTE) {                
                     ULONG colorIdx = 0;
                     GetAttr(PALETTE_Colour, psv->penColorPalette, &colorIdx);
+
                     if (CurrentMainScreen) {
                         ULONG color = penIndexToRRGGBB(CurrentMainScreen, (UWORD)colorIdx);
                         app->appSettings.editorPenColor = color;

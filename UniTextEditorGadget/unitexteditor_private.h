@@ -613,6 +613,7 @@ ULONG uted_x_to_char_floor     (const UniTextEditorLine *line, WORD pixelX);
 void  uted_free_wrap_map       (UniTextEditorData *inst);
 void  uted_rebuild_wrap_map    (UniTextEditorData *inst);
 ULONG uted_cursor_visual_row   (UniTextEditorData *inst);
+UTEDWrapRow *uted_wrap_row_at_y(UniTextEditorData *inst, WORD y);
 BOOL  uted_pool_alloc          (UTEDBitMapPool *pool, ULONG size,
                                  UWORD lineHeight, struct Screen *screen);
 BOOL  uted_pool_growalloc      (UTEDBitMapPool *pool, ULONG newSize,

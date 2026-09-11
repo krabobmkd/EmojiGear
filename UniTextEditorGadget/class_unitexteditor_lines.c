@@ -1346,6 +1346,38 @@ done:
 }
 
 /* =========================================================================
+ * uted_wrap_row_at_y
+ *
+ * Resolves a gadget-relative Y coordinate to the wrap-map row displayed
+ * under it (same Y→row math as the word-wrap render loop). Returns NULL
+ * when word wrap is off or the wrap map is empty.
+ *
+ * Shared by UniTextEditor_DoHitTest and the click-anchor setup in
+ * class_unitexteditor_render.c so both stay in sync -- previously the
+ * click-anchor code recomputed pixel X without this row's startPixel,
+ * which silently resolved the anchor character to an earlier visual row
+ * of the same logical line whenever the click landed past the first
+ * wrapped row, corrupting drag-selection direction.
+ * =========================================================================
+ */
+UTEDWrapRow *uted_wrap_row_at_y(UniTextEditorData *inst, WORD y)
+{
+    ULONG visRow;
+    LONG  relY;
+
+    if (!inst->wordWrap || !inst->wrapMap || inst->wrapRowCount == 0)
+        return NULL;
+
+    relY = (LONG)y - (LONG)inst->topMargin;
+    if (relY < 0) relY = 0;
+    visRow = inst->scrollTopLine + (ULONG)(relY / inst->lineHeight);
+    if (visRow >= inst->wrapRowCount)
+        visRow = inst->wrapRowCount - 1;
+
+    return &inst->wrapMap[visRow];
+}
+
+/* =========================================================================
  * uted_cursor_visual_row
  *
  * Returns the visual row index for the current cursor position.

@@ -33,6 +33,8 @@ typedef struct EmojiBoxWindow {
 
     Object         *chooser;                        /* set-selector          */
     Object         *gridGadget;                     /* emoji grid            */
+    Object         *hexEditor;                      /* "Unicode Hex:" input  */
+    Object         *hexButton;                      /* UTF-8 preview/insert  */
     Object         *mainLayout;                     /* root layout           */
 
     struct List     chooserList;                    /* list of chooser nodes */
@@ -64,6 +66,13 @@ ULONG EmojiBoxWindow_GetSignalMask(EmojiBoxWindow *ebw);
 /* Call from the main task when SIGBREAKF_CTRL_F fires.
  * Redraws the emoji grid if GM_RENDER was deferred due to wrong process. */
 void EmojiBoxWindow_FlushPendingRender(EmojiBoxWindow *ebw);
+
+/* Redirect target for "Unicode Hex:" editor notifications queued via
+ * TargetInstance/DelayQueue (see emojigear.c's ID_SEARCH_EDITOR-style
+ * redirect pattern). Keeps the hex-preview UniButton's glyph in sync with
+ * the editor's text on every keystroke. */
+void EmojiBoxWindow_HandleBoopsiMessages(EmojiBoxWindow *ebw, ULONG sender_ID,
+                                          struct TagItem *msg);
 
 /* -------------------------------------------------------------------------
  * F-key emoji insertion (original functionality, kept here)
