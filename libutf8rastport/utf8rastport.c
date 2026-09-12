@@ -1335,8 +1335,14 @@ void URPDC_ChangeFontsSize(REG(a0, struct URPDrawContext *dc),
     ULONG fontMaskBit=1;
     ULONG anyChange=FALSE;
     if(!dc) return;
-    if(nPointSize<8) nPointSize=8;
-    if(nPointSize>64) nPointSize=64;
+    /* Sanity floor only -- FT_Set_Char_Size(face, 0, 0, ...) is degenerate.
+     * No upper/lower policy clamp here: URPDC_AddFont applies none, and a
+     * mismatched clamp between the two entry points made a font's actual
+     * size depend on which API last touched it (e.g. FriendSh3ep's
+     * dcUsername legitimately reaches 81pt; a hardcoded 64pt cap here
+     * silently overrode that on the second resize while AddFont's first
+     * call had honored it). Callers own their valid range. */
+    if(nPointSize<1) nPointSize=1;
 
     ObtainSemaphore(&dc->sem);
      for (i = 0; i < dc->numFonts; i++) {
