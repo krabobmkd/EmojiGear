@@ -17,7 +17,7 @@
 #include <proto/intuition.h>
 #include <proto/alib.h>
 #include <devices/inputevent.h>
-#include <intuition/intuition.h>
+#include <intuition/intuition.h>œ
 #include <intuition/gadgetclass.h>
 #include "unibutton_private.h"
 

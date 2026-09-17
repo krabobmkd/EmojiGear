@@ -44,8 +44,8 @@
  * then a fine dot ghost pattern is overlaid.
  * =========================================================================
  */
-static void ubt_build_one_state(UniButtonData *inst, WORD gadW, WORD gadH,
-                                 int state, struct DrawInfo *dri,
+static void ubt_build_one_state(UniButtonData *inst,
+                                 int state,
                                  struct Screen *scr)
 {
     OffscreenBitMap *obm = &inst->cacheBm[state];
@@ -90,11 +90,7 @@ static void ubt_build_one_state(UniButtonData *inst, WORD gadW, WORD gadH,
     }
 
     /* ---- Allocate offscreen bitmap -------------------------------------- */
-/*
-   WORD    fontHeight;
-    WORD    fontAscent;
-    WORD    textWidth;
-*/
+
     w = inst->textWidth;
     h = inst->textHeight;
     if(w<16) w=16;
@@ -119,27 +115,9 @@ static void ubt_build_one_state(UniButtonData *inst, WORD gadW, WORD gadH,
     obm->_bgpen = bgPen;
     /* 3. Render UTF-8 label centred in content area */
     if (inst->text && inst->text[0] && inst->dc && scr) {
-        // WORD contentLeft  = inst->leftMargin;
-        // WORD contentTop   = inst->topMargin;
-        // WORD contentW     = gadW - inst->leftMargin - inst->rightMargin;
-        // WORD contentH     = gadH - inst->topMargin  - inst->bottomMargin;
-    //    struct URPTextMetric metric;
+
         struct URPTextPos    pos;
-      //  WORD textX, textY;
 
-       // if (contentW <= 0 || contentH <= 0) return;
-
-    //    URPDC_TextSizeUTF8(inst->dc, inst->text, -1, &metric);
-
-        // textX = 0;// contentLeft + (contentW - metric.width) / 2;
-        // textY = // contentTop  + (contentH - inst->fontHeight) / 2
-        //         //+
-        //         inst->fontAscent;
-
-/*        if (textX < contentLeft) textX = contentLeft;
-        if (textY < contentTop + inst->fontAscent)
-            textY = contentTop + inst->fontAscent;
-*/
         pos.x = 0;
         pos.y = inst->fontAscent;
 
@@ -184,8 +162,6 @@ void ubt_update_font_metrics(UniButtonData *inst)
  * =========================================================================
  */
 void ubt_rebuild_cache(Class *cl, Object *o,
-                               WORD gadW, WORD gadH,
-                               struct DrawInfo *dri,
                                struct Screen   *scr)
 {
     UniButtonData *inst = UBT_DATA(cl, o);
@@ -194,7 +170,7 @@ void ubt_rebuild_cache(Class *cl, Object *o,
     ubt_update_font_metrics(inst);
 
     for (i = 0; i < UBT_NUM_STATES; i++)
-        ubt_build_one_state(inst, gadW, gadH, i, dri, scr);
+        ubt_build_one_state(inst, i, scr);
 
     inst->cacheValid  = TRUE;
 }
@@ -205,7 +181,19 @@ void ubt_rebuild_cache(Class *cl, Object *o,
  */
 ULONG UniButton_OnLayout(Class *cl, Object *o, struct gpLayout *msg)
 {
-    (void)cl; (void)o;
+    UniButtonData  *inst   = UBT_DATA(cl, o);
+
+    if(!inst->cacheValid &&  inst->dc &&
+        msg->gpl_GInfo && msg->gpl_GInfo->gi_Screen &&
+        (inst->regularProcess == (void *)FindTask(NULL)) /* OS3.9 would "sometimes" use GM_LAYOUT on folkloric process */
+        )
+    {
+        inst->screen = msg->gpl_GInfo->gi_Screen;
+        URPDC_SetDrawScreen(inst->dc, inst->screen);
+        ubt_rebuild_cache(cl, o, inst->screen );
+    }
+
+
     return DoSuperMethodA(cl, o, (APTR)msg);
 }
 
@@ -225,28 +213,33 @@ ULONG UniButton_OnRender(Class *cl, Object *o, struct gpRender *msg)
     BOOL             needRebuild;
     int              state;
 
-    if (gadW <= 0 || gadH <= 0) return 0;
+    if (inst->isRendering || gadW <= 0 || gadH <= 0) return 0;
+
+/* can happen from input device process */
+inst->isRendering = TRUE;
 
     /* Cache the screen and DrawInfo for use in render helpers */
     if (scr)  inst->screen   = scr;
     if (dri)  inst->drawInfo = dri;
 
-    /* Update the screen reference in the draw context */
-    if (scr && inst->dc)
-        URPDC_SetDrawScreen(inst->dc, scr);
 
     /* When selBgPen hasn't been explicitly set, use FILLPEN from DrawInfo */
     if (inst->selBgPen == 3 && dri)
         inst->selBgPen = (ULONG)dri->dri_Pens[FILLPEN];
 
-    /* Rebuild cache if size changed or cache was invalidated */
-/*no, it's better to really keep all freetype engine inits out of render if we can.
- * */
-    needRebuild = (!inst->cacheValid );
 
-    if (needRebuild && scr) {
-        ubt_rebuild_cache(cl, o, gadW, gadH, dri, scr);
+    if(!inst->cacheValid &&  inst->dc &&
+        msg->gpr_GInfo && msg->gpr_GInfo->gi_Screen &&
+        (inst->regularProcess == (void *)FindTask(NULL)) /* OS3.9 would "sometimes" use GM_LAYOUT on folkloric process */
+        )
+    {
+        inst->screen = msg->gpr_GInfo->gi_Screen;
+        URPDC_SetDrawScreen(inst->dc, inst->screen);
+        ubt_rebuild_cache(cl, o, inst->screen );
     }
+
+    /* Render can be thrown from input device and other, only short blits */
+    /* Rebuild cache if size changed or cache was invalidated */
 
     /* Pick the correct state bitmap */
     if (g->Flags & GFLG_DISABLED)
@@ -255,6 +248,7 @@ ULONG UniButton_OnRender(Class *cl, Object *o, struct gpRender *msg)
         state = UBT_STATE_SELECTED;
     else
         state = UBT_STATE_NORMAL;
+
 
     if (inst->cacheValid && inst->cacheBm[state]._bm) {
         ubt_blit_state(inst, g, rp, state);
@@ -278,6 +272,7 @@ ULONG UniButton_OnRender(Class *cl, Object *o, struct gpRender *msg)
         DrawImageState(rp, (struct Image *)inst->bevel, 0L, 0L,
                        (ULONG)inst->cacheBm[state]._imageState, dri);
     }
+inst->isRendering = FALSE;
 
     return 0;
 }

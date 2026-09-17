@@ -109,35 +109,382 @@ INLINE int urp_is_variation_selector(unsigned long cp)
 
 
 /* =========================================================================
- * Face size helper
+ * Shared font pool
+ *
+ * FT_Face/FT_Size objects are opened at most once per (resolved path,
+ * point size) for the whole system and refcounted -- see the design
+ * comment in urp_internal.h next to struct URPSharedFace/URPSharedSize.
+ * Guarded by urpFontSem, a library-global semaphore distinct from any
+ * per-DC dc->sem.
+ *
+ * Lock order when both are needed: dc->sem (outer) then urpFontSem
+ * (inner) -- every place in this file that nests them follows this
+ * order, so there is no lock-order inversion / deadlock risk. Several
+ * functions (URPDC_AddFont, URPDC_RemoveFont) instead take them
+ * sequentially, never nested, which is equally safe.
  * ========================================================================= */
 
+static struct SignalSemaphore urpFontSem;
+static FT_Library             urpSharedFTLib;
+static struct URPSharedFace   urpSharedFaces[URP_SHARED_FACE_MAX];
+static struct URPSharedSize   urpSharedSizes[URP_SHARED_SIZE_MAX];
+
+/* Called once from CLibInit(), before any process can OpenLibrary() this
+ * library -- runs single-threaded, no locking needed yet. Returns TRUE
+ * on success; on failure urpSharedFTLib is left NULL so cleanup can
+ * detect init never completed. */
+int urp_shared_fonts_init(void)
+{
+    InitSemaphore(&urpFontSem);
+    return FT_Init_FreeType(&urpSharedFTLib) == 0;
+}
+
+/* Called once from CLibExpunge(), when the last opener has closed the
+ * library and the system reclaims it -- also reached if CLibInit()
+ * itself failed partway through, possibly before urp_shared_fonts_init()
+ * ever ran, so guard on urpSharedFTLib rather than assume init happened.
+ * Any DC that leaked a reference at this point is a caller bug (didn't
+ * URPDC_Release everything it created) -- close what's left rather than
+ * leak it further. */
+void urp_shared_fonts_cleanup(void)
+{
+    int i;
+    if (!urpSharedFTLib) return;
+    for (i = 0; i < URP_SHARED_SIZE_MAX; i++)
+        if (urpSharedSizes[i].owner) FT_Done_Size(urpSharedSizes[i].ftSize);
+    for (i = 0; i < URP_SHARED_FACE_MAX; i++)
+        if (urpSharedFaces[i].face) FT_Done_Face(urpSharedFaces[i].face);
+    memset(urpSharedSizes, 0, sizeof(urpSharedSizes));
+    memset(urpSharedFaces, 0, sizeof(urpSharedFaces));
+    FT_Done_FreeType(urpSharedFTLib);
+    urpSharedFTLib = NULL;
+}
+
+/* =========================================================================
+ * Shared screen CLUT remap pool -- see struct URPSharedScreenClut's design
+ * comment in urp_internal.h. Independent of the font pool above (separate
+ * semaphore, never nested with urpFontSem); only ever nested inside a
+ * per-DC dc->sem (outer), same lock-order convention as the font pool.
+ * ========================================================================= */
+
+static struct SignalSemaphore     urpClutSem;
+static struct URPSharedScreenClut urpSharedCluts[URP_SHARED_CLUT_MAX];
+
+/* Called once from CLibInit(), same one-shot timing as urp_shared_fonts_init(). */
+void urp_shared_cluts_init(void)
+{
+    /* note global inits will not be done with this tricked c runtime,
+    so cleaning defaults can be done here */
+    memset(&urpClutSem,0,sizeof(struct SignalSemaphore));
+    memset(&urpSharedCluts[0],0,sizeof(urpSharedCluts));
+
+    InitSemaphore(&urpClutSem);
+}
+
 /*
- * For scalable fonts: FT_Set_Char_Size at the requested point size.
- * For bitmap-only fonts (no outlines, e.g. CBDT emoji): FT_Select_Size
- * choosing the strike whose height is closest to the requested point size.
+ * Recompute sc->clutRemap from screen's current palette, but only if
+ * sc has never been computed (sc->refCount == 0, i.e. a just-allocated
+ * slot) or the palette actually changed since the last computation.
+ * Change detection is a cheap folded checksum over the same per-pen
+ * RGB values GetRGB32 has to read anyway just to know; the O(4096*256)
+ * nearest-pen search below that is what this whole cache exists to
+ * skip when nothing actually changed. Caller must hold urpClutSem.
+ * Returns TRUE if the expensive rebuild actually ran, FALSE if the
+ * existing table was reused as-is -- purely informational, for tracing.
  */
-static int urp_set_face_size(struct URPFontEntry *fe)
+static BOOL urp_clut_ensure_fresh(struct URPSharedScreenClut *sc, struct Screen *screen)
+{
+    UBYTE clut_r[256], clut_g[256], clut_b[256];
+    ULONG rgb[3];
+    ULONG hash;
+    int   numColors, i, j;
+    int   bestDist, bestIdx, dist, dr, dg, db;
+
+    if (!screen->ViewPort.ColorMap) return FALSE;
+
+    numColors = (int)screen->ViewPort.ColorMap->Count; /*can have sprite colors that bitmaps can't display */
+    if ((int)sc->depth <= 8 && numColors > (1L << sc->depth))
+        numColors = (int)(1L << sc->depth);
+    if (numColors > 256) numColors = 256;
+    /* vf manage less calls to GetRGB32() */
+
+
+    /* Seed with numColors so a palette that shrinks or grows always
+     * changes the hash even if every surviving entry is identical. */
+     hash = (ULONG)numColors; // * 2654435761UL;
+    for(i =0 ; i<numColors ; i+=64 )
+    {
+        ULONG rgb[3*64];
+        int nextcolor = i+64;
+        int nbc;
+        if(numColors<nextcolor) nextcolor = numColors;
+        nbc = nextcolor-i;
+        if(nbc>0)
+        {
+            ULONG *prgb = rgb;
+            GetRGB32(screen->ViewPort.ColorMap, (ULONG)i, nbc, rgb);
+            for( j=i ; j<nextcolor ; j++ )
+            {
+                ULONG c;
+                clut_r[j] = (UBYTE)((*prgb++) >> 24);
+                clut_g[j] = (UBYTE)((*prgb++) >> 24);
+                clut_b[j] = (UBYTE)((*prgb++) >> 24);
+
+                c =  (((ULONG)clut_r[j])<<16) |
+                     (((ULONG)clut_g[j])<<8) |
+                     ((ULONG)clut_b[j]);
+                hash ^= c;
+            }
+        }
+    }
+
+
+    if (sc->refCount > 0 && sc->paletteHash == hash)
+    {
+        return FALSE; /* already current palette */
+    }
+
+ //  bdbprintf(" - EFRESH do one color remap nbc:%d hash:%08x\n",numColors,hash);
+
+
+    {
+     UBYTE *pclut = &sc->clutRemap[0];
+     for(int r=0 ; r<256; r+=17) // 0->255
+      for(int g=0 ; g<256; g+=17)
+        for(int b=0 ; b<256; b+=17)
+    {
+
+        bestDist = 0x7FFFFFFF;
+        bestIdx  = 0;
+        for (i = 0; i < numColors; i++) {
+            dr = r - (int)clut_r[i];
+            dg = g - (int)clut_g[i];
+            db = b - (int)clut_b[i];
+            dist = dr*dr + dg*dg + db*db;
+            if (dist < bestDist) {
+                bestDist = dist;
+                bestIdx  = i;
+                if (dist == 0) break;
+            }
+        }
+         *pclut++ = (UBYTE)bestIdx;
+    }
+    }
+   sc->paletteHash = hash;
+
+    return TRUE;
+}
+
+static struct URPSharedScreenClut *urp_shared_clut_find(struct Screen *screen, ULONG depth)
+{
+    int i;
+    for (i = 0; i < URP_SHARED_CLUT_MAX; i++)
+        if (urpSharedCluts[i].screen == screen && urpSharedCluts[i].depth == depth)
+            return &urpSharedCluts[i];
+    return NULL;
+}
+
+static struct URPSharedScreenClut *urp_shared_clut_find_free(void)
+{
+    int i;
+    for (i = 0; i < URP_SHARED_CLUT_MAX; i++)
+        if (!urpSharedCluts[i].screen) return &urpSharedCluts[i];
+    return NULL;
+}
+
+/*
+ * Acquire a reference to the shared CLUT table for (screen,depth),
+ * creating and computing it on first use, or refreshing it in place
+ * (shared by every other reference too) if the palette changed since
+ * the last acquire/refresh by anyone. Caller must hold urpClutSem.
+ */
+static struct URPSharedScreenClut *urp_shared_clut_acquire(struct Screen *screen, ULONG depth)
+{
+    struct URPSharedScreenClut *sc = urp_shared_clut_find(screen, depth);
+    if (!sc) {
+        sc = urp_shared_clut_find_free();
+        if (!sc) return NULL;
+        sc->screen   = screen;
+        sc->depth    = depth;
+        sc->refCount = 0;
+    }
+
+    sc->refCount++;
+    return sc;
+}
+
+/* Caller must hold urpClutSem. */
+static void urp_shared_clut_release(struct URPSharedScreenClut *sc)
+{
+    if (!sc) return;
+    if (sc->refCount > 0) sc->refCount--;
+    if (sc->refCount == 0) sc->screen = NULL; /* slot free for reuse */
+}
+
+/* urp_dc_bind_screen_clut(), which ties the pool above into a
+ * URPDrawContext, is defined further down next to urp_rebuild_aa_remap
+ * and urp_flush_clut_bitmaps, which it calls. */
+
+/* ---- pool lookup/allocation; caller must hold urpFontSem ---- */
+
+static struct URPSharedFace *urp_shared_face_find(const char *path)
+{
+    int i;
+    for (i = 0; i < URP_SHARED_FACE_MAX; i++)
+        if (urpSharedFaces[i].face && strcmp(urpSharedFaces[i].path, path) == 0)
+            return &urpSharedFaces[i];
+    return NULL;
+}
+
+static struct URPSharedFace *urp_shared_face_find_free(void)
+{
+    int i;
+    for (i = 0; i < URP_SHARED_FACE_MAX; i++)
+        if (!urpSharedFaces[i].face) return &urpSharedFaces[i];
+    return NULL;
+}
+
+static struct URPSharedSize *urp_shared_size_find(struct URPSharedFace *owner, int pointSize)
+{
+    int i;
+    for (i = 0; i < URP_SHARED_SIZE_MAX; i++)
+        if (urpSharedSizes[i].owner == owner && urpSharedSizes[i].pointSize == pointSize)
+            return &urpSharedSizes[i];
+    return NULL;
+}
+
+static struct URPSharedSize *urp_shared_size_find_free(void)
+{
+    int i;
+    for (i = 0; i < URP_SHARED_SIZE_MAX; i++)
+        if (!urpSharedSizes[i].owner) return &urpSharedSizes[i];
+    return NULL;
+}
+
+/*
+ * Configure a freshly created (and activated) FT_Size for pointSize on
+ * face: FT_Set_Char_Size for scalable fonts, or FT_Select_Size (nearest
+ * strike) for bitmap-only fonts (e.g. CBDT color emoji). Done once per
+ * shared (face,pointSize) pair, at creation time -- everyday use is just
+ * FT_Activate_Size, see urp_activate_face_size below.
+ */
+static int urp_configure_size(FT_Face face, int pointSize)
 {
     FT_Error err;
     int i, best, diff, bestDiff, target;
 
-    if (!FT_IS_SCALABLE(fe->face) && fe->face->num_fixed_sizes > 0) {
-        target   = fe->pointSize;
+    if (!FT_IS_SCALABLE(face) && face->num_fixed_sizes > 0) {
+        target   = pointSize;
         best     = 0;
-        bestDiff = abs(fe->face->available_sizes[0].height - target);
-        for (i = 1; i < fe->face->num_fixed_sizes; i++) {
-            diff = abs(fe->face->available_sizes[i].height - target);
+        bestDiff = abs(face->available_sizes[0].height - target);
+        for (i = 1; i < face->num_fixed_sizes; i++) {
+            diff = abs(face->available_sizes[i].height - target);
             if (diff < bestDiff) { bestDiff = diff; best = i; }
         }
-        err = FT_Select_Size(fe->face, best);
+        err = FT_Select_Size(face, best);
         return (err == 0);
     }
 
-    err = FT_Set_Char_Size(fe->face, 0,
-                           (FT_F26Dot6)(fe->pointSize * 64),
+    err = FT_Set_Char_Size(face, 0,
+                           (FT_F26Dot6)(pointSize * 64),
                            URP_DPI_X, URP_DPI_Y);
     return (err == 0);
+}
+
+/*
+ * Acquire a reference to the shared (face,pointSize) pair for a resolved
+ * path, opening the face and/or creating the FT_Size the first time
+ * either is needed. Bumps ss->refCount (and, on first use of the face,
+ * sf->refCount too). Returns NULL if the file can't be opened/parsed or
+ * a pool is full. Caller must hold urpFontSem.
+ */
+static struct URPSharedSize *urp_shared_font_acquire(const char *path, int pointSize)
+{
+    struct URPSharedFace *sf;
+    struct URPSharedSize *ss;
+    int sfIsNew = FALSE;
+
+    sf = urp_shared_face_find(path);
+    if (!sf) {
+        sf = urp_shared_face_find_free();
+        if (!sf) return NULL;
+        if (FT_New_Face(urpSharedFTLib, path, 0, &sf->face) != 0) {
+            sf->face = NULL;
+            return NULL;
+        }
+        /* Explicitly request the Unicode charmap. FreeType usually
+         * auto-selects it, but some CJK fonts carry Shift-JIS/Big5
+         * charmaps alongside Unicode and auto-selection can land on the
+         * wrong one. Ignore the error: if no Unicode cmap exists,
+         * FreeType keeps its default choice. */
+        FT_Select_Charmap(sf->face, FT_ENCODING_UNICODE);
+        strncpy(sf->path, path, URP_PATH_MAX - 1);
+        sf->path[URP_PATH_MAX - 1] = '\0';
+        sf->refCount = 0;
+        sfIsNew = TRUE;
+    }
+
+    ss = urp_shared_size_find(sf, pointSize);
+    if (ss) {
+        ss->refCount++;
+        return ss;
+    }
+
+    ss = urp_shared_size_find_free();
+    if (ss && FT_New_Size(sf->face, &ss->ftSize) == 0) {
+        FT_Activate_Size(ss->ftSize);
+        if (urp_configure_size(sf->face, pointSize)) {
+            ss->owner     = sf;
+            ss->pointSize = pointSize;
+            ss->refCount  = 1;
+            sf->refCount++;
+            return ss;
+        }
+        FT_Done_Size(ss->ftSize);
+    }
+
+    /* Size pool full, or size creation/config failed: if we just opened
+     * this face for a size that never materialised, nobody else
+     * references it yet -- close it now instead of leaking an orphan. */
+    if (sfIsNew) { FT_Done_Face(sf->face); sf->face = NULL; }
+    return NULL;
+}
+
+/*
+ * Drop one reference to a shared (face,pointSize) pair, freeing the
+ * FT_Size (and, if it was the face's last user, the FT_Face) at zero.
+ * Caller must hold urpFontSem.
+ */
+static void urp_shared_font_release(struct URPSharedSize *ss)
+{
+    struct URPSharedFace *sf;
+    if (!ss) return;
+    sf = ss->owner;
+    if (ss->refCount > 0) ss->refCount--;
+    if (ss->refCount > 0) return;
+    FT_Done_Size(ss->ftSize);
+    ss->owner  = NULL;
+    ss->ftSize = NULL;
+    if (sf && sf->refCount > 0) {
+        sf->refCount--;
+        if (sf->refCount == 0) { FT_Done_Face(sf->face); sf->face = NULL; }
+    }
+}
+
+/*
+ * Make fe's (face,pointSize) the one FT_Load_Glyph/metrics reads see on
+ * its face. Cheap -- FT_Activate_Size only flips face->size to point at
+ * fe->shared->ftSize, already fully configured -- no rescale, unlike the
+ * old per-DC-private urp_set_face_size(), which called FT_Set_Char_Size
+ * unconditionally. Must be called immediately before any size-dependent
+ * FreeType call on this face, even if fe was also the last thing to use
+ * it: another DC (same process or another one entirely, since faces are
+ * shared system-wide) may have activated a different size on it since.
+ * Caller must hold urpFontSem for the activate-then-use sequence.
+ */
+static void urp_activate_face_size(struct URPFontEntry *fe)
+{
+    FT_Activate_Size(fe->shared->ftSize);
 }
 
 
@@ -648,6 +995,7 @@ static struct URPGlyphEntry *urp_fill_cache_entry(struct URPDrawContext *dc,
                                                    FT_UInt               gi,
                                                    ULONG                 cp)
 {
+    FT_Face               face;
     FT_GlyphSlot          slot;
     FT_Bitmap            *bm;
     struct URPGlyphEntry *entry;
@@ -656,7 +1004,24 @@ static struct URPGlyphEntry *urp_fill_cache_entry(struct URPDrawContext *dc,
     int   srcW, srcH, dstW, dstH, pitch;
     int   cellH, scaleNum, scaleDen;
     UBYTE *pixels;
+    WORD  bearingX, bearingY, advanceX;
 
+    /* fe->shared->ftSize/face are shared system-wide: another DC (this
+     * process or another one) may activate a different size on the same
+     * face at any time via preemption. Everything that reads face->size
+     * or face->glyph must therefore stay inside one urpFontSem-locked
+     * section, from the activate through the last read of slot/bm below
+     * -- releasing early would let a concurrent FT_Load_Glyph on the same
+     * face clobber the single shared glyph slot before we've copied out
+     * of it. */
+    ObtainSemaphore(&urpFontSem);
+    urp_activate_face_size(fe);
+    face = fe->shared->owner->face;
+/*re
+    bdbprintf("urp_fill_cache_entry dc:%08lx task:%08lx cp:%04lx font:%s size:%ld style:%ld face:%08lx\n",
+              (ULONG)dc, (ULONG)FindTask(NULL), (ULONG)cp, fe->path, (LONG)fe->pointSize,
+              (LONG)dc->currentStyle, (ULONG)face);
+*/
     /* Choose FreeType load flags.
      * FT_LOAD_TARGET_MONO asks the outline rasteriser to produce a 1-bit bitmap.
      * It must NOT be set for bitmap-only fonts (e.g. CBDT/CBLC color emoji):
@@ -664,28 +1029,35 @@ static struct URPGlyphEntry *urp_fill_cache_entry(struct URPDrawContext *dc,
      * hiding the color data and preventing URP_CACHE_RGBA from being chosen.
      * For bitmap-only fonts FT_LOAD_COLOR alone is sufficient. */
     load_flags = FT_LOAD_RENDER | FT_LOAD_COLOR;
-    if (!(dc->prefFlags & URP_PREF_ANTIALIAS) && FT_IS_SCALABLE(fe->face))
+    if (!(dc->prefFlags & URP_PREF_ANTIALIAS) && FT_IS_SCALABLE(face))
         load_flags |= FT_LOAD_TARGET_MONO;
 
     /* For scalable fonts with active style, load outline only then transform+render. */
-    if (dc->currentStyle && FT_IS_SCALABLE(fe->face)) {
+    if (dc->currentStyle && FT_IS_SCALABLE(face)) {
         int norender_flags = FT_LOAD_COLOR;
         if (!(dc->prefFlags & URP_PREF_ANTIALIAS))
             norender_flags |= FT_LOAD_TARGET_MONO;
-        if (FT_Load_Glyph(fe->face, gi, norender_flags))
+        if (FT_Load_Glyph(face, gi, norender_flags)) {
+            ReleaseSemaphore(&urpFontSem);
             return NULL;
-        slot = fe->face->glyph;
+        }
+        slot = face->glyph;
         if (dc->currentStyle & URP_STYLE_BOLD)   FT_GlyphSlot_Embolden(slot);
         if (dc->currentStyle & URP_STYLE_ITALIC)  FT_GlyphSlot_Oblique(slot);
         {
             FT_Render_Mode rmode = (norender_flags & FT_LOAD_TARGET_MONO)
                                    ? FT_RENDER_MODE_MONO : FT_RENDER_MODE_NORMAL;
-            if (FT_Render_Glyph(slot, rmode)) return NULL;
+            if (FT_Render_Glyph(slot, rmode)) {
+                ReleaseSemaphore(&urpFontSem);
+                return NULL;
+            }
         }
     } else {
-        if (FT_Load_Glyph(fe->face, gi, load_flags))
+        if (FT_Load_Glyph(face, gi, load_flags)) {
+            ReleaseSemaphore(&urpFontSem);
             return NULL;
-        slot = fe->face->glyph;
+        }
+        slot = face->glyph;
     }
     bm   = &slot->bitmap;
 
@@ -707,8 +1079,8 @@ static struct URPGlyphEntry *urp_fill_cache_entry(struct URPDrawContext *dc,
      * native size, which we scale proportionally using the face cell height. */
     scaleNum = 1;
     scaleDen = 1;
-    if (!FT_IS_SCALABLE(fe->face) && fe->face->num_fixed_sizes > 0) {
-        cellH = (int)(fe->face->size->metrics.height >> 6);
+    if (!FT_IS_SCALABLE(face) && face->num_fixed_sizes > 0) {
+        cellH = (int)(face->size->metrics.height >> 6);
         if (cellH > 0 && cellH != fe->pointSize) {
             scaleNum = fe->pointSize;
             scaleDen = cellH;
@@ -735,24 +1107,34 @@ static struct URPGlyphEntry *urp_fill_cache_entry(struct URPDrawContext *dc,
     }
 
     entry = (struct URPGlyphEntry *)AllocVec(sizeof(*entry), MEMF_CLEAR);
-    if (!entry) return NULL;
+    if (!entry) { ReleaseSemaphore(&urpFontSem); return NULL; }
 
     pixels = NULL;
     if (dstW > 0 && dstH > 0) {
         pixels = (UBYTE *)AllocVec((ULONG)(pitch * dstH), MEMF_CLEAR);
-        if (!pixels) { FreeVec(entry); return NULL; }
+        if (!pixels) { FreeVec(entry); ReleaseSemaphore(&urpFontSem); return NULL; }
 
+        /* Reads bm (== &slot->bitmap), still the shared face's glyph
+         * slot -- must happen before we release urpFontSem. */
         urp_blit_to_cache(dc, bm, pixels, dstW, dstH, pitch, cachePixFmt);
     }
+
+    /* Capture the rest of what we need from the shared glyph slot now,
+     * while still locked; nothing after ReleaseSemaphore() below may
+     * touch slot/bm/face again. */
+    bearingX = (WORD)((slot->bitmap_left  * scaleNum + scaleDen / 2) / scaleDen);
+    bearingY = (WORD)((slot->bitmap_top   * scaleNum + scaleDen / 2) / scaleDen);
+    advanceX = (WORD)(((slot->advance.x >> 6) * scaleNum + scaleDen / 2) / scaleDen);
+    ReleaseSemaphore(&urpFontSem);
 
     entry->codepoint = cp;
     entry->style     = dc->currentStyle;
     entry->pixelFmt  = cachePixFmt;
     entry->width     = (WORD)dstW;
     entry->rows      = (WORD)dstH;
-    entry->bearingX  = (WORD)((slot->bitmap_left  * scaleNum + scaleDen / 2) / scaleDen);
-    entry->bearingY  = (WORD)((slot->bitmap_top   * scaleNum + scaleDen / 2) / scaleDen);
-    entry->advanceX  = (WORD)(((slot->advance.x >> 6) * scaleNum + scaleDen / 2) / scaleDen);
+    entry->bearingX  = bearingX;
+    entry->bearingY  = bearingY;
+    entry->advanceX  = advanceX;
     entry->pitch     = (WORD)pitch;
     entry->pixels    = pixels;
     entry->next      = NULL;
@@ -857,7 +1239,7 @@ static void urp_rebuild_aa_remap(struct URPDrawContext *dc)
 {
     int i;
 
-    if (!dc->clutValid) return;
+    if (!dc->screenClut) return;
     /* i=0 (alpha=0): use the exact background pen, bypassing clutRemap[] so
      * we never accidentally remap it to a neighbouring colour. */
 
@@ -865,7 +1247,7 @@ static void urp_rebuild_aa_remap(struct URPDrawContext *dc)
         UBYTE r = (UBYTE)(((int)dc->background.argb.R * (15 - i) + (int)dc->draw.argb.R * i) / 15);
         UBYTE g = (UBYTE)(((int)dc->background.argb.G * (15 - i) + (int)dc->draw.argb.G * i) / 15);
         UBYTE b = (UBYTE)(((int)dc->background.argb.B * (15 - i) + (int)dc->draw.argb.B * i) / 15);
-        dc->aaRemap[i] = dc->clutRemap[
+        dc->aaRemap[i] = dc->screenClut->clutRemap[
             ((ULONG)(r >> 4) << 8) |
             ((ULONG)(g >> 4) << 4) |
              (ULONG)(b >> 4)];
@@ -879,6 +1261,7 @@ static void urp_rebuild_aa_remap(struct URPDrawContext *dc)
     {
         dc->aaRemap[15] = dc->txtPen;
     }
+    dc->screenSharedClutSync = dc->screenClut->paletteHash;
 
 }
 
@@ -960,7 +1343,7 @@ static int urp_build_clut_bitmaps_gray(struct URPDrawContext *dc,
     ULONG  size, x, y;
     UBYTE bgpen;
 
-    if (!dc->currentFriendBitmap || !dc->clutValid) return 0;
+    if (!dc->currentFriendBitmap || !dc->screenClut) return 0;
     if (ge->width <= 0 || ge->rows <= 0 || !ge->pixels) return 0;
 
     /* wait pending draw to end - must be done before any FreeBitMap(); */
@@ -1029,7 +1412,7 @@ static int urp_build_clut_bitmaps_gray(struct URPDrawContext *dc,
  * urp_build_clut_bitmaps_rgba()
  *
  * Build CLUT-remapped bitmap + mask for a URP_CACHE_RGBA glyph entry.
- * Maps each RGB triple through dc->clutRemap[] (nearest-pen lookup).
+ * Maps each RGB triple through dc->screenClut->clutRemap[] (nearest-pen lookup).
  * The aaRemap shade ramp is not used here; colour comes from the glyph data.
  */
 static int urp_build_clut_bitmaps_rgba(struct URPDrawContext *dc,
@@ -1038,7 +1421,7 @@ static int urp_build_clut_bitmaps_rgba(struct URPDrawContext *dc,
     UBYTE *chunky, *maskBuf;
     ULONG  size, x, y;
     UBYTE bgpen;
-    if (!dc->currentFriendBitmap || !dc->clutValid) return 0;
+    if (!dc->currentFriendBitmap || !dc->screenClut) return 0;
     if (ge->width <= 0 || ge->rows <= 0 || !ge->pixels) return 0;
 
     /* wait pending draw to end - must be done before any FreeBitMap(); */
@@ -1067,7 +1450,7 @@ static int urp_build_clut_bitmaps_rgba(struct URPDrawContext *dc,
             for (x = 0; x < (ULONG)ge->width; x++) {
                 const UBYTE *sp = srcRow + x * 4UL;
                 if (sp[3] > 192) {
-                    dstRow[x] = dc->clutRemap[
+                    dstRow[x] = dc->screenClut->clutRemap[
                         ((ULONG)(sp[0] >> 4) << 8) |
                         ((ULONG)(sp[1] >> 4) << 4) |
                          (ULONG)(sp[2] >> 4)];
@@ -1094,7 +1477,7 @@ static int urp_build_clut_bitmaps_rgba(struct URPDrawContext *dc,
             for (x = 0; x < (ULONG)ge->width; x++) {
                 const UBYTE *sp = srcRow + x * 4UL;
                 if (sp[3] > 192) {
-                    dstRow[x] = dc->clutRemap[
+                    dstRow[x] = dc->screenClut->clutRemap[
                         ((ULONG)(sp[0] >> 4) << 8) |
                         ((ULONG)(sp[1] >> 4) << 4) |
                          (ULONG)(sp[2] >> 4)];
@@ -1116,12 +1499,8 @@ static int urp_build_clut_bitmaps_rgba(struct URPDrawContext *dc,
 struct URPDrawContext *URPDC_Create(REG(a0, const char *name))
 {
     struct URPDrawContext *dc;
-    FT_Error err;
     dc = (struct URPDrawContext *)AllocVec(sizeof(*dc), MEMF_PUBLIC|MEMF_CLEAR);
     if (!dc) return NULL;
-
-    err = FT_Init_FreeType(&dc->library);
-    if (err) { FreeVec(dc); return NULL; }
 
     InitSemaphore(&dc->sem);
 
@@ -1138,7 +1517,10 @@ struct URPDrawContext *URPDC_Create(REG(a0, const char *name))
     memset(&dc->cache, 0, sizeof(dc->cache));
 
     dc->useCount = 1;
-
+/*re
+    bdbprintf("URPDC_Create dc:%08lx name:%s useCount->1\n",
+              (ULONG)dc, name ? name : "(null)");
+*/
     return dc;
 }
 
@@ -1148,6 +1530,7 @@ void URPDC_Retain(REG(a0, struct URPDrawContext *dc))
     if (!dc) return;
 
     dc->useCount++;
+//re    bdbprintf("URPDC_Retain  dc:%08lx useCount->%ld\n", (ULONG)dc, (LONG)dc->useCount);
 }
 void URPDC_Release(REG(a0, struct URPDrawContext *dc))
 {
@@ -1155,9 +1538,13 @@ void URPDC_Release(REG(a0, struct URPDrawContext *dc))
     if (!dc) return;
 
     if(dc->useCount>0 ) dc->useCount--;
+//re    bdbprintf("URPDC_Release dc:%08lx useCount->%ld\n", (ULONG)dc, (LONG)dc->useCount);
 
     /* if some other object still use it, do not delete */
     if(dc->useCount>0 ) return;
+
+//re    bdbprintf("URPDC_Release dc:%08lx task:%08lx useCount==0, DESTROYING now (numFonts:%ld)\n",
+//re              (ULONG)dc, (ULONG)FindTask(NULL), (LONG)dc->numFonts);
 
     ObtainSemaphore(&dc->sem);
 
@@ -1168,16 +1555,23 @@ void URPDC_Release(REG(a0, struct URPDrawContext *dc))
         dc->tempChipRamAlloc = NULL;
     }
 
+    ObtainSemaphore(&urpFontSem);
     for (i = 0; i < dc->numFonts; i++) {
-        if (dc->fonts[i].face) {
-            FT_Done_Face(dc->fonts[i].face);
-            dc->fonts[i].face = NULL;
+        if (dc->fonts[i].shared) {
+            urp_shared_font_release(dc->fonts[i].shared);
+            dc->fonts[i].shared = NULL;
         }
+    }
+    ReleaseSemaphore(&urpFontSem);
+
+    if (dc->screenClut) {
+        ObtainSemaphore(&urpClutSem);
+        urp_shared_clut_release(dc->screenClut);
+        ReleaseSemaphore(&urpClutSem);
+        dc->screenClut = NULL;
     }
 
     if (dc->hqScratch) { FreeVec(dc->hqScratch); dc->hqScratch = NULL; }
-
-    FT_Done_FreeType(dc->library);
 
     ReleaseSemaphore(&dc->sem);
     FreeVec(dc);
@@ -1217,68 +1611,74 @@ static BOOL urp_font_magic_ok(const char *path)
     return FALSE;
 }
 
+/*
+ * Try FONTS:<name>, then PROGDIR:fonts/<name>, then <name> verbatim,
+ * accepting the first whose header passes urp_font_magic_ok(). Writes
+ * the winning path into resolved (URP_PATH_MAX bytes) and returns TRUE,
+ * or FALSE if none of the three exist/look like a font file. Split out
+ * of URPDC_AddFont so path resolution (no pool state touched) happens
+ * before the shared-pool lookup keyed on the resolved path.
+ */
+static BOOL urp_resolve_font_path(const char *fontPath, char *resolved)
+{
+    resolved[0] = 0;
+    strcat(resolved, "FONTS:");
+    strcat(resolved, fontPath);
+    if (urp_font_magic_ok(resolved)) return TRUE;
+
+    resolved[0] = 0;
+    strcat(resolved, "PROGDIR:fonts/");
+    strcat(resolved, fontPath);
+    if (urp_font_magic_ok(resolved)) return TRUE;
+
+    if (urp_font_magic_ok(fontPath)) {
+        strncpy(resolved, fontPath, URP_PATH_MAX - 1);
+        resolved[URP_PATH_MAX - 1] = '\0';
+        return TRUE;
+    }
+    return FALSE;
+}
+
 int URPDC_AddFont(REG(a0, struct URPDrawContext *dc),
                   REG(a1, const char           *fontPath),
                   REG(d0, int                   pointSize),
                   REG(d1, ULONG                 flags))
 {
-    struct URPFontEntry *fe;
-    FT_Error err;
-    char tfontpath[256];
+    struct URPFontEntry  *fe;
+    struct URPSharedSize *ss;
+    char resolved[URP_PATH_MAX];
 
     if (!dc || !fontPath) return 0;
     if (dc->numFonts >= URP_MAX_FONTS) return 0;
 
-    ObtainSemaphore(&dc->sem);
+    /* first FONTS:fontname.ttf, then PROGDIR:fonts/, then raw path --
+     * whichever passes the magic-byte check first. No pool state touched
+     * yet: the shared pool is keyed on this resolved path. */
+    if (!urp_resolve_font_path(fontPath, resolved))
+        return 0;
 
-    fe = &dc->fonts[dc->numFonts];
-
-    /* first try FONTS:fontname.ttf */
-    tfontpath[0]=0;
-    strcat(tfontpath,"FONTS:");
-    strcat(tfontpath,fontPath);
-
-    err = 1;
-    if (urp_font_magic_ok(tfontpath))
-        err = FT_New_Face(dc->library, tfontpath, 0, &fe->face);
-    if(err!=0)
-    {
-        /* then try progdir */
-        tfontpath[0]=0;
-        strcat(tfontpath,"PROGDIR:fonts/");
-        strcat(tfontpath,fontPath);
-        err = 1;
-        if (urp_font_magic_ok(tfontpath))
-            err = FT_New_Face(dc->library, tfontpath, 0, &fe->face);
-    }
-    if(err!=0)
-    {
-        /* then only try raw current path */
-        err = 1;
-        if (urp_font_magic_ok(fontPath))
-            err = FT_New_Face(dc->library, fontPath, 0, &fe->face);
-    }
-
-    if (err) {
-    ReleaseSemaphore(&dc->sem);
+    ObtainSemaphore(&urpFontSem);
+    ss = urp_shared_font_acquire(resolved, pointSize);
+    ReleaseSemaphore(&urpFontSem);
+    if (!ss) {
+        // bdbprintf("URPDC_AddFont dc:%08lx path:%s size:%ld FAILED (acquire)\n",
+        //           (ULONG)dc, resolved, (LONG)pointSize);
         return 0;
     }
 
-    /* Explicitly request the Unicode charmap.  FreeType usually auto-selects
-     * it, but some CJK fonts carry Shift-JIS / Big5 charmaps alongside
-     * Unicode and the auto-selection can land on the wrong one.  Ignore the
-     * error: if no Unicode cmap exists FreeType keeps its default choice. */
-    FT_Select_Charmap(fe->face, FT_ENCODING_UNICODE);
-
+    ObtainSemaphore(&dc->sem);
+    fe = &dc->fonts[dc->numFonts];
+    fe->shared = ss;
     strncpy(fe->path, fontPath, URP_PATH_MAX - 1);
     fe->path[URP_PATH_MAX - 1] = '\0';
     fe->pointSize = pointSize;
     fe->flags     = flags;
-
-    urp_set_face_size(fe);
-
     dc->numFonts++;
     dc->monoAdvanceX = 0; /* invalidate: primary font may have changed */
+    // bdbprintf("URPDC_AddFont dc:%08lx path:%s size:%ld slot:%ld numFonts->%ld shared:%08lx(refs %ld) face:%08lx(refs %ld)\n",
+    //           (ULONG)dc, resolved, (LONG)pointSize, (LONG)(dc->numFonts - 1),
+    //           (LONG)dc->numFonts, (ULONG)ss, (LONG)ss->refCount,
+    //           (ULONG)ss->owner, (LONG)ss->owner->refCount);
     ReleaseSemaphore(&dc->sem);
     return 1;
 }
@@ -1296,16 +1696,22 @@ void URPDC_RemoveFont(REG(a0, struct URPDrawContext *dc),
         if (dc->fonts[i].pointSize == pointSize &&
             strcmp(dc->fonts[i].path, fontPath) == 0)
         {
-            FT_Done_Face(dc->fonts[i].face);
+            ObtainSemaphore(&urpFontSem);
+            urp_shared_font_release(dc->fonts[i].shared);
+            ReleaseSemaphore(&urpFontSem);
             for (j = i; j < dc->numFonts - 1; j++)
                 dc->fonts[j] = dc->fonts[j + 1];
             dc->numFonts--;
             memset(&dc->fonts[dc->numFonts], 0, sizeof(dc->fonts[0]));
             dc->monoAdvanceX = 0;
+    //         bdbprintf("URPDC_RemoveFont dc:%08lx path:%s size:%ld numFonts->%ld\n",
+    //                   (ULONG)dc, fontPath, (LONG)pointSize, (LONG)dc->numFonts);
     ReleaseSemaphore(&dc->sem);
             return;
         }
     }
+    // bdbprintf("URPDC_RemoveFont dc:%08lx path:%s size:%ld NOT FOUND\n",
+    //           (ULONG)dc, fontPath, (LONG)pointSize);
     ReleaseSemaphore(&dc->sem);
 }
 
@@ -1314,11 +1720,14 @@ void URPDC_FlushFonts(REG(a0, struct URPDrawContext *dc))
     int i;
 
     if (!dc) return;
+//    bdbprintf("URPDC_FlushFonts dc:%08lx numFonts:%ld -> 0\n", (ULONG)dc, (LONG)dc->numFonts);
     ObtainSemaphore(&dc->sem);
+    ObtainSemaphore(&urpFontSem);
     for (i = 0; i < dc->numFonts; i++) {
-        if (dc->fonts[i].face)
-            FT_Done_Face(dc->fonts[i].face);
+        if (dc->fonts[i].shared)
+            urp_shared_font_release(dc->fonts[i].shared);
     }
+    ReleaseSemaphore(&urpFontSem);
     memset(dc->fonts, 0, sizeof(dc->fonts));
     dc->numFonts     = 0;
     dc->monoAdvanceX = 0;
@@ -1344,18 +1753,32 @@ void URPDC_ChangeFontsSize(REG(a0, struct URPDrawContext *dc),
      * call had honored it). Callers own their valid range. */
     if(nPointSize<1) nPointSize=1;
 
+    // bdbprintf("URPDC_ChangeFontsSize dc:%08lx size:%ld mask:%08lx (numFonts:%ld)\n",
+    //           (ULONG)dc, (LONG)nPointSize, (ULONG)fontMask, (LONG)dc->numFonts);
+
     ObtainSemaphore(&dc->sem);
+    ObtainSemaphore(&urpFontSem);
      for (i = 0; i < dc->numFonts; i++) {
         if ((fontMaskBit &fontMask) &&
-            dc->fonts[i].face &&
-             dc->fonts[i].pointSize != nPointSize )
+            dc->fonts[i].shared &&
+             dc->fonts[i].pointSize != (int)nPointSize )
         {
-            dc->fonts[i].pointSize = nPointSize;
-            urp_set_face_size(&dc->fonts[i]);
-            anyChange = TRUE;
+            /* Swap to the shared (face,pointSize) pair for the new size --
+             * reusing one that another DC/font-entry already has open
+             * (e.g. dcUsername already at this exact size) costs nothing
+             * but a refcount bump. Keep the old one on failure. */
+            struct URPSharedSize *newSs = urp_shared_font_acquire(
+                dc->fonts[i].shared->owner->path, (int)nPointSize);
+            if (newSs) {
+                urp_shared_font_release(dc->fonts[i].shared);
+                dc->fonts[i].shared    = newSs;
+                dc->fonts[i].pointSize = (int)nPointSize;
+                anyChange = TRUE;
+            }
         }
         fontMaskBit<<=1;
     }
+    ReleaseSemaphore(&urpFontSem);
     if(anyChange) {
         dc->monoAdvanceX = 0;
         urp_cache_free_all(&dc->cache);
@@ -1369,12 +1792,13 @@ void URPDC_ChangeFontsSize(REG(a0, struct URPDrawContext *dc),
 void URPDC_SetPreferenceFlags(REG(a0, struct URPDrawContext *dc), REG(d0, ULONG flags))
 {
     if (!dc) return;
-
+    ObtainSemaphore(&dc->sem);
     if (dc->prefFlags != flags) {
         dc->prefFlags    = flags;
         dc->monoAdvanceX = 0; /* invalidate: FORCE_MONOSPACE may have changed */
         urp_cache_free_all(&dc->cache); /* flush: pixel format may have changed */
     }
+    ReleaseSemaphore(&dc->sem);
 }
 
 
@@ -1410,16 +1834,28 @@ void  URPDC_SetDrawColor(REG(a0, struct URPDrawContext *dc),
                          REG(d0, ULONG textRGB), REG(d1, ULONG backgroundRGB))
 {
     if (!dc) return;
+
     /*important or flush clut cache constantly */
+
     if(textRGB == dc->draw.ARGB && dc->background.ARGB == backgroundRGB) return;
-    dc->draw.ARGB = textRGB;
-    dc->background.ARGB = backgroundRGB;
 
-    /* GRAY CLUT bitmaps are baked with the draw colour; flush them so they
-     * are rebuilt with the new colour on the next render call. */
-    urp_flush_clut_bitmaps(&dc->cache);
+    ObtainSemaphore(&dc->sem);
+        dc->draw.ARGB = textRGB;
+        dc->background.ARGB = backgroundRGB;
 
-    urp_rebuild_aa_remap(dc);
+        // bdbprintf("URPDC_SetDrawColor dc:%08lx txt:%08lx bg:%08lx CHANGED -> flush+rebuild\n",
+        //           (ULONG)dc, (ULONG)textRGB, (ULONG)backgroundRGB);
+
+        /* GRAY CLUT bitmaps are baked with the draw colour; flush them so they
+         * are rebuilt with the new colour on the next render call. */
+        urp_flush_clut_bitmaps(&dc->cache);
+
+        if(dc->screenClut)
+        {
+            urp_rebuild_aa_remap(dc);
+        }
+
+    ReleaseSemaphore(&dc->sem);
 }
 
 /* same but use your screen color index setting */
@@ -1433,9 +1869,16 @@ void  URPDC_SetDrawColorFromPen(
     ULONG RGB32Colors[3];
     int colorsDiffers = 0;
 
-    if (!dc || !screen )
+    /* was: "if (!dc || !screen) { dc->currentFriendBitmap = NULL; return; }"
+     * -- dereferenced dc even in the !dc branch. Pre-existing bug, fixed
+     * here while instrumenting this function; unrelated to the tracing. */
+    if (!dc) return;
+
+    ObtainSemaphore(&dc->sem);
+    if (!screen)
     {
         dc->currentFriendBitmap = NULL;
+        ReleaseSemaphore(&dc->sem);
         return;
     }
     if(txtPen>=0 && screen->ViewPort.ColorMap)
@@ -1462,70 +1905,47 @@ void  URPDC_SetDrawColorFromPen(
     dc->bgPen = backgroundpen;
 
     dc->pensSet = TRUE;
+    // bdbprintf("URPDC_SetDrawColorFromPen dc:%08lx scr:%08lx txtPen:%ld bgPen:%ld differs:%ld\n",
+    //           (ULONG)dc, (ULONG)screen, (LONG)txtPen, (LONG)backgroundpen, (LONG)colorsDiffers);
     if(colorsDiffers)
     {
         urp_flush_clut_bitmaps(&dc->cache);
         urp_rebuild_aa_remap(dc);
     }
-
+    ReleaseSemaphore(&dc->sem);
 }
-/* Internal implementation shared by URPDC_SetDrawScreen and URPDC_UpdateColorMap.
- * Must be called with dc->sem already held. */
-static ULONG urp_update_color_map(struct URPDrawContext *dc, struct Screen *screen)
+/*
+ * Point dc at the shared CLUT table (struct URPSharedScreenClut) for
+ * (screen,depth): reuse the one already bound if it matches (just
+ * re-checking freshness), otherwise release the old reference (if any)
+ * and acquire the matching/new one. Shared by URPDC_SetDrawScreen (which
+ * only calls this after its own cheap screen-pointer/depth pre-check
+ * finds a real change) and URPDC_UpdateColorMap (which has no such
+ * pre-check -- its whole job is to notice a palette change on a screen
+ * the DC was already bound to). Must be called with dc->sem already held.
+ */
+static ULONG urp_dc_bind_screen_clut(struct URPDrawContext *dc, struct Screen *screen, ULONG depth)
 {
-    UBYTE clut_r[256], clut_g[256], clut_b[256];
-    ULONG rgb[3];
-    int   numColors, i, j;
-    int   bestDist, bestIdx, dist, dr, dg, db, depth;
+    BOOL rebuilt;
+    struct URPSharedScreenClut *oldSc;
 
-    if (!dc || !screen || !screen->ViewPort.ColorMap) return 0;
+    if (!screen || !screen->ViewPort.ColorMap) return 0;
 
-    depth = GetBitMapAttr(screen->RastPort.BitMap,BMA_DEPTH);
+    oldSc = dc->screenClut;
+    ObtainSemaphore(&urpClutSem);
+    if (dc->screenClut && dc->screenClut->screen == screen && dc->screenClut->depth == depth) {
 
-    numColors = (int)screen->ViewPort.ColorMap->Count;
-    if(depth<=8 && numColors> (1L<<depth)) numColors = 1L<<depth;
+        /* dc->clutValid must keep state */
+    } else {
+        struct URPSharedScreenClut *sc = urp_shared_clut_acquire(screen, depth);
+        if (dc->screenClut) urp_shared_clut_release(dc->screenClut);
+        dc->screenClut = sc;
 
-    if (numColors > 256) numColors = 256;
-
-    /* Read all palette entries once */
-    for (i = 0; i < numColors; i++) {
-        GetRGB32(screen->ViewPort.ColorMap, (ULONG)i, 1, rgb);
-        clut_r[i] = (UBYTE)(rgb[0] >> 24);
-        clut_g[i] = (UBYTE)(rgb[1] >> 24);
-        clut_b[i] = (UBYTE)(rgb[2] >> 24);
     }
 
-    /* For each of the 4096 possible RGB444 values find the nearest pen */
-    for (j = 0; j < 4096; j++) {
-        /* Expand 4-bit channels to 8-bit by nibble-replication */
-        int r4 = (j >> 8) & 0xF;
-        int g4 = (j >> 4) & 0xF;
-        int b4 =  j       & 0xF;
-        int r8 = (r4 << 4) | r4;
-        int g8 = (g4 << 4) | g4;
-        int b8 = (b4 << 4) | b4;
+    ReleaseSemaphore(&urpClutSem);
 
-        bestDist = 0x7FFFFFFF;
-        bestIdx  = 0;
-        for (i = 0; i < numColors; i++) {
-            dr = r8 - (int)clut_r[i];
-            dg = g8 - (int)clut_g[i];
-            db = b8 - (int)clut_b[i];
-            dist = dr*dr + dg*dg + db*db;
-            if (dist < bestDist) {
-                bestDist = dist;
-                bestIdx  = i;
-                if (dist == 0) break; /* exact match, no need to continue */
-            }
-        }
-        dc->clutRemap[j] = (UBYTE)bestIdx;
-    }
-
-    dc->clutValid = 1;
-    urp_rebuild_aa_remap(dc);
-
-    /* Old CLUT bitmaps were built with the previous palette; discard them */
-    urp_flush_clut_bitmaps(&dc->cache);
+    if (!dc->screenClut) { return 0; }
 
     return TRUE;
 }
@@ -1538,14 +1958,38 @@ ULONG URPDC_SetDrawScreen(REG(a0, struct URPDrawContext *dc), REG(a1, struct Scr
 
     if (!dc || !screen || !screen->RastPort.BitMap) return 0;
 
-    ObtainSemaphore(&dc->sem);
+
     ndepth = GetBitMapAttr(screen->RastPort.BitMap, BMA_DEPTH);
     if (dc->lastScreen != screen || ndepth != dc->lastScreenDepth) {
-        dc->lastScreen      = screen;
-        dc->lastScreenDepth = ndepth;
-        result = urp_update_color_map(dc, screen);
+
+        ObtainSemaphore(&dc->sem);
+
+            dc->lastScreen      = screen;
+            dc->lastScreenDepth = ndepth;
+
+            result = urp_dc_bind_screen_clut(dc, screen, ndepth);
+
+        ReleaseSemaphore(&dc->sem);
+
     }
-    ReleaseSemaphore(&dc->sem);
+    /* if color have to be updated when screen new
+     - note does not check palette change, URPC_UpdateColor does -
+     */
+    if(dc->screenClut)
+    {
+        LONG rebuilt = urp_clut_ensure_fresh(dc->screenClut, screen);
+     // bdbprintf("URPDC_SetDrawScreen color update clutValid:%d rebuilt:%d\n",
+     //    dc->clutValid,rebuilt);
+
+        if(rebuilt || dc->screenSharedClutSync != dc->screenClut->paletteHash)
+        {
+            /* as clut is shared, could have not been refresh, but the dc map must */
+            urp_rebuild_aa_remap(dc);
+            /* Old CLUT bitmaps may have been built under a stale palette; */
+            urp_flush_clut_bitmaps(&dc->cache);
+
+        }
+    }
     return result;
 }
 
@@ -1559,13 +2003,40 @@ ULONG URPDC_SetDrawScreen(REG(a0, struct URPDrawContext *dc), REG(a1, struct Scr
  * For each entry the nearest screen pen is found by minimising the squared
  * Euclidean distance in RGB space after expanding the 4-bit channels back to
  * 8 bits via replication (e.g. R4=0xA → R8=0xAA).
+ *
+ * Unlike URPDC_SetDrawScreen, this always at least checks whether the
+ * palette changed (no screen-pointer/depth shortcut) -- that's the point
+ * of calling it: the screen may be unchanged but its palette may not be
+ * (e.g. an image load allocated new pens). The actual 4096-entry rebuild
+ * only happens if urp_clut_ensure_fresh's cheap hash says something
+ * really did change; if this DC's screen+depth already match another
+ * DC's shared table that's already current, this call costs one palette
+ * read-and-hash and nothing else.
  */
 ULONG URPDC_UpdateColorMap(REG(a0, struct URPDrawContext *dc), REG(a1, struct Screen *screen))
 {
-    ULONG result;
-    if (!dc) return 0;
+    ULONG depth, result;
+    if (!dc || !screen || !screen->RastPort.BitMap) return 0;
+
     ObtainSemaphore(&dc->sem);
-    result = urp_update_color_map(dc, screen);
+        depth = GetBitMapAttr(screen->RastPort.BitMap, BMA_DEPTH);
+        dc->lastScreen      = screen;
+        dc->lastScreenDepth = depth;
+        result = urp_dc_bind_screen_clut(dc, screen, depth);
+
+        /* note: even if clut valid, verify if need update */
+        {
+            LONG rebuilt = urp_clut_ensure_fresh(dc->screenClut, screen);
+            if(rebuilt || dc->screenSharedClutSync != dc->screenClut->paletteHash)
+            {
+                urp_rebuild_aa_remap(dc);
+                /* Old CLUT bitmaps may have been built under a stale palette; */
+                urp_flush_clut_bitmaps(&dc->cache);
+
+            }
+        }
+
+
     ReleaseSemaphore(&dc->sem);
     return result;
 }
@@ -1575,7 +2046,7 @@ ULONG URPDC_UpdateColorMap(REG(a0, struct URPDrawContext *dc), REG(a1, struct Sc
  * built by URPDC_UpdateColorMap()/URPDC_SetDrawScreen(). Same nearest-pen
  * lookup formula as the internal glyph remapper
  * (urp_build_clut_bitmaps_rgba() above): index = (R>>4)<<8 | (G>>4)<<4 |
- * (B>>4) into dc->clutRemap[].
+ * (B>>4) into dc->screenClut->clutRemap[].
  *
  * srcRGB is pixelCount tightly-packed 3-byte (R,G,B) pixels (e.g. a decoded
  * thumbnail); dstPen receives one pen byte per pixel, suitable for
@@ -1585,7 +2056,7 @@ ULONG URPDC_UpdateColorMap(REG(a0, struct URPDrawContext *dc), REG(a1, struct Sc
  *
  * Returns 0 (nothing written) if dc/srcRGB/dstPen is NULL or the colour map
  * hasn't been built yet (dc->clutValid == 0) -- call
- * URPDC_UpdateColorMap()/URPDC_SetDrawScreen() first. Returns pixelCount on
+ * URPDC_UpdateColorMap()/URPDC_SetDrawSURPDC_RemapRGB24ToPen8creen() first. Returns pixelCount on
  * success.
  */
 ULONG URPDC_RemapRGB24ToPen8(REG(a0, struct URPDrawContext *dc),
@@ -1594,13 +2065,14 @@ ULONG URPDC_RemapRGB24ToPen8(REG(a0, struct URPDrawContext *dc),
                               REG(d0, ULONG pixelCount))
 {
     ULONG i;
-
+    UBYTE  *clutRemap; /*[4096];*/
     if (!dc || !srcRGB || !dstPen) return 0;
-    if (!dc->clutValid) return 0;
+    if (!dc->screenClut) return 0;
 
+    clutRemap = &dc->screenClut->clutRemap[0];
     for (i = 0; i < pixelCount; i++) {
         const UBYTE *sp = srcRGB + i * 3UL;
-        dstPen[i] = dc->clutRemap[
+        dstPen[i] = clutRemap[
             ((ULONG)(sp[0] >> 4) << 8) |
             ((ULONG)(sp[1] >> 4) << 4) |
              (ULONG)(sp[2] >> 4)];
@@ -1710,18 +2182,22 @@ static WORD urp_font_ascender(struct URPDrawContext *dc)
     int i, asc, maxAscend = 0;
     for (i = 0; i < dc->numFonts; i++) {
         struct URPFontEntry *fe = &dc->fonts[i];
+        FT_Face face;
         int scaleNum = 1, scaleDen = 1;
-        if (!fe->face) continue;
-        urp_set_face_size(fe);
-        asc = (int)(fe->face->size->metrics.ascender >> 6);
-        if (!FT_IS_SCALABLE(fe->face) && fe->face->num_fixed_sizes > 0) {
-            int cellH = (int)(fe->face->size->metrics.height >> 6);
+        if (!fe->shared) continue;
+        ObtainSemaphore(&urpFontSem);
+        urp_activate_face_size(fe);
+        face = fe->shared->owner->face;
+        asc = (int)(face->size->metrics.ascender >> 6);
+        if (!FT_IS_SCALABLE(face) && face->num_fixed_sizes > 0) {
+            int cellH = (int)(face->size->metrics.height >> 6);
             if (cellH > 0 && cellH != fe->pointSize) {
                 scaleNum = fe->pointSize;
                 scaleDen = cellH;
             }
             if (asc <= 0) asc = cellH;
         }
+        ReleaseSemaphore(&urpFontSem);
         asc = (asc * scaleNum + scaleDen / 2) / scaleDen;
         if (asc > maxAscend) maxAscend = asc;
     }
@@ -1733,21 +2209,25 @@ static WORD urp_line_height(struct URPDrawContext *dc)
     int i, asc, dsc, maxAscend = 0, maxDescend = 0;
     for (i = 0; i < dc->numFonts; i++) {
         struct URPFontEntry *fe = &dc->fonts[i];
+        FT_Face face;
         FT_Pos raw_dsc;
         int scaleNum = 1, scaleDen = 1;
-        if (!fe->face) continue;
-        urp_set_face_size(fe);
-        asc = (int)(fe->face->size->metrics.ascender >> 6);
-        raw_dsc = fe->face->size->metrics.descender;
+        if (!fe->shared) continue;
+        ObtainSemaphore(&urpFontSem);
+        urp_activate_face_size(fe);
+        face = fe->shared->owner->face;
+        asc = (int)(face->size->metrics.ascender >> 6);
+        raw_dsc = face->size->metrics.descender;
         dsc = (int)((-raw_dsc) >> 6);
-        if (!FT_IS_SCALABLE(fe->face) && fe->face->num_fixed_sizes > 0) {
-            int cellH = (int)(fe->face->size->metrics.height >> 6);
+        if (!FT_IS_SCALABLE(face) && face->num_fixed_sizes > 0) {
+            int cellH = (int)(face->size->metrics.height >> 6);
             if (cellH > 0 && cellH != fe->pointSize) {
                 scaleNum = fe->pointSize;
                 scaleDen = cellH;
             }
             if (asc <= 0) { asc = cellH; dsc = 0; }
         }
+        ReleaseSemaphore(&urpFontSem);
         if (dsc < 0) dsc = 0;
         asc = (asc * scaleNum + scaleDen / 2) / scaleDen;
         dsc = (dsc * scaleNum + scaleDen / 2) / scaleDen;
@@ -1812,10 +2292,12 @@ void URPDC_TextSizeUTF8(REG(a0, struct URPDrawContext *dc),
         if (urp_is_variation_selector(cp)) continue;
 
         fe = NULL; gi = 0;
+        ObtainSemaphore(&urpFontSem);
         for (i = 0; i < dc->numFonts; i++) {
-            gi = FT_Get_Char_Index(dc->fonts[i].face, (FT_ULong)cp);
+            gi = FT_Get_Char_Index(dc->fonts[i].shared->owner->face, (FT_ULong)cp);
             if (gi != 0) { fe = &dc->fonts[i]; break; }
         }
+        ReleaseSemaphore(&urpFontSem);
         if (!fe) {
             /* Count the tofu box advance in the measured width */
             ge = urp_cache_lookup(&dc->cache, URP_CP_NOTFOUND, 0);
@@ -1830,7 +2312,6 @@ void URPDC_TextSizeUTF8(REG(a0, struct URPDrawContext *dc),
         /* Use cache for advance (also warms it up before the draw call) */
         ge = urp_cache_lookup(&dc->cache, (ULONG)cp, dc->currentStyle);
         if (!ge) {
-            urp_set_face_size(fe);
             ge = urp_fill_cache_entry(dc, fe, gi, (ULONG)cp);
             if (ge) urp_cache_insert(&dc->cache, ge);
         }
@@ -1894,26 +2375,29 @@ void URPDC_GetFontLineMetrics(REG(a0, struct URPDrawContext *dc),
     ObtainSemaphore(&dc->sem);
     for (i = 0; i < dc->numFonts; i++) {
         struct URPFontEntry *fe = &dc->fonts[i];
+        FT_Face face;
         FT_Pos raw_dsc;
         int scaleNum = 1;
         int scaleDen = 1;
 
-        if (!fe->face) continue;
+        if (!fe->shared) continue;
 
-        urp_set_face_size(fe);
+        ObtainSemaphore(&urpFontSem);
+        urp_activate_face_size(fe);
+        face = fe->shared->owner->face;
 
-        asc = (int)(fe->face->size->metrics.ascender >> 6);
+        asc = (int)(face->size->metrics.ascender >> 6);
 
         /* descender is a negative FT_Pos; negate before shifting to avoid
          * implementation-defined behaviour on negative right-shifts. */
-        raw_dsc = fe->face->size->metrics.descender;
+        raw_dsc = face->size->metrics.descender;
         dsc = (int)((-raw_dsc) >> 6);
 
         /* Bitmap-only fonts (PNG/CBDT/CBLC emoji) report metrics at the native
          * strike size, not at pointSize.  Mirror the same scale used in
          * urp_fill_cache_entry so the metrics reflect actual rendered pixels. */
-        if (!FT_IS_SCALABLE(fe->face) && fe->face->num_fixed_sizes > 0) {
-            int cellH = (int)(fe->face->size->metrics.height >> 6);
+        if (!FT_IS_SCALABLE(face) && face->num_fixed_sizes > 0) {
+            int cellH = (int)(face->size->metrics.height >> 6);
             if (cellH > 0 && cellH != fe->pointSize) {
                 scaleNum = fe->pointSize;
                 scaleDen = cellH;
@@ -1925,6 +2409,7 @@ void URPDC_GetFontLineMetrics(REG(a0, struct URPDrawContext *dc),
                 dsc = 0;
             }
         }
+        ReleaseSemaphore(&urpFontSem);
 
         if (dsc < 0) dsc = 0;
 
@@ -1989,10 +2474,12 @@ void URPDC_HorizontalOffsetArrayUTF8(REG(a0, struct URPDrawContext *dc),
         if (urp_is_variation_selector(cp)) continue;
 
         fe = NULL; gi = 0;
+        ObtainSemaphore(&urpFontSem);
         for (i = 0; i < dc->numFonts; i++) {
-            gi = FT_Get_Char_Index(dc->fonts[i].face, (FT_ULong)cp);
+            gi = FT_Get_Char_Index(dc->fonts[i].shared->owner->face, (FT_ULong)cp);
             if (gi != 0) { fe = &dc->fonts[i]; break; }
         }
+        ReleaseSemaphore(&urpFontSem);
         if (!fe) {
             /* Count the tofu box advance in the measured width */
             ge = urp_cache_lookup(&dc->cache, URP_CP_NOTFOUND, 0);
@@ -2007,7 +2494,6 @@ void URPDC_HorizontalOffsetArrayUTF8(REG(a0, struct URPDrawContext *dc),
         /* Use cache for advance (also warms it up before the draw call) */
         ge = urp_cache_lookup(&dc->cache, (ULONG)cp, dc->currentStyle);
         if (!ge) {
-            urp_set_face_size(fe);
             ge = urp_fill_cache_entry(dc, fe, gi, (ULONG)cp);
             if (ge) urp_cache_insert(&dc->cache, ge);
         }
@@ -2035,10 +2521,12 @@ static struct URPGlyphEntry *urp_get_glyph(struct URPDrawContext *dc,
     int i;
 
     fe = NULL; gi = 0;
+    ObtainSemaphore(&urpFontSem);
     for (i = 0; i < dc->numFonts; i++) {
-        gi = FT_Get_Char_Index(dc->fonts[i].face, (FT_ULong)cp);
+        gi = FT_Get_Char_Index(dc->fonts[i].shared->owner->face, (FT_ULong)cp);
         if (gi != 0) { fe = &dc->fonts[i]; break; }
     }
+    ReleaseSemaphore(&urpFontSem);
     if (fe_out) *fe_out = fe;
     if (gi_out) *gi_out = gi;
 
@@ -2046,7 +2534,6 @@ static struct URPGlyphEntry *urp_get_glyph(struct URPDrawContext *dc,
 
     ge = urp_cache_lookup(&dc->cache, (ULONG)cp, dc->currentStyle);
     if (!ge) {
-        urp_set_face_size(fe);
         ge = urp_fill_cache_entry(dc, fe, gi, (ULONG)cp);
         if (ge) urp_cache_insert(&dc->cache, ge);
     }
@@ -2718,7 +3205,7 @@ static void urp_draw_text_clut(struct RastPort      *rp,
             }
                 break;
             case URP_CACHE_GRAY:
-                if (dc->clutValid && dc->currentFriendBitmap) {
+                if (dc->screenClut && dc->currentFriendBitmap) {
                     if (!ge->clutBitmap && !ge->chk_clutBitmap)
                         urp_build_clut_bitmaps_gray(dc, ge);
                     if(ge->chk_clutBitmap)
@@ -2746,7 +3233,7 @@ static void urp_draw_text_clut(struct RastPort      *rp,
                 }
                 break;
             case URP_CACHE_RGBA:
-                if (dc->clutValid && dc->currentFriendBitmap) {
+                if (dc->screenClut && dc->currentFriendBitmap) {
                     if (!ge->clutBitmap && !ge->chk_clutBitmap)
                         urp_build_clut_bitmaps_rgba(dc, ge);
 
@@ -2894,7 +3381,7 @@ static void urp_draw_text_clut_forcedmono(struct RastPort      *rp,
 
                 break;
             case URP_CACHE_GRAY:
-                if (dc->clutValid && dc->currentFriendBitmap) {
+                if (dc->screenClut && dc->currentFriendBitmap) {
                     if (!ge->clutBitmap && !ge->chk_clutBitmap)
                         urp_build_clut_bitmaps_gray(dc, ge);
 
@@ -2923,7 +3410,7 @@ static void urp_draw_text_clut_forcedmono(struct RastPort      *rp,
                 }
                 break;
             case URP_CACHE_RGBA:
-                if (dc->clutValid && dc->currentFriendBitmap) {
+                if (dc->screenClut && dc->currentFriendBitmap) {
                     if (!ge->clutBitmap && !ge->chk_clutBitmap)
                         urp_build_clut_bitmaps_rgba(dc, ge);
 
@@ -2978,7 +3465,12 @@ void URPDrawTextUTF8(REG(a0, struct RastPort      *rp),
     p         = (const unsigned char *)utf8;
     remaining = ((int)maxChars < 0) ? 32767 : maxChars;
 
-// bdbprintf("\n ** URPDrawTextUTF8 ** \n");
+    /* task:%08lx identifies which task actually called this -- compare
+     * this value across a hexButton draw and a TootTimeline draw sharing
+     * the same dc to confirm/refute whether they really run on the same
+     * process, instead of assuming it. */
+    // bdbprintf("URPDrawTextUTF8 dc:%08lx task:%08lx bm:%08lx text:\"%.24s\"\n",
+    //           (ULONG)dc, (ULONG)FindTask(NULL), (ULONG)rp->BitMap, utf8);
 
     dc->currentFriendBitmap = rp->BitMap;
 
@@ -2991,6 +3483,8 @@ void URPDrawTextUTF8(REG(a0, struct RastPort      *rp),
         SetAPen(rp,dc->txtPen);
         SetBPen(rp,dc->bgPen);
     }
+
+
 
     if (CyberGfxBase != NULL &&
         GetCyberMapAttr(rp->BitMap, CYBRMATTR_ISCYBERGFX) != 0 &&

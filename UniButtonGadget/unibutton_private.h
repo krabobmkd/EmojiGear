@@ -100,7 +100,9 @@ typedef struct UniButtonData {
     /* OS3.9 intuition can't manage OM_NOTIFY with DoSuperMethod... */
     Object *target;
     ULONG  ga_id;
+    void *regularProcess;
 
+    volatile int isRendering;
 } UniButtonData;
 
 #define UBT_DATA(cl, o)  ((UniButtonData *)INST_DATA((cl), (o)))
@@ -119,8 +121,6 @@ void ubt_free_cache(UniButtonData *inst);
 
 /* Rebuild all three state bitmaps (application-task context only) */
 void ubt_rebuild_cache(Class *cl, Object *o,
-                       WORD gadW, WORD gadH,
-                       struct DrawInfo *dri,
                        struct Screen   *scr);
 
 /* Blit state bitmap to rastport at gadget position; no-op if cache invalid */
@@ -147,7 +147,7 @@ ULONG ASM SAVEDS UniButton_Dispatch(
 /* class_unibutton_attribs.c */
 ULONG UniButton_OnNew    (Class *cl, Object *o, struct opSet *msg);
 ULONG UniButton_OnDispose(Class *cl, Object *o, Msg msg);
-ULONG UniButton_OnSet    (Class *cl, Object *o, struct opSet *msg);
+ULONG UniButton_OnSet    (Class *cl, Object *o, struct opSet *msg, int isNew);
 ULONG UniButton_OnGet    (Class *cl, Object *o, struct opGet *msg);
 
 /* class_unibutton_render.c */

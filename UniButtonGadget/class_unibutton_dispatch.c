@@ -23,7 +23,7 @@ ULONG ASM SAVEDS UniButton_Dispatch(
         case OM_UPDATE:
         {
             ULONG result = DoSuperMethodA(cl, o, (APTR)msg);
-            return result | UniButton_OnSet(cl, o, (struct opSet *)msg);
+            return result | UniButton_OnSet(cl, o, (struct opSet *)msg,FALSE);
         }
 
         case OM_GET:

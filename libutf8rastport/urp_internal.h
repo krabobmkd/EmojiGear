@@ -17,6 +17,7 @@
 #include FT_FREETYPE_H
 #include FT_GLYPH_H
 #include FT_SYNTHESIS_H
+#include FT_SIZES_H
 
 #include <libraries/utf8rastport.h>   /* public constants: URP_CACHE_*, URP_PREF_*, URP_PATH_MAX etc. */
 
@@ -70,14 +71,95 @@ struct URPGlyphCache {
 
 
 /* -------------------------------------------------------------------------
- * Font entry
+ * Shared font pool -- FT_Face/FT_Size objects are opened at most once
+ * per (resolved path, point size) system-wide, refcounted, and shared by
+ * every URPDrawContext in every process that has this library open (a
+ * classic Amiga shared library has exactly one instance of its global
+ * data; every OpenLibrary() caller reaches the same one). Guarded by the
+ * library-global urpFontSem semaphore (utf8rastport.c), not by any
+ * per-DC dc->sem.
+ *
+ * Two levels, refcounted independently:
+ *   URPSharedFace  -- one per distinct font file (path). Owns the parsed
+ *                     FT_Face (tables, outlines, cmap). Freed via
+ *                     FT_Done_Face when its last URPSharedSize goes away.
+ *   URPSharedSize  -- one per (face, pointSize) pair actually in use.
+ *                     Owns an FT_Size created via FT_New_Size, pre-
+ *                     configured once (FT_Set_Char_Size/FT_Select_Size)
+ *                     at creation. Using it afterwards is just
+ *                     FT_Activate_Size -- a pointer flip, no rescale --
+ *                     which is what makes sharing one face across DCs at
+ *                     different sizes (dcNormal/dcUsername/dcMini) cheap
+ *                     even when draws interleave sizes glyph-by-glyph;
+ *                     without per-size objects, reasserting a size on a
+ *                     shared face via FT_Set_Char_Size would force a
+ *                     rescale on every switch.
+ *
+ * All memory FreeType itself allocates for a shared face/size (tables,
+ * outlines, glyph slot) already comes from an AllocMem(..., MEMF_PUBLIC)-
+ * backed pool -- see builds/amiga/src/base/ftsystem.c's FT_New_Memory --
+ * so it's already safe to touch from whichever process's task happens to
+ * be executing library code at the time.
  * ------------------------------------------------------------------------- */
 
 #define URP_PATH_MAX  256
 
+#define URP_SHARED_FACE_MAX  16
+#define URP_SHARED_SIZE_MAX  64
+
+struct URPSharedFace {
+    FT_Face face;                 /* NULL = free slot */
+    char    path[URP_PATH_MAX];
+    ULONG   refCount;             /* number of URPSharedSize entries owned */
+};
+
+struct URPSharedSize {
+    struct URPSharedFace *owner;  /* NULL = free slot */
+    FT_Size ftSize;
+    int     pointSize;
+    ULONG   refCount;             /* number of per-DC URPFontEntry's using this pair */
+};
+
+/* -------------------------------------------------------------------------
+ * Shared screen CLUT remap table -- the RGB444->pen nearest-match table
+ * (and the palette snapshot it was built from) for one (Screen*, depth)
+ * pair, shared by every URPDrawContext bound to that screen instead of
+ * each keeping its own private 4096-entry copy. Building it is the
+ * expensive part (up to 4096*256 distance comparisons); rebuilding it
+ * redundantly per DC for an unchanged screen+palette is pure waste, and
+ * happens a lot in practice: FriendSh3ep alone rebinds 3 draw contexts
+ * (dcNormal/dcUsername/dcMini) to the same screen on every font-size
+ * change and on every "palette may have changed" refresh (e.g. after an
+ * image load allocates new pens).
+ *
+ * paletteHash is a cheap folded checksum of the palette entries actually
+ * read to answer "did anything change" -- reading those entries via
+ * GetRGB32 is unavoidable even just to check, but it's far cheaper than
+ * the 4096-entry nearest-pen search, which only runs when the hash
+ * doesn't match (or the slot is brand new: refCount == 0 forces it).
+ *
+ * Guarded by urpClutSem (utf8rastport.c), a separate semaphore from
+ * urpFontSem -- the two pools are independent and never nested with each
+ * other, only each with a per-DC dc->sem (outer).
+ * ------------------------------------------------------------------------- */
+
+#define URP_SHARED_CLUT_MAX  8
+
+struct URPSharedScreenClut {
+    struct Screen *screen;      /* NULL = free slot */
+    ULONG          depth;
+    ULONG          paletteHash;
+    UBYTE          clutRemap[4096];
+    ULONG          refCount;
+};
+
+/* -------------------------------------------------------------------------
+ * Font entry
+ * ------------------------------------------------------------------------- */
+
 struct URPFontEntry {
-    FT_Face  face;
-    char     path[URP_PATH_MAX];
+    struct URPSharedSize *shared;  /* face+size this entry currently uses */
+    char     path[URP_PATH_MAX];   /* caller-supplied path, for RemoveFont matching */
     int      pointSize;
     ULONG    flags;
 };
@@ -92,7 +174,6 @@ struct sARGB { UBYTE A, R, G, B; };
 struct URPDrawContext {
     struct SignalSemaphore sem;
     ULONG               useCount;
-    FT_Library           library;
     struct URPFontEntry  fonts[URP_MAX_FONTS];
     int                  numFonts;
     /* last screen bitmap we have drawn with,
@@ -148,14 +229,23 @@ struct URPDrawContext {
     int   numberOfGlyphsNotFound;
     ULONG codeNotFound[MAX_CODE_NOT_FOUND];
 
-    /* RGB444 → CLUT pen remap table; clutValid set by URPDC_UpdateColorMap() */
-    UBYTE clutRemap[4096];
+    /* RGB444 -> CLUT pen remap table for lastScreen/lastScreenDepth, shared
+     * with every other DC bound to the same screen -- see struct
+     * URPSharedScreenClut. clutValid mirrors (screenClut != NULL) as a
+     * quick flag; set/cleared only in urp_dc_bind_screen_clut(). */
+    struct URPSharedScreenClut *screenClut;
 
-    /* 16-entry AA shade ramp for GRAY glyphs on CLUT screens */
+    /* hash sync from shared clut state, same when local aa table rebuilt */
+    ULONG screenSharedClutSync;
+
+    /* 16-entry AA shade ramp for GRAY glyphs on CLUT screens -- stays
+     * per-DC: it also depends on this DC's own draw/background colours,
+     * not just the shared screen palette (see urp_rebuild_aa_remap). */
     UBYTE aaRemap[16];
-    UBYTE clut_pad[3];
-    UBYTE clutValid;/* moved for alignment, goes with clutRemap */
-
+   // UBYTE clut_pad[3];
+    /*  UBYTE clutValid was antipattern, we rely only on:
+     (screenClut && screenClut->hash == screenSharedClutSync)
+    */
     /* Scratch buffer for URP_PREF_HIGHFILTERING pyramid downscaling.
      * Allocated lazily, grown as needed, freed in URPDC_Destroy.
      * Holds one BGRA intermediate level (at most srcW/2 × srcH/2 × 4 bytes). */
@@ -165,6 +255,7 @@ struct URPDrawContext {
     /* Cached advance width for URP_PREF_FORCE_MONOSPACE: advance of 'M' in
      * the primary font.  0 means not yet computed (computed lazily). */
     WORD monoAdvanceX;
+
 
     /* experimental */
     int saveChipMode;

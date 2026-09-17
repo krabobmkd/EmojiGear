@@ -15,12 +15,22 @@ void flushbdbprint(void);
 void clearbdbprint(void);
 int bdbavailable(void);
 
+/* One-time InitSemaphore() for bdb_sem below -- call once from a place
+ * guaranteed to run before any other task can reach this library's
+ * bdbprintf() (CLibInit(), same timing as urp_shared_fonts_init()).
+ * bdb_buffer/bdb_position are this library's own static globals, which
+ * (unlike an application's private bdbprintf.c copy) means every process
+ * that has utf8rastport.library open shares the SAME buffer -- callable
+ * from any task per the comment below, so it needs real locking, not
+ * just "flush from the main task" discipline. */
+void bdbprintf_init(void);
 
 #else
 INLINE int bdbprintf(const char *format, ...) { (void)format; return 0; }
 INLINE void flushbdbprint(void) {}
 INLINE void clearbdbprint(void) {}
 INLINE int bdbavailable(void)  { return 0; }
+INLINE void bdbprintf_init(void) {}
 
 #endif
 

@@ -6,6 +6,7 @@
 #include <proto/layers.h>
 #include <proto/cybergraphics.h>
 #include <workbench/startup.h>
+#include "bdbprintf.h"
 
 /* libnix20 ADD2INIT/ADD2EXIT registrations are walked by ncrt0.S callfuncs,
    which is never linked (-nostartfiles).  We must call the critical ones
@@ -23,6 +24,15 @@ extern void __exitmalloc(void);
 /* Required by __initstdio (_WBenchMsg == NULL means CLI context). */
 struct WBStartup *_WBenchMsg = NULL;
 
+/* utf8rastport.c: one-time setup/teardown of the shared font pool (see
+ * urp_internal.h's struct URPSharedFace/URPSharedSize design comment).
+ * Must run exactly once per library residency, which is exactly what
+ * CLibInit/CLibExpunge give us -- they run once regardless of how many
+ * processes OpenLibrary() this. */
+extern int  urp_shared_fonts_init(void);
+extern void urp_shared_fonts_cleanup(void);
+extern void urp_shared_cluts_init(void);
+
 struct DosLibrary      *DOSBase       ;
 struct GfxBase         *GfxBase       ;
 struct IntuitionBase   *IntuitionBase ;
@@ -30,7 +40,7 @@ struct Library         *UtilityBase   ;
 struct Library         *LayersBase    ;
 struct Library         *CyberGfxBase  ;
 
-const char VersionString[] = "utf8rastport.library 5.4 ("__DATE__")";
+const char VersionString[] = "utf8rastport.library 6.1 ("__DATE__")";
 const char Lib_ID[]= "utf8rastport.library";
 
 
@@ -39,6 +49,8 @@ void CLibExpunge();
 
 int CLibInit()
 {
+    bdbprintf_init(); /* before anything below can possibly trace */
+
     DOSBase = NULL;
     GfxBase = NULL;
     IntuitionBase = NULL;
@@ -59,6 +71,9 @@ int CLibInit()
         /* CyberGfxBase NULL accepted */
     CyberGfxBase = OpenLibrary("cybergraphics.library", 1);
 
+    if (!urp_shared_fonts_init()) goto failinit;
+    urp_shared_cluts_init();
+
     /* success is 0 */
     return 0;
 failinit:
@@ -71,6 +86,7 @@ void CLibClose()
 }
 void CLibExpunge()
 {
+    urp_shared_fonts_cleanup();
 
     if(CyberGfxBase) CloseLibrary(CyberGfxBase);
     CyberGfxBase = NULL;

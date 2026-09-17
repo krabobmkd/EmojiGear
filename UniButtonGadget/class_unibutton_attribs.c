@@ -180,9 +180,9 @@ ULONG UniButton_OnNew(Class *cl, Object *o, struct opSet *msg)
     inst->rightMargin = 4;
     inst->topMargin   = 2;
     inst->bottomMargin= 2;
-
-//bdbprintf("UniButton_OnNew\n");
-
+    inst->target = 0;
+    inst->ga_id = 0;
+    inst->regularProcess = (void *)FindTask(NULL);
     /* URPDrawContext: shared or private */
     {
         struct URPDrawContext *externalDc = NULL;
@@ -229,7 +229,7 @@ ULONG UniButton_OnNew(Class *cl, Object *o, struct opSet *msg)
     }
 
     /* Apply remaining tags */
-    UniButton_OnSet(cl, newObj, msg);
+    UniButton_OnSet(cl, newObj, msg, TRUE);
 
     /* looks like we ned that for WMHI_GADGETUP to work */
     {
@@ -280,7 +280,7 @@ bdbprintf("UniButton_OnDispose\n");
  * OM_SET / OM_UPDATE
  * =========================================================================
  */
-ULONG UniButton_OnSet(Class *cl, Object *o, struct opSet *msg)
+ULONG UniButton_OnSet(Class *cl, Object *o, struct opSet *msg, int isNew)
 {
     UniButtonData  *inst   = UBT_DATA(cl, o);
     struct TagItem *state  = msg->ops_AttrList;
@@ -515,10 +515,8 @@ ULONG UniButton_OnSet(Class *cl, Object *o, struct opSet *msg)
      * GM_RENDER may be dispatched on a different process on some OS versions,
      * where the FreeType glyph engine is unsafe to call.  Pre-building here
      * means GM_RENDER only needs to blit the ready cache. */
-    if (redraw && inst->dc) {
+    if (!inst->cacheValid && inst->dc) {
         struct URPTextMetric m;
-        WORD gadW = G(o)->Width;
-        WORD gadH = G(o)->Height;
 
         /* Update textWidth first so ubt_rebuild_cache allocates the correct bitmap size. */
         if (inst->text && inst->text[0]) {
@@ -529,18 +527,23 @@ ULONG UniButton_OnSet(Class *cl, Object *o, struct opSet *msg)
             inst->textWidth = 16;
             inst->textHeight = 8;
         }
-
-        if (gadW > 0 && gadH > 0 && inst->screen) {
-            /* Full rebuild: also calls ubt_update_font_metrics internally. */
-            ubt_rebuild_cache(cl, o, gadW, gadH, inst->drawInfo, inst->screen);
+        /* at new and before visible, can't create bitmaps and render/remap
+          but we can "metrics" which inits the glyphs and manage all FreeType
+          work on correct process - when text is changed when visible it's
+           updated here */
+        if (msg && msg->ops_GInfo && msg->ops_GInfo->gi_Screen) {
+             /* Full rebuild: also calls ubt_update_font_metrics internally. */
+             ubt_rebuild_cache(cl, o, inst->screen);
         } else {
             /* Gadget not yet rendered – update metrics only so GM_DOMAIN works. */
             ubt_update_font_metrics(inst);
         }
     }
 
-    if ((redraw || justBlit) && msg->ops_GInfo)
+    if ( !isNew && (redraw || justBlit) && msg->ops_GInfo)
+    {
         ubt_render_self(cl, o, msg->ops_GInfo);
+    }
 
     return result;
 }

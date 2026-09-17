@@ -164,7 +164,7 @@ static LibraryEntry libraryTable[] = {
     {"icon.library",      39, &IconBase},
     {"asl.library",       39, &AslBase},
     {"gadtools.library",  39, &GadToolsBase},
-    {"utf8rastport.library",5, &URPBase},
+    {"utf8rastport.library",6, &URPBase},
 
     /* BOOPSI class libraries - with minimal version of OS3.9 (not related to os!) */
     {"window.class",           42, &WindowBase},
@@ -182,8 +182,8 @@ static LibraryEntry libraryTable[] = {
     {"gadgets/chooser.gadget", 44, &ChooserBase},
     {"images/penmap.image",    47, &PenMapBase},
     /* ... and the one that are starred in this app */
-    {"gadgets/unitexteditor.gadget",5, &UniTextEditorBase},
-    {"gadgets/unibutton.gadget", 4, &UniButtonBase},
+    {"gadgets/unitexteditor.gadget",6, &UniTextEditorBase},
+    {"gadgets/unibutton.gadget", 6, &UniButtonBase},
 
     {NULL, 0, NULL} /* Terminator */
 };
@@ -714,7 +714,7 @@ int main(int argc, char **argv)
             {
                 SetAttrs(app->textEditorObj,UTED_FlushDebugOutput,TRUE,TAG_END);
             }
-            URPDC_FlushGlyphCache(NULL);
+            //URPDC_FlushGlyphCache(NULL);
 
             settingsSig  = EgSettingsView_GetSignalMask(&app->settingsView);
             fontsSig     = EgFontsView_GetSignalMask(&app->fontsView);
