@@ -135,7 +135,15 @@ static struct URPSharedSize   urpSharedSizes[URP_SHARED_SIZE_MAX];
  * detect init never completed. */
 int urp_shared_fonts_init(void)
 {
+    /* our special C runtime wouldnt do static member initialization,
+    so we do explicitly here  */
+    memset(&urpFontSem,0,sizeof( struct SignalSemaphore));
+    urpSharedFTLib = NULL;
+    memset(&urpSharedFaces[0],0,sizeof(urpSharedFaces));
+    memset(&urpSharedSizes[0],0,sizeof(urpSharedSizes));
+
     InitSemaphore(&urpFontSem);
+
     return FT_Init_FreeType(&urpSharedFTLib) == 0;
 }
 
@@ -422,11 +430,18 @@ static struct URPSharedSize *urp_shared_font_acquire(const char *path, int point
         sf->path[URP_PATH_MAX - 1] = '\0';
         sf->refCount = 0;
         sfIsNew = TRUE;
+        bdbprintf("URPFONT OPEN  \"%s\" size:%ld -- file opened for the FIRST time (face:%08lx)\n",
+                  sf->path, (LONG)pointSize, (ULONG)sf->face);
+    } else {
+        bdbprintf("URPFONT REUSE \"%s\" size:%ld -- file already open, sharing it (face:%08lx faceRefs:%ld)\n",
+                  sf->path, (LONG)pointSize, (ULONG)sf->face, (LONG)sf->refCount);
     }
 
     ss = urp_shared_size_find(sf, pointSize);
     if (ss) {
         ss->refCount++;
+        bdbprintf("URPFONT REUSE \"%s\" size:%ld -- same size shared too, sizeRefs->%ld\n",
+                  sf->path, (LONG)pointSize, (LONG)ss->refCount);
         return ss;
     }
 
@@ -446,7 +461,11 @@ static struct URPSharedSize *urp_shared_font_acquire(const char *path, int point
     /* Size pool full, or size creation/config failed: if we just opened
      * this face for a size that never materialised, nobody else
      * references it yet -- close it now instead of leaking an orphan. */
-    if (sfIsNew) { FT_Done_Face(sf->face); sf->face = NULL; }
+    if (sfIsNew) {
+        bdbprintf("URPFONT CLOSE \"%s\" size:%ld -- size setup FAILED, closing the face we just opened\n",
+                  sf->path, (LONG)pointSize);
+        FT_Done_Face(sf->face); sf->face = NULL;
+    }
     return NULL;
 }
 
@@ -467,7 +486,14 @@ static void urp_shared_font_release(struct URPSharedSize *ss)
     ss->ftSize = NULL;
     if (sf && sf->refCount > 0) {
         sf->refCount--;
-        if (sf->refCount == 0) { FT_Done_Face(sf->face); sf->face = NULL; }
+        if (sf->refCount == 0) {
+            bdbprintf("URPFONT CLOSE \"%s\" -- last reference released, file closed for good\n",
+                      sf->path);
+            FT_Done_Face(sf->face); sf->face = NULL;
+        } else {
+            bdbprintf("URPFONT FREE  \"%s\" size:%ld -- size dropped, file still shared (faceRefs:%ld)\n",
+                      sf->path, (LONG)ss->pointSize, (LONG)sf->refCount);
+        }
     }
 }
 

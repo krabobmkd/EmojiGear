@@ -19,7 +19,7 @@ project(utf8rastport C)
 
 set(CMAKE_C_STANDARD 11)
 
-option(UTF8RASTPORT_SHARED "link utf8rastport as amiga shared lib"  ON)
+# option(UTF8RASTPORT_SHARED "link utf8rastport as amiga shared lib"  ON)
 
 # -------------------------------------------------------------------------
 # Amiga CPU/FPU options: 68020, software floating-point (no FPU required)
@@ -213,7 +213,7 @@ if(UTF8RASTPORT_SHARED)
 		lib_amiga_crt.c
 		utf8rastport.c
 		urp_cgx_blend.c
-		bdbprintf.c
+#		bdbprintf.c
 	)
 
 target_link_options(${UTF8RPNAME} PRIVATE
@@ -263,6 +263,6 @@ endif()
 if(AMIGA)
     target_compile_options(${UTF8RPNAME} PRIVATE ${AMIGA_CPU_FLAGS})
 endif()
-target_compile_definitions(${UTF8RPNAME} PRIVATE USE_DEBUG_BDBPRINT=1)
+#target_compile_definitions(${UTF8RPNAME} PRIVATE USE_DEBUG_BDBPRINT=1)
 
 
