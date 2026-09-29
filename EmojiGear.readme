@@ -2,13 +2,36 @@ Short:        UTF-8/Unicode text editor+Emoji+gadgets
 Author:       krabobmkd
 Uploader:     victorien.ferry@free.fr
 Type:         text/edit
-Version:      5.4
+Version:      6.1
 Architecture: m68k-amigaos >= 3.0
 Requires:     68020, better with OS 3.2.x, 8 MB Fast RAM
-Replaces:     text/edit/EmojiGear5.3.lha
+Replaces:     text/edit/EmojiGear*
 
 
+------------------------- Version 6.1
 
+ This package install text editor EmojiGear, but also the BOOPSI gadget 
+  unitexeditor.gadget that does most of the editor, unibutton.gadget,
+  and utf8rastport.library,the dynamic shared library that handles 
+  unicode/UTF8 text drawing and font management.
+  
+ This release is primarily made to dispatch version 6.1 of utf8rastport.library
+ which was heavily rewritten so:
+ 
+  - if a single ttf is opened by many apps or many "Draw Context" inside an app,
+    the ttf file management is shared, which speed up things and consume less memory.
+
+  - in 8bit color index modes, color remap tables are shared by screen, and
+   updated only if needed, which optimizes the heavy cpu time 
+   previously taken for this by each context. 
+   
+   Also: Before using the installer, quit EmojiGear and other Apps that uses its libs,
+   and do "avail flush", or install after a reboot so fonts can actually be updated.
+   
+   This version of the package will be needed by Mastodon client FriendSh3ep 1.1.337
+   More about FriendSh3ep, the best Mastodon client around - all platforms - here:
+   https://www.youtube.com/watch?v=J_v4kxDJINw
+   
 ------------------------- Version 5.4
 
  Changes From Version 5.3 / 5.2:

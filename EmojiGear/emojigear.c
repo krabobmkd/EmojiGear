@@ -588,7 +588,7 @@ int main(int argc, char **argv)
 
     /* Create window object */
     {
-        ULONG lasttag = TAG_END;
+        ULONG lasttag = TAG_IGNORE;
         ULONG lastValue = 0;
         if(AppDiskObject)
         {
