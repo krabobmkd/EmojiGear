@@ -55,7 +55,7 @@ _LVORemove     EQU   -252
 
 ; important must be the same as in c ...
 VERSION		EQU	6
-REVISION	EQU	0
+REVISION	EQU	1
 
 CALL	MACRO
 	jsr	_LVO\1(a6)
